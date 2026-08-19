@@ -2,7 +2,7 @@
 
 [English](README.md) | 中文
 
-本参考定义 profile 启动、web 别名、插件管理和配置 dump 等命令模式。argv 由 [`src/args.ts`](../src/args.ts) 统一解析一次，[`src/bin.ts`](../src/bin.ts) 只会动态导入选中的运行器。
+本参考定义 profile 启动、web 别名、插件管理、恢复和配置 dump 等命令模式。argv 由 [`src/args.ts`](../src/args.ts) 统一解析一次，[`src/bin.ts`](../src/bin.ts) 只会动态导入选中的运行器。
 
 ## Profile 启动
 
@@ -61,6 +61,29 @@ dsh --profile tui
 ```
 
 随源码发布的 Git 托管插件会在安装期间通过 `prepare` 脚本构建，而 pnpm ≥10 默认会阻止该脚本，直到使用方明确允许。首次运行 `add` 会失败，并显示 pnpm 的 `allowBuilds` 提示；dsh 还会提示应修改该 profile 的 `pnpm-workspace.yaml`。将输出的键复制到该文件后，重新运行命令即可。安装已经构建好的 tarball 或本地 checkout 时，无需加入 `allowBuilds`。
+
+## 恢复
+
+恢复是 launcher 模式，而不是普通 DSH 插件。`src/bin.ts` 会在导入应用 boot、profile 组合、Cordis 或任何插件包之前分派该模式。该模式只使用 Node 内置模块和已安装的 `git` 可执行文件，因此普通 profile 无法组合或启动时仍然可用。
+
+DSH Git checkout 必须通过 `--source` 或 `$DSH_SOURCE_HOME` 提供；恢复功能绝不会假定当前调用 workspace 就是 Harness 源码。`--dsh-home` 默认为 `$DSH_HOME` 或 `~/.dsh`，`--store` 默认为 `$DSH_RECOVERY_HOME` 或 `~/.dsh-recovery`。三个根目录必须彼此分离；恢复存储绝不放在可变安装目录或用户数据树内。
+
+```sh
+dsh recovery create --source <path> [--dsh-home <path>] [--store <path>] [--label <text>] [--json]
+dsh recovery list [--store <path>] [--json]
+dsh recovery verify <checkpoint-id> [--store <path>] [--json]
+dsh recovery restore <checkpoint-id> --source <path> --confirm <checkpoint-id> --offline [--dsh-home <path>] [--store <path>] [--json]
+```
+
+`create` 通过 Git 取得已跟踪文件和未被忽略的未跟踪文件，略过当前不存在的已跟踪文件，并把其余普通文件复制到尚未发布的临时检查点中。Git 符号链接会按链接记录，不会跟随目标。DSH 控制平面的允许清单只包含顶层 `settings.yaml` 与 `cordis.patch.yml`，以及每个 profile 直接目录内的 `package.json`、`cordis.patch.yml`、`pnpm-lock.yaml` 和 `pnpm-workspace.yaml`。只有当 manifest 和每个 SHA-256 payload 哈希都通过校验，且临时目录被 rename 为不可变 id 后，检查点才会变得可见。
+
+凭据、含密钥的环境文件、Session、附件、storage、`node_modules`、生成的依赖和工作区内容都不属于恢复范围。系统不会复制它们，恢复也绝不写入它们。这条命令不是用户数据备份。
+
+`list` 读取已发布 manifest，不会重新计算每个 payload 的哈希。`verify` 执行完整的 payload 与符号链接元数据校验。`restore` 要求在 `--confirm` 中重复完全相同的 id；`--offline` 表示调用方确认已经停止 DSH Host，第一版自身不会发现或停止仍在运行的 Host。在首次写入目标前，恢复会完整校验所请求的检查点，要求目标源码与 home 根目录等于记录值，要求源码 checkout 仍处于记录的 Git commit，并为当前状态创建和校验一份 `pre-restore` 救援检查点。每个文件执行原子替换前，还会再次与该救援状态比对。
+
+恢复会替换所选检查点中存在的文件，并重新创建其中记录的符号链接。它不会删除后来新增的未跟踪源码文件、后来新增的 profile 或其他额外文件。如果恢复过 profile manifest，报告会标明需要重新协调依赖，因为已有依赖仍可能反映较新的 manifest。在外部 guardian 接管停止进程和离线安装之前，请手动停止 DSH，并在普通启动前通过受支持的插件管理路径协调受影响 profile 的依赖。
+
+Web profile 在侧边栏底部提供紧凑的电源菜单，只包含创建检查点、回档至最近检查点和安全关机；设置页的“恢复与回档”栏目负责检查点历史、完整性校验、路径详情与精确 ID 选择。恢复 Remote 命名空间仅限本机回环访问。用户明确确认后，Host 桥会启动独立 guardian 并请求有边界关停；guardian 等待 Host PID 退出，再执行恢复并按原命令重启。如果 Host 在该插件加载前就失败，Web 插件仍无法提供帮助，因此命令行模式始终是手动后备入口。
 
 ## Web 别名
 

@@ -2,7 +2,7 @@
 
 English | [中文](README.zh.md)
 
-This reference defines the profile, web-alias, plugin-management, and config-dump command modes. Argv is parsed once through [`src/args.ts`](../src/args.ts), and [`src/bin.ts`](../src/bin.ts) dynamically imports only the selected runner.
+This reference defines the profile, web-alias, plugin-management, recovery, and config-dump command modes. Argv is parsed once through [`src/args.ts`](../src/args.ts), and [`src/bin.ts`](../src/bin.ts) dynamically imports only the selected runner.
 
 ## Profile boot
 
@@ -61,6 +61,29 @@ dsh --profile tui
 ```
 
 Git-hosted plugins that ship sources build during install through their `prepare` script, which pnpm ≥10 blocks until the consumer allows it: the first `add` fails with pnpm's `allowBuilds` hint (and a dsh pointer at the profile's `pnpm-workspace.yaml`); copy the printed key there and re-run. Installing a built tarball or a local checkout needs no allowance.
+
+## Recovery
+
+Recovery is a launcher mode, not an ordinary DSH plugin. `src/bin.ts` dispatches it before importing application boot, profile composition, Cordis, or a plugin package. The mode uses Node built-ins plus the installed `git` executable and remains available when an ordinary profile cannot compose or boot.
+
+The DSH Git checkout is required through `--source` or `$DSH_SOURCE_HOME`; recovery never assumes that the invoking workspace is the Harness source. The defaults are `$DSH_HOME` or `~/.dsh` for `--dsh-home`, and `$DSH_RECOVERY_HOME` or `~/.dsh-recovery` for `--store`. All three roots must be separate; the recovery store never lives inside the mutable installation or user-data tree.
+
+```sh
+dsh recovery create --source <path> [--dsh-home <path>] [--store <path>] [--label <text>] [--json]
+dsh recovery list [--store <path>] [--json]
+dsh recovery verify <checkpoint-id> [--store <path>] [--json]
+dsh recovery restore <checkpoint-id> --source <path> --confirm <checkpoint-id> --offline [--dsh-home <path>] [--store <path>] [--json]
+```
+
+`create` asks Git for tracked files and non-ignored untracked files, omits tracked files that are currently absent, and copies the remaining regular files into an unpublished temporary checkpoint. Git symlinks are recorded as links rather than followed. The DSH control-plane allowlist contains only top-level `settings.yaml` and `cordis.patch.yml`, plus `package.json`, `cordis.patch.yml`, `pnpm-lock.yaml`, and `pnpm-workspace.yaml` immediately inside each profile. A checkpoint becomes visible only after its manifest and every SHA-256 payload hash verify and the temporary directory is renamed to its immutable id.
+
+Credentials and secret environment files, sessions, attachments, storages, `node_modules`, generated dependencies, and workspace content are outside the recovery scope. They are not copied and restore never writes them. This command is not a user-data backup.
+
+`list` reads published manifests without hashing every payload. `verify` performs the full payload and symlink-metadata verification. `restore` requires the exact id in `--confirm`, and `--offline` is an acknowledgement that the caller has stopped the DSH Host; this first implementation does not discover or stop a running Host itself. Before its first target write, restore fully verifies the requested checkpoint, requires the recorded source and home roots, requires the source checkout to remain on the recorded Git commit, and creates and verifies a `pre-restore` rescue checkpoint of the current state. Each restored file is checked against that rescue state again before an atomic replacement.
+
+Restore replaces files present in the selected checkpoint and recreates captured symlinks. It does not delete later untracked source files, later profiles, or other extra files. If profile manifests were restored, the report marks dependency reconciliation as required because existing installed dependencies can still reflect the newer manifest. Until an external guardian owns shutdown and offline installation, stop DSH manually and reconcile the affected profile through the supported plugin-management path before ordinary boot.
+
+The Web profile exposes a compact sidebar-footer power menu with create, restore-latest, and clean-shutdown actions; the Settings Recovery page owns checkpoint history, verification, path details, and exact-id selection. The recovery Remote namespace is loopback-only. After explicit confirmation, its Host bridge starts a detached guardian and requests bounded shutdown; the guardian waits for the Host PID to exit, restores, and restarts the original invocation. A Web plugin cannot help when the Host fails before that plugin loads, so command-line mode remains the manual fallback.
 
 ## Web alias
 

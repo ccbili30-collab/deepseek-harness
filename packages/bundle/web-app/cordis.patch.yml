@@ -100,6 +100,10 @@
     - id: plugin-inventory
       name: '@deepseek-ai/dsh-host-plugin-inventory'
 
+    # Loopback-only bridge to the detached recovery guardian.
+    - id: recovery
+      name: '@deepseek-ai/dsh-host-recovery'
+
     # The API gateway: the transport-agnostic dispatch face every client shape
     # shares. The base layer's agent-default-model service owns the default model.
     - id: api-gateway
@@ -222,6 +226,9 @@
 
     - id: ui-cordis
       name: '@deepseek-ai/dsh-client-ui-cordis'
+
+    - id: ui-recovery
+      name: '@deepseek-ai/dsh-client-ui-recovery'
 
     # Durable workflow lifecycle as an independent Chat node after the
     # existing generic workflow tool row.

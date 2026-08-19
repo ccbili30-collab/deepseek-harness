@@ -8,9 +8,9 @@
 
 /* v8 ignore file -- built-bin acceptance exercises this self-executing dispatch. */
 
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { loadLayeredEnv } from '@deepseek-ai/dsh-app-boot'
 import { parseDshArgs } from './args.ts'
 
 // Both the source tree (apps/cli/src) and the bundled bin (apps/cli/lib) sit
@@ -24,10 +24,19 @@ function readVersion(): string {
   return typeof manifest.version === 'string' ? manifest.version : '0.0.0'
 }
 
+/** Publish the checkout root to recovery children when this CLI runs from source or its local build. */
+function exposeSourceCheckout(): void {
+  if (process.env.DSH_SOURCE_HOME !== undefined) return
+  const candidate = resolve(fileURLToPath(new URL('../../../', import.meta.url)))
+  if (existsSync(new URL('../../../.git', import.meta.url))) process.env.DSH_SOURCE_HOME = realpathSync(candidate)
+}
+
 const invocation = parseDshArgs(process.argv.slice(2), readVersion())
 
 switch (invocation.mode) {
   case 'profile': {
+    exposeSourceCheckout()
+    const { loadLayeredEnv } = await import('@deepseek-ai/dsh-app-boot')
     const { runProfile } = await import('./profile-boot.ts')
     await runProfile({
       environment: loadLayeredEnv('dsh'),
@@ -45,6 +54,11 @@ switch (invocation.mode) {
   case 'dump-config': {
     const { runDumpConfig } = await import('./dump-config.ts')
     runDumpConfig(invocation.profile, invocation.defaultOnly, invocation.patches)
+    break
+  }
+  case 'recovery': {
+    const { runRecovery } = await import('./recovery.ts')
+    await runRecovery(invocation)
     break
   }
   default:

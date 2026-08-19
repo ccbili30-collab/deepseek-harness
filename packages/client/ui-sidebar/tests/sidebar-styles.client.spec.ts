@@ -72,4 +72,8 @@ describe('SidebarRoot.module.css', () => {
     expect(declarations('.fallbackBrandName')?.get('font-size')).toBe('17px')
     expect(declarations('.fallbackBrandName')?.get('white-space')).toBe('nowrap')
   })
+
+  it('provides the containing block for footer-corner actions', () => {
+    expect(declarations('.footArea')?.get('position')).toBe('relative')
+  })
 })

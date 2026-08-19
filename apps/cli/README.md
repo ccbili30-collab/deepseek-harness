@@ -12,6 +12,7 @@ The `dsh` command is the product launcher for profiles: ordered stacks of plugin
 | `dsh --profile headless "job"` | Run one fresh persisted session, print the final answer, and exit. |
 | `dsh web` | Alias of `--profile web`. |
 | `dsh plugin --profile <name> <pnpm args>` | Manage a profile's plugins by forwarding to pnpm in the profile directory. |
+| `dsh recovery <command>` | Create, verify, and restore boot-independent recovery checkpoints. |
 
 The invoking directory is the default workspace root. The `web` and `headless` profiles auto-initialize on first use from shipped templates; any other profile must be created through `dsh plugin`.
 
@@ -40,7 +41,24 @@ Bundles named in `dsh.profile.bundles` resolve from the dsh installation first (
 
 Use `--dump-default-config` and `--dump-config` to inspect the composed tree without booting it.
 
-The [CLI behavior reference](reference/README.md) owns exact layer precedence, flags, shutdown behavior, deployment defaults, and source execution.
+## Recovery checkpoints
+
+`dsh recovery` runs before the launcher imports application boot or any plugin. Its external store defaults to `$DSH_RECOVERY_HOME` or `~/.dsh-recovery`; the store must be separate from both the source checkout and `DSH_HOME`.
+
+```sh
+dsh recovery create --source /path/to/deepseek-harness --label "before installing a plugin"
+dsh recovery list
+dsh recovery verify <checkpoint-id>
+dsh recovery restore <checkpoint-id> --source /path/to/deepseek-harness --confirm <checkpoint-id> --offline
+```
+
+A checkpoint captures the Git source checkout plus DSH control files: top-level `settings.yaml` and `cordis.patch.yml`, and each profile's package, patch, lock, and workspace manifests. It deliberately excludes credentials, `.env` secrets, sessions, attachments, storages, dependency trees, and workspace content. Restore therefore rolls back code and plugin configuration without rolling back new conversations or replacing newly rotated credentials.
+
+Pass the DSH checkout explicitly with `--source`, or set `DSH_SOURCE_HOME`; a local source launch publishes its checkout automatically. Direct CLI restore requires the DSH Host to be stopped. Restore verifies the selected checkpoint, requires the same source Git commit and recorded roots, then creates a verified rescue checkpoint before writing. A restored profile manifest can disagree with its existing `node_modules`; the command reports that dependency reconciliation is required.
+
+The Web profile mounts a compact power menu beside Settings in the expanded sidebar footer (and above Settings on the collapsed rail). It offers only create checkpoint, restore latest checkpoint, and clean shutdown; checkpoint history, verification, path details, and exact-id restore live in the Settings "Recovery" page. The loopback-only Host bridge starts a detached guardian, requests bounded shutdown, restores only after the Host PID exits, and restarts the original invocation. The browser is a front end, not the recovery authority: use the CLI path if the ordinary profile cannot boot.
+
+The [CLI behavior reference](reference/README.md) owns exact layer precedence, recovery scope, flags, shutdown behavior, deployment defaults, and source execution.
 
 ## Development
 

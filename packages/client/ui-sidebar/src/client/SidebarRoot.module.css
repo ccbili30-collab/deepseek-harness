@@ -299,6 +299,7 @@
 /* Footer seats: additive actions stack above Settings. Each occupant owns its
    button geometry and hover chrome. */
 .footArea {
+  position: relative;
   flex: none;
   display: flex;
   flex-direction: column;

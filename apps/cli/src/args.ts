@@ -11,7 +11,8 @@
  * and `dsh --profile web -h` prints the web app's help, not this one's.
  *
  * `web` is a hardcoded alias for `--profile web`; `plugin` manages a profile's
- * plugin dependencies by forwarding to pnpm.
+ * plugin dependencies by forwarding to pnpm. `recovery` owns boot-independent
+ * control-plane checkpoints.
  * @module @deepseek-ai/dsh/args
  */
 
@@ -44,8 +45,66 @@ interface PluginInvocation {
   args: string[]
 }
 
+/** Paths shared by recovery operations. The runner resolves omitted paths. */
+interface RecoveryPaths {
+  source?: string
+  dshHome?: string
+  store?: string
+  json: boolean
+}
+
+/** Create an immutable recovery checkpoint. */
+interface RecoveryCreateInvocation extends RecoveryPaths {
+  mode: 'recovery'
+  action: 'create'
+  label?: string
+}
+
+/** List recovery checkpoints without booting DSH. */
+interface RecoveryListInvocation {
+  mode: 'recovery'
+  action: 'list'
+  store?: string
+  json: boolean
+}
+
+/** Verify one recovery checkpoint and all of its payload hashes. */
+interface RecoveryVerifyInvocation {
+  mode: 'recovery'
+  action: 'verify'
+  snapshot: string
+  store?: string
+  json: boolean
+}
+
+/** Restore one checkpoint after an explicit offline acknowledgement. */
+interface RecoveryRestoreInvocation extends RecoveryPaths {
+  mode: 'recovery'
+  action: 'restore'
+  snapshot: string
+  confirm?: string
+  offline: boolean
+}
+
+/** Internal detached guardian: wait for the Host, restore, then restart it. */
+interface RecoveryGuardianRestoreInvocation extends RecoveryPaths {
+  mode: 'recovery'
+  action: 'guardian-restore'
+  snapshot: string
+  parentPid: number
+  restartSpec: string
+}
+
+/** A boot-independent recovery command. */
+export type RecoveryInvocation =
+  | RecoveryCreateInvocation
+  | RecoveryListInvocation
+  | RecoveryVerifyInvocation
+  | RecoveryRestoreInvocation
+  | RecoveryGuardianRestoreInvocation
+
 /** The resolved `dsh` invocation. Help, version, and errors exit inside {@link parseDshArgs}. */
-export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation
+export type DshInvocation = ProfileInvocation | DumpConfigInvocation | PluginInvocation | RecoveryInvocation
 
 /** Launcher flags shared by the default command and the `web` alias. */
 interface BootOptions {
@@ -69,6 +128,8 @@ Examples:
   dsh --profile tui --resume <session>       arguments after the launcher flags reach the app
   dsh --profile web --help                   the web app's own flags and help
   dsh plugin --profile tui add <package>     install a plugin into the tui profile
+  dsh recovery create --source /path/to/dsh  checkpoint source and DSH control files
+  dsh recovery list                          list checkpoints without booting DSH
 `
 
 /**
@@ -178,6 +239,107 @@ export function parseDshArgs(argv: readonly string[], version: string): DshInvoc
       if (options.profile === '') program.error('error: --profile needs a name')
       if (args.length === 0) program.error('error: plugin needs pnpm arguments to forward (e.g. add <package>)')
       resolved = { mode: 'plugin', profile: options.profile, args }
+    })
+
+  /** Add explicit recovery-root selection and machine-readable output. */
+  const addRecoveryOutputOptions = (command: Command): Command => command
+    .option('--store <path>', 'recovery store (default: $DSH_RECOVERY_HOME or ~/.dsh-recovery)')
+    .option('--json', 'print machine-readable JSON')
+
+  /** Add the two mutable roots captured or restored by recovery. */
+  const addRecoveryPathOptions = (command: Command): Command => addRecoveryOutputOptions(command)
+    .option('--source <path>', 'DSH source checkout (or set $DSH_SOURCE_HOME)')
+    .option('--dsh-home <path>', 'DSH user-data root (default: $DSH_HOME or ~/.dsh)')
+
+  interface RecoveryPathOptions {
+    source?: string
+    dshHome?: string
+    store?: string
+    json?: boolean
+  }
+
+  const recovery = program.command('recovery').description('create and restore boot-independent recovery checkpoints')
+  recovery.action(() => recovery.help())
+
+  addRecoveryPathOptions(recovery.command('create').description('create an immutable checkpoint'))
+    .option('--label <text>', 'human-readable checkpoint label')
+    .action((options: RecoveryPathOptions & { label?: string }) => {
+      rejectParentOptions('recovery create')
+      resolved = {
+        mode: 'recovery',
+        action: 'create',
+        json: options.json === true,
+        ...options.source === undefined ? {} : { source: options.source },
+        ...options.dshHome === undefined ? {} : { dshHome: options.dshHome },
+        ...options.store === undefined ? {} : { store: options.store },
+        ...options.label === undefined ? {} : { label: options.label },
+      }
+    })
+
+  addRecoveryOutputOptions(recovery.command('list').description('list published checkpoints'))
+    .action((options: Pick<RecoveryPathOptions, 'store' | 'json'>) => {
+      rejectParentOptions('recovery list')
+      resolved = {
+        mode: 'recovery',
+        action: 'list',
+        json: options.json === true,
+        ...options.store === undefined ? {} : { store: options.store },
+      }
+    })
+
+  addRecoveryOutputOptions(recovery.command('verify').description('verify one checkpoint and every payload hash'))
+    .argument('<snapshot>', 'checkpoint id')
+    .action((snapshot: string, options: Pick<RecoveryPathOptions, 'store' | 'json'>) => {
+      rejectParentOptions('recovery verify')
+      resolved = {
+        mode: 'recovery',
+        action: 'verify',
+        snapshot,
+        json: options.json === true,
+        ...options.store === undefined ? {} : { store: options.store },
+      }
+    })
+
+  addRecoveryPathOptions(recovery.command('restore').description('restore one checkpoint after creating a rescue checkpoint'))
+    .argument('<snapshot>', 'checkpoint id')
+    .option('--confirm <snapshot>', 'repeat the checkpoint id to confirm the mutation')
+    .option('--offline', 'acknowledge that the target DSH Host is stopped')
+    .action((snapshot: string, options: RecoveryPathOptions & { confirm?: string; offline?: boolean }) => {
+      rejectParentOptions('recovery restore')
+      resolved = {
+        mode: 'recovery',
+        action: 'restore',
+        snapshot,
+        json: options.json === true,
+        offline: options.offline === true,
+        ...options.source === undefined ? {} : { source: options.source },
+        ...options.dshHome === undefined ? {} : { dshHome: options.dshHome },
+        ...options.store === undefined ? {} : { store: options.store },
+        ...options.confirm === undefined ? {} : { confirm: options.confirm },
+      }
+    })
+
+  addRecoveryPathOptions(recovery.command('guardian-restore').description('internal detached restore guardian'))
+    .requiredOption('--snapshot <snapshot>', 'checkpoint id')
+    .requiredOption('--parent-pid <pid>', 'Host process id')
+    .requiredOption('--restart-spec <base64url>', 'encoded restart specification')
+    .action((options: RecoveryPathOptions & { snapshot: string; parentPid: string; restartSpec: string }) => {
+      rejectParentOptions('recovery guardian-restore')
+      const parentPid = Number(options.parentPid)
+      if (!Number.isSafeInteger(parentPid) || parentPid <= 0) {
+        program.error('error: --parent-pid must be a positive integer')
+      }
+      resolved = {
+        mode: 'recovery',
+        action: 'guardian-restore',
+        snapshot: options.snapshot,
+        parentPid,
+        restartSpec: options.restartSpec,
+        json: options.json === true,
+        ...options.source === undefined ? {} : { source: options.source },
+        ...options.dshHome === undefined ? {} : { dshHome: options.dshHome },
+        ...options.store === undefined ? {} : { store: options.store },
+      }
     })
 
   try {

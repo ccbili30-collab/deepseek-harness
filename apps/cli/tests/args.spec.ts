@@ -57,6 +57,34 @@ describe('parseDshArgs', () => {
       .toEqual({ mode: 'plugin', profile: 'tui', args: ['add', '--save-dev', 'x'] })
   })
 
+  it('routes boot-independent recovery commands', () => {
+    expect(parse(['recovery', 'create']))
+      .toEqual({ mode: 'recovery', action: 'create', json: false })
+    expect(parse(['recovery', 'create', '--source', '/source', '--dsh-home', '/home', '--store', '/store', '--label', 'known good', '--json']))
+      .toEqual({
+        mode: 'recovery',
+        action: 'create',
+        source: '/source',
+        dshHome: '/home',
+        store: '/store',
+        label: 'known good',
+        json: true,
+      })
+    expect(parse(['recovery', 'list', '--store', '/store']))
+      .toEqual({ mode: 'recovery', action: 'list', store: '/store', json: false })
+    expect(parse(['recovery', 'verify', 'snapshot-id', '--json']))
+      .toEqual({ mode: 'recovery', action: 'verify', snapshot: 'snapshot-id', json: true })
+    expect(parse(['recovery', 'restore', 'snapshot-id', '--confirm', 'snapshot-id', '--offline']))
+      .toEqual({
+        mode: 'recovery',
+        action: 'restore',
+        snapshot: 'snapshot-id',
+        confirm: 'snapshot-id',
+        offline: true,
+        json: false,
+      })
+  })
+
   it('routes profile and web config dumps', () => {
     expect(parse(['--profile', 'web', '--dump-config']))
       .toEqual({ mode: 'dump-config', profile: 'web', defaultOnly: false, patches: [] })
@@ -96,6 +124,9 @@ describe('parseDshArgs', () => {
     expect(exitCode(['plugin', '--profile', 'tui'])).toBe(1) // nothing to forward
     expect(exitCode(['plugin', '--profile', ''])).toBe(1)
     expect(exitCode(['--profile', 'x', 'plugin', 'add', 'y'])).toBe(1)
+    expect(exitCode(['recovery', 'verify'])).toBe(1)
+    expect(exitCode(['recovery', 'restore'])).toBe(1)
+    expect(exitCode(['--profile', 'x', 'recovery', 'list'])).toBe(1)
   })
 
   it('keeps its own help for an invocation with no app to hand it to', () => {

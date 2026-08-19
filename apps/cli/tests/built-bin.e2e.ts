@@ -326,6 +326,18 @@ describe.skipIf(!existsSync(dshBin))('dsh BUILT bin (node lib/bin.js, no tsx)', 
     }
   }, 30_000)
 
+  it('dispatches recovery from the published bin without booting a profile', async () => {
+    const store = mkdtempSync(join(tmpdir(), 'dsh-built-recovery-'))
+    try {
+      const result = await runBuiltBin(['recovery', 'list', '--store', store])
+      expect(result.code).toBe(0)
+      expect(result.stdout).toBe('No recovery checkpoints.')
+      expect(result.stderr).toBe('')
+    } finally {
+      rmSync(store, { recursive: true, force: true })
+    }
+  })
+
   it('routes help and usage errors without activating startup-dependent rows', async () => {
     const home = mkdtempSync(join(tmpdir(), 'dsh-app-help-'))
     try {

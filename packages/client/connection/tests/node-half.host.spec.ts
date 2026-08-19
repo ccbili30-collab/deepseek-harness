@@ -177,6 +177,7 @@ describe('connection node half', () => {
       // reconnaissance, and copy/remove/openDocument manage the roster and
       // drive the host desktop.
       'agentPreset.read', 'agentPreset.copy', 'agentPreset.openDocument', 'agentPreset.remove',
+      'recovery/list', 'recovery/create', 'recovery/verify', 'recovery/scheduleRestore', 'recovery/shutdown',
     ]) {
       const denied = fakeResponse()
       await routes[0]!.handler(

@@ -10,6 +10,25 @@ DeepSeek Harness（`dsh`）是由 [DeepSeek AI](https://deepseek.com) 开发的�
 
 DeepSeek Harness 目前处于 _开发者预览_ 阶段，正在快速迭代。**未来将出现破坏兼容性的变更。**
 
+## 内置恢复中心
+
+恢复中心专门用于在源码编辑或插件变更出现问题后安全回档。紧凑的电源菜单可以创建检查点、回档至最近检查点或安全关闭 DSH；设置页则提供完整的检查点历史、完整性校验、路径详情与精确 ID 回档。
+
+检查点同时存放在 DSH 源码树和 `DSH_HOME` 之外。凭据、对话、附件、存储数据、工作区及已安装依赖均被明确排除，因此恢复可以回退代码和插件控制文件，而不会清除用户数据。即使 Web profile 无法启动，用户仍可通过 `dsh recovery` 使用同一套恢复边界。
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/recovery-power-menu.jpg" alt="紧凑的恢复中心电源菜单"></td>
+    <td width="50%"><img src="assets/recovery-settings.jpg" alt="设置页中的恢复与回档管理"></td>
+  </tr>
+  <tr>
+    <td align="center">快捷电源菜单</td>
+    <td align="center">设置页中的完整恢复管理</td>
+  </tr>
+</table>
+
+这是不会清除用户数据的回档功能，并非会删除数据的恢复出厂设置。在删除范围与恢复保证得到明确定义之前，项目不会把真正的恢复出厂设置宣传为已经实现。
+
 ## 运行
 
 ### 通过 `npm` 运行

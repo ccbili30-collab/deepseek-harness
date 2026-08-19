@@ -10,6 +10,25 @@ It uses an architecture where **everything is a plugin**, and is powered by [Cor
 
 DeepSeek Harness is currently in _developer preview_ and is iterating rapidly. **THERE WILL BE COMPATIBILITY-BREAKING CHANGES.**
 
+## Built-in Recovery Center
+
+The Recovery Center is purpose-built for safe rollback after source edits or plugin changes. Its compact power menu creates a checkpoint, restores the latest checkpoint, or shuts DSH down cleanly. Full checkpoint history, integrity verification, path details, and exact-id restore live in Settings.
+
+Checkpoints are stored outside both the DSH source tree and `DSH_HOME`. Credentials, conversations, attachments, storage data, workspaces, and installed dependencies are deliberately excluded, so recovery rolls code and plugin control files back without erasing user data. If the Web profile cannot start, the same recovery boundary remains available from `dsh recovery`.
+
+<table>
+  <tr>
+    <td width="50%"><img src="assets/recovery-power-menu.jpg" alt="Compact Recovery Center power menu"></td>
+    <td width="50%"><img src="assets/recovery-settings.jpg" alt="Recovery and rollback management in Settings"></td>
+  </tr>
+  <tr>
+    <td align="center">Quick power menu</td>
+    <td align="center">Full recovery management in Settings</td>
+  </tr>
+</table>
+
+This is a non-destructive rollback facility, not a data-erasing factory reset. A true factory reset is intentionally not advertised until its deletion scope and recovery guarantees are defined.
+
 ## Run
 
 ### Run from `npm`
