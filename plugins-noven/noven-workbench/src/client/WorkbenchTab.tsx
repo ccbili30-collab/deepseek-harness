@@ -1,15 +1,15 @@
 /**
- * The 工作台 sidebar view — the ported shape of the legacy ProjectNavigation
- * workbench mode: one launcher row per registered workbench (book glyph,
- * title, 进入创作空间), each expanding into its resource tree; files open in
- * the sidebar editor (images through our annotate/pick viewer). The registry
- * is live: what the AI tools write appears without a manual refresh.
+ * The 工作台 sidebar view — the ported ProjectNavigation launcher: one row per
+ * registered workbench (book glyph, title, 进入创作空间), each expanding into
+ * its resource tree. Clicking a row enters the 创作空间 (the main canvas);
+ * tree files open in the sidebar editor. The registry is live: what the AI
+ * tools write appears without a manual refresh.
  * @module noven-workbench/client/WorkbenchTab
  */
 import { useCallback, useEffect, useState } from 'react'
 import type { TabComponentProps } from 'dsh-better-sidebar/client/service'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { cutTerminalOnce } from './index.tsx'
+import { cutTerminalOnce, PANEL_ID } from './index.tsx'
 import type { WorkbenchApi, WorkbenchRecordView } from './api.ts'
 import { ResourceTree } from './ResourceTree.tsx'
 import type { ImageStageTranslate } from './ImageStage.tsx'
@@ -18,6 +18,8 @@ import type { ImageStageTranslate } from './ImageStage.tsx'
 export interface WorkbenchTabProps extends TabComponentProps {
   readonly api: WorkbenchApi
   readonly t: ImageStageTranslate
+  /** Enter the 创作空间 for a workbench id (select + open the canvas panel). */
+  readonly enterStudio: (workbenchId: string) => void
 }
 
 /**
@@ -26,7 +28,7 @@ export interface WorkbenchTabProps extends TabComponentProps {
  * @returns the view.
  */
 export function WorkbenchTab(props: WorkbenchTabProps) {
-  const { t, api, scope, onOpenFile } = props
+  const { t, api, scope, onOpenFile, enterStudio } = props
   const sessionId = scope.sessionId as SessionId
   const [records, setRecords] = useState<readonly WorkbenchRecordView[] | undefined>(undefined)
   const [registryFailed, setRegistryFailed] = useState(false)
@@ -68,11 +70,17 @@ export function WorkbenchTab(props: WorkbenchTabProps) {
 
   const visible = (records ?? []).filter(record => record.visible)
 
-  /** A file row's open: absolute path, as the sidebar editor expects. */
+  /** A tree row's open: absolute path, as the sidebar editor expects. */
   const openFile = (rel: string): void => {
     const root = scope.cwd
     if (root === undefined || onOpenFile === undefined) return
     onOpenFile(`${root}/${rel}`)
+  }
+
+  /** Launcher click: expand this workbench's tree and enter the 创作空间. */
+  const launch = (id: string): void => {
+    setExpandedTreeId(current => current === id ? current : id)
+    enterStudio(id)
   }
 
   return (
@@ -97,13 +105,13 @@ export function WorkbenchTab(props: WorkbenchTabProps) {
       )}
       <div className="noven-wb-launcher-list" role="list">
         {visible.map(record => (
-          <div className="noven-wb-launcher" role="listitem" key={record.id}>
+          <div className="noven-wb-launcher" role="listitem" key={record.id} data-panel={PANEL_ID}>
             <button
               type="button"
               className="noven-wb-launcher-main"
               data-active={expandedTreeId === record.id}
               aria-expanded={expandedTreeId === record.id}
-              onClick={() => { setExpandedTreeId(current => current === record.id ? null : record.id) }}
+              onClick={() => { launch(record.id) }}
             >
               {bookGlyphInline()}
               <span><strong>{record.title}</strong><small>{t('launcher.enter')}</small></span>

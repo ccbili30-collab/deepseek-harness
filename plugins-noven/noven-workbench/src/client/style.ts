@@ -30,6 +30,30 @@ const CSS = `
 .noven-wb-tree-glyph-image::after { content: ''; position: absolute; left: 2px; top: 2px; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .9; box-shadow: 0 4px 0 -1px currentColor; }
 .noven-wb-tree-pending, .noven-wb-tree-failed { font-size: 12px; opacity: .6; }
 .noven-wb-tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.noven-wb-canvas { display: flex; flex-direction: column; gap: 8px; height: 100%; min-height: 0; padding: 12px 16px; overflow-y: auto; }
+.noven-wb-canvas-header { display: flex; align-items: center; justify-content: space-between; flex: none; }
+.noven-wb-canvas-header strong { font-size: 15px; }
+.noven-wb-canvas-actions { display: flex; gap: 6px; }
+.noven-wb-exhibition { display: flex; flex-direction: column; gap: 12px; }
+.noven-wb-exhibition > header { display: flex; align-items: baseline; gap: 8px; }
+.noven-wb-exhibition > header span { font-size: 14px; font-weight: 600; }
+.noven-wb-exhibition > header small { font-size: 12px; opacity: .65; }
+.noven-wb-exhibition h2 { font-size: 12px; font-weight: 600; opacity: .7; margin: 0 0 6px; }
+.noven-wb-exhibition section { display: flex; flex-direction: column; }
+.noven-wb-exhibition-hero { position: relative; border: 1px solid rgba(128,128,128,.3); border-radius: 10px; overflow: hidden; cursor: zoom-in; padding: 0; background: rgba(128,128,128,.08); max-width: 560px; }
+.noven-wb-exhibition-hero img { width: 100%; max-height: 320px; object-fit: cover; display: block; }
+.noven-wb-exhibition-hero strong { position: absolute; left: 8px; bottom: 6px; font-size: 12px; background: rgba(20,20,20,.7); color: #fff; border-radius: 5px; padding: 2px 8px; }
+.noven-wb-exhibition-groups { display: flex; flex-wrap: wrap; gap: 6px; }
+.noven-wb-exhibition-groups span { border: 1px solid rgba(128,128,128,.35); border-radius: 999px; padding: 3px 12px; font-size: 12px; }
+.noven-wb-exhibition-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
+.noven-wb-exhibition-cards button { display: flex; flex-direction: column; gap: 3px; align-items: stretch; border: 1px solid rgba(128,128,128,.3); border-radius: 8px; padding: 6px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
+.noven-wb-exhibition-cards button:hover { border-color: rgba(128,128,128,.7); }
+.noven-wb-exhibition-cards img { width: 100%; aspect-ratio: 4/3; object-fit: cover; border-radius: 5px; }
+.noven-wb-exhibition-cards strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.noven-wb-exhibition-cards small { font-size: 10px; opacity: .6; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.noven-wb-stage-empty { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 48px 0; opacity: .7; }
+.noven-wb-stage-empty h1 { font-size: 16px; margin: 0; }
+.noven-wb-stage-empty p { font-size: 12px; margin: 0; }
 .noven-wb-chips { display: flex; flex-wrap: wrap; gap: 4px; flex: none; }
 .noven-wb-chip { border: 1px solid rgba(128,128,128,.4); border-radius: 999px; padding: 2px 10px; font-size: 12px; background: transparent; color: inherit; cursor: pointer; }
 .noven-wb-chip[data-active='true'] { background: rgba(128,128,128,.25); border-color: rgba(128,128,128,.8); }
