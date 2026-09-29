@@ -14,6 +14,7 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 const zh = {
   'tab.title': '工作台',
   'tab.description': '已注册的工作台与文件树，随 AI 工具实时更新',
+  'studio.title': '创作空间',
   'viewer.title': '诺文图片（批注/取色）',
   'viewer.unavailable': '这个视图缺少会话上下文，无法展示批注。',
   'stage.exhibitionHeader': '作品展览',
@@ -58,6 +59,7 @@ export type NovenWorkbenchKey = keyof typeof zh
 const en: Record<NovenWorkbenchKey, string> = {
   'tab.title': 'Workbench',
   'tab.description': 'Registered workbenches and their file trees, live with the AI tools',
+  'studio.title': 'Studio',
   'viewer.title': 'Noven image (annotate/pick)',
   'viewer.unavailable': 'This view lacks the session context annotations need.',
   'stage.exhibitionHeader': 'Exhibition',

@@ -39,8 +39,9 @@ import { WorkbenchTab } from './WorkbenchTab.tsx'
 /** Dictionary namespace owned by this plugin. */
 const NS = 'novenWorkbench'
 
-/** The sidebar tab type id, the image viewer id, and the canvas's main-panel id. */
+/** The sidebar tab type id, the canvas fallback tab id, the image viewer id, and the canvas's main-panel id. */
 export const WORKBENCH_TAB_ID = 'noven:workbench'
+export const STUDIO_TAB_ID = 'noven:studio'
 export const NOVEN_IMAGE_VIEWER_ID = 'noven:image'
 export const PANEL_ID = 'noven-workbench' as MainPanelId
 
@@ -62,13 +63,30 @@ export function apply(ctx: ClientContext): void {
 
   const api = createWorkbenchApi(ctx.remote)
 
-  /** Enter the 创作空间 for a workbench: select it, then select the canvas panel. */
+  /** Open a workspace-relative document in the sidebar editor (its render/edit is white-gloved there). */
+  const openDocument = (sessionId: SessionId, cwd: string, rel: string): void => {
+    try {
+      ctx.betterSidebar.openFile({ sessionId, cwd }, `${cwd}/${rel}`, rel.split('/').pop())
+    } catch { /* sidebar editor unavailable — the card click stays inert */ }
+  }
+
+  /**
+   * Enter the 创作空间 for a workbench: select it, then open the canvas — the
+   * main panel (the legacy stage) when the layout takes the selection, the
+   * sidebar's own 创作空间 tab otherwise. One of the two always shows it.
+   */
   const enterStudio = (workbenchId: string): void => {
     workbenchSelection.set(workbenchId)
+    let opened = false
     try {
       ctx.layout.selectPanel(PANEL_ID)
-    } catch { /* layout not mounted — the selection still lands */ }
+      opened = ctx.layout.panelInfo.getSnapshot().activePanelId === PANEL_ID
+    } catch { opened = false }
+    if (!opened) {
+      try { ctx.betterSidebar.openTab({ type: STUDIO_TAB_ID }) } catch { /* both surfaces refused — nothing more to try */ }
+    }
   }
+
 
   ctx.effect(() => ctx.betterSidebar.registerTab({
     id: WORKBENCH_TAB_ID,
@@ -84,15 +102,23 @@ export function apply(ctx: ClientContext): void {
     name: 'main',
     key: PANEL_ID,
     locale: NS,
-    inject: () => ({
+    inject: () => ({ api, openDocument }),
+  }, MainCreationStage))
+
+  ctx.effect(() => ctx.betterSidebar.registerTab({
+    id: STUDIO_TAB_ID,
+    title: () => t('studio.title'),
+    icon: size => bookGlyph(size),
+    hidden: true,
+    single: true,
+    component: tabProps => CreationStage({
+      t,
       api,
-      openDocument: (sessionId: SessionId, cwd: string, rel: string) => {
-        try {
-          ctx.betterSidebar.openFile({ sessionId, cwd }, `${cwd}/${rel}`, rel.split('/').pop())
-        } catch { /* sidebar editor unavailable — the card click stays inert */ }
-      },
+      openDocument,
+      sessionId: tabProps.scope.sessionId as SessionId | undefined,
+      cwd: tabProps.scope.cwd,
     }),
-  }, CreationStage))
+  }), 'noven-workbench: studio fallback tab')
 
   ctx.effect(() => ctx.betterSidebar.registerFileViewer({
     id: NOVEN_IMAGE_VIEWER_ID,
@@ -113,6 +139,29 @@ export function apply(ctx: ClientContext): void {
     if (!ctx.betterSidebar.isTabEnabled(WORKBENCH_TAB_ID)) return
     ctx.betterSidebar.openTab({ type: WORKBENCH_TAB_ID })
   }), 'noven-workbench: auto-open')
+}
+
+/**
+ * The main-panel wrapper: resolves the canvas's session through the standard
+ * props' selector hook and renders the pure canvas.
+ * @param props - the main seat's composed props with the injected face.
+ * @returns the canvas.
+ */
+function MainCreationStage(props: {
+  t: (key: Parameters<Parameters<typeof CreationStage>[0]['t']>[0]) => string
+  api: ReturnType<typeof createWorkbenchApi>
+  openDocument: (sessionId: SessionId, cwd: string, rel: string) => void
+  useSessions: <T>(selector: (state: { byId: Record<string, { retainedBy?: { mainView?: number }, cwd?: string } | undefined> }) => T) => T
+}) {
+  const sessionId = props.useSessions(state => {
+    const row = Object.entries(state.byId).find(([, candidate]) => (candidate?.retainedBy?.mainView ?? 0) > 0)?.[0] as SessionId | undefined
+    return row
+  })
+  const cwd = props.useSessions(state => {
+    const current = Object.entries(state.byId).find(([, candidate]) => (candidate?.retainedBy?.mainView ?? 0) > 0)?.[0]
+    return current === undefined ? undefined : state.byId[current as SessionId]?.cwd
+  })
+  return CreationStage({ t: props.t as Parameters<typeof CreationStage>[0]['t'], api: props.api, openDocument: props.openDocument, sessionId, cwd })
 }
 
 /**

@@ -9,7 +9,6 @@
  */
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { ImageStage } from './ImageStage.tsx'
 import type { ImageStageTranslate } from './ImageStage.tsx'
 import { buildWorkbenchExhibition, walkExhibition } from './exhibition.ts'
@@ -18,37 +17,26 @@ import { pinnedFirst } from './api.ts'
 import type { WorkbenchApi, WorkbenchRecordView } from './api.ts'
 import { workbenchSelection } from './selection.ts'
 
-/** What the panel's registration injects beside the standard props. */
-export interface CreationStageInjected {
+/** Props both hosts (main panel, fallback sidebar tab) bind for the canvas. */
+export interface CreationStageProps {
+  readonly t: ImageStageTranslate
   readonly api: WorkbenchApi
   /** Open a workspace-relative document in the sidebar editor (its render/edit is white-gloved there). */
   readonly openDocument: (sessionId: SessionId, cwd: string, rel: string) => void
-}
-
-/** Props the framework and the registration bind for the panel. */
-export type CreationStageProps =
-  & PropsRuntime<'main'>
-  & PropsLocale<'novenWorkbench'>
-  & CreationStageInjected
-
-/** The session currently holding the main view, per the layout's own rule. */
-function currentSessionOf(byId: Record<string, { retainedBy?: { mainView?: number }, cwd?: string } | undefined>): SessionId | undefined {
-  return (Object.entries(byId).find(([, row]) => (row?.retainedBy?.mainView ?? 0) > 0)?.[0] as SessionId | undefined)
+  /** The session to read; the canvas renders the pick-a-session note without one. */
+  readonly sessionId: SessionId | undefined
+  readonly cwd: string | undefined
 }
 
 /**
- * Render the workbench canvas.
- * @param props - locale copy, the API face, and the document opener.
+ * Render the workbench canvas. Pure: the host resolves the session; the
+ * selected workbench comes from the shared selection store.
+ * @param props - locale copy, the API face, the document opener, and the session.
  * @returns the canvas.
  */
 export function CreationStage(props: CreationStageProps) {
-  const { t, api } = props
+  const { t, api, sessionId, cwd } = props
   const selectedId = useSyncExternalStore(workbenchSelection.subscribe, workbenchSelection.get)
-  const sessionId = props.useSessions(state => currentSessionOf(state.byId))
-  const cwd = props.useSessions(state => {
-    const current = currentSessionOf(state.byId)
-    return current === undefined ? undefined : state.byId[current]?.cwd
-  })
   const [records, setRecords] = useState<readonly WorkbenchRecordView[]>([])
   const [staged, setStaged] = useState<string | null>(null)
   const [entries, setEntries] = useState<readonly ExhibitionEntry[] | undefined>(undefined)
