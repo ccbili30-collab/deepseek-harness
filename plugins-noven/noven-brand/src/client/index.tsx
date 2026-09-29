@@ -22,9 +22,12 @@ export function NovenName() {
   )
 }
 
-/** Fill the sidebar brand slots with the Noven identity. */
+/** Fill the sidebar brand slots once their declaring entries are up. */
 export function apply(ctx: ClientContext): void {
   document.title = '诺文 Noven'
-  ctx.slots.register({ name: 'sidebar.brand.mark' }, NovenMark)
-  ctx.slots.register({ name: 'sidebar.brand.name' }, NovenName)
+  ctx.slots.inject('sidebar.brand.mark', () =>
+    ctx.slots.inject('sidebar.brand.name', function* () {
+      yield ctx.slots.register({ name: 'sidebar.brand.mark' }, NovenMark)
+      yield ctx.slots.register({ name: 'sidebar.brand.name' }, NovenName)
+    }))
 }
