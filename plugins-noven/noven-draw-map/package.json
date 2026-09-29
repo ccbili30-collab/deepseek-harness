@@ -17,7 +17,8 @@
     "cordis.patch.yml"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "test": "node tests/synthetic-pipeline.mjs"
   },
   "engines": {
     "node": ">=20"
