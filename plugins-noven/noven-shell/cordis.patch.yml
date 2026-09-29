@@ -1,0 +1,4 @@
+# noven-shell bundle patch — mount the host row; the browser half ships via exports["./client"].
+- insert:
+    - id: noven-shell
+      name: 'noven-shell'
