@@ -1,0 +1,4 @@
+# noven-brand bundle patch — mount the host row; the browser half ships via exports["./client"].
+- insert:
+    - id: noven-brand
+      name: 'noven-brand'
