@@ -8,13 +8,70 @@
 
 import { dirname, relative } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import type {} from '@deepseek-ai/dsh-client-connection'
+import type {} from '@deepseek-ai/dsh-session'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-tools'
+import {
+  AnnotationValidationError,
+  emptyAnnotationDoc,
+  parseAnnotationDoc,
+  readAnnotations,
+  safeImageRel,
+  writeAnnotations,
+} from './annotations.ts'
 import { loadRegistry, mintId, saveRegistry, underRoot } from './registry.ts'
 import type { WorkbenchRecord } from './registry.ts'
 
 export const name = 'noven-workbench'
-export const inject = ['tools']
+export const inject = ['tools', 'connection', 'sessions']
+
+/** One response per annotation request, JSON everywhere, never cached. */
+const JSON_HEADERS = {
+  'Content-Type': 'application/json; charset=utf-8',
+  'Cache-Control': 'private, no-store',
+}
+
+/** Hard cap on one annotation write, matching the document-size validation. */
+const MAX_BODY_BYTES = 256 * 1024
+
+/**
+ * Serve one image's annotation sidecar: GET reads it, POST replaces it.
+ *
+ * The connection service authenticates before this handler runs (same fence
+ * as `/api/file`); the session names the workspace root, the image path is
+ * confined to it, and the sidecar lands under `.noven/annotations/` only.
+ * @param request - the authenticated request.
+ * @param ctx - host context carrying the session service.
+ * @returns the JSON response.
+ */
+async function serveAnnotations(request: Request, ctx: Context): Promise<Response> {
+  const fail = (status: number, text: string): Response =>
+    new Response(request.method === 'HEAD' ? null : text, { status, headers: JSON_HEADERS })
+  const params = new URL(request.url).searchParams
+  const imageRel = safeImageRel(params.get('image') ?? '')
+  if (imageRel === undefined) return fail(400, 'invalid image path')
+  const session = params.get('session') as SessionId | null
+  const projectRoot = session === null ? undefined : ctx.sessions.get(session)?.header?.cwd
+  if (projectRoot === undefined) return fail(404, 'unknown session')
+  try {
+    if (request.method === 'GET' || request.method === 'HEAD') {
+      const doc = await readAnnotations(projectRoot, imageRel)
+      const body = JSON.stringify(doc ?? emptyAnnotationDoc(imageRel))
+      return new Response(request.method === 'HEAD' ? null : body, { headers: JSON_HEADERS })
+    }
+    const body = await request.text()
+    if (body.length > MAX_BODY_BYTES) return fail(413, 'annotation payload too large')
+    const doc = parseAnnotationDoc(JSON.parse(body), imageRel)
+    await writeAnnotations(projectRoot, imageRel, doc)
+    return new Response(JSON.stringify({ ok: true, count: doc.annotations.length }), { headers: JSON_HEADERS })
+  } catch (error: unknown) {
+    if (error instanceof AnnotationValidationError) return fail(400, error.message)
+    if (error instanceof SyntaxError) return fail(400, 'body is not valid JSON')
+    return fail(500, error instanceof Error ? error.message : 'annotation store failed')
+  }
+}
 
 /** Session cwd for one tool execution. */
 function sessionCwd(exec: { agent?: { session: { header: { cwd?: string } } } }): string {
@@ -44,8 +101,15 @@ function byId(registry: { workbenches: WorkbenchRecord[] }, id: string): Workben
   return record
 }
 
-/** Register the seven ported tools. */
+/** Register the annotation route and the seven ported tools. */
 export function apply(ctx: Context): void {
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/noven-annotations',
+    methods: ['GET', 'HEAD', 'POST'],
+    requestBody: 'buffered',
+    fetch: request => serveAnnotations(request, ctx),
+  }), 'noven-workbench: /api/noven-annotations')
+
   ctx.tools.register(defineTool({
     name: 'register_workbench',
     description: `把项目内一个目录注册为工作台（侧栏可浏览的成果区）。${HAND_EDIT_WARNING}`,
