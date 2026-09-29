@@ -38,6 +38,7 @@ plugins-noven/               # 独立 pnpm workspace，不进主仓 workspace
 | 技能 | `ctx.skills.register({ name: 'noven-*', description, whenToUse?, content, source: 'runtime', invocation: { modelInvocable, userInvocable } })` | kebab-case；模型经 `skill({name})` 工具调用 |
 | 斜杠命令 | `ctx.commands.register({ name, description, input?: { hint, attachments? }, handler })` | handler 不直接见模型；驱动模型用 `invocation.agent.followup(createUserMessage({ content: [{type:'text', text}], source: {kind:'user'} }))`（`createUserMessage` 来自 `@deepseek-ai/dsh-llm`） |
 | 工具 | `ctx.tools.register(defineTool({ name, ... }))`（`defineTool` 来自 `@deepseek-ai/dsh-tools`） | 参照 `packages/fs/tool-fs/src/read.ts` |
+| 设置页卡片 | 客户端半边经 `ctx.configForms.whileServed(['<ns>'], …)` 往 `plugins.item` 槽注册卡片（模板：`packages/client/ui-settings-web-search`；密钥走 `ctx.remote.credentials`，不进设置文件） | 生图配置卡就是这么挂进「内置插件」页的 |
 | 浏览器 UI | 客户端插件 `ctx.slots.register({name: '<slot>'}, Component)`；侧栏页用 better-sidebar 的 `ctx.betterSidebar.registerTab` | 品牌插槽：`sidebar.brand.mark` / `sidebar.brand.name`。**坑：槽必须先被声明才能 register，启动时序不保证——一律用 `ctx.slots.inject(槽名, 回调)` 延迟注册**（照抄 ui-brand-official 的嵌套写法），否则浏览器端报 "entry did not activate" |
 
 ## DSH 内置工具名（技能正文引用用这些）
