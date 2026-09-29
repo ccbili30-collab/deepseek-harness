@@ -1,0 +1,4 @@
+# noven-workbench bundle patch — mount the host plugin into the composed tree.
+- insert:
+    - id: noven-workbench
+      name: 'noven-workbench'
