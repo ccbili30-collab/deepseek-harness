@@ -40,6 +40,9 @@ export function GalleryBody(props: GalleryBodyProps) {
       if (signal.aborted) return
       if (result.ok) { setRecords(result.value); setRegistryFailed(false) }
       else setRegistryFailed(true)
+    }, () => {
+      // A rejected promise (dead connection, missing service) must not leave the panel blank.
+      if (!signal.aborted) setRegistryFailed(true)
     })
   }, [api, sessionId])
 
@@ -48,6 +51,19 @@ export function GalleryBody(props: GalleryBodyProps) {
     reloadRegistry(controller.signal)
     return () => { controller.abort() }
   }, [reloadRegistry])
+
+  // The registry is live: whatever the tools write to .noven/ shows up without a manual refresh.
+  useEffect(() => {
+    const controller = new AbortController()
+    void (async () => {
+      try {
+        for await (const kind of api.watchPath(sessionId, '.noven', controller.signal)) {
+          if (kind === 'change') reloadRegistry(controller.signal)
+        }
+      } catch { /* watch unavailable — the refresh button remains */ }
+    })()
+    return () => { controller.abort() }
+  }, [api, sessionId, reloadRegistry])
 
   const visible = (records ?? []).filter(record => record.visible)
   const selected = visible.find(record => record.id === selectedId) ?? visible[0]
@@ -60,9 +76,32 @@ export function GalleryBody(props: GalleryBodyProps) {
     void api.listFolder(sessionId, selected.folder, controller.signal).then(result => {
       if (controller.signal.aborted) return
       setFolders(current => ({ ...current, [selected.id]: result.ok ? result.value : 'failed' }))
+    }, () => {
+      if (controller.signal.aborted) return
+      setFolders(current => ({ ...current, [selected.id]: 'failed' }))
     })
     return () => { controller.abort() }
   }, [selected, api, sessionId, folders])
+
+  // The selected folder is live too: images the tools drop in appear as they land.
+  useEffect(() => {
+    if (selected === undefined) return
+    const controller = new AbortController()
+    const id = selected.id
+    void (async () => {
+      try {
+        for await (const kind of api.watchPath(sessionId, selected.folder, controller.signal)) {
+          if (kind === 'change') setFolders(current => {
+            if (current[id] === undefined) return current
+            const next = { ...current }
+            delete next[id]
+            return next
+          })
+        }
+      } catch { /* folder gone or watch unavailable — the refresh button remains */ }
+    })()
+    return () => { controller.abort() }
+  }, [selected?.id, selected?.folder, api, sessionId])
 
   /** The authenticated file URL for one workspace-relative image. */
   const mediaUrlOf = (rel: string): string | undefined =>

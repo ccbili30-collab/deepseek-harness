@@ -10,7 +10,7 @@
  */
 import type { ClientRemote, RemoteResult } from '@deepseek-ai/dsh-api-remotes/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { WorkspaceDirectoryEntry } from '@deepseek-ai/dsh-api-workspace-files/types'
+import type { WorkspaceDirectoryEntry, WorkspaceFileWatchFrame } from '@deepseek-ai/dsh-api-workspace-files/types'
 import { RemoteError, type RemoteFailure } from '@deepseek-ai/dsh-typert-protocol'
 import type { AnnotationDoc, AnnotationRecord } from '../annotations.ts'
 
@@ -47,6 +47,8 @@ export interface WorkbenchApi {
   readonly readRegistry: (sessionId: SessionId, signal: AbortSignal) => Promise<RemoteResult<readonly WorkbenchRecordView[]>>
   /** List one workbench folder into the gallery's split view. */
   readonly listFolder: (sessionId: SessionId, folder: string, signal: AbortSignal) => Promise<RemoteResult<FolderView>>
+  /** Observe one path (a file or a directory's direct entries) for change notifications. */
+  readonly watchPath: (sessionId: SessionId, path: string, signal: AbortSignal) => AsyncIterable<'ready' | 'change'>
   /** Load one image's annotation sidecar; absent reads as an empty document. */
   readonly loadAnnotations: (sessionId: SessionId, imageRel: string) => Promise<RemoteResult<readonly AnnotationRecord[]>>
   /** Replace one image's annotation sidecar. */
@@ -117,6 +119,9 @@ export function createWorkbenchApi(remote: ClientRemote): WorkbenchApi {
       const docs = names.filter(name => !isImageName(name)).map(name => `${folder}/${name}`)
       return { ok: true, value: { images, docs } }
     },
+    watchPath(sessionId, path, signal) {
+      return watchPath(remote, sessionId, path, signal)
+    },
     async loadAnnotations(sessionId, imageRel) {
       const response = await fetch(annotationUrl(sessionId, imageRel), { method: 'GET' })
       if (!response.ok) return httpFailure(response)
@@ -140,6 +145,38 @@ async function httpFailure(response: Response): Promise<{ ok: false, error: Remo
   const message = (await response.text().catch(() => response.statusText)).slice(0, 300)
   const error: RemoteFailure = new RemoteError('gateway/internal', `annotations http/${String(response.status)}: ${message}`, {})
   return { ok: false, error }
+}
+
+/**
+ * Observe one path through the workspace watch stream, yielding readiness and
+ * change notices until the caller's signal aborts. A watch that cannot open
+ * (the path is gone, the stream is refused) simply ends — polling and manual
+ * refresh remain the fallbacks.
+ */
+async function* watchPath(
+  remote: ClientRemote,
+  sessionId: SessionId,
+  path: string,
+  signal: AbortSignal,
+): AsyncIterable<'ready' | 'change'> {
+  if (signal.aborted) return
+  const stream = remote.$stream<WorkspaceFileWatchFrame>({
+    name: `noven-workbench watch ${path}`,
+    open: lifetime => remote.workspaceFiles.changes(sessionId, path, lifetime),
+    ended: () => new Error(`watch ended: ${path}`),
+  })
+  const abort = (): void => { void stream.dispose() }
+  signal.addEventListener('abort', abort, { once: true })
+  try {
+    for await (const item of stream) {
+      if (signal.aborted) return
+      if (item.value.kind === 'ready') item.accept()
+      yield item.value.kind
+    }
+  } finally {
+    signal.removeEventListener('abort', abort)
+    await stream.dispose()
+  }
 }
 
 /** Same-origin route URL; the browser's auth cookie rides the request. */

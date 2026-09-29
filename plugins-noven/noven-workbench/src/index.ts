@@ -90,6 +90,7 @@ const REGISTRY_SCHEMA = {
     folder: { type: 'string' },
     home: { type: 'string' },
     visible: { type: 'boolean' },
+    pinned: { type: 'array', items: { type: 'string' } },
     count: { type: 'integer' },
   },
 } as const
@@ -99,6 +100,13 @@ function byId(registry: { workbenches: WorkbenchRecord[] }, id: string): Workben
   const record = registry.workbenches.find(w => w.id === id)
   if (record === undefined) throw new Error(`unknown workbench id: ${id}（先 register_workbench）`)
   return record
+}
+
+/** Tool output row: the record with a mutable-array pinned view plus the registry count. */
+function registryOutput(record: WorkbenchRecord, registry: { workbenches: readonly WorkbenchRecord[] }): {
+  id: string, title: string, folder: string, home?: string, visible: boolean, pinned?: string[], count: number
+} {
+  return { ...record, pinned: record.pinned === undefined ? undefined : [...record.pinned], count: registry.workbenches.length }
 }
 
 /** Register the annotation route and the seven ported tools. */
@@ -131,7 +139,7 @@ export function apply(ctx: Context): void {
       }
       registry.workbenches.push(record)
       await saveRegistry(root, registry)
-      return { ...record, count: registry.workbenches.length }
+      return registryOutput(record, registry)
     },
   }))
 
@@ -149,7 +157,7 @@ export function apply(ctx: Context): void {
       const record = byId(registry, args.id)
       record.title = args.title
       await saveRegistry(root, registry)
-      return { ...record, count: registry.workbenches.length }
+      return registryOutput(record, registry)
     },
   }))
 
@@ -164,7 +172,7 @@ export function apply(ctx: Context): void {
       const record = byId(registry, args.id)
       registry.workbenches = registry.workbenches.filter(w => w.id !== args.id)
       await saveRegistry(root, registry)
-      return { ...record, count: registry.workbenches.length }
+      return registryOutput(record, registry)
     },
   }))
 
@@ -182,7 +190,7 @@ export function apply(ctx: Context): void {
       const record = byId(registry, args.id)
       record.home = args.path
       await saveRegistry(root, registry)
-      return { ...record, count: registry.workbenches.length }
+      return registryOutput(record, registry)
     },
   }))
 
@@ -200,7 +208,7 @@ export function apply(ctx: Context): void {
       const record = byId(registry, args.id)
       record.visible = args.visible
       await saveRegistry(root, registry)
-      return { ...record, count: registry.workbenches.length }
+      return registryOutput(record, registry)
     },
   }))
 
@@ -219,7 +227,7 @@ export function apply(ctx: Context): void {
       const pinned = [...(record.pinned ?? []).filter(p => p !== args.path), args.path]
       record.pinned = pinned.slice(-16)
       await saveRegistry(root, registry)
-      return { ...record, count: registry.workbenches.length }
+      return registryOutput(record, registry)
     },
   }))
 
