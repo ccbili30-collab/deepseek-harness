@@ -53,7 +53,12 @@ export interface WorkbenchApi {
   readonly saveAnnotations: (sessionId: SessionId, imageRel: string, annotations: readonly AnnotationRecord[]) => Promise<RemoteResult<{ count: number }>>
 }
 
-/** Accumulate a small JSON file through the byte-window RPC. */
+/** Whether a Remote failure just means "nothing there yet" — an absent file or folder, not a broken read. */
+function isNotFound(failure: RemoteFailure): boolean {
+  return failure.code === 'workspace-file/not-found'
+}
+
+/** Accumulate a small JSON file through the byte-window RPC; absence reads as no value. */
 async function readJsonFile(
   remote: ClientRemote,
   sessionId: SessionId,
@@ -64,7 +69,8 @@ async function readJsonFile(
   let body = ''
   for (let page = 0; page < 8; page++) {
     const window = await remote.workspaceFiles.readBytes(sessionId, path, { range: { offset: body.length } }, signal)
-    if (!window.ok) return window
+    // No registry yet is the first-run state, not a failure — the empty state guides the user to register one.
+    if (!window.ok) return isNotFound(window.error) ? { ok: true as const, value: undefined } : window
     body += text.decode(window.value.data, { stream: !window.value.eof })
     if (window.value.eof) break
   }
@@ -100,7 +106,8 @@ export function createWorkbenchApi(remote: ClientRemote): WorkbenchApi {
     },
     async listFolder(sessionId, folder, signal) {
       const listing = await remote.workspaceFiles.list(sessionId, folder, signal)
-      if (!listing.ok) return listing
+      // A registered folder that is gone reads as empty, matching the owner's empty state.
+      if (!listing.ok) return isNotFound(listing.error) ? { ok: true, value: { images: [], docs: [] } } : listing
       const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' })
       const names = listing.value.entries
         .filter((entry: WorkspaceDirectoryEntry) => entry.type === 'file')
