@@ -46,6 +46,7 @@
     "@deepseek-ai/dsh-tools": "^0.1.7-rc.1",
     "@deepseek-ai/dsh-typert-protocol": "^0.1.7-rc.1",
     "@types/react": "^18.3.12",
+    "dsh-better-sidebar": "^0.22.0",
     "react": "^18.3.1",
     "tsdown": "^0.22.2",
     "typescript": "^5.9.3"
@@ -56,13 +57,8 @@
     },
     "client": {
       "inject": [
+        "dsh-better-sidebar",
         "@deepseek-ai/dsh-client-locale",
-        "@deepseek-ai/dsh-client-ui-slots",
-        "@deepseek-ai/dsh-client-ui-renderer",
-        "@deepseek-ai/dsh-client-ui-layout",
-        "@deepseek-ai/dsh-client-ui-sidebar",
-        "@deepseek-ai/dsh-client-ui-sidebar-right",
-        "@deepseek-ai/dsh-client-ui-session",
         "@deepseek-ai/dsh-api-remotes"
       ],
       "platform": "web"

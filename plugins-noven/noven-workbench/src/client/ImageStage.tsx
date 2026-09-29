@@ -8,9 +8,9 @@
 import { useEffect, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent, MouseEvent as ReactMouseEvent } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { PropsLocale } from '@deepseek-ai/dsh-client-ui-slots'
 import type { AnnotationRecord } from '../annotations.ts'
 import type { WorkbenchApi } from './api.ts'
+import type { NovenWorkbenchKey } from './locales.ts'
 
 /** One in-progress box while the pointer is down, in image fractions. */
 interface DraftBox { x0: number, y0: number, x1: number, y1: number }
@@ -18,13 +18,18 @@ interface DraftBox { x0: number, y0: number, x1: number, y1: number }
 /** A picked color, as the swatch row shows it. */
 interface PickedColor { hex: string, rgb: string }
 
-/** Props the gallery binds for the stage. */
-export type ImageStageProps = PropsLocale<'novenWorkbench'> & {
+/** The translate shape both hosts (sidebar tab, image viewer) hand the stage. */
+export type ImageStageTranslate = (key: NovenWorkbenchKey) => string
+
+/** Props the gallery and the image viewer bind for the stage. */
+export interface ImageStageProps {
+  readonly t: ImageStageTranslate
   readonly sessionId: SessionId
   readonly imageRel: string
   readonly url: string
   readonly api: WorkbenchApi
-  readonly onClose: () => void
+  /** Exit back to the gallery; absent in the editor-pane viewer, which has no gallery behind it. */
+  readonly onClose?: () => void
 }
 
 /** Smallest drag that counts as a new box rather than a stray click, in fractions. */
@@ -178,7 +183,7 @@ export function ImageStage(props: ImageStageProps) {
   return (
     <div className="noven-wb-stage">
       <div className="noven-wb-toolbar">
-        <button type="button" className="noven-wb-btn" onClick={props.onClose}>← {t('back')}</button>
+        {props.onClose !== undefined && <button type="button" className="noven-wb-btn" onClick={props.onClose}>← {t('back')}</button>}
         <button type="button" className="noven-wb-btn" data-active={mode === 'view'} onClick={() => { setMode('view'); setEditing(null) }}>{t('mode.view')}</button>
         <button type="button" className="noven-wb-btn" data-active={mode === 'annotate'} onClick={() => { setMode('annotate'); setEditing(null) }}>{t('mode.annotate')}</button>
         <button type="button" className="noven-wb-btn" data-active={mode === 'pick'} onClick={() => { setMode('pick'); setEditing(null) }}>{t('mode.pick')}</button>

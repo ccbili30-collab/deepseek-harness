@@ -7,9 +7,8 @@
  */
 
 const CSS = `
-.noven-wb-panel { display: flex; height: 100%; min-height: 0; }
-.noven-wb-rail { width: 264px; flex: none; display: flex; flex-direction: column; gap: 6px; padding: 10px 8px; border-right: 1px solid rgba(128,128,128,.22); overflow-y: auto; min-height: 0; }
-.noven-wb-rail-heading { display: flex; align-items: center; justify-content: space-between; font-size: 13px; opacity: .8; padding: 0 2px; }
+.noven-wb-sidebar { display: flex; flex-direction: column; gap: 6px; height: 100%; min-height: 0; padding: 8px 6px; overflow-y: auto; }
+.noven-wb-sidebar-heading { display: flex; align-items: center; justify-content: space-between; font-size: 12px; opacity: .8; padding: 0 2px; flex: none; }
 .noven-wb-launcher-list { display: flex; flex-direction: column; gap: 2px; }
 .noven-wb-launcher-main { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; border-radius: 8px; padding: 6px 8px; background: transparent; color: inherit; cursor: pointer; text-align: left; }
 .noven-wb-launcher-main:hover { background: rgba(128,128,128,.12); }
@@ -31,8 +30,6 @@ const CSS = `
 .noven-wb-tree-glyph-image::after { content: ''; position: absolute; left: 2px; top: 2px; width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .9; box-shadow: 0 4px 0 -1px currentColor; }
 .noven-wb-tree-pending, .noven-wb-tree-failed { font-size: 12px; opacity: .6; }
 .noven-wb-tree-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.noven-wb-content { flex: 1; min-width: 0; display: flex; flex-direction: column; min-height: 0; }
-.noven-wb-showroom { display: flex; flex-direction: column; gap: 10px; padding: 12px; overflow-y: auto; min-height: 0; flex: 1; align-content: start; }
 .noven-wb-chips { display: flex; flex-wrap: wrap; gap: 4px; flex: none; }
 .noven-wb-chip { border: 1px solid rgba(128,128,128,.4); border-radius: 999px; padding: 2px 10px; font-size: 12px; background: transparent; color: inherit; cursor: pointer; }
 .noven-wb-chip[data-active='true'] { background: rgba(128,128,128,.25); border-color: rgba(128,128,128,.8); }
