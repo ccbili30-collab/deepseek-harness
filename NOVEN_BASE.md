@@ -37,6 +37,12 @@
 - 升级前先跑 `pnpm install && pnpm run build` 确认绿，再动基线。
 - 重钉基线后，社区插件要在 profile 里重装并回归：`pnpm dsh plugin --profile web add dsh-better-sidebar`。
 
+### 已踩过的坑（重钉基线时必查）
+
+1. **幽灵目录**：`git checkout` 切基线不删空目录，旧基线的包目录（如 `packages/examples/acp-demo`）只剩 node_modules 壳，会被 tsdown 的 `packages/*/*` 误匹配成成员，构建报 `[@deepseek-ai/dsh-root] Cannot find entry: lib/types/{index,invariant,startup}.js`。切完基线先跑 `pnpm install`，再用 `git ls-files` 核对可疑目录，无跟踪文件就 `rm -rf`。
+2. **Node 版本**：DSH 入口和构建脚本用 `if (import.meta.main)` 守卫，tsx 在 Node 22.14 的 `--import tsx/esm` 模式下**不设**该标志 → CLI 和 build 全部"秒退 + exit 0"的假成功。Node ≥22.19（实测 24.21 正常）才可靠。本机已升 Node 24.21.0（`~/.local/nodejs/` 并排安装，软链在 `~/.local/bin`）。
+3. **退出码假象**：`pnpm run build 2>&1 | tail` 管道会吞真实退出码（tail 恒 0）；看构建是否真成功，以日志里出现 `build: recorded N client artifact(s)` 为准。
+
 ## Profile 与社区插件
 
 - 运行 profile：`web`（`~/.dsh/profiles/web/`），bundle 层：`dsh-base` + `dsh-web-app` + `dsh-better-sidebar`
