@@ -4,7 +4,7 @@ import type { SettingsFormLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 
 /** Locale keys the page renders. */
 export type NovenImageSettingsLocaleKey =
-  | 'title' | 'description'
+  | 'nav' | 'title' | 'description'
   | 'apiKey' | 'apiKeyHint' | 'apiKeySet' | 'apiKeyUnset'
   | 'baseUrl' | 'baseUrlHint'
   | 'model' | 'modelHint'
@@ -15,6 +15,7 @@ export type NovenImageSettingsLocaleKey =
 
 /** English copy. */
 export const en: Record<NovenImageSettingsLocaleKey, string> = {
+  nav: 'Image generation',
   title: 'Image generation',
   description: 'Set up the Noven image provider (OpenAI-compatible images API).',
   apiKey: 'API key',
@@ -41,6 +42,7 @@ export const en: Record<NovenImageSettingsLocaleKey, string> = {
 
 /** Simplified Chinese copy. */
 export const zh: Record<NovenImageSettingsLocaleKey, string> = {
+  nav: '生图',
   title: '生图',
   description: '配置诺文生图（OpenAI 兼容图像 API）。',
   apiKey: 'API Key',

@@ -7,18 +7,16 @@
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: the ctx.configForms Context merge.
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-// Type-only: the Plugins page's SlotMap merge (the 'plugins.item' entry).
-import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
 // Type-only: the ctx.remote Context merge and the forwarded-event key face.
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 // Type-only: the ctx.slots Context merge.
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import { NovenImageCard } from './NovenImageCard.tsx'
+import { NovenImageSection } from './NovenImageSection.tsx'
 import { NOVEN_IMAGE_NS, NovenImageCardController } from './noven-image-card-controller.ts'
 import { en, zh, type NovenImageSettingsLocaleKey } from './locales.ts'
 
-export type { NovenImageCardProps } from './NovenImageCard.tsx'
+export type { NovenImageSectionProps } from './NovenImageSection.tsx'
 export type { NovenImageCardFace, NovenImageCardState, NovenImageSettings } from './noven-image-card-controller.ts'
 export type { NovenImageSettingsLocaleKey } from './locales.ts'
 
@@ -51,7 +49,7 @@ export function apply(ctx: ClientContext): void {
     () => ctx.remote.$on('credentials/reference-updated', (ref: string) => { card.refreshCredential(ref) }),
     'noven-image: credential invalidations',
   )
-  ctx.effect(() => ctx.configForms.whileServed([NOVEN_IMAGE_NS], () => ctx.slots.inject('plugins.item', () => ctx.slots.register({
-    name: 'plugins.item', id: 'noven-image', order: 40, label: () => t('title'), locale: NS, inject: () => card.inject(),
-  }, NovenImageCard))), 'noven-image: page')
+  ctx.effect(() => ctx.configForms.whileServed([NOVEN_IMAGE_NS], () => ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section', id: 'noven-image', order: 11, label: () => t('nav'), locale: NS, inject: () => card.inject(),
+  }, NovenImageSection))), 'noven-image: page')
 }

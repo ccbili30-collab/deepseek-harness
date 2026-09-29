@@ -10,22 +10,20 @@ import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-cli
 import { formLabels } from './locales.ts'
 import type { NovenImageCardFace } from './noven-image-card-controller.ts'
 
-/** Props the renderer binds for the image page. */
-export type NovenImageCardProps =
-  PropsRuntime<'plugins.item'>
+/** Props the renderer binds for the image settings section. */
+export type NovenImageSectionProps =
+  PropsRuntime<'settings.section'>
   & PropsLocale<'settings.novenImage'>
   & InjectFace<NovenImageCardFace>
 
 /**
- * Render the image provider's one-liner or its settings form, as the Plugins
- * page asks.
- * @param props - the view asked for, locale copy, the form snapshot, and its actions.
- * @returns the one-liner, or the form.
+ * Render the image provider's settings page as a top-level settings section.
+ * @param props - section owner props, locale copy, the form snapshot, and its actions.
+ * @returns the section page.
  */
-export function NovenImageCard(props: NovenImageCardProps) {
+export function NovenImageSection(props: NovenImageSectionProps) {
   const { t } = props
   const state = props.useNovenImageCard(snapshot => snapshot)
-  if (props.view === 'summary') return t('description')
   const disabled = !state.writable
   return (
     <SettingsForm labels={formLabels(t)} state={state} onSave={props.save} onDiscard={props.discard}>
