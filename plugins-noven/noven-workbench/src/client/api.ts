@@ -47,6 +47,8 @@ export interface WorkbenchApi {
   readonly readRegistry: (sessionId: SessionId, signal: AbortSignal) => Promise<RemoteResult<readonly WorkbenchRecordView[]>>
   /** List one workbench folder into the gallery's split view. */
   readonly listFolder: (sessionId: SessionId, folder: string, signal: AbortSignal) => Promise<RemoteResult<FolderView>>
+  /** List one directory's raw entries for the resource tree. */
+  readonly listDir: (sessionId: SessionId, path: string, signal: AbortSignal) => Promise<RemoteResult<readonly WorkspaceDirectoryEntry[]>>
   /** Observe one path (a file or a directory's direct entries) for change notifications. */
   readonly watchPath: (sessionId: SessionId, path: string, signal: AbortSignal) => AsyncIterable<'ready' | 'change'>
   /** Load one image's annotation sidecar; absent reads as an empty document. */
@@ -121,6 +123,11 @@ export function createWorkbenchApi(remote: ClientRemote): WorkbenchApi {
     },
     watchPath(sessionId, path, signal) {
       return watchPath(remote, sessionId, path, signal)
+    },
+    async listDir(sessionId, path, signal) {
+      const listing = await remote.workspaceFiles.list(sessionId, path, signal)
+      if (!listing.ok) return isNotFound(listing.error) ? { ok: true, value: [] } : listing
+      return { ok: true, value: listing.value.entries }
     },
     async loadAnnotations(sessionId, imageRel) {
       const response = await fetch(annotationUrl(sessionId, imageRel), { method: 'GET' })

@@ -13,6 +13,9 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 const zh = {
   'type.label': '诺文展厅',
+  'panel': '工作台',
+  'launcher.enter': '进入创作空间',
+  'hint.selectSession': '选择或开启一个会话后，这里显示它的工作台。',
   'guide.title': '诺文展厅',
   'guide.description': '浏览工作台成果：图片展厅、批注与取色',
   'loadFailed': '读取失败',
@@ -43,6 +46,9 @@ export type NovenWorkbenchKey = keyof typeof zh
 
 const en: Record<NovenWorkbenchKey, string> = {
   'type.label': 'Noven gallery',
+  'panel': 'Workbenches',
+  'launcher.enter': 'Enter the studio',
+  'hint.selectSession': 'Select or start a session to see its workbenches here.',
   'guide.title': 'Noven gallery',
   'guide.description': 'Browse workbench outputs: image gallery, annotations, color picking',
   'loadFailed': 'failed to load',
