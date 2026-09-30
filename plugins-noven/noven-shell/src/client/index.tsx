@@ -20,11 +20,15 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
+import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
+import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
+import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
+import type { NovenShellLocaleKey } from './locales.ts'
 import { defineStore } from '@deepseek-ai/dsh-client-store'
-import type { TabComponentProps } from 'dsh-better-sidebar/client/service'
-import type {} from 'dsh-better-sidebar'
 import { Home } from './pages/Home.tsx'
 import { Create } from './pages/Create.tsx'
 import { Me } from './pages/Me.tsx'
@@ -32,6 +36,13 @@ import { Messages } from './pages/Messages.tsx'
 import { CardEditor } from './pages/CardEditor.tsx'
 import { ContextTab } from './tabs/Context.tsx'
 import { LibraryTab } from './tabs/Library.tsx'
+import { WorkbenchTab } from './tabs/Workbench.tsx'
+import { HeaderChips } from './tabs/HeaderChips.tsx'
+import { FootLauncher, SessionList } from './sidebar.tsx'
+import type { FootLauncherInjected, FootLauncherProps, SessionListInjected, SessionListProps } from './sidebar.tsx'
+import { CardReceiptTail, CardToolView, CARD_READ_TOOLS, CARD_WRITE_TOOLS, type CardReceiptInjected } from './toolviews.tsx'
+import { cardSavedDefinition } from './card-receipt.ts'
+import { SlashChips } from './inputdock.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
 import { injectNovenStyles } from './style.ts'
 import { en, zh } from './locales.ts'
@@ -46,6 +57,10 @@ export const CARD_EDITOR_ID = 'noven-card-editor' as MainPanelId
 export const WORKBENCH_ID = 'noven-workbench' as MainPanelId
 export const CONTEXT_TAB_ID = 'noven:context'
 export const LIBRARY_TAB_ID = 'noven:library'
+export const WORKBENCH_TAB_ID = 'noven:workbench-canvas'
+const CONTEXT_DEF_ID = 'noven-shell.context'
+const LIBRARY_DEF_ID = 'noven-shell.library'
+const WORKBENCH_DEF_ID = 'noven-shell.workbench-canvas'
 
 /** Which card the editor is showing — shared between 我的 and the editor entry. */
 type ShellState = { cardId: string | null }
@@ -69,9 +84,14 @@ interface ShellFace {
 type PageProps = PropsRuntime<'main'> & PropsLocale<'novenShell'>
 type FacePageProps = PageProps & InjectFace<ShellFace>
 type EditorPageProps = PageProps & PropsStore<ReturnType<typeof createShellStore>>
+type TabBodyProps = PropsRuntime<'sidebar.right.pane.tab'> & PropsLocale<'novenShell'>
 
-/** Required browser services: slots, panel selection, theme, copy, right rail. */
-export const inject = ['slots', 'locale', 'layout', 'theme', 'betterSidebar']
+/** Guide-picker glyphs for the two rail tabs. */
+function ContextTabIcon({ size }: { size?: number }) { return glyph.chat(size ?? 16) }
+function LibraryTabIcon({ size }: { size?: number }) { return glyph.book(size ?? 16) }
+
+/** Required browser services: slots, panel selection, theme, copy, right rail, session navigation. */
+export const inject = ['slots', 'locale', 'layout', 'theme', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiWorkspace']
 
 export function apply(ctx: ClientContext): void {
   injectNovenStyles()
@@ -105,8 +125,8 @@ export function apply(ctx: ClientContext): void {
   }
 
   const NAV: readonly { id: MainPanelId; order: number; label: () => string; Icon: (p: { size: number; active: boolean }) => React.ReactNode }[] = [
+    { id: CREATE_ID, order: 5, label: () => t('nav.create'), Icon: CreateIcon },
     { id: HOME_ID, order: 10, label: () => t('nav.home'), Icon: HomeIcon },
-    { id: CREATE_ID, order: 20, label: () => t('nav.create'), Icon: CreateIcon },
     { id: MESSAGES_ID, order: 30, label: () => t('nav.messages'), Icon: BellIcon },
     { id: ME_ID, order: 40, label: () => t('nav.me'), Icon: MeIcon },
   ]
@@ -132,21 +152,89 @@ export function apply(ctx: ClientContext): void {
       (p: EditorPageProps) => <CardEditor t={p.t} />)
   })
 
-  ctx.effect(() => ctx.betterSidebar.registerTab({
-    id: CONTEXT_TAB_ID,
+  // Right-rail tab types register in two stages: the type definition into
+  // `sidebarRightTabs`, then the body into the `sidebar.right.pane.tab` seat
+  // keyed by the definition's id. The workbench canvas carries no guide
+  // entries, so it stays off the "+" picker; the context tab opens it.
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    id: CONTEXT_DEF_ID,
+    kind: CONTEXT_TAB_ID,
     title: () => t('tab.context'),
-    icon: size => glyph.chat(size),
-    order: 5,
-    single: true,
-    component: () => <ContextTab t={t} />,
-  }), 'noven-shell: 本会话 tab')
-
-  ctx.effect(() => ctx.betterSidebar.registerTab({
-    id: LIBRARY_TAB_ID,
+    guide: [{ id: 'context', order: 5, title: () => t('tab.context'), description: () => t('tab.context.hint'), icon: ContextTabIcon }],
+  }), 'noven-shell: 本会话 type')
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    id: LIBRARY_DEF_ID,
+    kind: LIBRARY_TAB_ID,
     title: () => t('tab.library'),
-    icon: size => glyph.book(size),
-    order: 12,
-    single: true,
-    component: () => <LibraryTab t={t} />,
-  }), 'noven-shell: 创作库 tab')
+    guide: [{ id: 'library', order: 12, title: () => t('tab.library'), description: () => t('tab.library.hint'), icon: LibraryTabIcon }],
+  }), 'noven-shell: 创作库 type')
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    id: WORKBENCH_DEF_ID,
+    kind: WORKBENCH_TAB_ID,
+    title: () => t('tab.workbench'),
+    keepMounted: true,
+  }), 'noven-shell: 工作台 type')
+
+  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+    name: 'sidebar.right.pane.tab', key: CONTEXT_DEF_ID, locale: NS,
+  }, (p: TabBodyProps) => <ContextTab t={p.t} useTabInfo={p.useTabInfo} />)), 'noven-shell: 本会话 body')
+  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+    name: 'sidebar.right.pane.tab', key: LIBRARY_DEF_ID, locale: NS,
+  }, (p: TabBodyProps) => <LibraryTab t={p.t} />)), 'noven-shell: 创作库 body')
+  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+    name: 'sidebar.right.pane.tab', key: WORKBENCH_DEF_ID, locale: NS,
+  }, (p: TabBodyProps) => <WorkbenchTab useTabInfo={p.useTabInfo} t={p.t} />)), 'noven-shell: 工作台 body')
+
+  // The design's flat session list replaces the workspace browser (single-cell
+  // shadowing: the lowest-priority live entry renders, the loser stays
+  // registered but unmounted). The settings launcher seat below becomes the
+  // account row; the gear keeps the shell's own openSettings callback.
+  ctx.slots.inject('sidebar.workspaces', () => ctx.slots.register({
+    name: 'sidebar.workspaces', priority: -1, locale: NS,
+    inject: (): SessionListInjected => ({
+      openSession: (sessionId) => { ctx.uiWorkspace.openSession(sessionId) },
+      startSession: () => { ctx.uiWorkspace.startSession() },
+    }),
+  }, (p: SessionListProps) => <SessionList {...p} />))
+  ctx.slots.inject('settings.launcher', () => ctx.slots.register({
+    name: 'settings.launcher', priority: -1, locale: NS,
+    inject: (): FootLauncherInjected => ({ openMy: () => { ctx.layout.selectPanel(ME_ID) } }),
+  }, (p: FootLauncherProps) => <FootLauncher {...p} />))
+
+  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+    name: 'conversation.session.header.actions', id: 'noven-context-chips', order: -8, locale: NS,
+  }, (p: { t: (key: NovenShellLocaleKey) => string }) => <HeaderChips t={p.t} />))
+
+  // Card tools render compact labelled rows inside the folded process group;
+  // the saved-card receipt is a Turn-level element on the turnTail list seat,
+  // derived from the persisted result meta so replay reproduces it.
+  ctx.slots.inject('tool.call.toolview', function* () {
+    for (const name of [...CARD_WRITE_TOOLS, ...CARD_READ_TOOLS]) {
+      yield ctx.slots.register({ name: 'tool.call.toolview', key: name, locale: NS }, CardToolView)
+    }
+  })
+  ctx.effect(() => ctx.uiConversation.events.register(cardSavedDefinition), 'noven-shell: card receipts')
+  ctx.slots.inject('conversation.chat.turnTail', () => ctx.slots.register({
+    name: 'conversation.chat.turnTail', id: 'noven-card-saved', order: 30, locale: NS,
+    inject: (): CardReceiptInjected => ({ openCard: face.openCard }),
+  }, CardReceiptTail))
+  ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
+    name: 'conversation.input.dock', id: 'noven-slash-chips', order: 10, locale: NS,
+  }, SlashChips))
+
+  // 本会话 is the rail's home tab: seed the strip 本会话/创作库/文件 the first
+  // time each session's seat mounts — the role noven-workbench's auto-open
+  // used to play — with 本会话 left active.
+  const seededFor = new Set<string>()
+  ctx.effect(() => ctx.sidebarRight.mounted.subscribe(() => {
+    const sessionId = ctx.sidebarRight.mounted.getSnapshot()
+    if (sessionId === undefined || seededFor.has(sessionId)) return
+    seededFor.add(sessionId)
+    try {
+      ctx.sidebarRight.openTab(CONTEXT_TAB_ID)
+      ctx.sidebarRight.openTab(LIBRARY_TAB_ID)
+      ctx.sidebarRight.openTab('files')
+      ctx.sidebarRight.openTab(CONTEXT_TAB_ID)
+    } catch { /* no seat bound yet */ }
+  }), 'noven-shell: default rail tabs')
 }

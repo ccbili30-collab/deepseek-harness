@@ -1,78 +1,110 @@
 /**
- * 首页 — the community feed: 发现/关注 tabs, kind pills, and a masonry of
- * work cards. Clicking a card slides the landing drawer in from the right;
- * the feed stays put behind it.
+ * 首页 — the community feed: a search field, 发现/关注 tabs, kind pills, and
+ * a masonry mixing image cards (cover + badges) with text cards (badge, body,
+ * 进入世界/以此创作 actions). Selecting a card docks the landing panel on the
+ * right; the feed stays put behind it.
  * @module noven-shell/client/pages/Home
  */
 import { useState } from 'react'
 import type { NovenShellLocaleKey } from '../locales.ts'
-import { FEED, coverStyle, type FeedCard } from '../data.ts'
+import { FEED, asset, type FeedCard } from '../data.ts'
+import { glyph } from '../icons.tsx'
 
 export type ShellT = (key: NovenShellLocaleKey) => string
 
 interface Props { readonly t: ShellT }
 
-/** Card cover: gradient placeholder until real covers exist. */
-function Cover({ card }: { readonly card: FeedCard }) {
-  return <div className="nv-workcard-cover" style={{ ...coverStyle(card.hue), aspectRatio: card.ar }} />
+const fmt = (t: ShellT, key: NovenShellLocaleKey, vars: Record<string, string | number>): string =>
+  Object.entries(vars).reduce((s, [k, v]) => s.replace(`{${k}}`, String(v)), t(key))
+
+function KindTag({ t, kind, dot }: { readonly t: ShellT; readonly kind: FeedCard['kind']; readonly dot?: boolean }) {
+  return (
+    <span className="nv-tag">
+      {kind === 'world' ? t('home.filter.world') : t('home.filter.character')}
+      {dot && <span className="dot" />}
+    </span>
+  )
 }
 
-function LandingDrawer({ t, card, onClose }: { readonly t: ShellT; readonly card: FeedCard; readonly onClose: () => void }) {
+function FeedCardView({ t, card, onOpen }: { readonly t: ShellT; readonly card: FeedCard; readonly onOpen: () => void }) {
   return (
-    <div className="nv-drawer-wrap">
-      <div className="nv-drawer-mask" onClick={onClose} />
-      <aside className="nv-drawer">
-        <button className="nv-drawer-close" onClick={onClose} aria-label="close">×</button>
-        <div className="nv-drawer-scroll">
-          <div className="nv-drawer-cover" style={coverStyle(card.hue)} />
-          <div className="nv-drawer-body">
-            <div>
-              <div className="nv-h1">{card.title}</div>
-              <div className="nv-workcard-author" style={{ marginTop: 8 }}>
-                <span className="nv-avatar">{card.author.slice(0, 1)}</span>
-                <span>{card.author}</span>
-                <button className="nv-btn-ghost" style={{ marginLeft: 'auto', padding: '4px 14px' }}>{t('home.follow')}</button>
-              </div>
-            </div>
-            <div className="nv-workcard-meta">
-              {card.enterable && <span className="nv-tag">{t('home.enterable')}</span>}
-              <span className="nv-tag" data-outline="true">{t('home.modifiable')}</span>
-              <span>{card.forks} {t('home.forkedBy')}</span>
-            </div>
-            <p style={{ margin: 0, fontSize: 13, lineHeight: 1.7, color: 'var(--nv-primary-text)' }}>{card.desc}</p>
-            {card.modules && (
-              <section>
-                <div className="nv-h2" style={{ marginBottom: 8 }}>模块</div>
-                <div className="nv-mod-list">
-                  {card.modules.map(m => (
-                    <div key={m.title} className="nv-mod-item">
-                      <div><h4>{m.title}</h4><p>{m.preview}</p></div>
-                    </div>
-                  ))}
-                </div>
-              </section>
-            )}
-            {card.roles && (
-              <section>
-                <div className="nv-h2" style={{ marginBottom: 8 }}>{t('home.roles')}</div>
-                <div className="nv-role-row">
-                  {card.roles.map(r => (
-                    <div key={r} className="nv-role"><span className="nv-avatar">{r.slice(0, 1)}</span><span>{r}</span></div>
-                  ))}
-                </div>
-              </section>
-            )}
-            <section>
-              <div className="nv-h2">{t('home.dialogs')}（0）</div>
-            </section>
-          </div>
+    <button className="nv-card nv-fcard" onClick={onOpen}>
+      {card.cover && (
+        <span className="nv-fcard-cover">
+          <img src={asset(card.cover)} alt="" />
+          <span className="nv-badge-cover">{card.kind === 'world' ? t('home.filter.world') : t('home.filter.character')}</span>
+          {card.enterable && <span className="nv-badge-enter">{t('home.enterable')}</span>}
+        </span>
+      )}
+      <span className="nv-fcard-body">
+        {!card.cover && <KindTag t={t} kind={card.kind} dot />}
+        <span className="nv-fcard-title">{card.title}</span>
+        <span className="nv-fcard-desc">{card.desc}</span>
+        {!card.cover && (
+          <span className="nv-fcard-actions">
+            <span className="enter">{t('home.enterArrow')}</span>
+            <span style={{ color: 'var(--nv-secondary-text)', fontSize: 13 }}>{glyph.planet(13)} {t('home.fork')}</span>
+          </span>
+        )}
+        <span className="nv-fcard-author">
+          <span className="nv-avatar">{card.author.slice(0, 1)}</span>
+          <span>{card.author}</span>
+          <span style={{ marginLeft: 4 }}>{card.forks} {t('home.forkedBy')}</span>
+          <span className="spacer" />
+          <span className="nv-bookmark">{glyph.pin(15)}</span>
+        </span>
+      </span>
+    </button>
+  )
+}
+
+function Landing({ t, card, onClose }: { readonly t: ShellT; readonly card: FeedCard; readonly onClose: () => void }) {
+  return (
+    <aside className="nv-landing">
+      <button className="nv-landing-close" onClick={onClose} aria-label="close">×</button>
+      <div className="nv-landing-scroll">
+        <KindTag t={t} kind={card.kind} dot />
+        <div className="nv-h1" style={{ fontSize: 22 }}>{card.title}</div>
+        <div className="nv-fcard-author">
+          <span className="nv-avatar">{card.author.slice(0, 1)}</span>
+          <span>{card.author}</span>
+          <button className="nv-btn-ghost" style={{ marginLeft: 'auto', padding: '5px 16px', borderColor: 'var(--nv-accent)', color: 'var(--nv-accent-deep)' }}>
+            {t('home.follow')}
+          </button>
         </div>
-        <div className="nv-drawer-foot">
-          <button className="nv-btn-primary">{t('home.enter')}</button>
-          <button className="nv-btn-ghost">{t('home.fork')}</button>
+        <p style={{ margin: 0, fontSize: 13.5, lineHeight: 1.75 }}>{card.desc}</p>
+        {card.modules && (
+          <section>
+            <div className="nv-section-head"><span className="nv-h2" style={{ fontSize: 13 }}>模块</span></div>
+            <div className="nv-mod-list">
+              {card.modules.map(m => (
+                <div key={m.title} className="nv-mod-item"><h4>{m.title}</h4><p>{m.preview}</p></div>
+              ))}
+            </div>
+          </section>
+        )}
+        {card.roles && (
+          <section>
+            <div className="nv-section-head"><span className="nv-h2" style={{ fontSize: 13 }}>{t('home.roles')}</span><small>{card.roles.length}</small></div>
+            <div className="nv-role-row" style={{ marginTop: 10 }}>
+              {card.roles.map(r => (
+                <div key={r} className="nv-role"><span className="nv-avatar">{r.slice(0, 1)}</span><span>{r}</span></div>
+              ))}
+            </div>
+          </section>
+        )}
+        <div className="nv-fork-row">
+          <span>{fmt(t, 'home.forkCount', { count: card.forks })}</span>
+          <span style={{ color: 'var(--nv-secondary-text)' }}>›</span>
         </div>
-      </aside>
-    </div>
+        <div className="nv-h2" style={{ fontSize: 13 }}>{t('home.dialogs')}（0）</div>
+      </div>
+      <div className="nv-landing-foot">
+        <button className="nv-btn-primary">{t('home.enter')}</button>
+        <button className="nv-btn-ghost">{t('home.fork')}</button>
+        <button className="nv-iconbtn" style={{ height: 38, width: 38 }}>{glyph.pin(15)}</button>
+      </div>
+    </aside>
   )
 }
 
@@ -84,19 +116,20 @@ export function Home({ t }: Props) {
   const cards = FEED.filter(c => kind === 'all' || c.kind === kind)
   const pills: readonly { id: 'all' | 'world' | 'character'; label: NovenShellLocaleKey }[] = [
     { id: 'all', label: 'home.filter.all' },
-    { id: 'world', label: 'home.filter.world' },
     { id: 'character', label: 'home.filter.character' },
+    { id: 'world', label: 'home.filter.world' },
   ]
 
   return (
-    <div className="nv-page">
-      <div className="nv-page-inner">
+    <div className="nv-page" style={{ display: 'flex', overflow: 'hidden' }}>
+      <div className="nv-inner" style={{ flex: 1, minWidth: 0, overflowY: 'auto' }}>
+        <div className="nv-search"><SearchGlyph /><input placeholder={t('home.search')} /></div>
         <div className="nv-feed-tabs">
           <button className="nv-feed-tab" data-active={feed === 'discover'} onClick={() => setFeed('discover')}>{t('home.discover')}</button>
           <button className="nv-feed-tab" data-active={feed === 'following'} onClick={() => setFeed('following')}>{t('home.following')}</button>
           <div className="nv-feed-pills" style={{ marginLeft: 'auto' }}>
             {pills.map(p => (
-              <button key={p.id} className="nv-chip" data-active={kind === p.id} onClick={() => setKind(p.id)}>{t(p.label)}</button>
+              <button key={p.id} className="nv-pill" data-active={kind === p.id} onClick={() => setKind(p.id)}>{t(p.label)}</button>
             ))}
           </div>
         </div>
@@ -105,26 +138,21 @@ export function Home({ t }: Props) {
         ) : (
           <div className="nv-masonry">
             {cards.map(card => (
-              <button key={card.id} className="nv-card nv-workcard" onClick={() => setOpen(card)}>
-                <Cover card={card} />
-                <div className="nv-workcard-body">
-                  <div className="nv-workcard-title">{card.title}</div>
-                  <div className="nv-workcard-desc">{card.desc}</div>
-                  <div className="nv-workcard-meta">
-                    {card.enterable && <span className="nv-tag">{t('home.enterable')}</span>}
-                    <span>{card.forks} {t('home.forkedBy')}</span>
-                  </div>
-                  <div className="nv-workcard-author">
-                    <span className="nv-avatar">{card.author.slice(0, 1)}</span>
-                    <span>{card.author}</span>
-                  </div>
-                </div>
-              </button>
+              <FeedCardView key={card.id} t={t} card={card} onOpen={() => setOpen(card)} />
             ))}
           </div>
         )}
       </div>
-      {open && <LandingDrawer t={t} card={open} onClose={() => setOpen(undefined)} />}
+      {open && <Landing t={t} card={open} onClose={() => setOpen(undefined)} />}
     </div>
+  )
+}
+
+/** Magnifier for the search field. */
+function SearchGlyph() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+      <circle cx="11" cy="11" r="7" /><path d="m21 21-4.3-4.3" />
+    </svg>
   )
 }

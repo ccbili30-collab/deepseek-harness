@@ -2,8 +2,13 @@
  * Demo fixtures for the Noven shell pages. The community feed and the local
  * card library have no backend yet (card format port is a separate phase);
  * these records keep the designed screens reviewable until real data lands.
+ * Cover art ships in the plugin's `assets/` directory, served by the host
+ * route `/api/noven-assets`.
  * @module noven-shell/client/data
  */
+
+/** URL for a packaged demo illustration (host route in src/index.ts). */
+export const asset = (name: string): string => `/api/noven-assets?name=${name}`
 
 /** One community work card on the home feed. */
 export interface FeedCard {
@@ -14,23 +19,16 @@ export interface FeedCard {
   readonly author: string
   readonly enterable: boolean
   readonly forks: number
-  readonly ar: string
-  readonly hue: number
+  /** Cover asset name; absent → the text-card variant. */
+  readonly cover?: string
   readonly roles?: readonly string[]
   readonly modules?: readonly { title: string; preview: string }[]
-}
-
-/** Placeholder cover: a soft two-tone gradient block standing in for art. */
-export function coverStyle(hue: number, light = false): { background: string } {
-  return {
-    background: `linear-gradient(135deg, hsl(${hue} 40% ${light ? 88 : 74}%), hsl(${(hue + 40) % 360} 45% ${light ? 80 : 62}%))`,
-  }
 }
 
 export const FEED: readonly FeedCard[] = [
   {
     id: 'f1', title: '云上第七天', kind: 'world', author: '山也', enterable: true, forks: 128,
-    ar: '3/4', hue: 160,
+    cover: 'cover-yunshang.webp',
     desc: '一座只在每周第七天出现的云上车站。检票员记得每一位乘客的名字，却没人记得他的。',
     roles: ['检票员', '第七天的猫', '临时站长'],
     modules: [
@@ -40,9 +38,9 @@ export const FEED: readonly FeedCard[] = [
   },
   {
     id: 'f2', title: '青玄门', kind: 'world', author: '临渊', enterable: true, forks: 342,
-    ar: '4/3', hue: 140,
-    desc: '云雾山门里的修仙门派，藏经峰上封存着不许再提的往事。',
-    roles: ['沈砚', '云鹤'],
+    cover: 'cover-qingxuan.webp',
+    desc: '云雾山门里的修仙门派，藏经峰上封存着不许再提的往事。掌门将逝，继任未定。',
+    roles: ['沈砚', '云鹤', '林晚'],
     modules: [
       { title: '门派史', preview: '二十年前的那场联署否决，写进了门规的空白处。' },
       { title: '继任规则', preview: '掌门之位不由血亲继承，由寒潭试炼决定。' },
@@ -50,23 +48,27 @@ export const FEED: readonly FeedCard[] = [
   },
   {
     id: 'f3', title: '海边的最后一班车', kind: 'world', author: '远岸', enterable: false, forks: 56,
-    ar: '1/1', hue: 205,
     desc: '末班车驶出站台时，海潮会倒着涨。短篇集，已完结。',
   },
   {
     id: 'f4', title: '阿迟', kind: 'character', author: '桃坞', enterable: true, forks: 89,
-    ar: '4/5', hue: 30,
+    cover: 'cover-achi.webp',
     desc: '慢半拍的占卜师，说话之前总要先看一眼自己的手心。',
   },
   {
     id: 'f5', title: '末日备忘录', kind: 'world', author: '夜航', enterable: true, forks: 203,
-    ar: '4/3', hue: 0,
+    cover: 'cover-mori.webp',
     desc: '文明崩塌后的档案馆里，一个 AI 还在逐条回复没人再看的留言。',
   },
   {
-    id: 'f6', title: '雾岛邮局', kind: 'world', author: '山也', enterable: true, forks: 77,
-    ar: '4/5', hue: 190,
-    desc: '寄不出去的信都堆在这里。邮局职员的工作是替它们找到收信人。',
+    id: 'f6', title: '今晚，你替月亮值班', kind: 'world', author: '半各', enterable: true, forks: 12,
+    cover: 'cover-yueban.webp',
+    desc: '你的第一位访客，是一个想退还昨天的人。',
+    roles: ['守夜人', '退信的人', '猫'],
+    modules: [
+      { title: '值班室', preview: '月亮底下的一间小屋，桌上只有一盏灯和一本登记簿。' },
+      { title: '访客簿', preview: '每一位来客都能寄存一样东西，天亮前必须取走或放弃。' },
+    ],
   },
 ]
 
@@ -78,15 +80,19 @@ export interface MyCard {
   readonly roles: number
   readonly chats: number
   readonly dirty: boolean
-  readonly hue: number
+  readonly desc?: string
+  readonly cover?: string
 }
 
 export const MY_CARDS: readonly MyCard[] = [
-  { id: 'm1', title: '青玄门', kind: 'world', roles: 6, chats: 2, dirty: true, hue: 140 },
-  { id: 'm2', title: '住在云上的第七天', kind: 'world', roles: 3, chats: 5, dirty: false, hue: 205 },
-  { id: 'm3', title: '海边的最后一班车', kind: 'world', roles: 2, chats: 1, dirty: false, hue: 215 },
-  { id: 'm4', title: '沈砚', kind: 'character', roles: 0, chats: 1, dirty: false, hue: 150 },
-  { id: 'm5', title: '云鹤', kind: 'character', roles: 0, chats: 0, dirty: true, hue: 170 },
+  { id: 'm1', title: '住在云上的第七天', kind: 'world', roles: 3, chats: 5, dirty: false, cover: 'cover-yunshang.webp' },
+  { id: 'm2', title: '青玄门', kind: 'world', roles: 8, chats: 2, dirty: true, desc: '掌门将逝，继任未定。', cover: 'cover-qingxuan.webp' },
+  { id: 'm3', title: '海边的最后一班车', kind: 'world', roles: 4, chats: 1, dirty: false, cover: 'cover-haibian.webp' },
+  { id: 'm4', title: '今晚，你替月亮值班', kind: 'world', roles: 2, chats: 3, dirty: false, desc: '你的第一位访客，是一个想退还昨天的人。', cover: 'cover-yueban.webp' },
+  { id: 'm5', title: '雾岛邮局', kind: 'world', roles: 2, chats: 0, dirty: false, cover: 'cover-wudao.webp' },
+  { id: 'm6', title: '沈砚', kind: 'character', roles: 0, chats: 1, dirty: false, cover: 'avatar-shenyan.webp' },
+  { id: 'm7', title: '云鹤', kind: 'character', roles: 0, chats: 0, dirty: true, cover: 'avatar-yunhe.webp' },
+  { id: 'm8', title: '阿迟', kind: 'character', roles: 0, chats: 2, dirty: false, cover: 'cover-achi.webp' },
 ]
 
 /** Workbench cards in 我的 → 创作库. */
@@ -94,37 +100,55 @@ export interface WorkbenchCard {
   readonly id: string
   readonly title: string
   readonly project: string
-  readonly files: number
+  readonly files: string
+  readonly badge: string
+  readonly cover?: string
   readonly worldCard?: string
-  readonly hue: number
 }
 
 export const WORKBENCHES: readonly WorkbenchCard[] = [
-  { id: 'w1', title: '山门地图', project: '青玄门', files: 4, worldCard: '青玄门', hue: 140 },
-  { id: 'w2', title: '人物志', project: '青玄门', files: 6, worldCard: '青玄门', hue: 160 },
-  { id: 'w3', title: '继任夜 · 漫画', project: '青玄门', files: 12, hue: 100 },
-  { id: 'w4', title: '云上车站速写集', project: '住在云上的第七天', files: 9, worldCard: '住在云上的第七天', hue: 205 },
+  { id: 'w1', title: '青玄门', project: '青玄门', files: '32 个文件', badge: '地图首页', cover: 'wb-map.webp', worldCard: '青玄门' },
+  { id: 'w2', title: '继任夜', project: '青玄门', files: '12 页', badge: '漫画', cover: 'wb-comic.webp' },
+  { id: 'w3', title: '云上车站的人们', project: '住在云上的第七天', files: '8 个文件', badge: '人物志', cover: 'wb-renwuzhi.webp', worldCard: '住在云上的第七天' },
+  { id: 'w4', title: '海边小镇考据', project: '海边的最后一班车', files: '8 份资料', badge: '研究资料' },
 ]
 
+/** Demo card binding for a sidebar session row, matched on the session title. */
+export interface SessionBinding {
+  readonly context: string
+  readonly cover?: string
+}
+
+const SESSION_BINDINGS: readonly { readonly match: RegExp; readonly binding: SessionBinding }[] = [
+  { match: /青玄门/, binding: { context: '管理 · 青玄门', cover: 'cover-qingxuan.webp' } },
+  { match: /第七天|云上|检票/, binding: { context: '住在云上的第七天 · GM', cover: 'cover-yunshang.webp' } },
+  { match: /阿迟|访谈/, binding: { context: '阿迟 · 扮演', cover: 'cover-achi.webp' } },
+  { match: /末日/, binding: { context: '末日备忘录 · GM', cover: 'cover-mori.webp' } },
+  { match: /月亮|值班/, binding: { context: '今晚，你替月亮值班 · GM', cover: 'cover-yueban.webp' } },
+]
+
+/** Fixture context line and cover for a session title; unbound sessions get the Nova assistant label. */
+export function sessionBinding(title: string): SessionBinding {
+  return SESSION_BINDINGS.find(entry => entry.match.test(title))?.binding ?? { context: 'Nova' }
+}
+
 export const RECENT_OUTPUTS = [
-  { id: 'r1', name: '沈砚.md', kind: '人物志', from: '青玄门继任设定整理' },
-  { id: 'r2', name: '山门地图 v3.png', kind: '地图', from: '青玄门继任设定整理' },
-  { id: 'r3', name: '继任夜-第4格.png', kind: '漫画', from: '第七天 · 另一条线' },
+  { id: 'r1', name: '藏经峰.md', icon: 'doc', from: '青玄门继任设定整理', ago: '10 分钟前' },
+  { id: 'r2', name: '山门地图', icon: 'image', from: '青玄门继任设定整理', ago: '12 分钟前' },
+  { id: 'r3', name: '第七站站台.png', icon: 'image', from: '云上车站的检票员', ago: '昨天' },
 ] as const
 
-/** Card-editor fixture: module tree + side-chat transcript. */
+/** Card-editor fixture: module tree + roles + the module's body. */
 export const EDITOR_MODULES = [
-  { id: 'e1', title: '概览', indent: 0 },
-  { id: 'e2', title: '门派史', indent: 0 },
-  { id: 'e3', title: '继任规则', indent: 1 },
-  { id: 'e4', title: '门规', indent: 1 },
-  { id: 'e5', title: '藏经峰', indent: 0 },
+  { id: 'e1', title: '概述', indent: 0, open: false },
+  { id: 'e2', title: '山门与地理', indent: 0, open: false },
+  { id: 'e3', title: '门规', indent: 0, open: true },
+  { id: 'e4', title: '日常戒律', indent: 1, open: false },
+  { id: 'e5', title: '继任规则', indent: 1, open: false },
 ] as const
 
-export const EDITOR_DOC = `# 继任规则
-
-掌门之位不由血亲继承。
-
-每二十年，寒潭试炼开启一次。候选者须在潭底取回一件被上一任掌门封存的东西——它必须是一件“不许再提的往事”。
-
-二十年前的那场联署否决之后，这条规则被加进了门规的空白处。没人记得是谁提议的，就像没人记得被否决的那个人选。`
+export const EDITOR_ROLES = [
+  { name: '云鹤', role: '掌门' },
+  { name: '沈砚', role: '长老' },
+  { name: '林晚', role: '弟子' },
+] as const

@@ -15,7 +15,7 @@ import { defineTool, type ParameterSchemaSpec } from '@deepseek-ai/dsh-tools'
 
 /** 任何可落 JSON 的值（工具返回值契约）。 */
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
-import { flattenModules, organizeFolders, assertValid, type ContentDocument, type ContentModule, type ModuleUse } from './model.ts'
+import { flattenModules, organizeFolders, assertValid, findTarget, type ContentDocument, type ContentModule, type ModuleUse } from './model.ts'
 import { CardStore, DraftConflict, type SavedCard } from './store.ts'
 import { applyEdit, type EditorCommand } from './editor.ts'
 import { buildBulkModules, parseBulkTree } from './bulk.ts'
@@ -37,6 +37,14 @@ const RESULT_SCHEMA = { type: 'object' as const, additionalProperties: true as c
 function render(): { type: 'text', text: string }[] {
   return [{ type: 'text', text: 'done' }]
 }
+
+/** 写卡工具把 saved 结果原样投影进 tool/result.meta，供客户端渲染保存回执卡。 */
+function presentSaved(_args: unknown, value: JsonValue): JsonValue {
+  return value
+}
+
+/** 写卡工具的 output 声明：模型面仍只回 'done'，结构化结果走 meta。 */
+const WRITE_OUTPUT = { schema: RESULT_SCHEMA, render, presentationMeta: presentSaved }
 
 /** 目标定位三件套的参数说明。 */
 const TARGET_PARAMS = {
@@ -207,13 +215,13 @@ export function registerCardTools(ctx: Context): void {
       kind: { type: 'string', required: true, description: 'WORLD 或 CHARACTER' },
       name: { type: 'string', required: true, description: '卡名' },
     },
-    output: { schema: RESULT_SCHEMA, render },
+    output: WRITE_OUTPUT,
     async execute(args, exec) {
       const kind = cardKind(args.kind)
       const name = mustName(args.name)
       const document: ContentDocument = emptyCard(kind, name)
       const saved = await storeOf(sessionCwd(exec)).saveNew(document, 'AI')
-      return savedResult(saved.cardId, saved)
+      return savedResult(saved.cardId, saved, undefined, document)
     },
   }))
 
@@ -225,7 +233,7 @@ export function registerCardTools(ctx: Context): void {
       name: { type: 'string', required: true, description: '卡名' },
       modules_json: { type: 'string', required: true, description: '模块树 JSON 数组文本，例如 [{"name":"基础档案","children":[{"name":"身份","text":"..."}]}]' },
     },
-    output: { schema: RESULT_SCHEMA, render },
+    output: WRITE_OUTPUT,
     async execute(args, exec) {
       const kind = cardKind(args.kind)
       const name = mustName(args.name)
@@ -236,7 +244,7 @@ export function registerCardTools(ctx: Context): void {
       const document: ContentDocument = { ...emptyCard(kind, name), id: cardId, modules }
       assertValid(document)
       const saved = await store.saveNew(document, 'AI')
-      return { ...savedResult(cardId, saved), created_module_ids: createdModuleIds, created_block_ids: createdBlockIds }
+      return { ...savedResult(cardId, saved, undefined, document), created_module_ids: createdModuleIds, created_block_ids: createdBlockIds }
     },
   }))
 
@@ -248,7 +256,7 @@ export function registerCardTools(ctx: Context): void {
       module_json: { type: 'string', required: true, description: '单个节点（含 children）的 JSON 对象文本，例如 {"name":"章节","text":"...","children":[]}' },
       before_id: { type: 'string', description: '定位根级模块编号，插到它之前；空/省略表示末尾' },
     },
-    output: { schema: RESULT_SCHEMA, render },
+    output: WRITE_OUTPUT,
     async execute(args, exec) {
       const root = String(args.root_id)
       const store = storeOf(sessionCwd(exec))
@@ -263,7 +271,7 @@ export function registerCardTools(ctx: Context): void {
       assertValid(nextDocument)
       const updated = await store.updateDraft(root, draft.version, nextDocument, 'AI')
       const saved = await store.commit(root, updated.version)
-      return { ...savedResult(root, saved, target.id), created_module_ids: createdModuleIds, created_block_ids: createdBlockIds }
+      return { ...savedResult(root, saved, target.id), created_module_ids: createdModuleIds, created_block_ids: createdBlockIds, ...cardTag(nextDocument, target.id) }
     },
   }))
 
@@ -442,7 +450,7 @@ export function registerCardTools(ctx: Context): void {
       module_id: { type: 'string', description: '模块编号或空（仅存素材）' },
       after_id: { type: 'string', description: '定位块编号或空（模块末尾）' },
     },
-    output: { schema: RESULT_SCHEMA, render },
+    output: WRITE_OUTPUT,
     async execute(args, exec) {
       const cwd = sessionCwd(exec)
       const bytes = await readProjectFile(cwd, String(args.image_path))
@@ -471,7 +479,7 @@ export function registerCardTools(ctx: Context): void {
       ...TARGET_PARAMS,
       source_id: { type: 'string', required: true, description: '来源角色卡根编号' },
     },
-    output: { schema: RESULT_SCHEMA, render },
+    output: WRITE_OUTPUT,
     async execute(args, exec) {
       const store = storeOf(sessionCwd(exec))
       const source = await mustOpen(store, String(args.source_id))
@@ -527,11 +535,11 @@ export function registerCardTools(ctx: Context): void {
       card_id: { type: 'string', required: true, description: '导入返回的卡编号' },
       draft_version: { type: 'string', required: true, description: '导入返回的版本' },
     },
-    output: { schema: RESULT_SCHEMA, render },
+    output: WRITE_OUTPUT,
     async execute(args, exec) {
       const store = storeOf(sessionCwd(exec))
       const saved = await store.commit(String(args.card_id), String(args.draft_version))
-      return savedResult(saved.cardId, saved)
+      return savedResult(saved.cardId, saved, undefined, saved.document)
     },
   }))
 }
@@ -543,7 +551,7 @@ function registerEditTool(tools: Tools, name: string, description: string, extra
     name,
     description,
     parameters: { ...TARGET_PARAMS, ...extra },
-    output: { schema: RESULT_SCHEMA, render },
+    output: WRITE_OUTPUT,
     async execute(args, exec) {
       return editAndCommit(sessionCwd(exec), String(args.root_id), String(args.target_id), String(args.draft_version), build(args))
     },
@@ -566,6 +574,7 @@ async function editAndCommit(cwd: string, root: string, target: string, version:
   return {
     status: 'saved', root_id: root, target_id: target, revision: saved.revision, next_draft_version: saved.version,
     created_module_ids: outcome.createdModuleIds, created_block_ids: outcome.createdBlockIds,
+    ...cardTag(outcome.draft.document, target),
   }
 }
 
@@ -576,11 +585,22 @@ function emptyCard(kind: 'WORLD' | 'CHARACTER', name: string): ContentDocument {
   }
 }
 
-function savedResult(cardId: string, saved: { revision: number, version: string }, targetId?: string): Record<string, JsonValue> {
+function savedResult(cardId: string, saved: { revision: number, version: string }, targetId?: string, document?: ContentDocument): Record<string, JsonValue> {
   return {
     status: 'saved', root_id: cardId, target_id: targetId ?? cardId,
     revision: saved.revision, next_draft_version: saved.version,
     created_module_ids: [], created_block_ids: [],
+    ...(document !== undefined ? { card_name: document.name, card_kind: document.kind } : {}),
+  }
+}
+
+/** 目标卡的名称/卡类回执字段；目标不可定位时（已移除等）省略。 */
+function cardTag(root: ContentDocument, targetId: string): Record<string, JsonValue> {
+  try {
+    const target = findTarget(root, targetId)
+    return { card_name: target.name, card_kind: target.kind }
+  } catch {
+    return {}
   }
 }
 

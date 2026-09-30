@@ -2,3 +2,8 @@
 - insert:
     - id: noven-shell
       name: 'noven-shell'
+
+# The Noven conversation is a single transcript; the trajectory debug view stays
+# available upstream but is out of this product profile.
+- id: ui-trajectory
+  disabled: true

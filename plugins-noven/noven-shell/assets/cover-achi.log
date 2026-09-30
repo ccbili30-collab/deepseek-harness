@@ -1,0 +1,6 @@
+[提示] gpt-image 系不认 size 参数，已把比例描述注入提示词，实际比例可能有偏差
+[请求] qianc/gpt-image-2.5-flare ratio=4:5 size=默认
+[容灾] 切换备选: sail/gpt-image-2.5-flare
+[请求] sail/gpt-image-2.5-flare ratio=4:5 size=默认（备选 qianc/gpt-image-2.5-flare 连续失败）
+[完成] /Users/noven/Documents/Codex/CodexProduct/1/桌面端 noven/plugins-noven/noven-shell/assets/cover-achi.webp（1122x1402，2373KB）
+SAVED:/Users/noven/Documents/Codex/CodexProduct/1/桌面端 noven/plugins-noven/noven-shell/assets/cover-achi.webp

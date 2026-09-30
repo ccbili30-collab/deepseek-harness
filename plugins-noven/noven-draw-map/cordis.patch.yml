@@ -1,4 +1,4 @@
-# noven-study bundle patch — mount the host plugin into the composed tree.
+# noven-draw-map bundle patch — mount the host plugin into the composed tree.
 - insert:
-    - id: noven-study
-      name: 'noven-study'
+    - id: noven-draw-map
+      name: 'noven-draw-map'

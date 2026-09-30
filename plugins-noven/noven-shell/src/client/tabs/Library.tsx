@@ -5,7 +5,7 @@
  * @module noven-shell/client/tabs/Library
  */
 import type { ShellT } from '../pages/Home.tsx'
-import { WORKBENCHES, RECENT_OUTPUTS, coverStyle } from '../data.ts'
+import { WORKBENCHES, RECENT_OUTPUTS, asset } from '../data.ts'
 
 interface Props { readonly t: ShellT }
 
@@ -15,7 +15,9 @@ export function LibraryTab({ t }: Props) {
       <div className="nv-card nv-ctx-section">
         {WORKBENCHES.slice(0, 3).map(w => (
           <div key={w.id} className="nv-ctx-row">
-            <span className="nv-ctx-thumb" style={coverStyle(w.hue, true)} />
+            {w.cover
+              ? <img className="nv-ctx-thumb" src={asset(w.cover)} alt="" />
+              : <span className="nv-ctx-thumb" />}
             <div>
               <div style={{ fontSize: 13, fontWeight: 600 }}>{w.title}</div>
               <small style={{ color: 'var(--nv-secondary-text)', fontSize: 11 }}>{w.project} · {w.files}</small>

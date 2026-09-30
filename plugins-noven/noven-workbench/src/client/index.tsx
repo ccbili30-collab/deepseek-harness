@@ -129,16 +129,8 @@ export function apply(ctx: ClientContext): void {
     component: props => NovenImageViewer({ ...props, api, t }),
   } satisfies FileViewerDescriptor), 'noven-workbench: image viewer')
 
-  // One workbench tab per session, opened the moment the sidebar has a
-  // session to hold it — the workbench is the sidebar's navigation home.
-  const openedFor = new Set<string>()
-  ctx.effect(() => ctx.betterSidebar.subscribeState(() => {
-    const sessionId = ctx.betterSidebar.getSnapshot().sessionId
-    if (sessionId === undefined || openedFor.has(sessionId)) return
-    openedFor.add(sessionId)
-    if (!ctx.betterSidebar.isTabEnabled(WORKBENCH_TAB_ID)) return
-    ctx.betterSidebar.openTab({ type: WORKBENCH_TAB_ID })
-  }), 'noven-workbench: auto-open')
+  // The workbench stays reachable through the rail's tab picker; noven-shell
+  // owns which tab a fresh session surface opens with.
 }
 
 /**

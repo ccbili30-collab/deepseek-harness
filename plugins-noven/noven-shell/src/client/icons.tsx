@@ -26,11 +26,9 @@ export function HomeIcon(p: IconProps) {
   return base(p, <g stroke="currentColor"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/></g>)
 }
 
-/** 创作 — mint plus in a pill. */
+/** 创作 — plain plus; the mint pill chrome comes from the sidebar row's CSS. */
 export function CreateIcon(p: IconProps) {
-  return base({ ...p, active: true }, (
-    <g stroke="currentColor"><circle cx="12" cy="12" r="9" strokeWidth={1.7}/><path d="M12 8v8M8 12h8"/></g>
-  ), true)
+  return base(p, <g stroke="currentColor" strokeWidth={2.2}><path d="M12 5v14M5 12h14"/></g>)
 }
 
 /** 消息 — bell. */
@@ -62,4 +60,9 @@ export const glyph = {
   pin: (s = 16) => wrap(<g><path d="M9 4h6l1 7 3 3v2H5v-2l3-3z"/><path d="M12 16v5"/></g>, s),
   file: (s = 16) => wrap(<g><path d="M6 2h8l5 5v15H6z"/><path d="M14 2v6h5"/></g>, s),
   chat: (s = 16) => wrap(<g><path d="M21 12a8 8 0 0 1-8 8H4l2-3a8 8 0 1 1 15-5z"/></g>, s),
+  search: (s = 16) => wrap(<g><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></g>, s),
+  plus: (s = 16) => wrap(<g><path d="M12 5v14M5 12h14"/></g>, s),
+  gear: (s = 16) => wrap(<g><circle cx="12" cy="12" r="3"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1"/></g>, s),
+  check: (s = 16) => wrap(<path d="M4 12.5l5 5L20 6.5"/>, s),
+  slash: (s = 16) => wrap(<g><path d="M14 4l-5 16"/><path d="M17 9l3 3-3 3"/></g>, s),
 }
