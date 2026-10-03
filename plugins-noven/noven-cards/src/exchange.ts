@@ -119,7 +119,7 @@ function labelFor(card: ContentDocument, ref: string): string {
 /** 严格解析卡结构：字段不完整或出现未支持字段直接报错（不静默丢弃）。 */
 function parseCardStrict(raw: unknown, path: string): ContentDocument {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`${path} 不是对象`)
-  const allowed = new Set(['id', 'kind', 'name', 'modules', 'resources', 'internalCharacters', 'extensions', 'appearance'])
+  const allowed = new Set(['id', 'kind', 'name', 'modules', 'resources', 'internalCharacters', 'characters', 'extensions', 'appearance'])
   for (const key of Object.keys(raw as Record<string, unknown>)) {
     if (!allowed.has(key)) throw new Error(`${path}.${key} 是未支持字段（不能静默丢弃）`)
   }
@@ -144,7 +144,8 @@ function parseCardStrict(raw: unknown, path: string): ContentDocument {
       }
       return { id: resource.id, content: resource.content, mediaType: resource.mediaType }
     }),
-    internalCharacters: (Array.isArray(source.internalCharacters) ? source.internalCharacters : []).map((entry, index) => parseCardStrict(entry, `${path}.internalCharacters[${String(index)}]`)),
+    internalCharacters: (Array.isArray(source.characters) ? source.characters : Array.isArray(source.internalCharacters) ? source.internalCharacters : [])
+      .map((entry, index) => parseCardStrict(entry, `${path}.characters[${String(index)}]`)),
     extensions: (() => {
       const extensions = source.extensions ?? {}
       if (extensions === null || typeof extensions !== 'object' || Array.isArray(extensions)) throw new Error(`${path}.extensions 不是对象`)
