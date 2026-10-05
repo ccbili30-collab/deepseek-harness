@@ -12,6 +12,7 @@
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
+import { ledgerDir, liftTree } from 'noven-ledger'
 
 /** One rectangle annotation over an image. */
 export interface AnnotationRecord {
@@ -55,9 +56,11 @@ export function safeImageRel(path: string): string | undefined {
   return parts.join('/')
 }
 
-/** Absolute sidecar path for one image inside a project root. */
-export function annotationPath(projectRoot: string, imageRel: string): string {
-  return join(projectRoot, '.noven', 'annotations', `${imageRel}.json`)
+/** Absolute sidecar path for one image — app-side under the project's ledger; the legacy `.noven/annotations/` tree is lifted once. */
+export async function annotationPath(projectRoot: string, imageRel: string): Promise<string> {
+  const dir = join(await ledgerDir(projectRoot), 'annotations')
+  await liftTree(join(projectRoot, '.noven', 'annotations'), dir)
+  return join(dir, `${imageRel}.json`)
 }
 
 /** The empty document for an image nothing has annotated yet. */
@@ -74,7 +77,7 @@ export function emptyAnnotationDoc(imageRel: string): AnnotationDoc {
 export async function readAnnotations(projectRoot: string, imageRel: string): Promise<AnnotationDoc | undefined> {
   let raw: string
   try {
-    raw = await readFile(annotationPath(projectRoot, imageRel), 'utf8')
+    raw = await readFile(await annotationPath(projectRoot, imageRel), 'utf8')
   } catch {
     return undefined
   }
@@ -89,9 +92,9 @@ export async function readAnnotations(projectRoot: string, imageRel: string): Pr
  */
 export async function writeAnnotations(projectRoot: string, imageRel: string, doc: AnnotationDoc): Promise<void> {
   // Belt and braces: the rel-path check already forbade escape, but the write
-  // refuses to land anywhere but under .noven/annotations/ regardless.
-  const folder = resolve(projectRoot, '.noven', 'annotations')
-  const target = resolve(annotationPath(projectRoot, imageRel))
+  // refuses to land anywhere but under the ledger's annotations/ regardless.
+  const folder = resolve(join(await ledgerDir(projectRoot), 'annotations'))
+  const target = resolve(await annotationPath(projectRoot, imageRel))
   if (target !== folder && !target.startsWith(`${folder}${sep}`)) {
     throw new AnnotationValidationError('sidecar escapes the annotations folder')
   }

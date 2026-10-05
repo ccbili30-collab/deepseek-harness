@@ -1,37 +1,42 @@
 /**
- * 创作库 — the right-rail tab listing this workspace's workbenches and
- * recent outputs. Shares the fixtures with 我的 → 创作库 until the real
- * library service exists.
+ * 创作库 — the right-rail tab for this session's creative library. Workbench
+ * records have no client read route yet (only model-side mutation tools), so
+ * that section stays an honest empty state; 最近产出 derives from the
+ * session's own durable `tool/result` saved meta — real cards, replayable.
  * @module noven-shell/client/tabs/Library
  */
 import type { ShellT } from '../pages/Home.tsx'
-import { WORKBENCHES, RECENT_OUTPUTS, asset } from '../data.ts'
+import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SessionOutputRow } from '../index.tsx'
 
-interface Props { readonly t: ShellT }
+interface Props {
+  readonly t: ShellT
+  readonly useOutputs: SnapshotSelectorHook<readonly SessionOutputRow[]>
+  readonly openCard: (id: string) => void
+}
 
-export function LibraryTab({ t }: Props) {
+export function LibraryTab({ t, useOutputs, openCard }: Props) {
+  const outputs = useOutputs(state => state)
   return (
     <div className="nv-ctx">
       <div className="nv-card nv-ctx-section">
-        {WORKBENCHES.slice(0, 3).map(w => (
-          <div key={w.id} className="nv-ctx-row">
-            {w.cover
-              ? <img className="nv-ctx-thumb" src={asset(w.cover)} alt="" />
-              : <span className="nv-ctx-thumb" />}
-            <div>
-              <div style={{ fontSize: 13, fontWeight: 600 }}>{w.title}</div>
-              <small style={{ color: 'var(--nv-secondary-text)', fontSize: 11 }}>{w.project} · {w.files}</small>
-            </div>
-          </div>
-        ))}
+        <h4>{t('tab.library')}</h4>
+        <div className="nv-ctx-row nv-ctx-empty">{t('lib.empty')}</div>
       </div>
       <div className="nv-card nv-ctx-section">
         <h4>{t('me.library.recent')}</h4>
-        {RECENT_OUTPUTS.map(r => (
-          <div key={r.id} className="nv-ctx-row" style={{ fontSize: 12 }}>
-            {r.name}
-          </div>
-        ))}
+        {outputs.length === 0
+          ? <div className="nv-ctx-row nv-ctx-empty">{t('ctx.outputsEmpty')}</div>
+          : outputs.map(row => (
+            <div className="nv-ctx-row" key={row.rootId ?? row.name} style={{ fontSize: 12 }}>
+              <span className="nv-avatar nv-ctx-cardicon">{row.kind === 'CHARACTER' ? '角' : '世'}</span>
+              {row.name}
+              {row.kind !== undefined && <small className="nv-tag">{row.kind === 'CHARACTER' ? t('card.kind.character') : t('card.kind.world')}</small>}
+              {row.rootId !== undefined && (
+                <button className="nv-btn-ghost" style={{ padding: '2px 10px', fontSize: 11, marginLeft: 'auto' }} onClick={() => openCard(row.rootId as string)}>{t('ctx.open')}</button>
+              )}
+            </div>
+          ))}
       </div>
     </div>
   )

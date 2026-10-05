@@ -10,33 +10,38 @@
  */
 
 import type { Context } from '@deepseek-ai/cordis'
+import type { Volatile } from '@deepseek-ai/cosmokit'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-tools'
+// Type-only: pulls the ctx.connection merge for the fetch-route registry.
+import type {} from '@deepseek-ai/dsh-client-connection'
 import z from '@deepseek-ai/schemastery'
 
 export const name = 'noven-image'
-export const inject = ['tools']
+export const inject = ['tools', 'connection']
 
+/** Resolved plugin config: every field is a volatile reference read through `.get()`. */
 export interface Config {
-  baseURL: string
-  model: string
-  apiKey: string
-  apiKeyEnv: string
-  outputDir: string
+  baseURL: Volatile<string>
+  model: Volatile<string>
+  apiKey: Volatile<string>
+  apiKeyEnv: Volatile<string>
+  outputDir: Volatile<string>
 }
 
 export const Config = z.object({
-  baseURL: z.string().description('OpenAI 兼容图像 API 的基础 URL，如 https://api.openai.com/v1').volatile(),
+  baseURL: z.string().default('').description('OpenAI 兼容图像 API 的基础 URL，如 https://api.openai.com/v1').volatile(),
   model: z.string().default('gpt-image-1').description('图像模型名，不内置枚举，随服务商填写').volatile(),
-  apiKey: z.string().role('secret').description('API 密钥；留空则读 apiKeyEnv 指定的环境变量').volatile(),
+  apiKey: z.string().role('secret').default('').description('API 密钥；留空则读 apiKeyEnv 指定的环境变量').volatile(),
   apiKeyEnv: z.string().role('credential-ref').default('NOVEN_IMAGE_API_KEY').description('存放密钥的环境变量名').volatile(),
   outputDir: z.string().default('视觉').description('生成图片在项目内的落盘目录').volatile(),
 })
 
 /** Effective key: config value first, then the named environment variable. */
-function resolveKey(config: { apiKey: string, apiKeyEnv: string }): string {
-  if (config.apiKey.trim().length > 0) return config.apiKey.trim()
-  return (process.env[config.apiKeyEnv] ?? '').trim()
+function resolveKey(config: Config): string {
+  const staged = config.apiKey.get().trim()
+  if (staged.length > 0) return staged
+  return (process.env[config.apiKeyEnv.get()] ?? '').trim()
 }
 
 /** Prompt → short filesystem slug. */
@@ -74,11 +79,71 @@ function sessionCwd(exec: { agent?: { session: { header: { cwd?: string } } } })
   return exec.agent?.session.header.cwd ?? process.cwd()
 }
 
-/** Register generate_image and edit_image. */
+const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' }
+
+/** Substrings that mark a model id as likely image-serving; they sort first in the returned list. */
+const IMAGE_HINT = /image|img|dall|flux|kolors|hunyuan|seedream|dreamina|banana|imagen|sd\d|stable|draw|paint|vision/i
+
+/**
+ * Serve the provider's model list to the settings page: `POST
+ * /api/noven-image-models` with `{ base?, apiKey? }`, where each staged value
+ * overrides the stored one so the page can probe before saving. The key stays
+ * host-side: an empty staged key falls back to the configured credential, and
+ * the response carries ids only.
+ */
+function serveModels(config: Config): (request: Request) => Promise<Response> {
+  return async (request) => {
+    const fail = (status: number, message: string): Response =>
+      new Response(JSON.stringify({ error: message }), { status, headers: JSON_HEADERS })
+    let body: { base?: unknown, apiKey?: unknown }
+    try {
+      body = await request.json() as typeof body
+    } catch {
+      return fail(400, 'body is not valid JSON')
+    }
+    const stagedBase = typeof body.base === 'string' ? body.base.trim() : ''
+    const endpoint = (stagedBase.length > 0 ? stagedBase : config.baseURL.get()).replace(/\/+$/u, '')
+    const stagedKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : ''
+    const key = stagedKey.length > 0 ? stagedKey : resolveKey(config)
+    if (endpoint.length === 0) return fail(400, 'endpoint is not configured')
+    if (key.length === 0) return fail(400, 'no API key is configured')
+    let response: Response
+    try {
+      response = await fetch(`${endpoint}/models`, {
+        headers: { authorization: `Bearer ${key}` },
+        signal: AbortSignal.timeout(15_000),
+      })
+    } catch (error) {
+      return fail(502, error instanceof Error ? error.message : 'request failed')
+    }
+    if (!response.ok) return fail(response.status, `provider answered ${String(response.status)}`)
+    const payload = await response.json() as {
+      data?: readonly { id?: unknown }[]
+      models?: readonly { id?: unknown, name?: unknown }[]
+    }
+    const ids = new Set<string>()
+    for (const item of payload.data ?? [])
+      if (typeof item.id === 'string' && item.id.length > 0) ids.add(item.id)
+    for (const item of payload.models ?? []) {
+      const id = typeof item.id === 'string' && item.id.length > 0 ? item.id : item.name
+      if (typeof id === 'string' && id.length > 0) ids.add(id)
+    }
+    const models = [...ids].sort((left, right) => Number(IMAGE_HINT.test(right)) - Number(IMAGE_HINT.test(left)) || left.localeCompare(right))
+    return new Response(JSON.stringify({ models }), { headers: JSON_HEADERS })
+  }
+}
+
+/** Register generate_image, edit_image, and the model-list probe route. */
 export function apply(ctx: Context, config: Config): void {
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/noven-image-models',
+    methods: ['POST'],
+    requestBody: 'buffered',
+    fetch: serveModels(config),
+  }), 'noven-image: /api/noven-image-models')
   const base = (): { endpoint: string, key: string, model: string } => {
     const key = resolveKey(config)
-    return { endpoint: config.baseURL.replace(/\/+$/u, ''), key, model: config.model }
+    return { endpoint: config.baseURL.get().replace(/\/+$/u, ''), key, model: config.model.get() }
   }
 
   ctx.tools.register(defineTool({
@@ -112,7 +177,7 @@ export function apply(ctx: Context, config: Config): void {
       const bytes = await decodeImagePayload(response, exec.signal)
       const { mkdir, writeFile } = await import('node:fs/promises')
       const { join, resolve } = await import('node:path')
-      const dir = resolve(sessionCwd(exec), config.outputDir)
+      const dir = resolve(sessionCwd(exec), config.outputDir.get())
       await mkdir(dir, { recursive: true })
       const customName = (args.filename ?? '').trim()
       const stem = customName.length > 0 ? customName : `${slugify(args.prompt)}-${Date.now().toString(36)}`
@@ -162,7 +227,7 @@ export function apply(ctx: Context, config: Config): void {
         signal: exec.signal,
       })
       const bytes = await decodeImagePayload(response, exec.signal)
-      const dir = resolve(cwd, config.outputDir)
+      const dir = resolve(cwd, config.outputDir.get())
       await mkdir(dir, { recursive: true })
       const original = basename(args.image_path, extname(args.image_path))
       const customName = (args.filename ?? '').trim()

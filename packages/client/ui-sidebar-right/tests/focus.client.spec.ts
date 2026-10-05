@@ -95,13 +95,15 @@ describe('sidebar focus targets', () => {
     const files = h.controller.active()!.id
     const right = h.controller.split(left)!
     expect(h.layout().activePaneId).toBe(right)
+    // Opened content floats: the chip lives in its canvas pane, not the dock.
+    const canvas = findTabPane(h.layout(), files).id
     const chip = h.tabElement(files)
     chip.focus()
-    expect(h.controller.focusedTarget()).toMatchObject({ sessionId: SESSION, paneId: left, tabId: files })
+    expect(h.controller.focusedTarget()).toMatchObject({ sessionId: SESSION, paneId: canvas, tabId: files })
     const iframe = document.createElement('iframe')
     chip.append(iframe)
     iframe.focus()
-    expect(h.controller.focusedTarget()).toMatchObject({ paneId: left, tabId: files })
+    expect(h.controller.focusedTarget()).toMatchObject({ paneId: canvas, tabId: files })
     const composer = document.createElement('textarea')
     document.body.append(composer)
     composer.focus()
@@ -113,6 +115,9 @@ describe('sidebar focus targets', () => {
     const h = harness()
     h.controller.openTab('files')
     const files = h.controller.active()!.id
+    // Collapse hides the docked column only, so the check needs a docked tab:
+    // the opened float is docked back first.
+    h.controller.dock(findTabPane(h.layout(), files).id)
     const chip = h.tabElement(files)
     const target = h.controller.focusedTarget(chip)!
     expect(h.controller.isTargetCurrent(target)).toBe(true)
@@ -155,7 +160,9 @@ describe('sidebar focus targets', () => {
     const files = h.controller.commandTarget(null)!
     h.controller.openTabFromTarget('files', files)
     expect(Object.values(h.layout().tabs)).toHaveLength(1)
-    expect(h.controller.isTargetCurrent(files)).toBe(false)
+    // A pure reveal bumps nothing: the captured page still names the live tab
+    // on the canvas, so the target stays current.
+    expect(h.controller.isTargetCurrent(files)).toBe(true)
     h.controller.openTabFromTarget('terminal', h.controller.commandTarget(null)!)
     h.controller.openTabFromTarget('terminal', h.controller.commandTarget(null)!)
     const terminals = Object.values(h.layout().tabs).filter(tab => tab.kind === 'terminal')
@@ -187,6 +194,9 @@ describe('sidebar focus targets', () => {
     h.controller.float(files)
     const floated = h.controller.focusedTarget(h.tabElement(files))!
     expect(h.controller.splitBlock(floated)).toBe('float')
+    // The mode lives on the drawer, not a pane — a live float target still commands it.
+    h.controller.toggleFullscreen(floated)
+    expect(h.layout().mode).toBe('fullscreen')
     h.controller.toggleFullscreen(floated)
     expect(h.layout().mode).toBe('push')
     h.room.autoFullscreen = true
@@ -212,20 +222,22 @@ describe('sidebar focus targets', () => {
     expect(h.controller.focusedTarget(stalePane)).toBeUndefined()
     h.controller.openTabFromTarget('files', h.controller.commandTarget(null)!)
     h.controller.close(h.controller.active()!.id)
+    // Closing the canvas's last float reseeds the docked column, so the
+    // captured pane names the seed rather than standing empty.
     const empty = h.controller.commandTarget(null)!
-    expect(empty.tabId).toBeUndefined()
+    expect(h.layout().tabs[empty.tabId!]?.kind).toBe('guide')
     expect(h.controller.isTargetCurrent(empty)).toBe(true)
-    expect(h.controller.closeTarget(empty)).toBe('unavailable')
+    expect(h.controller.closeTarget(empty)).toBe('closed')
     const surface = h.store.getSnapshot().bySession[SESSION]!
     h.store.store.set({ bySession: { [SESSION]: { ...surface, layout: { ...surface.layout, expanded: true } } } })
-    expect(sidebarTargetFromElement(pane, SESSION, h.layout(), vi.fn())?.tabId).toBeUndefined()
-    expect(h.controller.splitBlock(empty)).toBe('empty')
+    expect(sidebarTargetFromElement(pane, SESSION, h.layout(), vi.fn())?.tabId).toBe(empty.tabId)
+    expect(h.controller.splitBlock(empty)).toBeUndefined()
     h.controller.openTabFromTarget('files', empty)
+    // The seed the capture named is gone: the open replaced it and floated.
     expect(h.controller.isTargetCurrent(empty)).toBe(false)
     h.controller.openTabFromTarget('terminal', empty)
     expect(Object.values(h.layout().tabs).map(tab => tab.kind)).toEqual(['files'])
     const floatingFile = h.controller.active()!.id
-    h.controller.float(floatingFile)
     const floating = h.controller.focusedTarget(h.tabElement(floatingFile))!
     h.store.actions.setExpanded(SESSION, false)
     h.controller.openTabFromTarget('files', floating)
@@ -384,7 +396,9 @@ describe('sidebar keyboard commands', () => {
       commands.set(command.id, command); return () => { commands.delete(command.id) }
     } }, h.controller, makeTranslate(en), closeWindow))
     h.controller.openTabFromTarget('files', h.controller.commandTarget(null)!)
-    h.controller.close(h.controller.active()!.id)
+    const files = h.controller.active()!.id
+    // The open replaced the seed and floated, so the docked root stands empty
+    // while the canvas holds the float.
     const surface = h.store.getSnapshot().bySession[SESSION]!
     h.store.store.set({ bySession: { [SESSION]: { ...surface, layout: { ...surface.layout, expanded: true } } } })
     const target = h.paneElement()
@@ -393,7 +407,8 @@ describe('sidebar keyboard commands', () => {
     if (pending.status !== 'handled') throw new Error('Expected window-close command')
     pending.run()
     expect(closeWindow).toHaveBeenCalledOnce()
-    h.controller.openTab('files')
+    // Once the pane seats a tab the captured empty pane is stale.
+    h.controller.dock(findTabPane(h.layout(), files).id)
     pending.run()
     expect(closeWindow).toHaveBeenCalledOnce()
   })
@@ -476,10 +491,15 @@ describe('sidebar keyboard commands', () => {
     expect(h.controller.splitBlock(h.controller.commandTarget(null)!)).toBe('budget')
     h.controller.openTab('files')
     const files = h.controller.active()!.id
-    h.controller.float(files)
     const floated = h.tabElement(files)
     floated.focus()
-    expect(fullscreen.resolve({ ...context, target: floated })).toMatchObject({ status: 'blocked', reason: en['command.float'] })
+    // Split is still a docked-pane gesture and refuses a canvas float; the
+    // panel's own mode toggle accepts whichever pane owns focus.
+    expect(split.resolve({ ...context, target: floated })).toMatchObject({ status: 'blocked', reason: en['command.float'] })
+    const fromFloat = fullscreen.resolve({ ...context, target: floated })
+    expect(fromFloat.status).toBe('handled')
+    if (fromFloat.status === 'handled') fromFloat.run()
+    expect(h.layout().mode).toBe('fullscreen')
   })
 
   it.each([

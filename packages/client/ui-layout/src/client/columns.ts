@@ -21,12 +21,16 @@ export const SIDEBAR_COLLAPSED = 56
  * LG breakpoint); a manual toggle below it re-expands over the squeezed center
  * (stores.ts narrowExpanded). */
 export const SIDEBAR_AUTO_COLLAPSE = 1024
-/** Right column drag clamp floor. */
-export const RIGHTBAR_MIN = 300
+/** Right column drag clamp floor; a drag below it arms the collapse preview, releasing there folds the panel to its rail. */
+export const RIGHTBAR_MIN = 96
 /** Maximum normal right panel width as a fraction of the frame. */
 export const RIGHTBAR_MAX_RATIO = 0.7
-/** First-open right panel preference as a fraction of the frame. */
-export const RIGHTBAR_DEFAULT_RATIO = 0.45
+/** Right column width before any user drag — a tools column, sized like the sidebar, not a second work surface. */
+export const RIGHTBAR_DEFAULT = 340
+/** Collapsed right column: an icon rail, matching the closed sidebar's width. */
+export const RIGHTBAR_RAIL = 56
+/** Canvas page floor inside the unit column while a canvas claims it — the unit seam stops shrinking once the page drops to this. */
+export const CANVAS_MIN = 280
 
 /**
  * Clamp a panel width into its contract range.

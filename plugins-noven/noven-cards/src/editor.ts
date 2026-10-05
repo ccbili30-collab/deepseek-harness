@@ -1,6 +1,6 @@
 /**
  * 共同编辑入口，ported from the mobile CardEditor + CardComposition：人工与
- * AI 的每一次编辑都变成 EditorCommand 走这里——同一套变换、同一个乐观锁。
+ * AI 的每一次编辑都变成 EditorCommand 走这里——同一套变换、同一条按卡串行的写入链。
  * 一切编辑先落草稿；提交（commit）才成为正式修订。
  *
  * 与手机端的已声明简化：EditorPosition（UI 光标）不迁移——桌面端当前无卡
@@ -9,20 +9,22 @@
  */
 
 import { mintId, flattenModules, editBlocks, findTarget, replaceTarget, insertModule, updateModule, removeModule, parentOfModule, placeModule, organizeFolders, assertValid, type ContentBlock, type ContentDocument, type ContentModule, type ModuleLayout, type ModuleRouting, type ModuleTemporality, type ModuleUse } from './model.ts'
-import { CardStore, type CardDraft, type ChangeSource } from './store.ts'
+import { CardStore, EditConflict, type CardDraft, type ChangeSource, type SavedCard } from './store.ts'
 import { parseModuleMarkdown } from './markdown.ts'
 
 /** 编辑命令全集（工具与未来的人工界面共用）。 */
 export type EditorCommand =
-  | { kind: 'add_module', name: string, parentId?: string | null, layout?: ModuleLayout }
+  | { kind: 'add_module', name: string, parentId?: string | null, layout?: ModuleLayout, widget?: string }
   | { kind: 'rename_module', moduleId: string, name: string }
   | { kind: 'rename_card', name: string }
-  | { kind: 'write_text', moduleId: string, blockId?: string | null, moduleName: string, text: string }
+  | { kind: 'write_text', moduleId: string, blockId?: string | null, moduleName: string, text: string, expectedContent?: string }
   | { kind: 'replace_text_range', moduleId: string, blockId: string, expectedContent: string, start: number, end: number, text: string, moduleName?: string }
   | { kind: 'write_markdown', moduleId: string, name: string, text: string }
   | { kind: 'write_caption', moduleId: string, blockId: string, moduleName: string, text: string }
   | { kind: 'move_module', moduleId: string, beforeId?: string | null }
   | { kind: 'place_module', moduleId: string, parentId?: string | null, beforeId?: string | null }
+  | { kind: 'copy_module', moduleId: string, parentId?: string | null, beforeId?: string | null }
+  | { kind: 'merge_child', moduleId: string }
   | { kind: 'set_module_layout', moduleId: string, layout: ModuleLayout }
   | { kind: 'set_reading_layout', layout: 'PAGED' | 'CONTINUOUS' }
   | { kind: 'move_block', moduleId: string, blockId: string, beforeBlockId?: string | null }
@@ -47,11 +49,13 @@ export interface EditOutcome {
 }
 
 /**
- * 应用一条编辑命令到草稿（版本必须匹配）。调用方随后 commit。
+ * 把一条编辑命令套用到这张卡**当前最新**的草稿上（整段读改写在卡的串行链里完成）。
+ * 不需要读取时的版本号：编辑不同模块的人和 AI 互不干扰；只有命令自带的块级期望
+ * （`replace_text_range.expectedContent`、`write_text.expectedContent`）不满足时才抛
+ * {@link EditConflict}。调用方随后 commit。
  * @param store - 卡库。
  * @param cardId - 根卡 id。
  * @param targetId - 实际目标卡（自身或世界内角色）。
- * @param expectedVersion - 读取时的版本。
  * @param command - 编辑命令。
  * @param source - 编辑来源。
  */
@@ -59,14 +63,43 @@ export async function applyEdit(
   store: CardStore,
   cardId: string,
   targetId: string,
-  expectedVersion: string,
+  command: EditorCommand,
+  source: ChangeSource,
+): Promise<EditOutcome> {
+  return store.exclusive(cardId, () => applyEditLocked(store, cardId, targetId, command, source))
+}
+
+/**
+ * {@link applyEdit} 加提交，两步在同一段串行链里完成——中间不会插进别人的写入。
+ * @param store - 卡库。
+ * @param cardId - 根卡 id。
+ * @param targetId - 实际目标卡（自身或世界内角色）。
+ * @param command - 编辑命令。
+ * @param source - 编辑来源。
+ * @returns 编辑结果和提交后的修订。
+ */
+export async function applyAndCommit(
+  store: CardStore,
+  cardId: string,
+  targetId: string,
+  command: EditorCommand,
+  source: ChangeSource,
+): Promise<{ outcome: EditOutcome, saved: SavedCard }> {
+  return store.exclusive(cardId, async () => {
+    const outcome = await applyEditLocked(store, cardId, targetId, command, source)
+    const saved = await store.commit(cardId, outcome.draft.version)
+    return { outcome, saved }
+  })
+}
+
+async function applyEditLocked(
+  store: CardStore,
+  cardId: string,
+  targetId: string,
   command: EditorCommand,
   source: ChangeSource,
 ): Promise<EditOutcome> {
   const draft = await store.ensureDraft(cardId, source)
-  if (draft.version !== expectedVersion) {
-    throw new (await import('./store.ts')).DraftConflict(draft.version)
-  }
   const card = findTarget(draft.document, targetId)
   const createdModules: string[] = []
   const createdBlocks: string[] = []
@@ -82,9 +115,38 @@ export async function applyEdit(
   let next = card
   switch (command.kind) {
     case 'add_module': {
-      const created: ContentModule = { id: mintId(), name: command.name, blocks: [], tags: [], children: [], layout: command.layout ?? 'VERTICAL', characterIds: [] }
+      const created: ContentModule = { id: mintId(), name: command.name, blocks: [], tags: [], children: [], layout: command.layout ?? 'VERTICAL', characterIds: [], ...(command.widget !== undefined ? { widget: { type: command.widget } } : {}) }
       next = put({ ...card, modules: insertModule(card.modules, command.parentId ?? null, created, null) })
       createdModules.push(created.id)
+      break
+    }
+    case 'copy_module': {
+      const source = module(command.moduleId)
+      const clone = cloneModule(source)
+      const parentId = command.parentId !== undefined ? command.parentId : (parentOfModule(card.modules, source.id) ?? null)
+      if (parentId !== null) module(parentId)
+      const sibs = parentId === null ? card.modules : (flattenModules(card.modules).find(candidate => candidate.id === parentId)?.children ?? [])
+      const beforeId = command.beforeId !== undefined
+        ? command.beforeId
+        : (sibs.slice(sibs.findIndex(candidate => candidate.id === source.id) + 1)[0]?.id ?? null)
+      next = put({ ...card, modules: insertModule(card.modules, parentId, clone, beforeId) })
+      createdModules.push(...flattenModules([clone]).map(candidate => candidate.id))
+      break
+    }
+    case 'merge_child': {
+      const target = module(command.moduleId)
+      if (target.children.length !== 1) throw new Error('只有仅剩一个子模块的文件夹才能合并回本体')
+      const child = target.children[0]
+      if (child.children.length > 0) throw new Error('子模块内部还有子级，请先处理')
+      next = put({
+        ...card,
+        modules: updateModule(card.modules, target.id, original => ({
+          ...original,
+          blocks: [...original.blocks, ...child.blocks],
+          characterIds: [...original.characterIds, ...child.characterIds.filter(id => !original.characterIds.includes(id))],
+          children: [],
+        })),
+      })
       break
     }
     case 'rename_module':
@@ -102,6 +164,9 @@ export async function applyEdit(
       if (blockId !== null) {
         const existing = target.blocks.find(block => block.id === blockId)
         if (existing === undefined || existing.kind !== 'text') throw new Error('文字块不存在')
+        if (command.expectedContent !== undefined && existing.content !== command.expectedContent) {
+          throw new EditConflict('这个文字块在你读取之后被改过，请重新读取后再改', target.id, blockId)
+        }
       }
       const ref = await textRef(command.text)
       const block: ContentBlock = { kind: 'text', id: blockId ?? mintId(), content: ref }
@@ -116,7 +181,7 @@ export async function applyEdit(
       const target = module(command.moduleId)
       const block = target.blocks.find(candidate => candidate.id === command.blockId)
       if (block === undefined || block.kind !== 'text') throw new Error('文字块不存在')
-      if (block.content !== command.expectedContent) throw new Error('文字版本已变化，请重新读取后修改')
+      if (block.content !== command.expectedContent) throw new EditConflict('文字版本已变化，请重新读取后修改', target.id, block.id)
       const original = new TextDecoder().decode(await store.readPayload(cardId, block.content))
       const codepoints = Array.from(original)
       if (command.start < 0 || command.end < command.start || command.end > codepoints.length) throw new Error('文字修改范围无效')
@@ -303,7 +368,7 @@ export async function applyEdit(
 
   next = organizeFolders(next)
   assertValid(next)
-  const draft2 = await store.updateDraft(cardId, expectedVersion, replaceTarget(draft.document, targetId, next), source)
+  const draft2 = await store.updateDraft(cardId, undefined, replaceTarget(draft.document, targetId, next), source)
   return { draft: draft2, createdModuleIds: createdModules, createdBlockIds: createdBlocks }
 }
 
@@ -347,5 +412,22 @@ function cloneWithFreshIds(source: ContentDocument): ContentDocument {
       coverResourceId: source.appearance.coverResourceId !== undefined ? fresh(source.appearance.coverResourceId) : undefined,
     },
     internalCharacters: [],
+  }
+}
+
+/** 深拷贝模块子树：模块与块全部换新 id，文字载荷与图片资源按引用共享（载荷不可变，天然可共享）。 */
+function cloneModule(original: ContentModule): ContentModule {
+  return {
+    id: mintId(),
+    name: original.name,
+    blocks: original.blocks.map(block => ({ ...block, id: mintId() })),
+    tags: [...original.tags],
+    ...(original.use !== undefined ? { use: original.use } : {}),
+    children: original.children.map(cloneModule),
+    layout: original.layout,
+    characterIds: [...original.characterIds],
+    ...(original.routing !== undefined ? { routing: original.routing } : {}),
+    ...(original.temporality !== undefined ? { temporality: original.temporality } : {}),
+    ...(original.widget !== undefined ? { widget: { ...original.widget } } : {}),
   }
 }

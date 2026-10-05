@@ -41,28 +41,158 @@
   pointer-events: none;
 }
 
-/* Only docked Grid items slide. Their common ancestor remains untransformed,
-   unclipped and without a stacking context, so fixed floating children escape. */
-.panel :global([data-dockkit-host='dock']),
-.panel :global([data-dockkit-empty]),
-.panel :global([data-dockkit-divider]) {
-  transform: translateX(var(--dsh-sidebar-width));
-  visibility: hidden;
-  transition:
-    transform var(--ds-transition-duration-slow) var(--ds-ease-in-out),
-    visibility 0s linear var(--ds-transition-duration-slow);
+/* Collapsed stands the icon rail where the column was: the panel's width
+   follows the frame's track transition, so the column narrows toward its
+   anchored edge instead of sliding off it. */
+:global([data-animating]) .panel {
+  transition: width var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
-.panel[data-sidebar-right-open] :global([data-dockkit-host='dock']),
-.panel[data-sidebar-right-open] :global([data-dockkit-empty]),
-.panel[data-sidebar-right-open] :global([data-dockkit-divider]) {
+.rail {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-height: 0;
+  padding: 6px 0 8px;
+  pointer-events: auto;
+}
+
+/* Zone sort: the lifted zone floats above its sibling on the gesture's
+   inline transforms (zone-sort.ts) — same grammar as the frame's column sort,
+   one level down. */
+.navBody[data-zone-sorting] {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.navBody [data-zone-lift] {
+  z-index: 12;
+  position: relative;
+  background: var(--dsw-alias-bg-base);
+  box-shadow: var(--dsw-elevation-prominent);
+  border-radius: var(--dsw-radius-sm);
+}
+
+.navBody [data-zone-yield] {
+  position: relative;
+  background: var(--dsw-alias-bg-base);
+  box-shadow: var(--dsw-elevation-raised, 0 2px 8px rgb(0 0 0 / 0.10));
+  border-radius: var(--dsw-radius-sm);
+}
+
+/* A drag held below the width floor previews the fold: the navigation blurs
+   under the rail's mark, and releasing anywhere in this state collapses. */
+.panel[data-collapse-preview] .navBody {
+  filter: blur(6px);
+  opacity: 0.3;
+}
+
+.collapseMark {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.collapseMarkGlyph {
+  width: 18px;
+  height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.railList {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The product zone's rail form: the same rows the expanded topZone owns, as
+   an icon column hairlined off the feature list below — the rail keeps both
+   halves of the expanded layout. */
+.railTop {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: center;
+  gap: 1px;
+  max-height: 50%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.railTop:not(:empty) {
+  padding-bottom: 4px;
+  margin-bottom: 4px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.railTop:empty {
+  display: none;
+}
+
+.railRow {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 6px;
+  color: var(--dsw-alias-label-secondary);
+  line-height: 1;
+  background: transparent;
+  border: none;
+  border-radius: var(--dsw-radius-sm);
+  cursor: pointer;
+}
+
+.railRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* Collapse points toward the drawer's anchored edge and expand away from it.
+   The glyph bases are drawn for a right-anchored drawer, so a drawer anchored
+   left mirrors both. The drawer's side stands whether or not a canvas is up. */
+.panel[data-drawer-side='left'] .collapseGlyph {
   transform: none;
-  visibility: visible;
-  transition: transform var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+.panel[data-drawer-side='left'] .railExpandGlyph {
+  transform: scaleX(-1);
+}
+
+/* A right-parked canvas owns the frame's right edge inside the column; the
+   panel anchors to the column's inner edge and draws between the
+   conversation and the canvas instead of against it. */
+.panel[data-canvas-side='right'] {
+  left: 0;
+  right: auto;
+}
+
+/* The seam toward the conversation: whichever unit member stands against
+   the centre carries the hairline. The frame publishes the unit's side;
+   the panel draws it only while it is that member — a canvas parked
+   conv-side paints the seam on its own edge instead. */
+:global([data-unit-side='right']) .panel:not([data-canvas-side='left']) {
+  border-left: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+:global([data-unit-side='left']) .panel:not([data-canvas-side='right']) {
+  border-right: 0.5px solid var(--dsw-alias-border-l2);
 }
 
 .panel[data-sidebar-right-panel='fullscreen'] {
   --dsh-dockkit-dock-layer: 40;
+  /* The canvas shares this column; the fullscreen panel covers it. */
+  z-index: 40;
 }
 
 /* No whole-box subtraction here: Electron drag regions are window geometry,
@@ -101,11 +231,43 @@
   --dsh-dockkit-strip-inline-start: 10px;
 }
 
+/* Panel↔rail content: the incoming face fades in over the width's shrink or
+   growth instead of swapping at full width mid-motion. */
+@keyframes sidebarRightFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.rail {
+  animation: sidebarRightFadeIn var(--ds-transition-duration) var(--ds-ease-in-out) 60ms backwards;
+}
+
+.navBody {
+  animation: sidebarRightFadeIn var(--ds-transition-duration) var(--ds-ease-in-out) backwards;
+}
+
+/* Held through the collapse so the fold reads as motion, not a vanish:
+   the navigation fades out inside the shrinking column, clipped to it. */
+@keyframes sidebarRightFadeOut {
+  to { opacity: 0; }
+}
+
+.navBody[data-collapsing] {
+  overflow: hidden;
+  pointer-events: none;
+  animation: sidebarRightFadeOut 160ms var(--ds-ease-in-out) forwards;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .panel :global([data-dockkit-host='dock']),
-  .panel :global([data-dockkit-empty]),
-  .panel :global([data-dockkit-divider]) {
+  :global([data-animating]) .panel,
+  .canvas[data-canvas-sliding] {
     transition: none;
+  }
+
+  .rail,
+  .navBody,
+  .navBody[data-collapsing] {
+    animation: none;
   }
 }
 
@@ -136,15 +298,254 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+.iconButton:disabled {
+  color: var(--dsw-alias-label-tertiary);
+  cursor: default;
+}
+
+.iconButton:disabled:hover {
+  background: transparent;
+}
+
 /* The expand button's glyph, so collapse and expand share one affordance. */
 .collapseGlyph {
   transform: scaleX(-1);
 }
 
-.panelBody {
+/* The rail's expand affordance — unflipped while the panel anchors right. */
+.railExpandGlyph {
+  transform: none;
+}
+
+.navBody {
   display: flex;
   flex: 1 1 auto;
+  flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  pointer-events: auto;
+}
+
+/* The lower half: feature entries, visually parallel to the product
+   navigation above the hairline. Each zone stands at its natural height —
+   the drawer's depth below them is empty column, not feature space. */
+.featureNav {
+  display: flex;
+  flex: 0 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* The panel's own chrome row sits above every navigation zone: the collapse
+   and fullscreen controls belong to the column, not to the feature deck. */
+.panelHead {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 8px;
+}
+
+.featureList {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 2px 6px 8px;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.featureRow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, inherit);
+  font-size: 12.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.featureRow:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The open kind reads as selected — the product accent where the theme paints
+   it, the harness's selected surface otherwise. */
+.featureRow[data-feature-active],
+.railRow[data-feature-active] {
+  background: var(--nv-accent-soft, var(--dsw-alias-interactive-bg-hover));
+  color: var(--nv-accent-deep, var(--dsw-alias-label-primary));
+}
+
+.featureGlyph {
+  display: inline-flex;
+  width: 14px;
+  height: 14px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  color: var(--dsw-alias-label-secondary);
+}
+
+.featureLabel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The canvas: the topmost floating pane's surface, drawn inside the right
+   column's track beside the panel — left/right come from the host so the
+   claimed side and the panel's width decide its box. */
+.canvas {
+  position: absolute;
+  top: var(--dsh-frame-top-clearance, 0px);
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  background: var(--dsw-alias-bg-base);
+  border-left: 0.5px solid var(--dsw-alias-border-l2);
+  color: var(--dsw-alias-label-primary, inherit);
+}
+
+/* A left-parked canvas stands between the conversation and the panel: the
+   panel-side seam needs its own hairline. */
+.canvas[data-canvas-side='left'] {
+  border-right: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+/* Unit on the left flips which canvas edge meets the conversation: a
+   right-parked canvas then carries the seam on its right, while a
+   left-parked one leans on the sidebar's own border instead. */
+:global([data-unit-side='left']) .canvas[data-canvas-side='right'] {
+  border-right: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+:global([data-unit-side='left']) .canvas[data-canvas-side='left'] {
+  border-left: none;
+}
+
+/* While the canvas comes or goes, the column's own track fold carries its
+   box — the clip is what sells it: the page shrinks into the panel seam and
+   unfurls back out, never spilling mid-flight. No edge transition of its own;
+   the box pins to the column's edges so it moves in the same frame, on the
+   same curve. The seam pill hides until the slide lands. */
+.canvas[data-canvas-sliding] {
+  overflow: hidden;
+}
+
+.canvas[data-canvas-sliding] .canvasEdgePark {
+  opacity: 0;
+}
+
+.canvas[data-canvas-exiting] {
+  pointer-events: none;
+}
+
+.canvas[hidden] {
+  display: none;
+}
+
+.canvasChrome {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.canvasTitle {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* The park chevron points toward the panel; a left-parked canvas collapses
+   rightward, so the glyph flips. */
+.canvas[data-canvas-side='left'] .parkGlyph {
+  transform: scaleX(-1);
+}
+
+/* A selfChrome page draws its own top bar; the park affordance then stands
+   as a pill straddling the canvas's panel-facing seam. */
+.canvasEdgePark {
+  position: absolute;
+  top: 50%;
+  left: -13px;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 50%;
+  background: var(--dsw-alias-bg-base);
+  color: var(--dsw-alias-label-secondary);
+  box-shadow: var(--dsw-elevation-raised, 0 1px 4px rgb(0 0 0 / 0.08));
+  cursor: pointer;
+  transform: translateY(-50%);
+}
+
+.canvas[data-canvas-side='left'] .canvasEdgePark {
+  left: auto;
+  right: -13px;
+}
+
+.canvasEdgePark:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+/* The pill pops in after the canvas's slide lands rather than riding the seam. */
+.canvasEdgePark {
+  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out);
+}
+
+.canvasBody {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+}
+
+/* Stack members under the top keep their bodies mounted but undrawn. */
+.canvasBody[hidden] {
+  display: none;
+}
+
+/* The product's navigation strip above the panes. Empty it contributes no
+   box; populated it owns up to the top half of the panel and hairlines off
+   the docking layout below. */
+.topZone {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  max-height: 50%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.topZone:not(:empty) {
+  border-bottom: 0.5px solid var(--dsw-alias-border-l2);
+}
+
+.topZone:empty {
+  display: none;
 }
 
 .unavailable {

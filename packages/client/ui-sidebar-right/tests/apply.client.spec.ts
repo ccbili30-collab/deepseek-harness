@@ -23,7 +23,6 @@ import type { createSidebarRightStore } from '../src/client/stores.ts'
 import * as sidebarStores from '../src/client/stores.ts'
 import { RightbarSeat } from '../src/client/shell/SidebarRight.tsx'
 import { RightbarRoot } from '../src/client/shell/RightbarRoot.tsx'
-import { ExpandButton } from '../src/client/shell/ExpandButton.tsx'
 import { GuideBody } from '../src/client/tabs/guide/GuideBody.tsx'
 import { GuideTitle } from '../src/client/tabs/guide/GuideTitle.tsx'
 import { GUIDE_ID } from '../src/client/tabs/guide/definition.ts'
@@ -63,7 +62,7 @@ async function boot(shortcuts: Partial<Shortcuts> = {}) {
       return () => { dictionaries.delete(ns) }
     }),
   }
-  const layout = { openRightbar: vi.fn(), closeRightbar: vi.fn() }
+  const layout = { openRightbar: vi.fn(), closeRightbar: vi.fn(), toggleSidebar: vi.fn() }
   const resources = { pin: vi.fn<(address: string, signal: AbortSignal) => void>() }
   ctx.provide('slots', slots as never)
   ctx.provide('locale', locale as never)
@@ -71,7 +70,8 @@ async function boot(shortcuts: Partial<Shortcuts> = {}) {
     catalog: { getSnapshot: () => SHORTCUT_CATALOG, subscribe: () => () => {} }, ...shortcuts } as never)
   ctx.provide('layout', layout as never)
   ctx.provide('resources', resources as never)
-  ctx.provide('sessions', { retain: vi.fn() } as never)
+  ctx.provide('sessions', { retain: vi.fn(),
+    list: { getSnapshot: () => ({ ids: [], byId: {} }), subscribe: () => () => {} } } as never)
   ctx.provide('uiSession', { adapter: { current: createSnapshotStore({ key: undefined }) } } as never)
   const fiber = ctx.plugin({ inject: [...inject], apply })
   await fiber.await()
@@ -123,37 +123,41 @@ describe('ui-sidebar-right apply', () => {
     expect(guide?.id).toBe(GUIDE_ID)
     expect(guide?.priority).toBe('builtin')
     expect(guide?.title('sidebar://guide')).toBe('tab.guide.title')
-    // Five registrations: the root and panel seats, the header's corner seat,
-    // and the guide body and chip title under the guide implementation's id.
-    // The guide draws no product copy of its own, so neither guide seat binds the dictionary.
+    // Four registrations: the root and panel seats, and the guide body and
+    // chip title under the guide implementation's id. The collapsed panel's
+    // rail owns its own expand affordance, so the header's corner seat stays
+    // empty.
     expect(registered.map(entry => [entry.name, entry.key, entry.locale, entry.component])).toEqual([
       ['rightbar', undefined, undefined, RightbarRoot],
       ['rightbar.session', undefined, 'sidebarRight', RightbarSeat],
-      ['conversation.session.header.corner', undefined, 'sidebarRight', ExpandButton],
       ['sidebar.right.pane.tab', GUIDE_ID, undefined, GuideBody],
       ['sidebar.right.pane.tab.title', GUIDE_ID, undefined, GuideTitle],
     ])
     // The panel declares the extension seats; the guide declares its chain child.
     expect(Object.keys(seat('rightbar.session').children as object)).toEqual([
-      'sidebar.right.pane.tab', 'sidebar.right.pane.tab.title', 'sidebar.right.tab.menu.item',
+      'sidebar.right.pane.top', 'sidebar.right.pane.tab', 'sidebar.right.pane.tab.title', 'sidebar.right.tab.menu.item',
     ])
     expect(seat('sidebar.right.pane.tab').children).toMatchObject({ 'sidebar.right.tab.guide': { kind: 'chain', scope: 'session' } })
-    // Both seats read one store: the button only needs to know whether the panel is expanded.
     expect(seat('rightbar.session').store).toBeDefined()
-    expect(seat('conversation.session.header.corner').store).toBe(seat('rightbar.session').store)
   })
 
   it('hands the panel seat the frame report, the service binding, the opens, the observable registry, and the Tab domain', async () => {
     const { ctx, layout, resources, seat, injectedOf } = await boot()
     const injected = injectedOf(seat('rightbar.session')) as SidebarRightInjected
     // The frame learns the composition of expanded and presentation, nothing else.
-    injected.syncPresentation({ shown: true, track: true, fullscreen: false })
-    expect(layout.openRightbar).toHaveBeenLastCalledWith(true, false)
-    injected.syncPresentation({ shown: true, track: true, fullscreen: true })
-    expect(layout.openRightbar).toHaveBeenLastCalledWith(true, true)
-    injected.syncPresentation({ shown: true, track: false, fullscreen: true })
-    expect(layout.openRightbar).toHaveBeenLastCalledWith(false, true)
-    injected.syncPresentation({ shown: false, track: false, fullscreen: false })
+    injected.syncPresentation({ shown: true, track: true, fullscreen: false, canvas: null, rail: false })
+    expect(layout.openRightbar).toHaveBeenLastCalledWith(true, false, null, false)
+    injected.syncPresentation({ shown: true, track: true, fullscreen: true, canvas: null, rail: false })
+    expect(layout.openRightbar).toHaveBeenLastCalledWith(true, true, null, false)
+    injected.syncPresentation({ shown: true, track: false, fullscreen: true, canvas: null, rail: false })
+    expect(layout.openRightbar).toHaveBeenLastCalledWith(false, true, null, false)
+    // The canvas claims the column on its own: a hidden panel still keeps the region.
+    injected.syncPresentation({ shown: false, track: false, fullscreen: false, canvas: 'left', rail: false })
+    expect(layout.openRightbar).toHaveBeenLastCalledWith(false, false, 'left', false)
+    // The collapsed panel is its icon rail: it keeps a narrow track.
+    injected.syncPresentation({ shown: true, track: true, fullscreen: false, canvas: null, rail: true })
+    expect(layout.openRightbar).toHaveBeenLastCalledWith(true, false, null, true)
+    injected.syncPresentation({ shown: false, track: false, fullscreen: false, canvas: null, rail: false })
     expect(layout.closeRightbar).toHaveBeenCalledOnce()
     // The registry, observable: what the seat dispatches a kind to.
     expect(injected.hooks.tabTypes.getSnapshot().find(type => type.kind === 'guide')?.id).toBe(GUIDE_ID)
@@ -170,7 +174,6 @@ describe('ui-sidebar-right apply', () => {
     vi.stubGlobal('document', { activeElement: null })
     onTestFinished(() => { vi.unstubAllGlobals() })
     injected.toggleFullscreen()
-    expect(injectedOf(seat('conversation.session.header.corner'))).toHaveProperty('hooks.shortcuts')
     const release = injected.bindService({
       sessionId: SESSION, actions: instance.actions, surfaces: {},
       closeWithFocus: (_paneId, close) => { close() },
@@ -193,8 +196,6 @@ describe('ui-sidebar-right apply', () => {
   it('adopts each session\'s store instance as the runtime mints it, so a tab\'s own actions land with no seat bound', async () => {
     const { ctx, resources, seat } = await boot()
     const handle = seat('rightbar.session').store as ReturnType<typeof createSidebarRightStore>
-    // Both seats declare the same wrapped handle, so either minting adopts.
-    expect(seat('conversation.session.header.corner').store).toBe(handle)
     const instance = handle.create(SESSION)
     instance.actions.open(SESSION)
     // The first expansion seeds the guide; a second tab beside it makes it closable.
@@ -301,6 +302,6 @@ describe('ui-sidebar-right apply', () => {
     expect(dictionaries.size).toBe(0)
     await ctx.plugin({ inject: [...inject], apply }).await()
     expect(ctx.sidebarRightTabs.get('guide')?.id).toBe(GUIDE_ID)
-    expect(registered).toHaveLength(5)
+    expect(registered).toHaveLength(4)
   })
 })

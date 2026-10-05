@@ -237,6 +237,35 @@
   transition: none;
 }
 
+/* Region sort: a long-pressed column lifts into a floating block that follows
+   the pointer; its sibling slides aside on the transform the gesture writes
+   inline (region-sort.ts). The columns paint their own ground while airborne
+   so nothing shows through, and selection is suspended for the gesture. */
+.frame[data-region-sorting] {
+  cursor: grabbing;
+  user-select: none;
+}
+
+.frame[data-region-sorting] .centerCol,
+.frame[data-region-sorting] .rightbarCol {
+  will-change: transform;
+}
+
+.frame [data-region-lift] {
+  z-index: 12;
+  background: var(--dsw-alias-bg-base);
+  box-shadow: var(--dsw-elevation-prominent);
+}
+
+/* The armed swap's preview: the sibling that would trade places floats too —
+   a touch lighter than the dragged block — so letting go reads as the swap
+   and pulling back reads as the cancel before anything moves for real. */
+.frame [data-region-yield] {
+  z-index: 11;
+  background: var(--dsw-alias-bg-base);
+  box-shadow: var(--dsw-elevation-raised, 0 2px 8px rgb(0 0 0 / 0.10));
+}
+
 @media (prefers-reduced-motion: reduce) {
   .frame[data-animating] .handle {
     transition: none;

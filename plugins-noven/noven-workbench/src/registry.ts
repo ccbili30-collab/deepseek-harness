@@ -1,12 +1,32 @@
 /**
  * Workbench registry persistence — one JSON document under the project's
- * `.noven/` internal state directory. Tool calls are the only writer; the
- * model is told not to hand-edit this file.
+ * app-ledger directory (`~/.noven/ledger/<id>/`). Tool calls are the only
+ * writer; the model is told not to hand-edit this file.
  * @module noven-workbench/registry
  */
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
+import { ledgerDir, liftTree } from 'noven-ledger'
+
+/**
+ * Visibility scope over a workbench's file listing (CreatX V3 port): include
+ * and exclude glob patterns over workbench-relative paths, plus
+ * `autoIncludeNewFiles`. When auto-inclusion is off, `files` freezes the
+ * matched file set at the moment the rule was saved.
+ */
+export interface WorkbenchVisibility {
+  include: readonly string[]
+  exclude: readonly string[]
+  autoIncludeNewFiles: boolean
+  files?: readonly string[]
+}
+
+/** A one-shot presentation request left by `show_in_workbench` for the client to stage once. */
+export interface WorkbenchPresent {
+  readonly path: string
+  readonly at: string
+}
 
 /** One registered workbench. */
 export interface WorkbenchRecord {
@@ -16,6 +36,11 @@ export interface WorkbenchRecord {
   home?: string
   visible: boolean
   pinned?: readonly string[]
+  /** Per-file view bindings: workspace-relative source → workspace-relative frame HTML. */
+  views?: Record<string, string>
+  /** Latest presentation request; the drawer stages it once and remembers the timestamp. */
+  present?: WorkbenchPresent
+  visibility?: WorkbenchVisibility
 }
 
 /** The whole registry document. */
@@ -24,14 +49,17 @@ export interface WorkbenchRegistry {
   workbenches: WorkbenchRecord[]
 }
 
-function registryPath(projectRoot: string): string {
-  return join(projectRoot, '.noven', 'workbenches.json')
+/** Registry file in the app-side ledger; the legacy `.noven/` copy is lifted on first read. */
+async function registryPath(projectRoot: string): Promise<string> {
+  const target = join(await ledgerDir(projectRoot), 'workbenches.json')
+  await liftTree(join(projectRoot, '.noven', 'workbenches.json'), target)
+  return target
 }
 
 /** Load the registry, tolerating absence and malformed documents. */
 export async function loadRegistry(projectRoot: string): Promise<WorkbenchRegistry> {
   try {
-    const raw = await readFile(registryPath(projectRoot), 'utf8')
+    const raw = await readFile(await registryPath(projectRoot), 'utf8')
     const parsed = JSON.parse(raw) as Partial<WorkbenchRegistry>
     if (Array.isArray(parsed.workbenches)) {
       return { version: 1, workbenches: parsed.workbenches.filter((w): w is WorkbenchRecord => typeof w?.id === 'string') }
@@ -42,7 +70,7 @@ export async function loadRegistry(projectRoot: string): Promise<WorkbenchRegist
 
 /** Persist the registry through a temp file + rename. */
 export async function saveRegistry(projectRoot: string, registry: WorkbenchRegistry): Promise<void> {
-  const target = registryPath(projectRoot)
+  const target = await registryPath(projectRoot)
   const temp = `${target}.creatx-tmp`.replace('creatx-tmp', 'noven-tmp')
   await mkdir(dirname(target), { recursive: true })
   await writeFile(temp, `${JSON.stringify(registry, null, 2)}\n`)

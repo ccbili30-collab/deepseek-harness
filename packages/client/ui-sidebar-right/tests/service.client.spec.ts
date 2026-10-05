@@ -93,12 +93,13 @@ describe('SidebarRightController — opening', () => {
       const terminals = Object.values(h.layout().tabs).filter(tab => tab.kind === 'terminal')
       expect(terminals).toHaveLength(2)
       expect(terminals[0]!.contentId).not.toBe(terminals[1]!.contentId)
-      const pane = findTabPane(h.layout(), terminals[0]!.id).id
-      h.instance.actions.floatTab(SESSION, terminals[0]!.id)
+      // Both opened onto the canvas: each floats in its own pane. Docking one
+      // leaves the other afloat — the records stay distinct either way.
       const floating = findTabPane(h.layout(), terminals[0]!.id).id
+      expect(h.layout().floats).toHaveLength(2)
       h.instance.actions.unfloatPane(SESSION, floating)
-      expect(getPane(h.layout(), pane).tabs).toContain(terminals[0]!.id)
-      expect(getPane(h.layout(), pane).tabs).toContain(terminals[1]!.id)
+      expect(findTabPane(h.layout(), terminals[0]!.id).host).toBe('dock')
+      expect(findTabPane(h.layout(), terminals[1]!.id).host).toBe('float')
     } finally { release() }
   })
 
@@ -189,10 +190,13 @@ describe('SidebarRightController — opening', () => {
     const [left, right] = Object.values(layout().nodes).filter(node => node.kind === 'pane').map(node => node.id)
     if (left === undefined || right === undefined) throw new Error('expected two panes')
     controller.openResource('dsh-resource://file/session/s-test/a.txt', { paneId: left })
-    expect(findTabPane(layout(), tabOf('a.txt')).id).toBe(left)
+    // The named pane lends the record's slot, then the canvas takes it: opened
+    // content always floats, whatever docked pane it passed through.
+    expect(findTabPane(layout(), tabOf('a.txt')).host).toBe('float')
+    expect(layout().floats.at(-1)).toBe(findTabPane(layout(), tabOf('a.txt')).id)
   })
 
-  it('opens new content alone in a preferred pane and falls back to the current pane at the limit', () => {
+  it('opens new content alone on the canvas, one float each', () => {
     const { controller, publish, layout, tabOf, entries, expand } = harness()
     expand()
     publish()
@@ -200,14 +204,16 @@ describe('SidebarRightController — opening', () => {
     controller.openResource('dsh-resource://file/session/s-test/a.txt', { preferNewPane: true })
     const a = tabOf('a.txt')
     const pane = findTabPane(layout(), a)
-    expect(dockPaneIds(layout())).toHaveLength(2)
+    expect(pane.host).toBe('float')
     expect(pane.tabs).toEqual([a])
     expect(entries()).toBe(before + 1)
 
     publish()
     controller.openResource('dsh-resource://file/session/s-test/b.txt', { preferNewPane: true })
-    expect(dockPaneIds(layout())).toHaveLength(2)
-    expect(findTabPane(layout(), tabOf('b.txt')).id).toBe(pane.id)
+    const b = findTabPane(layout(), tabOf('b.txt'))
+    expect(b.host).toBe('float')
+    expect(b.id).not.toBe(pane.id)
+    expect(layout().floats).toHaveLength(2)
   })
 
   it('falls back when the pane is too narrow and reveals existing content without splitting', () => {
@@ -277,37 +283,41 @@ describe('SidebarRightController — opening', () => {
   })
 
   it('focuses the existing guide in the target pane', () => {
-    const { controller, instance, publish, layout, tabOf, expand } = harness()
+    const { controller, instance, publish, layout, expand } = harness()
     instance.actions.open(SESSION)
     expand()
     publish()
     controller.openResource('dsh-resource://file/session/s-test/a.txt')
     publish()
     controller.openTab('guide')
-    expect(Object.values(layout().tabs).filter(tab => tab.contentId === 'sidebar://guide')).toHaveLength(1)
-    expect(getPane(layout(), layout().activePaneId).activeTabId).toBe(tabOf('seed'))
+    // The seed stands in for the opened page: the canvas shows it, and the
+    // docked root reseeds behind it — still one guide on the canvas.
+    const onCanvas = layout().floats.flatMap(id => getPane(layout(), id).tabs)
+    expect(onCanvas.filter(id => layout().tabs[id]?.contentId === 'sidebar://guide')).toHaveLength(1)
+    const top = getPane(layout(), layout().floats.at(-1)!)
+    expect(layout().tabs[top.activeTabId!]?.contentId).toBe('sidebar://guide')
   })
 
-  it('keeps the guide to one per pane: opening it into a pane that holds one settles on that one', () => {
-    const { controller, instance, publish, layout, tabOf, expand } = harness()
+  it('keeps the guide to one on the canvas: a second open settles on the one already there', () => {
+    const { controller, instance, publish, layout, expand } = harness()
     instance.actions.open(SESSION)
     expand()
     publish()
     controller.openResource('dsh-resource://file/session/s-test/a.txt')
     publish()
-    const root = getPane(layout(), layout().rootId).id
     let settled: TabId | undefined
     instance.actions.openContent(SESSION, {
-      kind: 'guide', contentId: 'sidebar://guide', title: 'seed', paneId: root, revealIfOpened: false,
+      kind: 'guide', contentId: 'sidebar://guide', title: 'seed', revealIfOpened: false,
     }, (tabId) => { settled = tabId })
-    expect(settled).toBe(tabOf('seed'))
-    expect(Object.values(layout().tabs).filter(tab => tab.contentId === 'sidebar://guide')).toHaveLength(1)
-    // A pane without one gets its own.
-    instance.actions.closeTab(SESSION, tabOf('seed'))
+    const onCanvas = (): TabId[] => layout().floats.flatMap(id => getPane(layout(), id).tabs)
+    expect(onCanvas().filter(id => layout().tabs[id]?.contentId === 'sidebar://guide')).toHaveLength(1)
+    expect(getPane(layout(), layout().floats.at(-1)!).activeTabId).toBe(settled)
+    // Closing it lets a later open mint a fresh record for the same page.
+    instance.actions.closeTab(SESSION, settled!)
     instance.actions.openContent(SESSION, {
-      kind: 'guide', contentId: 'sidebar://guide', title: 'seed', paneId: root, revealIfOpened: false,
+      kind: 'guide', contentId: 'sidebar://guide', title: 'seed', revealIfOpened: false,
     }, () => {})
-    expect(Object.values(layout().tabs).filter(tab => tab.contentId === 'sidebar://guide')).toHaveLength(1)
+    expect(onCanvas().filter(id => layout().tabs[id]?.contentId === 'sidebar://guide')).toHaveLength(1)
   })
 
   it('merges a guide placed, dropped, or docked into a pane that already holds one', () => {
@@ -337,16 +347,16 @@ describe('SidebarRightController — opening', () => {
     expect(guides()).toHaveLength(2)
     instance.actions.dropTab(SESSION, arrivingByDrop, left, 'center')
     expect(guides()).toEqual([own])
-    // Dock: a floating guide returning to a pane that reseeded its own.
+    // Dock: a floating guide returns to the root it emptied — no reseed stands
+    // there while the canvas holds the float, so the same guide lands back.
     instance.actions.floatTab(SESSION, own)
     expect(layout().floats).toHaveLength(1)
-    const reseeded = guides().find(id => id !== own)
-    if (reseeded === undefined) throw new Error('expected the root to reseed a guide')
+    expect(guides()).toEqual([own])
     const [float] = layout().floats
     if (float === undefined) throw new Error('expected the float')
     instance.actions.unfloatPane(SESSION, float)
     expect(layout().floats).toHaveLength(0)
-    expect(guides()).toEqual([reseeded])
+    expect(guides()).toEqual([own])
   })
 
   it('records the navigation in the Tab domain: params delivered, revision counting every open', () => {
@@ -400,10 +410,12 @@ describe('SidebarRightController — the two opens', () => {
     publish()
     controller.openResource('dsh-resource://file/session/s-test/a.txt')
     publish()
-    // No pane holds the page yet: opening it by kind opens its tab.
+    // No pane holds the page yet: opening it by kind opens its tab on the
+    // canvas (the expansion's seed may stand docked behind it).
     controller.openTab('guide')
     publish()
-    expect(Object.values(layout().tabs).filter(tab => tab.contentId === 'sidebar://guide')).toHaveLength(1)
+    const onCanvas = layout().floats.flatMap(id => getPane(layout(), id).tabs)
+    expect(onCanvas.filter(id => layout().tabs[id]?.contentId === 'sidebar://guide')).toHaveLength(1)
     expect(controller.active()?.kind).toBe('guide')
     const before = entries()
     expect(() => { controller.openTab('nope') }).toThrow('no tab type is registered as "nope"')
@@ -419,7 +431,11 @@ describe('SidebarRightController — the two opens', () => {
     publish()
     const before = entries()
     controller.openTab('guide', { replaceTab: tabOf('a.txt') })
-    expect(Object.values(layout().tabs).map(tab => tab.title)).toEqual(['seed'])
+    // A float cannot lend its slot, so the open lands as a new canvas: a.txt
+    // still closes in the same entry, and the guide page tops the stack.
+    const onCanvas = layout().floats.flatMap(id => getPane(layout(), id).tabs).map(id => layout().tabs[id]?.title)
+    expect(onCanvas).toEqual(['seed'])
+    expect(Object.values(layout().tabs).some(tab => tab.title === 'a.txt')).toBe(false)
     expect(entries()).toBe(before + 1)
   })
 })
@@ -481,6 +497,11 @@ describe('SidebarRightController — layout operations', () => {
     const { controller, publish, layout, tabOf, entries } = harness()
     publish()
     controller.openResource('dsh-resource://file/session/s-test/a.txt')
+    publish()
+    // Opened content already floats; dock it first so the float gesture has
+    // something to lift.
+    controller.dock(findTabPane(layout(), tabOf('a.txt')).id)
+    expect(findTabPane(layout(), tabOf('a.txt')).host).toBe('dock')
     publish()
     controller.float(tabOf('a.txt'), { x: 10, y: 20, width: 300, height: 200 })
     expect(layout().floats).toHaveLength(1)

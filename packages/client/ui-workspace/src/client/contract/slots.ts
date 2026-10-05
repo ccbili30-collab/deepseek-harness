@@ -101,6 +101,20 @@ export type UseMenuOpenState = () => MenuOpenState
 export const menuOpenStateFactory: SlotHookFactory<'sidebar.workspaces.session.menu.item', UseMenuOpenState> =
   (_standard, state) => () => state
 
+/** The same open-state binding for the Workspace header-row menu seats. */
+export const workspaceMenuOpenStateFactory: SlotHookFactory<'sidebar.workspaces.workspace.menu.item', UseMenuOpenState> =
+  (_standard, state) => () => state
+
+/** Owner share of one Workspace header-row menu occurrence: the Workspace the row shows. */
+export interface WorkspaceRowOwnerProps {
+  /** Workspace the row shows; real Workspaces only (the ungrouped bucket shows no menu). */
+  workspaceId: WorkspaceId
+  /** Workspace canonical path — the identity a contributed action addresses. */
+  path: string | undefined
+  /** Row display title. */
+  displayTitle: string
+}
+
 /**
  * Owner share of the two Session-row schedule seats. Both receive only the
  * row's Session identity: the occupant reads that Session's own scheduled
@@ -182,6 +196,23 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * handling to keep the row from opening.
      */
     'sidebar.workspaces.session.row.action': { kind: 'list'; scope: 'root'; owner: SessionRowOwnerProps }
+    /**
+     * Extra rows of one Workspace header's "..." menu, in ascending `order`,
+     * rendered after the shipped rename row and before the shipped delete
+     * row. The contract mirrors `sidebar.workspaces.session.menu.item`: an
+     * entry renders one `role="menuitem"` button (ui-primitives'
+     * `MenuItemButton`), decides its own visibility, and dismisses the menu
+     * through `useMenuOpenState` after acting.
+     */
+    'sidebar.workspaces.workspace.menu.item': {
+      kind: 'list'
+      scope: 'root'
+      owner: WorkspaceRowOwnerProps
+      hookContext: MenuOpenState
+      inject: { hooks: {
+        menuOpenState: SlotHookFactory<'sidebar.workspaces.workspace.menu.item', UseMenuOpenState>
+      } }
+    }
   }
 }
 

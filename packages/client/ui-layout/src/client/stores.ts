@@ -5,9 +5,10 @@
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
 import type { MainPanelId } from './service.ts'
 import {
-  clampWidth, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN,
+  CANVAS_MIN, CENTER_MIN, clampWidth, RIGHTBAR_DEFAULT, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN,
   SIDEBAR_AUTO_COLLAPSE, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
 } from './columns.ts'
+import { readLayoutInfo, writeLayoutInfo } from './persistence.ts'
 
 /**
  * Transient layout preferences. Responsive concessions never rewrite widths;
@@ -32,6 +33,24 @@ type LayoutInfo = {
    */
   rightbar: number | null
   /**
+   * Saved unit column width (canvas page + panel) in px, or null for the
+   * computed share. Only meaningful while a canvas claims the column; the
+   * panel's own drag stays inside it through `rightbar`.
+   */
+  unit: number | null
+  /**
+   * A width drag pushed below RIGHTBAR_MIN: the occupant stands collapsed to
+   * its rail until it reports itself expanded again. The `rightbar` preference
+   * survives untouched so re-expansion restores the dragged width.
+   */
+  rightbarCollapsed: boolean
+  /**
+   * A width drag below RIGHTBAR_MIN that has not released yet: the occupant
+   * draws its collapse preview while the pointer is down. `settleRightbar`
+   * commits the fold on release.
+   */
+  rightbarCollapsePreview: boolean
+  /**
    * Whether the right panel is drawn at all, in either presentation.
    *
    * Derived chrome, not a source of truth: whether the right surface is
@@ -45,6 +64,18 @@ type LayoutInfo = {
    * fullscreen. Reported by the occupant; always false while hidden.
    */
   rightbarTrack: boolean
+  /**
+   * Which side of the panel the canvas page occupies inside the right region;
+   * null when no canvas is open. A non-null value claims the flexible track
+   * between the center column and the panel's own width.
+   */
+  rightbarCanvas: 'left' | 'right' | null
+  /**
+   * Whether the shown panel stands collapsed to its icon rail. Reported by
+   * the occupant; the track then holds the rail width instead of the saved
+   * panel preference.
+   */
+  rightbarRail: boolean
   /** Reported fullscreen presentation; hides the outer resize handle. */
   rightbarFullscreen: boolean
   /** Suppress transitions for a fullscreen exit until another geometry action. */
@@ -62,14 +93,16 @@ type LayoutActions = {
   toggleSidebar: (draft: LayoutState) => void
   setViewportWidth: (draft: LayoutState, width: number) => void
   setRightbar: (draft: LayoutState, px: number) => void
-  openRightbar: (draft: LayoutState, track: boolean, fullscreen: boolean) => void
+  settleRightbar: (draft: LayoutState) => void
+  setUnit: (draft: LayoutState, px: number) => void
+  openRightbar: (draft: LayoutState, track: boolean, fullscreen: boolean, canvas: 'left' | 'right' | null, rail: boolean) => void
   closeRightbar: (draft: LayoutState) => void
 }
 
 /**
  * Create the layout panel store handle. For the sidebar the preference IS the
  * width, so closing it forgets its drag width — reopening restores the contract
- * default. The right panel initializes at 45% of the frame on first opening
+ * default. The right panel initializes at the contract width on first opening
  * and keeps that px preference across resizes and close. Drag writes clamp to
  * the current frame's range. Narrow sidebar toggles change only the expansion
  * override; opening the right panel clears that override.
@@ -84,8 +117,13 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         viewportWidth: window.innerWidth,
         narrowExpanded: false,
         rightbar: null,
+        unit: null,
+        rightbarCollapsed: false,
+        rightbarCollapsePreview: false,
         rightbarShown: false,
         rightbarTrack: false,
+        rightbarCanvas: null,
+        rightbarRail: false,
         rightbarFullscreen: false,
         rightbarInstant: false,
       },
@@ -120,27 +158,65 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         }
         d.layoutInfo.viewportWidth = width
       },
+      // A drag below the floor arms the collapse preview instead of a narrower
+      // panel: the occupant blurs into its rail announcement while the pointer
+      // holds, and `settleRightbar` on release commits the fold. The `rightbar`
+      // preference survives either way so re-expansion restores the drag width.
       setRightbar: (d, px: number) => {
         d.layoutInfo.rightbarInstant = false
+        if (px < RIGHTBAR_MIN) { d.layoutInfo.rightbarCollapsePreview = true; return }
+        d.layoutInfo.rightbarCollapsePreview = false
+        d.layoutInfo.rightbarCollapsed = false
         d.layoutInfo.rightbar = clampWidth(px, RIGHTBAR_MIN, Math.max(RIGHTBAR_MIN, d.layoutInfo.viewportWidth * RIGHTBAR_MAX_RATIO))
       },
-      openRightbar: (d, track: boolean, fullscreen: boolean) => {
-        if (!d.layoutInfo.rightbarShown || d.layoutInfo.rightbarTrack !== track || d.layoutInfo.rightbarFullscreen !== fullscreen) {
-          d.layoutInfo.rightbarInstant = d.layoutInfo.rightbarFullscreen && !fullscreen
-        }
+      settleRightbar: (d) => {
+        if (d.layoutInfo.rightbarCollapsePreview) d.layoutInfo.rightbarCollapsed = true
+        d.layoutInfo.rightbarCollapsePreview = false
+      },
+      setUnit: (d, px: number) => {
+        d.layoutInfo.rightbarInstant = false
+        d.layoutInfo.unit = clampWidth(px, CANVAS_MIN, Math.max(CANVAS_MIN, d.layoutInfo.viewportWidth - CENTER_MIN))
+      },
+      openRightbar: (d, track: boolean, fullscreen: boolean, canvas: 'left' | 'right' | null, rail: boolean) => {
+        const presentationMoved = !d.layoutInfo.rightbarShown || d.layoutInfo.rightbarTrack !== track
+          || d.layoutInfo.rightbarFullscreen !== fullscreen || d.layoutInfo.rightbarCanvas !== canvas || d.layoutInfo.rightbarRail !== rail
+        if (presentationMoved) d.layoutInfo.rightbarInstant = d.layoutInfo.rightbarFullscreen && !fullscreen
         if (!d.layoutInfo.rightbarShown && d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) d.layoutInfo.narrowExpanded = false
-        d.layoutInfo.rightbar ??= Math.max(RIGHTBAR_MIN, Math.round(d.layoutInfo.viewportWidth * RIGHTBAR_DEFAULT_RATIO))
+        if (!rail) d.layoutInfo.rightbarCollapsed = false
+        d.layoutInfo.rightbarCollapsePreview = false
+        d.layoutInfo.rightbar ??= clampWidth(RIGHTBAR_DEFAULT, RIGHTBAR_MIN,
+          Math.max(RIGHTBAR_MIN, d.layoutInfo.viewportWidth * RIGHTBAR_MAX_RATIO))
         d.layoutInfo.rightbarShown = true
         d.layoutInfo.rightbarTrack = track
+        d.layoutInfo.rightbarCanvas = canvas
+        d.layoutInfo.rightbarRail = rail
         d.layoutInfo.rightbarFullscreen = fullscreen
       },
       closeRightbar: (d) => {
         if (d.layoutInfo.rightbarShown) d.layoutInfo.rightbarInstant = d.layoutInfo.rightbarFullscreen
+        d.layoutInfo.rightbarCollapsed = false
+        d.layoutInfo.rightbarCollapsePreview = false
         d.layoutInfo.rightbarShown = false
         d.layoutInfo.rightbarTrack = false
+        d.layoutInfo.rightbarCanvas = null
+        d.layoutInfo.rightbarRail = false
         d.layoutInfo.rightbarFullscreen = false
       },
     },
   })
-  return handle
+  return {
+    ...handle,
+    create() {
+      const instance = handle.create()
+      // Frame geometry is a preference: hydrate the saved columns before the
+      // first paint, then write back on every commit.
+      const saved = readLayoutInfo()
+      if (saved !== undefined) {
+        const fresh = instance.getSnapshot()
+        instance.store.set({ ...fresh, layoutInfo: { ...fresh.layoutInfo, ...saved } })
+      }
+      instance.subscribe(() => { writeLayoutInfo(instance.getSnapshot().layoutInfo) })
+      return instance
+    },
+  }
 }

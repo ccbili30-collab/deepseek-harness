@@ -120,6 +120,11 @@ export interface SidebarRightTabDefinition {
   /** Defaults to `extension`: a type that says nothing is one from outside the product. */
   readonly priority?: SidebarRightTabPriority
   /**
+   * The type draws its own canvas chrome — title, side toggle, collapse — so
+   * the canvas skips the host's chrome bar for it. Omit to get the host's.
+   */
+  readonly selfChrome?: boolean
+  /**
    * Veto an address this type's globs matched.
    *
    * Synchronous and cheap: it runs on every routing decision. Omit it to accept

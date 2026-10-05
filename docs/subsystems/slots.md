@@ -177,6 +177,7 @@ root
 │     └─ conversation.hero.agentPreset
 ├─ rightbar
 │  └─ rightbar.session
+│     ├─ sidebar.right.pane.top
 │     ├─ sidebar.right.pane.tab
 │     │  ├─ sidebar.right.tab.guide
 │     │  └─ sidebar.right.tab.guide.entry

@@ -80,7 +80,7 @@ export interface CreateAgentOptions {
     readonly cwd?: string
     readonly parentSession?: SessionId
     readonly isSeeded?: boolean
-    readonly origin?: 'subagent'
+    readonly origin?: 'subagent' | 'service'
     readonly delegationDepth?: number
     readonly agentPreset?: string
   }

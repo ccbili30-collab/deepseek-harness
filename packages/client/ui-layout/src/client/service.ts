@@ -47,8 +47,13 @@ export interface ILayout {
    *   including beneath a fullscreen overlay.
    * @param fullscreen - whether the panel covers the frame and hides its outer
    *   resize handle; independent of the underlying grid track.
+   * @param canvas - which side of the panel a canvas page occupies, or null when
+   *   no canvas is open. A claimed canvas makes the right region flexible: it
+   *   takes the width between the conversation's reserved share and the panel.
+   * @param rail - whether the shown panel stands collapsed to its icon rail;
+   *   the track then holds the rail width instead of the panel preference.
    */
-  openRightbar(track: boolean, fullscreen: boolean): void
+  openRightbar(track: boolean, fullscreen: boolean, canvas: 'left' | 'right' | null, rail: boolean): void
   /** Report the right panel as hidden: no track, no handle. */
   closeRightbar(): void
 }
@@ -94,9 +99,9 @@ export class LayoutController implements ILayout {
     this.panels.toggleSidebar()
   }
 
-  /** Report the right panel's track and fullscreen presentation. */
-  openRightbar(track: boolean, fullscreen: boolean): void {
-    this.panels.openRightbar(track, fullscreen)
+  /** Report the right panel's track, fullscreen presentation, canvas claim, and rail state. */
+  openRightbar(track: boolean, fullscreen: boolean, canvas: 'left' | 'right' | null, rail: boolean): void {
+    this.panels.openRightbar(track, fullscreen, canvas, rail)
   }
 
   /** Report the right panel as hidden: no track, no handle. */

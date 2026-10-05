@@ -10,8 +10,7 @@
 | 底座 | DeepSeek Harness (MIT) |
 | 官方上游 | https://github.com/deepseek-ai/deepseek-harness（`upstream` remote） |
 | 我们的 fork | https://github.com/ccbili30-collab/deepseek-harness（`origin` remote） |
-| 基线 commit | `477b4f420553e8a52c2fbccc464d7561b239c443` |
-| 基线版本 | dsh-v0.1.7-rc.2（tag 同名） |
+| 基线 tag | [dsh-v0.1.7-rc.2](https://github.com/deepseek-ai/deepseek-harness/tree/dsh-v0.1.7-rc.2) |
 | 钉线日期 | 2026-09-29 |
 | 产品分支 | `noven/main` |
 
@@ -23,7 +22,7 @@
 
 | 日期 | 基线 | 说明 |
 |---|---|---|
-| 2026-09-29（废弃） | `141eb6fef8` dsh-0.1.0-rc.8 | fork 原 master，落后上游太多且不满足插件 peer，当天弃用 |
+| 2026-09-29（废弃） | dsh-0.1.0-rc.8 | fork 原 master，落后上游太多且不满足插件 peer，当天弃用 |
 
 ## 补丁账本（动核心必登记）
 

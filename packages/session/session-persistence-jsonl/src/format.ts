@@ -88,7 +88,7 @@ interface HeaderLine {
   cwd?: string
   parentSession?: SessionId
   isSeeded: boolean
-  origin?: 'subagent'
+  origin?: 'subagent' | 'service'
   delegationDepth: number
   agentPreset?: string
 }
@@ -179,7 +179,8 @@ function isHeaderLine(value: unknown): value is HeaderLine {
       || typeof (value as { parentSession?: unknown }).parentSession === 'string')
     && typeof (value as { isSeeded?: unknown }).isSeeded === 'boolean'
     && ((value as { origin?: unknown }).origin === undefined
-      || (value as { origin?: unknown }).origin === 'subagent')
+      || (value as { origin?: unknown }).origin === 'subagent'
+      || (value as { origin?: unknown }).origin === 'service')
     && ((value as { agentPreset?: unknown }).agentPreset === undefined
       || typeof (value as { agentPreset?: unknown }).agentPreset === 'string')
   )

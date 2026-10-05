@@ -28,30 +28,31 @@ function KindTag({ t, kind, dot }: { readonly t: ShellT; readonly kind: FeedCard
 
 function FeedCardView({ t, card, onOpen }: { readonly t: ShellT; readonly card: FeedCard; readonly onOpen: () => void }) {
   return (
-    <button className="nv-card nv-fcard" onClick={onOpen}>
-      {card.cover && (
-        <span className="nv-fcard-cover">
+    <button className="nv-tcard" onClick={onOpen}>
+      {card.cover !== undefined ? (
+        <span className="nv-tcard-tile">
           <img src={asset(card.cover)} alt="" />
           <span className="nv-badge-cover">{card.kind === 'world' ? t('home.filter.world') : t('home.filter.character')}</span>
           {card.enterable && <span className="nv-badge-enter">{t('home.enterable')}</span>}
         </span>
+      ) : (
+        <span className="nv-tcard-tile nv-tcard-text">
+          <KindTag t={t} kind={card.kind} />
+          <span className="tt-title">{card.title}</span>
+          <span className="tt-desc">{card.desc}</span>
+          {card.enterable && <span className="nv-badge-enter">{t('home.enterable')}</span>}
+        </span>
       )}
-      <span className="nv-fcard-body">
-        {!card.cover && <KindTag t={t} kind={card.kind} dot />}
-        <span className="nv-fcard-title">{card.title}</span>
-        <span className="nv-fcard-desc">{card.desc}</span>
-        {!card.cover && (
-          <span className="nv-fcard-actions">
-            <span className="enter">{t('home.enterArrow')}</span>
-            <span style={{ color: 'var(--nv-secondary-text)', fontSize: 13 }}>{glyph.planet(13)} {t('home.fork')}</span>
-          </span>
-        )}
-        <span className="nv-fcard-author">
+      <span className="nv-tcard-cap">
+        {card.cover !== undefined && <strong>{card.title}</strong>}
+        <span className="nv-tcard-meta">
           <span className="nv-avatar">{card.author.slice(0, 1)}</span>
           <span>{card.author}</span>
-          <span style={{ marginLeft: 4 }}>{card.forks} {t('home.forkedBy')}</span>
-          <span className="spacer" />
-          <span className="nv-bookmark">{glyph.pin(15)}</span>
+          <span className="nv-tcard-acts">
+            <span>{glyph.heart(13)} {card.likes}</span>
+            <span>{glyph.fork(13)} {card.forks}</span>
+            <span>{glyph.bookmark(13)}</span>
+          </span>
         </span>
       </span>
     </button>

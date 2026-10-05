@@ -1,6 +1,6 @@
 /**
  * AI 管卡工具面——手机版 33 工具的同名移植（含四个久经实战的协议设计：
- * draft_version 乐观锁 + saved 新编号直链、宏通道优先、容错解析、失败不
+ * 按卡串行写入（不再要求整卡版本号）+ saved 新编号直链、宏通道优先、容错解析、失败不
  * 谎报），外加桌面补充：list_cards（无卡片界面时的发现入口）、export_card
  * / import_card / commit_import（交换与导入确认）。
  *
@@ -9,17 +9,20 @@
  * @module noven-cards/tools
  */
 
-import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { defineTool, type ParameterSchemaSpec } from '@deepseek-ai/dsh-tools'
 
 /** 任何可落 JSON 的值（工具返回值契约）。 */
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
-import { flattenModules, organizeFolders, assertValid, findTarget, type ContentDocument, type ContentModule, type ModuleUse } from './model.ts'
-import { CardStore, DraftConflict, type SavedCard } from './store.ts'
-import { applyEdit, type EditorCommand } from './editor.ts'
+import { flattenModules, organizeFolders, assertValid, findTarget, emptyCardDocument, type ContentDocument, type ContentModule, type ModuleUse } from './model.ts'
+import { BindingStore } from './bindings.ts'
+import { CardStore, cardsRoot, type SavedCard } from './store.ts'
+import { applyAndCommit, type EditorCommand } from './editor.ts'
 import { buildBulkModules, parseBulkTree } from './bulk.ts'
 import { exportCard, importExchange, importForeignFile, readProjectFile } from './exchange.ts'
+import { dirExists, loadRegistry, normalizeRoot } from 'noven-ledger'
 
 /** 模型给新建块惯用的伪编号——一律按"新建"处理而不是报错（实测高频翻车点）。 */
 const NEW_BLOCK_HINTS = new Set(['new', 'create', 'new_block', 'newblock', 'new text block', 'auto', 'null', 'none', 'todo', '新建'])
@@ -34,8 +37,9 @@ const IMAGE_MEDIA: Record<string, string> = {
 
 const RESULT_SCHEMA = { type: 'object' as const, additionalProperties: true as const }
 
-function render(): { type: 'text', text: string }[] {
-  return [{ type: 'text', text: 'done' }]
+/** 模型面的结果就是结构化值的 JSON——版本号、新编号、卡摘要全靠它回传。 */
+function render(_args: unknown, value: JsonValue): { type: 'text', text: string }[] {
+  return [{ type: 'text', text: JSON.stringify(value) }]
 }
 
 /** 写卡工具把 saved 结果原样投影进 tool/result.meta，供客户端渲染保存回执卡。 */
@@ -43,14 +47,15 @@ function presentSaved(_args: unknown, value: JsonValue): JsonValue {
   return value
 }
 
-/** 写卡工具的 output 声明：模型面仍只回 'done'，结构化结果走 meta。 */
+/** 写卡工具的 output 声明：JSON 结果同时喂模型面与保存回执卡。 */
 const WRITE_OUTPUT = { schema: RESULT_SCHEMA, render, presentationMeta: presentSaved }
 
 /** 目标定位三件套的参数说明。 */
 const TARGET_PARAMS = {
   root_id: { type: 'string' as const, required: true as const, description: '根作品编号' },
   target_id: { type: 'string' as const, required: true as const, description: '实际目标卡编号（世界内角色用其编号，否则同 root_id）' },
-  draft_version: { type: 'string' as const, required: true as const, description: '读取时的草稿版本（read_card 返回值，或上次保存返回的 next_draft_version）' },
+  draft_version: { type: 'string' as const, description: '可省略，不再参与冲突判定：编辑总是套用到卡的最新内容上（不同模块的修改互不影响）。同一文字块被别人改过时，写入会提示重读' },
+  project: { type: 'string' as const, description: '卡所在项目：项目名/编号/绝对路径；省略=自动在全部项目里找（本会话项目优先）' },
 }
 
 type Tools = Context['tools']
@@ -60,23 +65,11 @@ type CommandBuilder = (args: Record<string, unknown>) => EditorCommand
 export function registerCardTools(ctx: Context): void {
   const tools = ctx.tools
 
-  /** 打开卡；不存在抛错。 */
-  async function mustOpen(store: CardStore, cardId: string): Promise<SavedCard> {
+  /** 读这张卡当前最新的内容：有未提交草稿用草稿，否则用 head。 */
+  async function currentCard(store: CardStore, cardId: string): Promise<ContentDocument> {
     const saved = await store.open(cardId)
-    if (saved === undefined) throw new Error('卡不存在或已删除（先 list_cards）')
-    return saved
-  }
-
-  /** 按版本定位卡内容：草稿存在用草稿（版本必须匹配），否则用 head。 */
-  async function cardAtVersion(store: CardStore, cardId: string, version: string): Promise<ContentDocument> {
-    const saved = await mustOpen(store, cardId)
-    const draft = await store.draft(cardId)
-    if (draft === undefined) {
-      if (saved.version !== version) throw new DraftConflict(saved.version)
-      return saved.document
-    }
-    if (draft.version !== version) throw new DraftConflict(draft.version)
-    return draft.document
+    if (saved === undefined) throw new Error(`卡不存在或已删除：${cardId}（先 list_cards）`)
+    return (await store.draft(cardId))?.document ?? saved.document
   }
 
   function locate(document: ContentDocument, targetId: string): ContentDocument {
@@ -94,6 +87,7 @@ export function registerCardTools(ctx: Context): void {
       ...(module.use !== undefined ? { use: module.use } : {}),
       ...(module.routing !== undefined ? { routing: module.routing } : {}),
       ...(module.temporality !== undefined ? { temporality: module.temporality } : {}),
+      ...(module.widget !== undefined ? { widget: { type: module.widget.type, ...(module.widget.height !== undefined ? { height: module.widget.height } : {}) } } : {}),
       ...(module.characterIds.length > 0 ? { characters: module.characterIds } : {}),
       blocks: module.blocks.map((block): JsonValue => block.kind === 'text'
         ? { kind: 'text', id: block.id, content_ref: block.content }
@@ -110,12 +104,32 @@ export function registerCardTools(ctx: Context): void {
 
   // ---------- 读 ----------
   tools.register(defineTool({
-    name: 'list_cards',
-    description: '列出项目卡库的全部卡：编号、卡类（WORLD 世界 / CHARACTER 角色）、名称、修订号、是否有未提交草稿。',
+    name: 'list_projects',
+    description: '列出全部已注册项目（名称、编号、目录、卡数）。跨项目找卡先调它；project 参数可填项目名、编号或目录路径。',
     parameters: {},
     output: { schema: RESULT_SCHEMA, render },
     async execute(_args, exec) {
-      const store = storeOf(sessionCwd(exec))
+      const cwd = normalizeRoot(sessionCwd(exec))
+      const rows = await Promise.all((await loadRegistry()).map(async project => ({
+        name: project.title ?? '(未命名)', id: project.id ?? null, root: project.root,
+        current: normalizeRoot(project.root) === cwd,
+        missing: !(await dirExists(project.root)),
+        card_count: (await new CardStore(project.root).list().catch(() => [] as string[])).length,
+      })))
+      return { status: 'read', projects: rows }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'list_cards',
+    description: '列出项目卡库的全部卡：编号、卡类（WORLD 世界 / CHARACTER 角色）、名称、修订号、是否有未提交草稿。缺省列本会话项目；project 参数可列其他项目。',
+    parameters: {
+      project: { type: 'string', description: '项目名/编号/绝对路径；省略=本会话项目' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const cwd = sessionCwd(exec)
+      const store = new CardStore(await resolveProjectRoot(cwd, args.project))
       const rows: Record<string, JsonValue>[] = []
       for (const id of await store.list()) {
         const saved = await store.open(id)
@@ -123,28 +137,42 @@ export function registerCardTools(ctx: Context): void {
         const draft = await store.draft(id)
         rows.push({ id, kind: saved.document.kind, name: saved.document.name, revision: saved.revision, has_draft: draft !== undefined })
       }
-      return { status: 'read', cards: rows, ...(rows.length === 0 ? { hint: '还没有卡。用 create_card_bulk 一次成型整张卡。' } : {}) }
+      const mounted = await mountedRows(cwd, exec.agent?.session?.id as SessionId | undefined)
+      return {
+        status: 'read',
+        cards: rows,
+        ...(mounted.length > 0 ? { mounted } : {}),
+        ...(rows.length === 0 ? { hint: mounted.length > 0
+          ? '本项目卡库为空；挂载的卡见 mounted（引用卡可读写，跨项目也可用 list_projects + project 参数）。'
+          : '还没有卡。用 create_card_bulk 一次成型整张卡；跨项目找卡用 list_projects。' } : {}),
+      }
     },
   }))
 
   tools.register(defineTool({
     name: 'read_card',
-    description: '读取目标卡最新模块结构、编辑版本和修改来源，不读取全部正文，也不新建草稿。修改前先读取。',
+    description: '读取目标卡最新模块结构、编辑版本和修改来源，不读取全部正文，也不新建草稿。修改前先读取。卡在本项目、会话挂载引用或其他项目都能找到（project 可显式指定），跨项目卡照常读写。',
     parameters: {
       root_id: TARGET_PARAMS.root_id,
       target_id: { type: 'string', required: true, description: '目标卡编号' },
+      project: TARGET_PARAMS.project,
     },
     output: { schema: RESULT_SCHEMA, render },
     async execute(args, exec) {
-      const store = storeOf(sessionCwd(exec))
-      const saved = await mustOpen(store, String(args.root_id))
-      const draft = await store.draft(String(args.root_id))
-      const card = draft?.document ?? saved.document
+      const cwd = sessionCwd(exec)
+      const rootId = String(args.root_id)
+      const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, rootId, optionalId(args.project) ?? undefined)
+      const draft = await resolved.store.draft(rootId)
+      const card = draft?.document ?? resolved.saved.document
+      const dirName = await resolved.store.dirName(rootId)
       return {
         status: 'read',
-        draft_version: draft?.version ?? saved.version,
+        project_root: resolved.projectRoot,
+        ...(resolved.via === 'ref' ? { reference: true as const } : {}),
+        ...(dirName !== undefined ? { card_dir: join(cardsRoot(resolved.projectRoot), dirName) } : {}),
+        draft_version: draft?.version ?? resolved.saved.version,
         has_unsaved_draft: draft !== undefined,
-        source: draft?.source ?? saved.source,
+        source: draft?.source ?? resolved.saved.source,
         page_limit: PAGE_LIMIT,
         card: summarize(locate(card, String(args.target_id))),
       }
@@ -163,9 +191,10 @@ export function registerCardTools(ctx: Context): void {
     },
     output: { schema: RESULT_SCHEMA, render },
     async execute(args, exec) {
+      const cwd = sessionCwd(exec)
       const root = String(args.root_id)
-      const store = storeOf(sessionCwd(exec))
-      const card = await cardAtVersion(store, root, String(args.draft_version))
+      const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, root)
       const target = locate(card, String(args.target_id))
       const module = flattenModules(target.modules).find(candidate => candidate.id === args.module_id)
       if (module === undefined) throw new Error('目标模块不存在或不属于当前卡片')
@@ -173,7 +202,7 @@ export function registerCardTools(ctx: Context): void {
       if (block === undefined) throw new Error('内容块不存在')
       const ref = block.kind === 'text' ? block.content : block.caption
       if (ref === undefined) throw new Error('这个块没有可读文字')
-      const text = new TextDecoder().decode(await store.readPayload(root, ref))
+      const text = new TextDecoder().decode(await resolved.store.readPayload(root, ref))
       const codepoints = Array.from(text)
       const offset = typeof args.offset === 'number' ? args.offset : 0
       const count = Math.min(typeof args.count === 'number' ? args.count : PAGE_LIMIT, PAGE_LIMIT)
@@ -195,33 +224,37 @@ export function registerCardTools(ctx: Context): void {
       root_id: TARGET_PARAMS.root_id,
       target_id: TARGET_PARAMS.target_id,
       resource_id: { type: 'string', required: true, description: '本卡图片资源编号' },
+      project: TARGET_PARAMS.project,
     },
     output: { schema: RESULT_SCHEMA, render },
     async execute(args, exec) {
-      const store = storeOf(sessionCwd(exec))
-      const saved = await mustOpen(store, String(args.root_id))
-      const target = locate(saved.document, String(args.target_id))
+      const resolved = await resolveCard(sessionCwd(exec), exec.agent?.session?.id as SessionId | undefined, String(args.root_id), optionalId(args.project) ?? undefined)
+      const target = locate(resolved.saved.document, String(args.target_id))
       const resource = target.resources.find(candidate => candidate.id === args.resource_id)
       if (resource === undefined) throw new Error('资源不属于目标卡')
-      return { status: 'read', image_path: store.payloadPath(String(args.root_id), resource.content), media_type: resource.mediaType, next: '用 read_image 读取 image_path' }
+      return { status: 'read', image_path: await resolved.store.payloadPath(String(args.root_id), resource.content), media_type: resource.mediaType, next: '用 read_image 读取 image_path' }
     },
   }))
 
   // ---------- 建 / 宏通道 ----------
   tools.register(defineTool({
     name: 'create_card',
-    description: '新建一张空世界或角色并保存。只接受 kind（WORLD 世界／CHARACTER 角色）和 name。新建不代表正文完成。',
+    description: '新建一张空世界或角色并保存。只接受 kind（WORLD 世界／CHARACTER 角色）和 name。新建不代表正文完成。缺省建在本会话项目，project 可建到别的项目。',
     parameters: {
       kind: { type: 'string', required: true, description: 'WORLD 或 CHARACTER' },
       name: { type: 'string', required: true, description: '卡名' },
+      project: TARGET_PARAMS.project,
     },
     output: WRITE_OUTPUT,
     async execute(args, exec) {
       const kind = cardKind(args.kind)
       const name = mustName(args.name)
       const document: ContentDocument = emptyCard(kind, name)
-      const saved = await storeOf(sessionCwd(exec)).saveNew(document, 'AI')
-      return savedResult(saved.cardId, saved, undefined, document)
+      const cwd = sessionCwd(exec)
+      const projectRoot = await resolveProjectRoot(cwd, args.project)
+      const saved = await new CardStore(projectRoot).saveNew(document, 'AI')
+      await bindManaged(cwd, exec, saved.cardId, projectRoot)
+      return { ...savedResult(saved.cardId, saved, undefined, document), project_root: projectRoot }
     },
   }))
 
@@ -232,19 +265,28 @@ export function registerCardTools(ctx: Context): void {
       kind: { type: 'string', required: true, description: 'WORLD 或 CHARACTER' },
       name: { type: 'string', required: true, description: '卡名' },
       modules_json: { type: 'string', required: true, description: '模块树 JSON 数组文本，例如 [{"name":"基础档案","children":[{"name":"身份","text":"..."}]}]' },
+      project: TARGET_PARAMS.project,
     },
     output: WRITE_OUTPUT,
     async execute(args, exec) {
       const kind = cardKind(args.kind)
       const name = mustName(args.name)
       const nodes = parseBulkTree(args.modules_json, 'modules')
-      const store = storeOf(sessionCwd(exec))
-      const cardId = emptyCard(kind, name).id
-      const { modules, createdModuleIds, createdBlockIds } = await buildBulkModules(nodes, text => store.receivePayload(cardId, new TextEncoder().encode(text)))
-      const document: ContentDocument = { ...emptyCard(kind, name), id: cardId, modules }
-      assertValid(document)
-      const saved = await store.saveNew(document, 'AI')
-      return { ...savedResult(cardId, saved, undefined, document), created_module_ids: createdModuleIds, created_block_ids: createdBlockIds }
+      const cwd = sessionCwd(exec)
+      const projectRoot = await resolveProjectRoot(cwd, args.project)
+      const store = new CardStore(projectRoot)
+      let createdModuleIds: string[] = []
+      let createdBlockIds: string[] = []
+      const saved = await store.create(name, 'AI', async receive => {
+        const built = await buildBulkModules(nodes, text => receive(new TextEncoder().encode(text)))
+        createdModuleIds = built.createdModuleIds
+        createdBlockIds = built.createdBlockIds
+        const document: ContentDocument = { ...emptyCard(kind, name), modules: built.modules }
+        assertValid(document)
+        return document
+      })
+      await bindManaged(cwd, exec, saved.cardId, projectRoot)
+      return { ...savedResult(saved.cardId, saved, undefined, saved.document), project_root: projectRoot, created_module_ids: createdModuleIds, created_block_ids: createdBlockIds }
     },
   }))
 
@@ -258,20 +300,24 @@ export function registerCardTools(ctx: Context): void {
     },
     output: WRITE_OUTPUT,
     async execute(args, exec) {
+      const cwd = sessionCwd(exec)
       const root = String(args.root_id)
-      const store = storeOf(sessionCwd(exec))
-      const draft = await store.ensureDraft(root, 'AI')
-      if (draft.version !== args.draft_version) throw new DraftConflict(draft.version)
-      const target = locate(draft.document, String(args.target_id))
-      const nodes = parseBulkTree(`[${String(args.module_json)}]`, 'module')
-      const { modules, createdModuleIds, createdBlockIds } = await buildBulkModules(nodes, text => store.receivePayload(root, new TextEncoder().encode(text)))
-      const before = optionalId(args.before_id)
-      const inserted = { ...target, modules: before === null ? [...target.modules, ...modules] : insertBefore(target.modules, modules, before) }
-      const nextDocument = replaceInTree(draft.document, target.id, organizeFolders(inserted))
-      assertValid(nextDocument)
-      const updated = await store.updateDraft(root, draft.version, nextDocument, 'AI')
-      const saved = await store.commit(root, updated.version)
-      return { ...savedResult(root, saved, target.id), created_module_ids: createdModuleIds, created_block_ids: createdBlockIds, ...cardTag(nextDocument, target.id) }
+      const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
+      const store = resolved.store
+      const { saved, nextDocument, target, createdModuleIds, createdBlockIds } = await store.exclusive(root, async () => {
+        const draft = await store.ensureDraft(root, 'AI')
+        const located = locate(draft.document, String(args.target_id))
+        const nodes = parseBulkTree(typeof args.module_json === 'string' ? `[${args.module_json}]` : [args.module_json], 'module')
+        const built = await buildBulkModules(nodes, text => store.receivePayload(root, new TextEncoder().encode(text)))
+        const before = optionalId(args.before_id)
+        const inserted = { ...located, modules: before === null ? [...located.modules, ...built.modules] : insertBefore(located.modules, built.modules, before) }
+        const document = replaceInTree(draft.document, located.id, organizeFolders(inserted))
+        assertValid(document)
+        const updated = await store.updateDraft(root, undefined, document, 'AI')
+        return { saved: await store.commit(root, updated.version), nextDocument: document, target: located, createdModuleIds: built.createdModuleIds, createdBlockIds: built.createdBlockIds }
+      })
+      await bindManaged(cwd, exec, root, resolved.projectRoot)
+      return { ...savedResult(root, saved, target.id), project_root: resolved.projectRoot, created_module_ids: createdModuleIds, created_block_ids: createdBlockIds, ...cardTag(nextDocument, target.id) }
     },
   }))
 
@@ -283,12 +329,14 @@ export function registerCardTools(ctx: Context): void {
       block_id: { type: 'string', description: '已有文字块编号；新建时留空或省略' },
       name: { type: 'string', description: '模块名称（省略=保持现名）' },
       text: { type: 'string', required: true, description: '完整的新文字块正文' },
+      content_ref: { type: 'string', description: '替换已有文字块时可传读取时的正文引用：块在你读取之后被别人改过就拒绝，避免覆盖对方的修改' },
     },
     args => {
       const raw = typeof args.block_id === 'string' ? args.block_id.trim() : ''
       const blockId = raw.length > 0 && !NEW_BLOCK_HINTS.has(raw.toLowerCase()) ? raw : null
       const name = moduleNameOf(args)
-      return { kind: 'write_text', moduleId: String(args.module_id), blockId, moduleName: name ?? '', text: String(args.text) }
+      const expected = typeof args.content_ref === 'string' && args.content_ref.trim().length > 0 ? args.content_ref.trim() : undefined
+      return { kind: 'write_text', moduleId: String(args.module_id), blockId, moduleName: name ?? '', text: String(args.text), ...(expected !== undefined ? { expectedContent: expected } : {}) }
     })
 
   registerEditTool(tools, 'write_module_markdown',
@@ -301,7 +349,7 @@ export function registerCardTools(ctx: Context): void {
     args => ({ kind: 'write_markdown', moduleId: String(args.module_id), name: String(args.name), text: String(args.text) }))
 
   registerEditTool(tools, 'replace_text_range',
-    '局部替换已有文字块并保存，保留范围外的正文。先读取目标文字页，原样使用其 content_ref 与版本。范围按万国码码点计算，左闭右开；插入时 start 等于 end，删除时 text 为空。图片说明不适用。',
+    '局部替换已有文字块并保存，保留范围外的正文。先读取目标文字页，原样使用其 content_ref。范围按万国码码点计算，左闭右开；插入时 start 等于 end，删除时 text 为空。图片说明不适用。',
     {
       module_id: { type: 'string', required: true, description: '模块编号' },
       block_id: { type: 'string', required: true, description: '已有文字块编号' },
@@ -336,8 +384,16 @@ export function registerCardTools(ctx: Context): void {
       name: { type: 'string', required: true, description: '模块名称' },
       parent_id: { type: 'string', description: '父模块编号；空/省略为卡根部' },
       layout: { type: 'string', description: 'VERTICAL（竖向）或 HORIZONTAL（横向），缺省 VERTICAL' },
+      widget: {
+        type: 'string',
+        description: '特殊模块渲染器，缺省为普通文档模块。内置类型（正文块写版本化 JSON，与客户端编辑器同构）：' +
+          'timeline=时间线（{"version":1,"kind":"timeline","nodes":[{"time","title","description"}]}）、' +
+          'map=地图（{"version":1,"kind":"single_image","description":"…"}，另用 adopt_image 给模块加图片块）、' +
+          'collection=合集条目（{"version":1,"kind":"collection","items":[{"id","name","summary","description"}]}，语义名 region/faction/race/quotes 等同用此 kind）；' +
+          'html=自定义小组件（正文块直接写 HTML 源码，沙箱渲染，适合 vibecode 的交互组件）',
+      },
     },
-    args => ({ kind: 'add_module', name: String(args.name), parentId: optionalId(args.parent_id), layout: layoutOf(args.layout) ?? 'VERTICAL' }))
+    args => ({ kind: 'add_module', name: String(args.name), parentId: optionalId(args.parent_id), layout: layoutOf(args.layout) ?? 'VERTICAL', ...(args.widget !== undefined ? { widget: String(args.widget) } : {}) }))
 
   registerEditTool(tools, 'rename_module', '只修改模块名称并保存，不改模块正文。',
     { module_id: { type: 'string', required: true, description: '模块编号' }, name: { type: 'string', required: true, description: '新名称' } },
@@ -457,9 +513,9 @@ export function registerCardTools(ctx: Context): void {
       const extension = String(args.image_path).split('.').pop()?.toLowerCase() ?? ''
       const mediaType = IMAGE_MEDIA[extension]
       if (mediaType === undefined) throw new Error(`不支持的图片类型：${extension}`)
-      return editAndCommit(cwd, String(args.root_id), String(args.target_id), String(args.draft_version), {
+      return editAndCommit(exec, String(args.root_id), String(args.target_id), {
         kind: 'adopt_image', bytes, mediaType, moduleId: optionalId(args.module_id), afterBlockId: optionalId(args.after_id),
-      })
+      }, optionalId(args.project) ?? undefined)
     },
   }))
 
@@ -474,17 +530,19 @@ export function registerCardTools(ctx: Context): void {
 
   tools.register(defineTool({
     name: 'copy_internal_character',
-    description: '从允许读取的独立角色复制至允许管理的世界，模块、图片和扩展完整复制；副本独立。source_id 为来源角色根编号。',
+    description: '从允许读取的独立角色复制至允许管理的世界，模块、图片和扩展完整复制；副本独立。source_id 为来源角色根编号，可来自别的项目。',
     parameters: {
       ...TARGET_PARAMS,
       source_id: { type: 'string', required: true, description: '来源角色卡根编号' },
+      source_project: { type: 'string', description: '来源角色所在项目（省略=自动全项目查找）' },
     },
     output: WRITE_OUTPUT,
     async execute(args, exec) {
-      const store = storeOf(sessionCwd(exec))
-      const source = await mustOpen(store, String(args.source_id))
+      const cwd = sessionCwd(exec)
+      const sessionId = exec.agent?.session?.id as SessionId | undefined
+      const source = (await resolveCard(cwd, sessionId, String(args.source_id), optionalId(args.source_project) ?? undefined)).saved
       if (source.document.kind !== 'CHARACTER') throw new Error('只能复制角色卡')
-      return editAndCommit(sessionCwd(exec), String(args.root_id), String(args.target_id), String(args.draft_version), { kind: 'copy_character', source: source.document })
+      return editAndCommit(exec, String(args.root_id), String(args.target_id), { kind: 'copy_character', source: source.document }, optionalId(args.project) ?? undefined)
     },
   }))
 
@@ -492,21 +550,56 @@ export function registerCardTools(ctx: Context): void {
     { character_id: { type: 'string', required: true, description: '内部角色编号' } },
     args => ({ kind: 'remove_character', characterId: String(args.character_id) }))
 
-  // ---------- 交换 ----------
+  // ---------- 搬家 / 交换 ----------
+  tools.register(defineTool({
+    name: 'move_card',
+    description: '把一张卡整体转移到另一个项目（目录搬家：编号、内容、修订历史、草稿原样随行；挂载引用不失效）。省略 project 时自动在全项目里找这张卡。搬完后它就是目标项目的本地卡。',
+    parameters: {
+      card_id: { type: 'string', required: true, description: '要搬的卡编号' },
+      to_project: { type: 'string', required: true, description: '目标项目：项目名/编号/绝对路径（本会话项目可传 this）' },
+      project: { type: 'string', description: '来源项目（省略=自动查找）' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const cwd = sessionCwd(exec)
+      const sessionId = exec.agent?.session?.id as SessionId | undefined
+      const cardId = String(args.card_id)
+      const rawTarget = String(args.to_project)
+      const resolved = await resolveCard(cwd, sessionId, cardId, optionalId(args.project) ?? undefined)
+      const targetRoot = rawTarget.trim() === 'this' ? cwd : await resolveProjectRoot(cwd, rawTarget)
+      await resolved.store.moveTo(cardId, targetRoot)
+      // 本会话若挂着它的引用 → 搬到本项目就摘引用，搬到别处则跟随新根。
+      if (sessionId !== undefined) {
+        const bindings = new BindingStore(cwd)
+        const current = (await bindings.all())[sessionId]
+        const refs = current?.refs ?? []
+        const entry = refs.find(ref => ref.cardId === cardId)
+        if (current !== undefined && entry !== undefined) {
+          const toLocal = normalizeRoot(targetRoot) === normalizeRoot(cwd)
+          const next = toLocal
+            ? refs.filter(ref => ref.cardId !== cardId)
+            : refs.map(ref => ref.cardId === cardId ? { root: targetRoot, cardId } : ref)
+          await bindings.set(sessionId, { ...current, refs: next })
+        }
+      }
+      return { status: 'moved', card_id: cardId, name: resolved.saved.document.name, from: resolved.projectRoot, to: targetRoot }
+    },
+  }))
+
   tools.register(defineTool({
     name: 'export_card',
     description: '导出一张已保存的卡为交换包（.novex.zip：结构 + 载荷 + SHA-256 清单，完整还原含模块顺序/嵌套/图片/世界内角色）。未提交草稿存在时拒绝导出。',
     parameters: {
       root_id: { type: 'string', required: true, description: '根卡编号' },
       output_path: { type: 'string', description: '输出 zip 相对路径；缺省为 <卡名>.novex.zip' },
+      project: TARGET_PARAMS.project,
     },
     output: { schema: RESULT_SCHEMA, render },
     async execute(args, exec) {
       const cwd = sessionCwd(exec)
-      const store = storeOf(cwd)
-      const saved = await mustOpen(store, String(args.root_id))
-      const output = optionalId(args.output_path) ?? `${saved.document.name}.novex.zip`
-      const result = await exportCard(store, String(args.root_id), `${cwd}/${output}`)
+      const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, String(args.root_id), optionalId(args.project) ?? undefined)
+      const output = optionalId(args.output_path) ?? `${resolved.saved.document.name}.novex.zip`
+      const result = await exportCard(resolved.store, String(args.root_id), `${cwd}/${output}`)
       return { status: 'exported', path: output, entries: result.entries }
     },
   }))
@@ -537,8 +630,10 @@ export function registerCardTools(ctx: Context): void {
     },
     output: WRITE_OUTPUT,
     async execute(args, exec) {
-      const store = storeOf(sessionCwd(exec))
+      const cwd = sessionCwd(exec)
+      const store = storeOf(cwd)
       const saved = await store.commit(String(args.card_id), String(args.draft_version))
+      await bindManaged(cwd, exec, saved.cardId, cwd)
       return savedResult(saved.cardId, saved, undefined, saved.document)
     },
   }))
@@ -553,7 +648,7 @@ function registerEditTool(tools: Tools, name: string, description: string, extra
     parameters: { ...TARGET_PARAMS, ...extra },
     output: WRITE_OUTPUT,
     async execute(args, exec) {
-      return editAndCommit(sessionCwd(exec), String(args.root_id), String(args.target_id), String(args.draft_version), build(args))
+      return editAndCommit(exec, String(args.root_id), String(args.target_id), build(args), optionalId(args.project) ?? undefined)
     },
   }))
 }
@@ -562,28 +657,137 @@ function sessionCwd(exec: { agent?: { session: { header: { cwd?: string } } } })
   return exec.agent?.session.header.cwd ?? process.cwd()
 }
 
+/**
+ * 本会话挂载的卡（回答身份/背景/管理对象/跨项目引用）——绑定表在 .noven/，
+ * list_cards 的本项目清单不覆盖它们，单独列出让模型知道挂载存在。
+ */
+async function mountedRows(cwd: string, sessionId: SessionId | undefined): Promise<Record<string, JsonValue>[]> {
+  if (sessionId === undefined) return []
+  const bindings = new BindingStore(cwd)
+  await bindings.pruneDeadLocalMounts(sessionId)
+  const binding = (await bindings.all())[sessionId]
+  if (binding === undefined) return []
+  const rows: Record<string, JsonValue>[] = []
+  const store = storeOf(cwd)
+  const push = async (id: string, role: string, root?: string): Promise<void> => {
+    const cardStore = root === undefined ? store : new CardStore(root)
+    const head = await cardStore.open(id).catch(() => undefined)
+    const dirName = await cardStore.dirName(id).catch(() => undefined)
+    rows.push({
+      role, id,
+      name: head?.document.name ?? '（卡不存在）',
+      kind: head?.document.kind ?? '?',
+      ...(head === undefined ? { missing: true } : {}),
+      ...(root !== undefined ? { project_root: root, reference: true } : {}),
+      ...(dirName !== undefined ? { card_dir: join(cardsRoot(root ?? cwd), dirName) } : {}),
+    })
+  }
+  if (binding.identityCardId !== undefined) await push(binding.identityCardId, '回答身份')
+  for (const id of binding.backgroundCardIds) await push(id, '背景')
+  if (binding.managed !== undefined) await push(binding.managed.cardId, `管理对象（${binding.managed.permission}）`)
+  for (const ref of binding.refs ?? []) await push(ref.cardId, '引用', ref.root)
+  return rows
+}
+
+/**
+ * 保存成功后登记卡绑定：本项目卡记为管理对象（产出即管理对象，抽屉上半据此
+ * 跟随；同卡保留权限档，换卡默认 free）；别的项目的卡记进引用清单——会话
+ * 动过它就诚实可见。
+ */
+async function bindManaged(cwd: string, exec: { agent?: { session?: { id?: string } } }, cardId: string, cardRoot: string): Promise<void> {
+  const sessionId = exec.agent?.session?.id as SessionId | undefined
+  if (sessionId === undefined) return
+  const bindings = new BindingStore(cwd)
+  try {
+    const current = (await bindings.all())[sessionId] ?? { backgroundCardIds: [] }
+    if (normalizeRoot(cardRoot) !== normalizeRoot(cwd)) {
+      const refs = current.refs ?? []
+      if (!refs.some(ref => ref.cardId === cardId)) {
+        await bindings.set(sessionId, { ...current, refs: [...refs, { root: cardRoot, cardId }] })
+      }
+      return
+    }
+    const permission = current.managed?.cardId === cardId ? current.managed.permission : 'free'
+    await bindings.set(sessionId, { ...current, managed: { cardId, permission } })
+  } catch {
+    // The card commit already succeeded; a failed binding row must not flip the
+    // tool result to error or the model retries and saves a duplicate.
+  }
+}
+
 function storeOf(cwd: string): CardStore {
   return new CardStore(cwd)
 }
 
-/** 编辑 + 提交一条命令；返回 saved 结果。 */
-async function editAndCommit(cwd: string, root: string, target: string, version: string, command: EditorCommand): Promise<Record<string, JsonValue>> {
-  const store = storeOf(cwd)
-  const outcome = await applyEdit(store, root, target, version, command, 'AI')
-  const saved = await store.commit(root, outcome.draft.version)
+/** 会话挂载的引用卡（跨项目）；找到返回其来源项目根。 */
+async function refRootOf(cwd: string, sessionId: SessionId | undefined, cardId: string): Promise<string | undefined> {
+  if (sessionId === undefined) return undefined
+  const binding = (await new BindingStore(cwd).all())[sessionId]
+  return binding?.refs?.find(ref => ref.cardId === cardId)?.root
+}
+
+/**
+ * project 参数 → 项目根：项目名、项目编号、注册路径、或一个真实存在的目录
+ * （未注册的目录也认——注册表是索引不是牢笼）。缺省=本会话项目。
+ */
+async function resolveProjectRoot(cwd: string, raw: unknown): Promise<string> {
+  if (typeof raw !== 'string' || raw.trim().length === 0) return cwd
+  const wanted = raw.trim()
+  const projects = await loadRegistry()
+  const byName = projects.find(candidate => candidate.title === wanted || candidate.id === wanted)
+  if (byName !== undefined) return byName.root
+  const normalized = normalizeRoot(wanted)
+  if (await dirExists(normalized)) return normalized
+  const known = projects.map(candidate => `${candidate.title ?? '?'}(${candidate.root})`).join('、')
+  throw new Error(`项目 "${wanted}" 找不到：注册表没有这个名字/编号，目录也不存在。已注册：${known.length > 0 ? known : '（空）'}（list_projects 核对）`)
+}
+
+/**
+ * 定位一张卡：显式 project → 那个项目；否则本会话项目 → 会话挂载的引用 →
+ * 注册表全项目扫描（卡在别的项目照样找到，读写同一条路）。
+ * 找不到时报可操作的错——分不清"不存在"和"在别的项目"曾让模型绕路 find。
+ */
+async function resolveCard(cwd: string, sessionId: SessionId | undefined, cardId: string, project?: string): Promise<{ store: CardStore, saved: SavedCard, projectRoot: string, via: 'local' | 'ref' | 'registry' }> {
+  const explicit = typeof project === 'string' && project.trim().length > 0 ? await resolveProjectRoot(cwd, project) : undefined
+  const candidates: { store: CardStore, root: string, via: 'local' | 'ref' | 'registry' }[] = []
+  if (explicit !== undefined) candidates.push({ store: new CardStore(explicit), root: explicit, via: 'local' })
+  else candidates.push({ store: storeOf(cwd), root: cwd, via: 'local' })
+  const refRoot = await refRootOf(cwd, sessionId, cardId)
+  if (refRoot !== undefined && !candidates.some(c => normalizeRoot(c.root) === normalizeRoot(refRoot))) {
+    candidates.push({ store: new CardStore(refRoot), root: refRoot, via: 'ref' })
+  }
+  for (const row of await loadRegistry()) {
+    if (candidates.some(c => normalizeRoot(c.root) === normalizeRoot(row.root))) continue
+    candidates.push({ store: new CardStore(row.root), root: row.root, via: 'registry' })
+  }
+  const draftOnly: string[] = []
+  for (const candidate of candidates) {
+    const saved = await candidate.store.open(cardId).catch(() => undefined)
+    if (saved !== undefined) return { store: candidate.store, saved, projectRoot: candidate.root, via: candidate.via }
+    if (await candidate.store.draft(cardId).catch(() => undefined) !== undefined) draftOnly.push(candidate.root)
+  }
+  if (draftOnly.length > 0) throw new Error(`"${cardId}" 是未提交的导入草稿（${draftOnly[0]}）——用户确认后用 commit_import 提交，提交前不可读写`)
+  throw new Error(explicit !== undefined
+    ? `项目 "${String(project)}"（${explicit}）和已注册项目里都没有这张卡：${cardId}（list_projects / list_cards 核对）`
+    : `全部已注册项目和挂载引用里都没有这张卡：${cardId}（list_cards 看本项目，list_projects 看全部项目）`)
+}
+
+/** 编辑 + 提交一条命令；返回 saved 结果。跨项目照常——卡在哪就改哪。 */
+async function editAndCommit(exec: { agent?: { session: { id?: string, header: { cwd?: string } } } }, root: string, target: string, command: EditorCommand, project?: string): Promise<Record<string, JsonValue>> {
+  const cwd = sessionCwd(exec)
+  const sessionId = exec.agent?.session?.id as SessionId | undefined
+  const resolved = await resolveCard(cwd, sessionId, root, project)
+  const { outcome, saved } = await applyAndCommit(resolved.store, root, target, command, 'AI')
+  await bindManaged(cwd, exec, root, resolved.projectRoot)
   return {
     status: 'saved', root_id: root, target_id: target, revision: saved.revision, next_draft_version: saved.version,
+    project_root: resolved.projectRoot,
     created_module_ids: outcome.createdModuleIds, created_block_ids: outcome.createdBlockIds,
     ...cardTag(outcome.draft.document, target),
   }
 }
 
-function emptyCard(kind: 'WORLD' | 'CHARACTER', name: string): ContentDocument {
-  return {
-    id: `card-${randomUUID()}`, kind, name, modules: [], resources: [], internalCharacters: [], extensions: {},
-    appearance: { readingLayout: 'PAGED' },
-  }
-}
+const emptyCard = (kind: 'WORLD' | 'CHARACTER', name: string): ContentDocument => emptyCardDocument(kind, name)
 
 function savedResult(cardId: string, saved: { revision: number, version: string }, targetId?: string, document?: ContentDocument): Record<string, JsonValue> {
   return {

@@ -196,10 +196,15 @@ export function withNodes(
 ): LayoutState {
   const nodes: Record<NodeId, LayoutNode> = {}
   for (const [id, node] of entriesOf(state.nodes)) {
-    if (!(id in updates)) nodes[id] = node
+    if (id in updates) {
+      const update = updates[id]
+      if (update !== null && update !== undefined) nodes[id] = update
+    } else {
+      nodes[id] = node
+    }
   }
   for (const [id, node] of entriesOf(updates)) {
-    if (node !== null) nodes[id] = node
+    if (node !== null && !(id in state.nodes)) nodes[id] = node
   }
   return { ...state, nodes }
 }

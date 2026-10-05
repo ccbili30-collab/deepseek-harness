@@ -58,6 +58,14 @@ function payloadPath(kind: 'image' | 'text' | 'extension', index: number, label:
  * @returns 导出的清单摘要。
  */
 export async function exportCard(store: CardStore, cardId: string, outputPath: string): Promise<{ path: string, entries: number, sha256: Record<string, string> }> {
+  const built = await buildExportPackage(store, cardId)
+  await mkdir(dirname(outputPath), { recursive: true })
+  await writeFile(outputPath, built.bytes)
+  return { path: outputPath, entries: built.entries, sha256: built.sha256 }
+}
+
+/** 打包一张卡的交换包到内存 —— HTTP 导出与写盘导出共用同一份载荷。 */
+export async function buildExportPackage(store: CardStore, cardId: string): Promise<{ bytes: Uint8Array, name: string, entries: number, sha256: Record<string, string> }> {
   if (await store.draft(cardId) !== undefined) throw new Error('卡上有未提交草稿；先提交（commit_import / 保存）再导出')
   const saved = await store.open(cardId)
   if (saved === undefined) throw new Error('卡不存在或已删除')
@@ -89,9 +97,7 @@ export async function exportCard(store: CardStore, cardId: string, outputPath: s
     { name: 'structure.json', data: new TextEncoder().encode(`${JSON.stringify(structure, null, 2)}\n`) },
     ...packageEntries,
   ]
-  await mkdir(dirname(outputPath), { recursive: true })
-  await writeFile(outputPath, writeZip(all))
-  return { path: outputPath, entries: refs.length, sha256: sha256s }
+  return { bytes: writeZip(all), name: saved.document.name, entries: refs.length, sha256: sha256s }
 }
 
 /** 给载荷起人可读名：优先引用它的模块名，兜底卡名。 */
@@ -181,7 +187,7 @@ function parseModulesStrict(raw: unknown, path: string): ContentModule[] {
     if (entry === null || typeof entry !== 'object') throw new Error(`${path}[${String(index)}] 不是对象`)
     const module = entry as Record<string, unknown>
     for (const key of Object.keys(module)) {
-      if (!['id', 'name', 'blocks', 'tags', 'use', 'children', 'layout', 'characterIds', 'characters', 'routing', 'temporality'].includes(key)) {
+      if (!['id', 'name', 'blocks', 'tags', 'use', 'children', 'layout', 'characterIds', 'characters', 'routing', 'temporality', 'widget'].includes(key)) {
         throw new Error(`${path}[${String(index)}].${key} 是未支持字段`)
       }
     }
@@ -193,6 +199,12 @@ function parseModulesStrict(raw: unknown, path: string): ContentModule[] {
     if (routing !== undefined && routing !== 'DEFAULT' && routing !== 'PER_TURN' && routing !== 'STYLE' && routing !== 'STANDBY') throw new Error(`${path}[${String(index)}].routing 无效`)
     const temporality = module.temporality
     if (temporality !== undefined && temporality !== 'CONSTANT' && temporality !== 'SNAPSHOT') throw new Error(`${path}[${String(index)}].temporality 无效`)
+    const widget = module.widget
+    if (widget !== undefined) {
+      if (widget === null || typeof widget !== 'object' || typeof (widget as Record<string, unknown>).type !== 'string') throw new Error(`${path}[${String(index)}].widget 无效`)
+      const wh = (widget as Record<string, unknown>).height
+      if (wh !== undefined && typeof wh !== 'number') throw new Error(`${path}[${String(index)}].widget.height 无效`)
+    }
     const use = parseUseStrict(module.use, `${path}[${String(index)}].use`)
     const tags = Array.isArray(module.tags) ? module.tags : []
     if (tags.some(tag => typeof tag !== 'string' || tag.length === 0)) throw new Error(`${path}[${String(index)}].tags 无效`)
@@ -227,6 +239,7 @@ function parseModulesStrict(raw: unknown, path: string): ContentModule[] {
         : Array.isArray(module.characterIds) ? module.characterIds as string[] : [],
       ...(routing !== undefined ? { routing } : {}),
       ...(temporality !== undefined ? { temporality } : {}),
+      ...(widget !== undefined ? { widget: widget as ContentModule['widget'] & object } : {}),
     }
   })
 }
@@ -282,6 +295,12 @@ export async function importExchange(store: CardStore, bytes: Uint8Array): Promi
   // verify + transfer payloads, remap refs
   const refMap = new Map<string, string>()
   const cardId = mintId()
+  // 先落一个壳草稿把卡目录建出来——载荷要进它的 contents/；随后整卡覆盖。
+  const shell = await store.ensureDraft(cardId, 'IMPORT', {
+    kind: card.kind,
+    name: card.name,
+    document: { ...card, id: cardId, modules: [], resources: [], internalCharacters: [], extensions: {} },
+  })
   for (const ref of refs) {
     const entry = manifest[ref]
     if (entry === undefined) throw new Error(`清单缺少结构引用的载荷：${ref}`)
@@ -293,7 +312,7 @@ export async function importExchange(store: CardStore, bytes: Uint8Array): Promi
     refMap.set(ref, await store.receivePayload(cardId, data))
   }
   const remapped = remapAllIds(card, cardId, refMap)
-  const draft = await store.ensureDraft(cardId, 'IMPORT', { kind: remapped.kind, name: remapped.name, document: remapped })
+  const draft = await store.updateDraft(cardId, shell.version, remapped, 'IMPORT')
   return { cardId, version: draft.version, name: remapped.name, kind: remapped.kind }
 }
 

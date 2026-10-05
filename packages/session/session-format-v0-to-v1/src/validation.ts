@@ -55,8 +55,8 @@ export function assertReleasedSessionFormatHeader(header: SessionFormatHeader, v
   if (typeof record['cwd'] === 'string' && !isAbsolute(record['cwd'])) {
     throw new SessionFormatError(`format v${version} header cwd must be absolute`)
   }
-  if (record['origin'] !== undefined && record['origin'] !== 'subagent') {
-    throw new SessionFormatError(`format v${version} header origin must be "subagent"`)
+  if (record['origin'] !== undefined && record['origin'] !== 'subagent' && record['origin'] !== 'service') {
+    throw new SessionFormatError(`format v${version} header origin must be "subagent" or "service"`)
   }
 }
 

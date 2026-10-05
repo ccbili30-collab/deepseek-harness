@@ -54,8 +54,8 @@ function decodePhysicalHeader(value: unknown): SessionFormatHeader {
       throw new SessionFormatError(`released v2 header ${key} must be a string`)
     }
   }
-  if (record['origin'] !== undefined && record['origin'] !== 'subagent') {
-    throw new SessionFormatError('released v2 header origin must be "subagent"')
+  if (record['origin'] !== undefined && record['origin'] !== 'subagent' && record['origin'] !== 'service') {
+    throw new SessionFormatError('released v2 header origin must be "subagent" or "service"')
   }
   const header = snapshotSessionFormatJson({
     version: 2,

@@ -38,11 +38,15 @@ function decodeEnum<T extends string>(raw: unknown, allowed: readonly T[], what:
  * @param key - 字段名（错误信息用）。
  */
 export function parseBulkTree(raw: unknown, key: string): BulkModuleNode[] {
-  const array: unknown = Array.isArray(raw)
-    ? raw
-    : typeof raw === 'string'
-      ? safeJsonParse(raw)
-      : undefined
+  if (typeof raw === 'string') {
+    const trimmed = raw.trim()
+    try {
+      raw = JSON.parse(trimmed) as unknown
+    } catch (error) {
+      throw new Error(`${key} 不是合法 JSON：${error instanceof Error ? error.message : String(error)}（正确形状：[{"name":"模块名","text":"正文"}]）`)
+    }
+  }
+  const array: unknown = raw
   if (!Array.isArray(array)) {
     throw new Error(`${key} 缺失或不是 JSON 数组（不要整体加引号）。正确形状：\"${key}\":[{\"name\":\"模块名\",\"text\":\"正文\"}]`)
   }
@@ -50,14 +54,6 @@ export function parseBulkTree(raw: unknown, key: string): BulkModuleNode[] {
   const total = nodes.reduce((sum, node) => sum + textLength(node), 0)
   if (total > MAX_TOTAL_TEXT_CHARS) throw new Error(`${key} 正文总量 ${String(total)} 超过上限 ${String(MAX_TOTAL_TEXT_CHARS)}，请拆成多次 add_module_bulk`)
   return nodes
-}
-
-function safeJsonParse(raw: string): unknown {
-  try {
-    return JSON.parse(raw) as unknown
-  } catch {
-    return undefined
-  }
 }
 
 function textLength(node: BulkModuleNode): number {

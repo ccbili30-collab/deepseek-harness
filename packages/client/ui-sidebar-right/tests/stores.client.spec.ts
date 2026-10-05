@@ -103,42 +103,52 @@ describe('createSidebarRightStore — the sequence', () => {
   it.each([false, true])('does not split an empty collapsed pane after close=%s', (afterClose) => {
     const { actions, layout, surface } = harness()
     if (afterClose) {
+      // Opened content lands on the canvas (a float) and expands the column;
+      // closing it leaves the seeded guide docked behind the navigation.
       actions.openContent(SESSION, { kind: 'text', contentId: 'file:a', title: 'a' }, () => {})
-      actions.closeTab(SESSION, Object.values(layout().tabs)[0]!.id)
+      const text = Object.values(layout().tabs).find(tab => tab.kind === 'text')
+      if (text === undefined) throw new Error('expected the opened tab')
+      actions.closeTab(SESSION, text.id)
+      expect(layout().floats).toHaveLength(0)
     }
     const before = surface()
     const settled = vi.fn()
     actions.splitPane(SESSION, undefined, settled)
+    if (afterClose) {
+      // The seeded guide stands docked behind the navigation: the column has
+      // a tab to split, so the gesture lands.
+      expect(settled).toHaveBeenCalledOnce()
+      expect(dockPaneIds(layout())).toHaveLength(2)
+      return
+    }
     expect(surface()).toBe(before)
     expect(settled).not.toHaveBeenCalled()
     expect(layout().expanded).toBe(false)
     expect(Object.keys(layout().tabs)).toHaveLength(0)
   })
 
-  it.each(['guide', 'files'])('opens %s in the requested pane and merges a moved duplicate there', (kind) => {
+  it.each(['guide', 'files'])('opens %s once on the canvas: a second open focuses the same floating tab', (kind) => {
     const { actions, layout } = harness()
     const address = pageAddress(kind)
-    actions.openContent(SESSION, { kind, contentId: address, title: kind }, () => {})
-    const first = Object.values(layout().tabs)[0]!
-    const firstPane = layout().activePaneId
-    actions.splitPane(SESSION)
-    const secondPane = layout().activePaneId
-    const seed = getPane(layout(), secondPane).tabs[0]!
-    actions.openContent(SESSION, { kind: 'text', contentId: 'file:b', title: 'b', replaceTab: seed }, () => {})
     const opened = vi.fn<(tabId: TabId) => void>()
-    actions.openContent(SESSION, { kind, contentId: address, title: kind, paneId: secondPane }, opened)
-    const second = opened.mock.calls[0]![0]
-    expect(second).not.toBe(first.id)
-    expect(getPane(layout(), firstPane).tabs).toEqual([first.id])
-    expect(getPane(layout(), secondPane).activeTabId).toBe(second)
-    expect(layout().activePaneId).toBe(secondPane)
-    const held = vi.fn()
-    actions.openContent(SESSION, { kind, contentId: address, title: kind, paneId: secondPane, revealIfOpened: false }, held)
-    expect(held).toHaveBeenCalledWith(second)
-    actions.dropTab(SESSION, first.id, secondPane, 'center')
-    expect(layout().tabs[first.id]).toBeUndefined()
-    expect(getPane(layout(), secondPane).activeTabId).toBe(second)
-    expect(dockPaneIds(layout())).toEqual([secondPane])
+    actions.openContent(SESSION, { kind, contentId: address, title: kind }, opened)
+    const first = opened.mock.calls[0]![0]
+    // Opened content lives on the canvas: the tab's pane floats.
+    expect(findTabPane(layout(), first).host).toBe('float')
+    expect(layout().floats).toHaveLength(1)
+    // Opening another page stacks a second canvas; reopening the first raises
+    // its float again rather than duplicating the page.
+    actions.openContent(SESSION, { kind: 'text', contentId: 'file:b', title: 'b' }, () => {})
+    expect(layout().floats).toHaveLength(2)
+    actions.openContent(SESSION, { kind, contentId: address, title: kind }, opened)
+    expect(opened).toHaveBeenLastCalledWith(first)
+    // The canvas holds one copy of the page; the docked seed pane is allowed
+    // its own invisible record of the default page's kind.
+    const onCanvas = layout().floats
+      .flatMap(paneId => getPane(layout(), paneId).tabs)
+      .map(tabId => layout().tabs[tabId])
+    expect(onCanvas.filter(tab => tab?.contentId === address)).toHaveLength(1)
+    expect(layout().floats.at(-1)).toBe(findTabPane(layout(), first).id)
   })
 
   it('allows two docked panes and rejects further splits without recording', () => {
@@ -194,6 +204,19 @@ describe('createSidebarRightStore — the sequence', () => {
     expect(Object.values(layout().tabs)).toHaveLength(1)
   })
 
+  it('opens on the canvas beside a collapsed column when the intent says not to expand', () => {
+    const { actions, layout } = harness()
+    // The rail's pick switches the canvas page without unfolding the drawer.
+    actions.openContent(SESSION, { kind: 'text', contentId: 'file:a', title: 'a', expandColumn: false }, () => {})
+    const text = Object.values(layout().tabs).find(tab => tab.kind === 'text')
+    if (text === undefined) throw new Error('expected the opened tab')
+    expect(findTabPane(layout(), text.id).host).toBe('float')
+    expect(layout().expanded).toBe(false)
+    // A later ordinary open still expands the column for its content.
+    actions.openContent(SESSION, { kind: 'text', contentId: 'file:b', title: 'b' }, () => {})
+    expect(layout().expanded).toBe(true)
+  })
+
   it('closes a tab once: a second close of a record already gone records nothing and throws nothing', () => {
     const { actions, layout, entries } = harness()
     actions.openContent(SESSION, { kind: 'text', contentId: 'dsh-resource://file/session/s-test/a.txt', title: 'a' }, () => {})
@@ -237,9 +260,14 @@ describe('createSidebarRightStore — the last docked tab', () => {
   it('closes the last non-guide tab together with the column, leaving it empty until the next expansion seeds', () => {
     const { actions, layout, entries, expand, guide } = harness()
     expand()
+    // Opened content floats onto the canvas; docking it again gives the column
+    // a non-guide tab beside the seeded guide.
     actions.openContent(SESSION, { kind: 'text', contentId: 'dsh-resource://file/session/s-test/a.txt', title: 'a' }, () => {})
     const text = Object.values(layout().tabs).find(tab => tab.kind === 'text')
     if (text === undefined) throw new Error('expected the text tab beside the guide')
+    const float = findTabPane(layout(), text.id)
+    if (float.host !== 'float') throw new Error('expected the opened tab to float')
+    actions.unfloatPane(SESSION, float.id)
     // Two tabs: closing the guide is an ordinary close, and the column stays open.
     actions.closeTab(SESSION, guide())
     expect(layout().expanded).toBe(true)
@@ -274,10 +302,10 @@ describe('createSidebarRightStore — the last docked tab', () => {
   it('closes a floating tab without touching the column: floats do not count as the last docked tab', () => {
     const { actions, layout, guide } = harness()
     actions.setExpanded(SESSION, true)
+    // Opened content already floats: it is the canvas's tab, not the column's.
     actions.openContent(SESSION, { kind: 'text', contentId: 'dsh-resource://file/session/s-test/a.txt', title: 'a' }, () => {})
     const text = Object.values(layout().tabs).find(tab => tab.kind === 'text')
     if (text === undefined) throw new Error('expected the text tab')
-    actions.floatTab(SESSION, text.id, { x: 10, y: 20, width: 300, height: 200 })
     // The guide is now the docked surface's only tab; the floating text tab closes freely.
     actions.closeTab(SESSION, text.id)
     expect(layout().floats).toHaveLength(0)
@@ -379,43 +407,26 @@ describe('createSidebarRightStore — focus', () => {
     actions.openContent(SESSION, { kind: 'text', contentId: 'dsh-resource://file/session/s-test/a.txt', title: 'a' }, () => {})
     const text = Object.values(layout().tabs).find(tab => tab.kind === 'text')
     if (text === undefined) throw new Error('expected the text tab')
-    const home = layout().activePaneId
-    expect(getPane(layout(), home).activeTabId).toBe(text.id)
+    // The opened tab is the canvas: its floating pane is the active one, and
+    // the seeded guide keeps the docked pane.
+    const home = findTabPane(layout(), text.id).id
+    expect(layout().activePaneId).toBe(home)
+    const docked = findTabPane(layout(), guide()).id
+    expect(docked).not.toBe(home)
     const recorded = entries()
     // Already the active tab of the active pane, already the active pane: nothing to record.
     actions.focusTab(SESSION, text.id)
     actions.focusPane(SESSION, home)
     expect(entries()).toBe(recorded)
-    // Another tab of the same pane: recorded.
+    // The docked pane's tab, focused while the canvas is active, is recorded.
     actions.focusTab(SESSION, guide())
-    expect(getPane(layout(), home).activeTabId).toBe(guide())
+    expect(layout().activePaneId).toBe(docked)
     expect(entries()).toBe(recorded + 1)
-    // Two panes: the home pane's active tab, focused while the other pane is active, is recorded.
-    actions.splitPane(SESSION)
-    const other = dockPaneIds(layout()).find(id => id !== home)
-    if (other === undefined) throw new Error('expected a second pane')
-    actions.focusPane(SESSION, other)
-    const split = entries()
-    actions.focusTab(SESSION, guide())
+    // Back to the canvas: focusing the floating pane and its tab each record.
+    actions.focusPane(SESSION, home)
     expect(layout().activePaneId).toBe(home)
-    expect(entries()).toBe(split + 1)
-    // A floating pane: focusing it while it is active records nothing; after
-    // a docked pane took focus, focusing its pane and its tab record again.
-    actions.floatTab(SESSION, text.id)
-    const [float] = layout().floats
-    if (float === undefined) throw new Error('expected a floating pane')
-    expect(layout().activePaneId).toBe(float)
-    const floated = entries()
-    actions.focusPane(SESSION, float)
     actions.focusTab(SESSION, text.id)
-    expect(entries()).toBe(floated)
-    actions.focusPane(SESSION, home)
-    actions.focusPane(SESSION, float)
-    expect(layout().activePaneId).toBe(float)
-    actions.focusPane(SESSION, home)
-    actions.focusTab(SESSION, text.id)
-    expect(layout().activePaneId).toBe(float)
-    expect(entries()).toBe(floated + 4)
+    expect(entries()).toBe(recorded + 2)
   })
 })
 

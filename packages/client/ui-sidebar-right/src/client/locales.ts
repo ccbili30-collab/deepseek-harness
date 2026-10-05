@@ -42,6 +42,9 @@ export const zh = {
   'dock.drop.bottom': '下分栏',
   'tab.guide.title': '开始',
   'tab.unavailable': '这类内容还没有可用的查看方式。',
+  'canvas.collapse': '收起画布',
+  'canvas.back': '后退',
+  'canvas.forward': '前进',
 } satisfies Record<string, string>
 
 /** Right-Sidebar dictionary key union. */
@@ -83,4 +86,7 @@ export const en = {
   'dock.drop.bottom': 'Add bottom split',
   'tab.guide.title': 'Start',
   'tab.unavailable': 'Nothing here can view this kind of content yet.',
+  'canvas.collapse': 'Park the canvas',
+  'canvas.back': 'Back',
+  'canvas.forward': 'Forward',
 } satisfies Record<SidebarRightKey, string>

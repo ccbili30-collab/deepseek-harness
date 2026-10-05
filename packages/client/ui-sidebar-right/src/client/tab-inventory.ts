@@ -2,7 +2,7 @@
 import { createSnapshotStore, type ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { TabId, TabRecord } from '@deepseek-ai/dsh-client-ui-dockkit'
-import { readSidebarLayout, sidebarPersistence } from './persistence.ts'
+import { readSidebarLayoutRecord, sidebarPersistence } from './persistence.ts'
 
 /** One open occurrence; resource recovery belongs to its kind's provider. */
 export interface SidebarRightOpenTab {
@@ -26,9 +26,13 @@ export class SidebarTabInventory {
       const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index))
       for (const key of keys) {
         if (key === null || !key.startsWith(`${sidebarPersistence}.`)) continue
-        const sessionId = key.slice(sidebarPersistence.length + 1) as SessionId
-        const saved = readSidebarLayout(sessionId)
-        if (saved !== undefined) this.sessions.set(sessionId, Object.values(saved.layout.tabs).map(tab => ({
+        const scope = key.slice(sidebarPersistence.length + 1)
+        const saved = readSidebarLayoutRecord(scope)
+        if (saved === undefined) continue
+        // Workspace-scoped records name the Session that wrote them; a bare
+        // session scope attributes to itself.
+        const sessionId = (saved.owner ?? scope) as SessionId
+        this.sessions.set(sessionId, Object.values(saved.surface.layout.tabs).map(tab => ({
           sessionId, tabId: tab.id, kind: tab.kind, contentId: tab.contentId,
         })))
       }

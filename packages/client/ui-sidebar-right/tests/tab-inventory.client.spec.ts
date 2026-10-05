@@ -10,7 +10,7 @@ afterEach(() => { localStorage.clear(); vi.restoreAllMocks() })
 const session = 'inactive-session' as SessionId
 const tab = { id: 'tab2', kind: 'terminal', contentId: 'terminal-page', title: 'Terminal' } as TabRecord
 function save(id: SessionId, tabs: Record<string, unknown>): void {
-  localStorage.setItem(`${sidebarPersistence}.${id}`, JSON.stringify({ bySession: { [id]: { minted: 3, layout: { tabs, expanded: false, mode: 'push', rootId: 'pane1', activePaneId: 'pane1', floats: [], nodes: { pane1: { id: 'pane1', kind: 'pane', host: 'dock', tabs: Object.keys(tabs), activeTabId: Object.keys(tabs)[0] } } } } } }))
+  localStorage.setItem(`${sidebarPersistence}.${id}`, JSON.stringify({ byScope: { [id]: { minted: 3, layout: { tabs, expanded: false, mode: 'push', rootId: 'pane1', activePaneId: 'pane1', floats: [], nodes: { pane1: { id: 'pane1', kind: 'pane', host: 'dock', tabs: Object.keys(tabs), activeTabId: Object.keys(tabs)[0] } } } } } }))
 }
 
 it('inventories collapsed and inactive saved Sessions without creating occurrences or resources', () => {
@@ -29,7 +29,7 @@ it('rejects an invalid layout as a whole without skipping later valid Sessions',
   save('invalid' as SessionId, { [tab.id]: tab, wrongId: tab })
   save(session, { [tab.id]: tab })
   localStorage.setItem(`${sidebarPersistence}.broken-json`, '{')
-  localStorage.setItem(`${sidebarPersistence}.missing-tabs`, '{"bySession":null}')
+  localStorage.setItem(`${sidebarPersistence}.missing-tabs`, '{"byScope":null}')
   const inventory = new SidebarTabInventory()
   expect(inventory.source.getSnapshot()).toHaveLength(1)
   inventory.remove(session)

@@ -36,7 +36,10 @@
     "@deepseek-ai/dsh-api-workspace-files": "^0.1.7-rc.1",
     "@deepseek-ai/dsh-client-connection": "^0.1.7-rc.1",
     "@deepseek-ai/dsh-client-locale": "^0.1.7-rc.1",
+    "@deepseek-ai/dsh-client-ui-chat": "^0.1.7-rc.1",
+    "@deepseek-ai/dsh-client-ui-conversation": "^0.1.7-rc.1",
     "@deepseek-ai/dsh-client-ui-layout": "^0.1.7-rc.1",
+    "@deepseek-ai/dsh-client-ui-primitives": "^0.1.7-rc.1",
     "@deepseek-ai/dsh-client-ui-renderer": "^0.1.7-rc.1",
     "@deepseek-ai/dsh-client-ui-session": "^0.1.7-rc.1",
     "@deepseek-ai/dsh-client-ui-sidebar": "^0.1.7-rc.1",
@@ -45,6 +48,7 @@
     "@deepseek-ai/dsh-session": "^0.1.7-rc.1",
     "@deepseek-ai/dsh-tools": "^0.1.7-rc.1",
     "@deepseek-ai/dsh-typert-protocol": "^0.1.7-rc.1",
+    "@deepseek-ai/dsh-util-workspace-path": "^0.1.7-rc.1",
     "@types/react": "^18.3.12",
     "dsh-better-sidebar": "^0.22.0",
     "react": "^18.3.1",
@@ -59,6 +63,8 @@
       "inject": [
         "dsh-better-sidebar",
         "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-chat",
+        "@deepseek-ai/dsh-client-ui-conversation",
         "@deepseek-ai/dsh-client-ui-layout",
         "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-client-ui-session",
@@ -68,5 +74,8 @@
       "platform": "web"
     },
     "manifestVersion": 1
+  },
+  "dependencies": {
+    "noven-ledger": "workspace:*"
   }
 }

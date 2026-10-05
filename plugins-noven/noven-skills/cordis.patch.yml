@@ -1,0 +1,5 @@
+# noven-skills bundle patch — mount the bundled-skill provider on the host
+# skill registry; preset agents read it through the merged catalog.
+- insert:
+    - id: noven-skills
+      name: 'noven-skills'

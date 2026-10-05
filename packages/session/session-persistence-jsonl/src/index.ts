@@ -1147,7 +1147,7 @@ class JsonlSessionPersistence extends SessionPersistence {
     readonly cwd?: string
     readonly parentSession?: string
     readonly isSeeded: boolean
-    readonly origin?: 'subagent'
+    readonly origin?: 'subagent' | 'service'
     readonly delegationDepth: number
     readonly agentPreset?: string
   }): SessionHeader {

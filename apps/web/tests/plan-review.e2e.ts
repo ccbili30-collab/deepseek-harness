@@ -194,7 +194,7 @@ describe('web e2e: plan review takeover round trip', () => {
       await preview.waitFor({ state: 'visible' })
       expect(answered).toBe(false)
       const saved = await page.evaluate(() => Object.keys(localStorage)
-        .filter(key => key.startsWith('dsh.sidebar-right.v1.')).map(key => localStorage.getItem(key)).join('\n'))
+        .filter(key => key.startsWith('dsh.sidebar-right.v2.')).map(key => localStorage.getItem(key)).join('\n'))
       expect(saved).toContain('dsh-resource://plan-review/')
       expect(saved).not.toContain('Ask before implementation.')
       await card.getByRole('button', { name: 'Approve', exact: true }).click()

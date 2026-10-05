@@ -21,6 +21,8 @@ let originalDarkTheme: string | null
 let originalThemeMetadata: Element[]
 
 beforeEach(() => {
+  // Frame geometry persists in localStorage; each mount must start unsaved.
+  localStorage.clear()
   originalRootStyle = document.documentElement.getAttribute('style')
   originalBodyStyle = document.body.getAttribute('style')
   originalDarkTheme = document.body.getAttribute('data-ds-dark-theme')

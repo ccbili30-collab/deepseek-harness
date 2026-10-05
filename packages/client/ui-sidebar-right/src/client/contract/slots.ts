@@ -50,6 +50,16 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       }
     }
     /**
+     * The product's own navigation above the feature entries: a single
+     * occupant the panel draws first, separated by a hairline. Nothing
+     * renders here by default — the seat exists for a product plugin's
+     * permanent navigation (the workbench's section tree), and collapses
+     * entirely while empty. `rail` reports the drawer's collapsed
+     * presentation: the occupant then draws the icon-only form of the same
+     * zone so the rail keeps both halves of the expanded layout.
+     */
+    'sidebar.right.pane.top': { kind: 'single'; scope: 'session'; owner: { readonly rail: boolean } }
+    /**
      * One tab's body, dispatched with the `id` of the type in force for
      * `tab.kind`. A tab type registers here under its definition's `id` and
      * receives every tab of that kind, in every pane, docked or floating. A kind
@@ -158,6 +168,11 @@ export interface SidebarRightTabActions {
   openTab<K extends string>(kind: K, options?: SidebarRightTabPlacement & { readonly params?: SidebarRightTabParamsFor<K> }): void
   /** Close this tab. */
   close(): void
+  /**
+   * Park the canvas hosting this tab: the float stack stays mounted while the
+   * region frees. The surface's collapse affordance for self-chrome pages.
+   */
+  park(): void
 }
 
 /** Live information shared by a tab's body, title, and guide replacement. */

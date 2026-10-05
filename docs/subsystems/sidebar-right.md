@@ -80,6 +80,7 @@ Two opens are the navigation controller, and every way into the column calls one
 | `paneId` | Land a new tab in this pane; default is the active docked pane (the first docked pane while a floating pane is active). |
 | `replaceTab` | Take this tab's pane and strip slot, closing it in the same step; a floating tab lends no place, so the new tab lands as if unplaced. |
 | `revealIfOpened` | Default `true`: a tab already showing the same `(kind, address)` is focused and handed `params`. `false` opens another tab regardless. |
+| `expandColumn` | Default `true`: the column expands for opened content. `false` lands the page on the canvas beside the still-collapsed column — the icon rail's picks use it. |
 | `preferNewPane` | Prefer a new docked pane under the normal pane budget and room rule; fall back to the target pane when it cannot split. Ignored with `replaceTab`. |
 | `kind` (`openResource` only) | Name the opening type instead of ranking claims; its implementation in force opens the address, and its `canOpen` still applies. |
 | `params` | Navigation parameters for the body, delivered as `navigation.params`. `openResource` types them by resource type through the merge-extensible `SidebarRightResourceParamsMap` (the text preview declares `{ line?: number }`); `openTab<K>` types them by kind through `SidebarRightTabParamsMap`, `undefined` for a kind that declares none; a body reads `SidebarRightNavigationParams`, the union of both. Values are JSON-shaped by convention and not validated at run time. |
@@ -94,10 +95,11 @@ Placement is the caller's option, never a type's property. The conversation call
 
 ## Slots and owner props
 
-The Sidebar declares four extension slots; its document tab declares the additional keyed document body below ([hierarchy](slots.md)).
+The Sidebar declares five extension slots; its document tab declares the additional keyed document body below ([hierarchy](slots.md)).
 
 | Slot | Cardinality | Purpose |
 |---|---|---|
+| `sidebar.right.pane.top` | single, Session scope | The column's upper zone above the feature list — product-level navigation such as the shipped workbench's own. The same seat also renders inside the collapsed icon rail with owner `rail: true` (the expanded zone receives `rail: false`), so the occupant draws the zone's icon form there. |
 | `sidebar.right.pane.tab` | keyed by the definition's `id`, Session scope | One tab's body. The seat dispatches a tab to the `id` of its kind's implementation in force, so the registrant receives every tab of its kind, docked or floating. A kind whose implementation registered no body renders the owner's "nothing can view this" notice. |
 | `sidebar.right.pane.tab.title` | keyed by the definition's `id`, Session scope | The chip's title, with the same owner share as the body. Optional: without an entry the chip shows the `title(address)` text captured at open time; a type with a live title reads its own store here. |
 | `sidebar.right.tab.guide` | chain, Session scope | Replaces the guide tab's contents without replacing the tab; the first non-declining entry takes the body, otherwise the shipped guide renders. |

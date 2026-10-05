@@ -10,16 +10,20 @@
  * The right column is a track, not a box: its occupant draws its panel anchored
  * to the frame's right edge at the resolved normal width, and the
  * track only decides whether the centre makes room for it. The occupant reports
- * shown/track/fullscreen through `ctx.layout`; fullscreen keeps the reported
- * track but hides the outer resize handle. Everything arrives through the framework
+ * shown/track/fullscreen/canvas through `ctx.layout`; fullscreen keeps the
+ * reported track but hides the outer resize handle, and a claimed canvas widens
+ * the column into a flexible region the occupant fills beside its panel.
+ * Everything arrives through the framework
  * shares — zero cordis or framework imports, zero self-made hooks.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type {
   PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
-import { CENTER_MIN, clampWidth, computeColumns, RIGHTBAR_DEFAULT_RATIO, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns.ts'
+import { CANVAS_MIN, CENTER_MIN, clampWidth, computeColumns, RIGHTBAR_DEFAULT, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, RIGHTBAR_RAIL, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns.ts'
+import { unitSide } from './arrangement.ts'
+import { useRegionSort } from './region-sort.ts'
 import { DocumentTitle } from './DocumentTitle.tsx'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
@@ -32,8 +36,10 @@ export type AppFrameProps =
   & PropsLocale<'common'>
 
 /** Center column grid item (session-body building block). */
-function CenterColumn(props: { children?: ReactNode }) {
-  return <div className={css.centerCol}>{props.children}</div>
+function CenterColumn(props: { order: number; children?: ReactNode }) {
+  // data-region-grip: blank presses inside the conversation column arm the
+  // frame's long-press sort (region-sort.ts skips interactive elements).
+  return <div className={css.centerCol} data-center-col data-region-grip="conv" style={{ order: props.order }}>{props.children}</div>
 }
 
 /** Subscribe to the main key without subscribing the column frame to each panel id. */
@@ -43,19 +49,23 @@ function MainPanel({ usePanelInfo, renderSlot }: Pick<PropsRuntime<'root'>, 'use
 }
 
 /**
- * Right column grid item. Zero-width unless the occupant asked for a track; the
- * occupant's panel is positioned against the column's right edge, which never
- * moves, so it can hang over the centre when there is no track.
+ * Right column grid item. Zero-width unless the occupant asked for a track;
+ * a claimed canvas instead turns it into the flexible region that holds the
+ * canvas page beside the panel. The occupant's panel is positioned against the
+ * column's right edge, which never moves, so it can hang over the centre when
+ * there is no track.
  */
-function RightbarColumn(props: { children?: ReactNode }) {
-  return <div className={css.rightbarCol} data-rightbar-col>{props.children}</div>
+function RightbarColumn(props: { order: number; children?: ReactNode }) {
+  // data-region-grip: blank presses on the column's own surface arm the
+  // frame's long-press sort (the canvas/drawer grips sit closer and win).
+  return <div className={css.rightbarCol} data-rightbar-col data-region-grip="unit" style={{ order: props.order }}>{props.children}</div>
 }
 
 /**
  * One drag handle: pointer capture, rAF-throttled dx reports against the drag-start origin.
  * `side` keys the hover-reveal CSS to the owning column.
  */
-function DragHandle(props: { side: 'sidebar' | 'rightbar'; left: number; onStart: () => void; onDrag: (dx: number) => void; onEnd: () => void }) {
+function DragHandle(props: { side: 'sidebar' | 'rightbar' | 'unit'; left: number; onStart: () => void; onDrag: (dx: number) => void; onEnd: () => void }) {
   const [dragging, setDragging] = useState(false)
   const origin = useRef(0)
   const latest = useRef(0)
@@ -128,7 +138,14 @@ export function AppFrame({
 }: AppFrameProps) {
   const layoutInfo = useStore(state => state.layoutInfo)
   const frameRef = useRef<HTMLDivElement | null>(null)
+  // A global panel occupying the main seat has no swappable sibling: the
+  // conv/unit sort only exists while the conversation faces the unit.
+  const panelActive = usePanelInfo(info => info.activePanelId !== null)
+  useRegionSort(frameRef, !panelActive)
   const viewport = layoutInfo.viewportWidth
+  // Which side of the centre the panel+canvas unit stands on (arrangement.ts).
+  useSyncExternalStore(listener => unitSide.subscribe(listener), () => unitSide.getSnapshot())
+  const unitLeft = unitSide.get() === 'left'
 
   // Track the frame's own box (not the window): rAF-throttled ResizeObserver.
   useLayoutEffect(() => {
@@ -162,7 +179,15 @@ export function AppFrame({
   const sidebarPreference = sidebarCollapsed
     ? 0
     : layoutInfo.sidebar === 0 ? SIDEBAR_DEFAULT : layoutInfo.sidebar
-  const rightbarPreference = layoutInfo.rightbar ?? viewport * RIGHTBAR_DEFAULT_RATIO
+  // A below-floor drag parks the panel at zero width: the occupant reads the
+  // zero through canShow and collapses to its rail, which then reports back.
+  const rightbarPreference = layoutInfo.rightbarCollapsed ? 0 : (layoutInfo.rightbar ?? RIGHTBAR_DEFAULT)
+  // Which side of the panel a canvas page claims, or null while none is up.
+  const canvas = layoutInfo.rightbarCanvas
+  // The panel's anchored edge inside the unit column: opposite the canvas when
+  // one is claimed; facing away from the conversation (its own outer edge)
+  // while it fills the column alone.
+  const anchorLeft = canvas === null ? unitLeft : canvas === 'right'
   // Desktop reopen controls occupy the frame's shell.leading seat (macOS) or
   // the Windows caption row; neither platform keeps an icon rail.
   const darwin = document.documentElement.dataset.platform === 'darwin'
@@ -170,8 +195,15 @@ export function AppFrame({
     || document.documentElement.hasAttribute('data-windows-titlebar') ? 0 : SIDEBAR_COLLAPSED
   // Opening on a narrow frame collapses the left sidebar. Eligibility must
   // include that space before the occupant's first shown report arrives.
+  const rail = layoutInfo.rightbarRail
   const normal = computeColumns(viewport, !layoutInfo.rightbarShown && narrow ? 0 : sidebarPreference, rightbarPreference, collapsedWidth)
   const cols = computeColumns(viewport, sidebarPreference, layoutInfo.rightbarTrack ? rightbarPreference : 0, collapsedWidth)
+  // The rail presentation occupies the icon width instead of the solved or
+  // saved preference; it always fits, so it bypasses the drag clamps.
+  if (rail) {
+    normal.rightbar = Math.min(RIGHTBAR_RAIL, Math.max(0, viewport - normal.sidebar - CENTER_MIN))
+    if (layoutInfo.rightbarTrack) cols.rightbar = normal.rightbar
+  }
   const colsRef = useRef(cols)
   colsRef.current = cols
   const rightbarWidth = useRef(normal.rightbar)
@@ -194,7 +226,7 @@ export function AppFrame({
   // chase the live window edge. The counter restarts the settle window when a
   // re-toggle interrupts a running transition.
   const [animating, setAnimating] = useState(0)
-  const trackToggle = `${sidebarCollapsed}:${layoutInfo.rightbarTrack}`
+  const trackToggle = `${sidebarCollapsed}:${layoutInfo.rightbarTrack}:${canvas !== null}:${rail}`
   const previousToggle = useRef(trackToggle)
   const previousViewport = useRef(viewport)
   useLayoutEffect(() => {
@@ -222,14 +254,17 @@ export function AppFrame({
     }
   }, [animating])
   const onDragEnd = useCallback(() => { setDragging(false) }, [])
+  // The rightbar release settles the collapse preview: an armed drag folds the
+  // panel to its rail here, an unarmed one just ends.
+  const onRightbarEnd = useCallback(() => { actions.settleRightbar(); setDragging(false) }, [actions])
   const onSidebarStart = useCallback(() => { sidebarBase.current = colsRef.current.sidebar; setDragging(true) }, [])
   const onSidebarDrag = useCallback((dx: number) => {
     actions.setSidebar(sidebarBase.current + dx)
   }, [actions])
   const onRightbarStart = useCallback(() => { rightbarBase.current = rightbarWidth.current; setDragging(true) }, [])
   const onRightbarDrag = useCallback((dx: number) => {
-    actions.setRightbar(rightbarBase.current - dx)
-  }, [actions])
+    actions.setRightbar(rightbarBase.current + (anchorLeft ? dx : -dx))
+  }, [actions, anchorLeft])
   const productTitle = process.env.DSH_CLIENT_TITLE ?? t('brand.localBuild')
   // The rendered template lets the grid solve the squeeze natively: the centre
   // declares its protected minimum and the right column bids up to the clamped
@@ -238,7 +273,44 @@ export function AppFrame({
   // it priced the squeeze itself, the centre column absorbed each width change
   // whole and was corrected two frames later — visible jitter. cols keeps only
   // the discrete decisions (track present, collapse state) and the drag base.
-  const rightbarMax = cols.rightbar === 0 ? 0 : clampWidth(rightbarPreference, RIGHTBAR_MIN, viewport * RIGHTBAR_MAX_RATIO)
+  const rightbarMax = cols.rightbar === 0
+    ? 0
+    : rail ? cols.rightbar : clampWidth(rightbarPreference, RIGHTBAR_MIN, viewport * RIGHTBAR_MAX_RATIO)
+  // A claimed canvas widens the right column into the region that holds both
+  // the canvas page and the panel: the center settles at the share it would
+  // keep beside the rail, and the column takes the rest of the frame. Both
+  // templates keep an identical minmax track structure — the canvas swaps only
+  // the third track's max bound — so grid-template-columns interpolates on the
+  // open/close transition instead of freezing at its start value.
+  const centerCap = Math.max(CENTER_MIN, Math.max(440, SIDEBAR_COLLAPSED + viewport * 0.3) - cols.sidebar)
+  // A claimed canvas widens the right column into the region that holds both
+  // the canvas page and the panel. Its conversation-facing edge is the unit
+  // seam: draggable between the conversation's protected share and a floor of
+  // the drawn panel plus a usable canvas.
+  const unitCeiling = Math.max(0, viewport - cols.sidebar - CENTER_MIN)
+  const unitFloor = Math.min(normal.rightbar + CANVAS_MIN, unitCeiling)
+  const rightTrackMax = canvas === null
+    ? rightbarMax
+    : Math.min(unitCeiling, Math.max(unitFloor, layoutInfo.unit ?? (viewport - cols.sidebar - centerCap)))
+  // The handles sit on the moving edges: the panel's free edge inside the
+  // column, and the column's own conversation-facing edge while a canvas is up.
+  const unitW = canvas === null ? cols.rightbar : rightTrackMax
+  // The handles anchor to the solved centre width, not centerCap: a stored
+  // unit width makes the drawn unit column narrower than the default share,
+  // and placing grips off the nominal cap detaches them from the real seams.
+  const convW = viewport - cols.sidebar - unitW
+  const unitColLeft = unitLeft ? cols.sidebar : cols.sidebar + convW
+  const rightbarHandleLeft = anchorLeft
+    ? unitColLeft + normal.rightbar
+    : unitColLeft + unitW - normal.rightbar
+  const unitHandleLeft = unitLeft ? unitColLeft + unitW : unitColLeft
+  const unitWRef = useRef(unitW)
+  unitWRef.current = unitW
+  const unitBase = useRef(0)
+  const onUnitStart = useCallback(() => { unitBase.current = unitWRef.current; setDragging(true) }, [])
+  const onUnitDrag = useCallback((dx: number) => {
+    actions.setUnit(unitBase.current + (unitLeft ? dx : -dx))
+  }, [actions, unitLeft])
   const sidebar = useMemo(() => renderSlot('sidebar', {
     collapsed: sidebarCollapsed,
     width: cols.sidebar,
@@ -262,11 +334,13 @@ export function AppFrame({
       style={{
         ...(document.documentElement.hasAttribute('data-windows-titlebar')
           ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
-        gridTemplateColumns:
-          `${cols.sidebar}px minmax(${cols.rightbar === 0 ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightbarMax}px)`,
+        gridTemplateColumns: unitLeft
+          ? `${cols.sidebar}px minmax(0px, ${rightTrackMax}px) minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr)`
+          : `${cols.sidebar}px minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightTrackMax}px)`,
       }}
+      data-unit-side={unitLeft ? 'left' : 'right'}
       data-sidebar-collapsed={sidebarCollapsed || undefined}
-      data-rightbar-collapsed={cols.rightbar === 0 || undefined}
+      data-rightbar-collapsed={(cols.rightbar === 0 && canvas === null) || undefined}
       data-rightbar-fullscreen={layoutInfo.rightbarFullscreen || undefined}
       data-rightbar-instant={layoutInfo.rightbarInstant || undefined}
       data-dragging={dragging || undefined}
@@ -281,9 +355,9 @@ export function AppFrame({
         {sidebar}
       </div>
       <>
-        <CenterColumn>{main}</CenterColumn>
-        <RightbarColumn>
-          {renderSlot('rightbar', { width: normal.rightbar, viewportWidth: viewport, canShow: normal.rightbar > 0 })}
+        <CenterColumn order={unitLeft ? 2 : 1}>{main}</CenterColumn>
+        <RightbarColumn order={unitLeft ? 1 : 2}>
+          {renderSlot('rightbar', { width: normal.rightbar, viewportWidth: viewport, canShow: normal.rightbar > 0, collapsePreview: layoutInfo.rightbarCollapsePreview })}
         </RightbarColumn>
       </>
       <div className={css.overlayLayer} data-shell-overlay>
@@ -296,8 +370,15 @@ export function AppFrame({
       )}
       {/* The collapsed rail is fixed-width: no resize handle while closed. */}
       {!sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
-      {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && normal.rightbar > 0 && (
-        <DragHandle side="rightbar" left={viewport - normal.rightbar} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onDragEnd} />
+      {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && !rail && normal.rightbar > 0
+        && (canvas === null || layoutInfo.rightbarTrack) && (
+        <DragHandle side="rightbar" left={rightbarHandleLeft} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onRightbarEnd} />
+      )}
+      {/* The unit seam exists only while a canvas claims the column: it moves
+          the whole region against the conversation, the panel's own handle
+          keeps dividing canvas from panel inside it. */}
+      {canvas !== null && layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && (
+        <DragHandle side="unit" left={unitHandleLeft} onStart={onUnitStart} onDrag={onUnitDrag} onEnd={onDragEnd} />
       )}
     </div>
   )

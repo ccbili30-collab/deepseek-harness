@@ -137,7 +137,7 @@ async function ensureExpanded(page: Page, column: Locator): Promise<void> {
 async function resetSidebar(page: Page): Promise<Locator> {
   await page.evaluate(() => {
     for (const key of Object.keys(localStorage)) {
-      if (key.startsWith('dsh.sidebar-right.v1.')) localStorage.removeItem(key)
+      if (key.startsWith('dsh.sidebar-right.v2.')) localStorage.removeItem(key)
     }
   })
   await page.reload({ waitUntil: 'load' })

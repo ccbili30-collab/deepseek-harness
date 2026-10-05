@@ -137,6 +137,11 @@ export interface RightbarOwnerProps {
    * Before a narrow opening, includes the space from collapsing the left sidebar.
    */
   canShow: boolean
+  /**
+   * A width drag is held below the floor: the occupant draws its collapse
+   * preview until release settles the fold.
+   */
+  collapsePreview: boolean
 }
 
 /** Required services (cordis fiber inject — the loader passes all module exports as an object plugin). */

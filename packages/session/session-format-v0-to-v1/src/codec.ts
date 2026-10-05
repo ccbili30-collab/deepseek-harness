@@ -168,8 +168,8 @@ function decodePhysicalHeader(
       throw new SessionFormatError(`released v${version} header ${key} must be a string`)
     }
   }
-  if (record['origin'] !== undefined && record['origin'] !== 'subagent') {
-    throw new SessionFormatError(`released v${version} header origin must be "subagent"`)
+  if (record['origin'] !== undefined && record['origin'] !== 'subagent' && record['origin'] !== 'service') {
+    throw new SessionFormatError(`released v${version} header origin must be "subagent" or "service"`)
   }
   const header = {
     version,

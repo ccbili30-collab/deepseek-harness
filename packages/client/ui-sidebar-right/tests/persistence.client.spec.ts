@@ -28,9 +28,19 @@ it('restores current layout independently by Session with a fresh undo history',
   const first = handle.create(sessionId)
   let file!: TabId
   first.actions.openContent(sessionId, { kind: 'text', contentId: 'file:a', title: 'a' }, (id) => { file = id })
+  // An empty docked root cannot split: opened content floats, so dock `a`
+  // back before splitting.
+  const aPane = Object.values(first.getSnapshot().bySession[sessionId]!.layout.nodes)
+    .find((node): node is Extract<typeof node, { kind: 'pane' }> => node.kind === 'pane' && node.tabs.includes(file))!
+  first.actions.unfloatPane(sessionId, aPane.id)
   first.actions.splitPane(sessionId)
   let floating!: TabId
   first.actions.openContent(sessionId, { kind: 'text', contentId: 'file:b', title: 'b' }, (id) => { floating = id })
+  // Opened content already floats; dock it back so the explicit float below
+  // exercises the gesture with its own rectangle.
+  const bPane = Object.values(first.getSnapshot().bySession[sessionId]!.layout.nodes)
+    .find((node): node is Extract<typeof node, { kind: 'pane' }> => node.kind === 'pane' && node.tabs.includes(floating))!
+  first.actions.unfloatPane(sessionId, bPane.id)
   first.actions.floatTab(sessionId, floating, { x: 20, y: 30, width: 480, height: 320 })
   const layout = first.getSnapshot().bySession[sessionId]!.layout
   const split = Object.values(layout.nodes).find(node => node.kind === 'split')!
@@ -41,9 +51,14 @@ it('restores current layout independently by Session with a fresh undo history',
   second.actions.open('second')
   const saved = first.getSnapshot()
   const restored = createSidebarRightStore(seed).create(sessionId)
-  const recovered = { bySession: { [sessionId]: { ...saved.bySession[sessionId], history: { entries: [], cursor: 0 } } } }
+  const recovered = { bySession: {
+    [sessionId]: { ...saved.bySession[sessionId], canvasParked: true, history: { entries: [], cursor: 0 } },
+  } }
   expect(restored.getSnapshot()).toEqual(recovered)
-  expect(createSidebarRightStore(seed).create('second').getSnapshot()).toEqual(second.getSnapshot())
+  const secondAgain = { bySession: {
+    second: { ...second.getSnapshot().bySession.second!, canvasParked: true, history: { entries: [], cursor: 0 } },
+  } }
+  expect(createSidebarRightStore(seed).create('second').getSnapshot()).toEqual(secondAgain)
   expect(createSidebarRightStore(seed).create('new').getSnapshot()).toEqual({ bySession: {} })
   restored.actions.undo(sessionId)
   restored.actions.redo(sessionId)
@@ -52,7 +67,7 @@ it('restores current layout independently by Session with a fresh undo history',
   expect(createSidebarRightStore(seed).create(sessionId).getSnapshot().bySession[sessionId]!.layout.expanded).toBe(false)
   restored.clearPersisted()
   expect(createSidebarRightStore(seed).create(sessionId).getSnapshot()).toEqual({ bySession: {} })
-  expect(createSidebarRightStore(seed).create('second').getSnapshot()).toEqual(second.getSnapshot())
+  expect(createSidebarRightStore(seed).create('second').getSnapshot()).toEqual(secondAgain)
 })
 
 it('pins restored records during adoption before the first render or store mutation', async () => {
@@ -83,7 +98,7 @@ it('pins restored records during adoption before the first render or store mutat
 
 it('starts from an empty layout when stored JSON is corrupt and keeps working when storage rejects writes', () => {
   const values = storage()
-  values.set(`dsh.sidebar-right.v1.${sessionId}`, '{broken')
+  values.set(`dsh.sidebar-right.v2.${sessionId}`, '{broken')
   vi.spyOn(console, 'error').mockImplementation(() => {})
   const instance = createSidebarRightStore(seed).create(sessionId)
   expect(instance.getSnapshot()).toEqual({ bySession: {} })

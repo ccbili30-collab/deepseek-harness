@@ -11,6 +11,7 @@ function fakePanels(): PanelActions {
     toggleSidebar: vi.fn(),
     setViewportWidth: vi.fn(),
     setRightbar: vi.fn(),
+    setUnit: vi.fn(),
     openRightbar: vi.fn(),
     closeRightbar: vi.fn(),
   }
@@ -21,14 +22,14 @@ describe('LayoutController', () => {
     const panels = fakePanels()
     const service = new LayoutController(panels, () => true, createSnapshotStore({ activePanelId: null }))
 
-    service.openRightbar(true, false)
-    service.openRightbar(true, true)
-    service.openRightbar(false, true)
+    service.openRightbar(true, false, null, false)
+    service.openRightbar(true, true, null, false)
+    service.openRightbar(false, true, null, false)
     service.closeRightbar()
 
-    expect(panels.openRightbar).toHaveBeenNthCalledWith(1, true, false)
-    expect(panels.openRightbar).toHaveBeenNthCalledWith(2, true, true)
-    expect(panels.openRightbar).toHaveBeenNthCalledWith(3, false, true)
+    expect(panels.openRightbar).toHaveBeenNthCalledWith(1, true, false, null, false)
+    expect(panels.openRightbar).toHaveBeenNthCalledWith(2, true, true, null, false)
+    expect(panels.openRightbar).toHaveBeenNthCalledWith(3, false, true, null, false)
     expect(panels.closeRightbar).toHaveBeenCalledTimes(1)
     // The drag width stays the frame's own business, never the caller's.
     expect(panels.setRightbar).not.toHaveBeenCalled()

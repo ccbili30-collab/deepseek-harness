@@ -13,7 +13,7 @@ import { ImageStage } from './ImageStage.tsx'
 import type { ImageStageTranslate } from './ImageStage.tsx'
 import { buildWorkbenchExhibition, walkExhibition } from './exhibition.ts'
 import type { ExhibitionEntry } from './exhibition.ts'
-import { pinnedFirst } from './api.ts'
+import { joinRel, pinnedFirst } from './api.ts'
 import type { WorkbenchApi, WorkbenchRecordView } from './api.ts'
 import { workbenchSelection } from './selection.ts'
 
@@ -36,7 +36,7 @@ export interface CreationStageProps {
  */
 export function CreationStage(props: CreationStageProps) {
   const { t, api, sessionId, cwd } = props
-  const selectedId = useSyncExternalStore(workbenchSelection.subscribe, workbenchSelection.get)
+  const selectedId = useSyncExternalStore(workbenchSelection.subscribe, () => workbenchSelection.get(sessionId))
   const [records, setRecords] = useState<readonly WorkbenchRecordView[]>([])
   const [staged, setStaged] = useState<string | null>(null)
   const [entries, setEntries] = useState<readonly ExhibitionEntry[] | undefined>(undefined)
@@ -62,7 +62,7 @@ export function CreationStage(props: CreationStageProps) {
     setWalkFailed(false)
     void walkExhibition(api, sessionId, record.folder, signal).then(walked => {
       if (signal.aborted) return
-      setEntries(walked)
+      setEntries(walked.entries)
     }, () => {
       if (!signal.aborted) setWalkFailed(true)
     })
@@ -157,7 +157,7 @@ export function CreationStage(props: CreationStageProps) {
           {orderedImages.length > 0 && (
             <section><h2>{t('stage.images')}</h2><div className="noven-wb-exhibition-cards">
               {orderedImages.map(rel => {
-                const homeMark = record.home !== undefined && rel === `${record.folder}/${record.home}`
+                const homeMark = record.home !== undefined && rel === joinRel(record.folder, record.home)
                 return (
                   <button key={rel} type="button" title={documentOf(rel)?.name ?? rel} onClick={() => { setStaged(rel) }}>
                     <img src={mediaUrlOf(rel)} alt={rel} loading="lazy" />

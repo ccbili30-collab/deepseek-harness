@@ -3,14 +3,14 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write packages/client/ui-sidebar-right/README.md
 /:
-  en: 0960aa113255a3a8
-  zh: 48e5173172a55a91
+  en: 891b2eeef76bbab7
+  zh: 3a4315f6d57a2860
 /deepseek-ai-dsh-client-ui-sidebar-right:
   en: 0b446bc3fbd57fad
   zh: e0b6491a6c43bee1
 /deepseek-ai-dsh-client-ui-sidebar-right/summary:
-  en: 8aafe5400014fdac
-  zh: b2d7d0e8dc4f1291
+  en: 98aa9c6dad57fae9
+  zh: 695dd3f25ffa2e0b
 /deepseek-ai-dsh-client-ui-sidebar-right/table-of-contents:
   en: ff17f27d8c5557d1
   zh: 6efe4b3d4902a441
@@ -18,26 +18,26 @@
   en: 3b007cc4d2d89c60
   zh: 74d9795c6392ad74
 /deepseek-ai-dsh-client-ui-sidebar-right/presentations:
-  en: 6d7f145ecb1fd140
-  zh: 666d142ef249f6cb
+  en: e79f29bd51546a8a
+  zh: 8af08273e08226f4
 /deepseek-ai-dsh-client-ui-sidebar-right/the-expand-button:
-  en: 28b0bc3d4050b0e0
-  zh: 733b44ad9309f49a
+  en: 0e4c8f70696c0d95
+  zh: 242f56e139845d21
 /deepseek-ai-dsh-client-ui-sidebar-right/state:
-  en: 2b15cdf5f1383291
-  zh: 57018036d77363ba
+  en: 86d89d7b948e9659
+  zh: 9de96ef6df9682aa
 /deepseek-ai-dsh-client-ui-sidebar-right/extension-seats:
-  en: ef2af36136c4a919
-  zh: 48d992e2c923a130
+  en: a52d7c9da7143e58
+  zh: 2357b6a15cc7e306
 /deepseek-ai-dsh-client-ui-sidebar-right/ctx-sidebarright:
-  en: 8cffef22360aa177
-  zh: a09eef5bb7fdbd61
+  en: 84c4ded1bee3d320
+  zh: 335f1d47b9f74ec8
 /deepseek-ai-dsh-client-ui-sidebar-right/the-tab-domain:
   en: 717b86e05b44ebdd
   zh: 0f4f694d0ea1d7f8
 /deepseek-ai-dsh-client-ui-sidebar-right/the-guide:
-  en: 601f9f6635babc4d
-  zh: e345004fe30a65b9
+  en: fab91063e9d27218
+  zh: 2237fa3514dcd1d2
 /deepseek-ai-dsh-client-ui-sidebar-right/copy:
   en: 4315a1c03ca5fef3
   zh: c09a09f1d9b99107

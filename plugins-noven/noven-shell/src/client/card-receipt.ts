@@ -50,7 +50,7 @@ export interface CardReceiptOwner {
 }
 
 /** Narrow the durable meta payload; older sessions may lack card fields. */
-function savedMeta(value: unknown): SavedCardMeta | undefined {
+export function savedMeta(value: unknown): SavedCardMeta | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const meta = value as SavedCardMeta
   return meta.status === 'saved' ? meta : undefined

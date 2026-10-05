@@ -1,0 +1,27 @@
+{
+  "name": "noven-ledger",
+  "version": "0.1.0",
+  "description": "Noven app-side bookkeeping: ~/.noven registry, ledger dirs, and the project marker — pure fs, no cordis.",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
+  }
+}

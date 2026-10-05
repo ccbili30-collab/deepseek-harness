@@ -30,6 +30,8 @@ export interface ImageStageProps {
   readonly api: WorkbenchApi
   /** Exit back to the gallery; absent in the editor-pane viewer, which has no gallery behind it. */
   readonly onClose?: () => void
+  /** The mode the stage boots into; the work-mode canvas's annotate action drives it. */
+  readonly initialMode?: 'view' | 'annotate' | 'pick'
 }
 
 /** Smallest drag that counts as a new box rather than a stray click, in fractions. */
@@ -47,7 +49,7 @@ function mintAnnotationId(): string {
  */
 export function ImageStage(props: ImageStageProps) {
   const { t } = props
-  const [mode, setMode] = useState<'view' | 'annotate' | 'pick'>('view')
+  const [mode, setMode] = useState<'view' | 'annotate' | 'pick'>(props.initialMode ?? 'view')
   const [annotations, setAnnotations] = useState<readonly AnnotationRecord[] | undefined>(undefined)
   const [loadFailed, setLoadFailed] = useState(false)
   const [draft, setDraft] = useState<DraftBox | null>(null)

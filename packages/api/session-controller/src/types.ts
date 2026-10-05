@@ -182,7 +182,7 @@ export interface SessionSummary {
   readonly running: boolean
   readonly blank: boolean
   readonly parentSessionId?: SessionId
-  readonly origin?: 'subagent'
+  readonly origin?: 'subagent' | 'service'
   readonly cwd?: string
   readonly projections?: SessionProjectionHints
 }
@@ -287,6 +287,13 @@ export interface SessionCreateRequest {
   readonly cwd?: string
   readonly sessionId?: SessionId
   readonly agentPreset?: string
+  /**
+   * `service` marks a product-internal session a feature owns: it stays out of
+   * ordinary session navigation while keeping durable transcript and Agent
+   * capabilities. Only consulted at creation; adoption of an existing Session
+   * keeps its stored origin.
+   */
+  readonly origin?: 'service'
 }
 
 /** Session creation response value. */
@@ -437,7 +444,7 @@ export interface SessionWireHeader {
   readonly parentSession?: SessionId
   /** Whether the Session contains a fork-inherited prefix. */
   readonly isSeeded: boolean
-  readonly origin?: 'subagent'
+  readonly origin?: 'subagent' | 'service'
   readonly delegationDepth?: number
   readonly agentPreset?: string
 }

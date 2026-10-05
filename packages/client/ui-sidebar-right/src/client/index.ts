@@ -34,7 +34,6 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from './contract/slots.ts'
 import { GuideBody, type GuideInjected } from './tabs/guide/GuideBody.tsx'
 import { GuideTitle } from './tabs/guide/GuideTitle.tsx'
-import { ExpandButton } from './shell/ExpandButton.tsx'
 import { RightbarSeat, type SidebarRightInjected } from './shell/SidebarRight.tsx'
 import { RightbarRoot, type RightbarRootInjected } from './shell/RightbarRoot.tsx'
 import { SidebarSessionViews } from './session-views.ts'
@@ -47,10 +46,11 @@ import { guideTabInfoFactory, tabInfoFactory } from './tab-info.ts'
 import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import { defaultSeed } from './contract/seed.ts'
 
+export { canvasSide } from './shell/canvas.ts'
+export type { CanvasSide } from './shell/canvas.ts'
 export type { SidebarRightTarget } from './focus.ts'
 export type { RightbarSeatProps, SidebarRightInjected, SidebarRightPresentation } from './shell/SidebarRight.tsx'
 export type { GuideBodyProps, GuideInjected } from './tabs/guide/GuideBody.tsx'
-export type { ExpandButtonProps } from './shell/ExpandButton.tsx'
 export type { SidebarRightState, SurfaceState } from './stores.ts'
 export type {
   ISidebarRight, SidebarRightBinding, SidebarRightOpenResourceOptions, SidebarRightOpenTabOptions,
@@ -77,6 +77,19 @@ export type { SidebarRightOpenTab } from './tab-inventory.ts'
 
 /** This package's copy namespace. */
 const NS = 'sidebarRight'
+
+/**
+ * The persisted workbench belongs to the workspace, not the Session: sibling
+ * Sessions in one directory share one saved layout, while Sessions without a
+ * cwd fall back to their own scope.
+ * @param sessions - session list face.
+ * @param sessionId - the Session a store is being minted for.
+ * @returns the localStorage scope key.
+ */
+function persistScope(sessions: ClientContext['sessions'], sessionId: SessionId): string {
+  const cwd = sessions.list.getSnapshot().byId[sessionId]?.cwd
+  return cwd === undefined || cwd === '' ? sessionId : `ws:${cwd}`
+}
 
 /** Required browser services: the slot registry, the frame's panel actions, copy, and the resource model. */
 export const inject = ['slots', 'layout', 'locale', 'resources', 'sessions', 'uiSession', 'shortcuts']
@@ -138,7 +151,7 @@ export function apply(ctx: ClientContext): void {
   if (typeof document !== 'undefined') ctx.effect(() => observeSidebarFocus(document), 'ui-sidebar-right: focus')
 
   ctx.effect(() => {
-    const handle = createSidebarRightStore(() => defaultSeed(tabs))
+    const handle = createSidebarRightStore(() => defaultSeed(tabs), key => persistScope(ctx.sessions, key as SessionId))
     // Each Session Context generation owns one Store. Background tab actions
     // use the latest adoption for that Session.
     const adoptions = new Map<SessionId, () => void>()
@@ -159,13 +172,14 @@ export function apply(ctx: ClientContext): void {
     }
     const layout: ILayout = ctx.layout
     const injected: Omit<SidebarRightInjected, 'keyedHooks' | 'occurrence' | 'closeTab'> = {
-      syncPresentation({ shown, track, fullscreen }) {
-        if (shown) layout.openRightbar(track, fullscreen)
+      syncPresentation({ shown, track, fullscreen, canvas, rail }) {
+        if (shown || canvas !== null) layout.openRightbar(track, fullscreen, canvas, rail)
         else layout.closeRightbar()
       },
       bindService: binding => controller.bind(binding),
       splitPane: (paneId) => { controller.split(paneId) },
       toggleFullscreen: () => { const target = controller.commandTarget(); if (target !== undefined) controller.toggleFullscreen(target) },
+      toggleSidebar: () => { ctx.layout.toggleSidebar() },
       openTab: (kind, options) => { controller.openTab(kind, options) },
       hooks: {
         shortcuts: ctx.shortcuts.catalog,
@@ -187,6 +201,7 @@ export function apply(ctx: ClientContext): void {
         name: 'rightbar.session',
         locale: NS,
         children: {
+          'sidebar.right.pane.top': { kind: 'single', scope: 'session' },
           'sidebar.right.pane.tab': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: tabInfoFactory } } },
           'sidebar.right.pane.tab.title': { kind: 'keyed', scope: 'session', inject: { hooks: { tabInfo: tabInfoFactory } } },
           'sidebar.right.tab.menu.item': { kind: 'list', scope: 'session' },
@@ -203,16 +218,8 @@ export function apply(ctx: ClientContext): void {
         }),
       }, RightbarSeat)
     })
-    // The expand button shares the panel's store: it only needs to know whether
-    // the panel is expanded, and to ask for it to be. The header's corner seat
-    // is its own place, past the utilities, so showing and hiding it moves
-    // nothing else in the row.
-    const disposeExpand = ctx.slots.inject('conversation.session.header.corner', () => ctx.slots.register({
-      name: 'conversation.session.header.corner',
-      locale: NS,
-      store,
-      inject: () => ({ hooks: { shortcuts: ctx.shortcuts.catalog } }),
-    }, ExpandButton))
+    // The collapsed panel draws its own rail with an expand affordance at its
+    // head, so the conversation header's corner seat is no longer occupied.
     // Stage two for the guide: it declares the chain child it hosts and reads
     // the registry's entry boxes, which an ordinary type has no reason to do.
     const guideInjected: GuideInjected = {
@@ -241,7 +248,6 @@ export function apply(ctx: ClientContext): void {
     return () => {
       disposeGuideTitle()
       disposeGuide()
-      disposeExpand()
       disposeSeat()
       for (const dispose of disposeTypes.reverse()) dispose()
       for (const release of adoptions.values()) release()

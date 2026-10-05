@@ -8,6 +8,8 @@ import { SidebarTabInventory } from '../src/client/tab-inventory.ts'
 const session = 'session'
 const key = `${sidebarPersistence}.${session}`
 const empty = createSurface()
+// A restored surface always starts parked — the canvas never claims the column at mount.
+const restored = { ...empty, canvasParked: true }
 const tab = { id: 'tab2', kind: 'terminal', contentId: 'sidebar://terminal/unique', title: 'Terminal' }
 const pane = { id: 'pane1', kind: 'pane', host: 'dock', tabs: ['tab2'], activeTabId: 'tab2' }
 const layout = { ...empty.layout, nodes: { pane1: pane }, tabs: { tab2: tab } }
@@ -52,21 +54,21 @@ it.each([
   ['float without rectangle', { minted: 3, layout: { ...empty.layout, tabs: { tab2: tab }, floats: ['float3'], nodes: { ...empty.layout.nodes, float3: { ...pane, id: 'float3', host: 'float' } } } }],
   ['empty floating pane', { minted: 3, layout: { ...empty.layout, floats: ['float3'], nodes: { ...empty.layout.nodes, float3: { ...otherPane, id: 'float3', host: 'float', rect: { x: 0, y: 0, width: 100, height: 100 } } } } }],
 ] as const)('discards %s without affecting another Session', (_name, invalid) => {
-  localStorage.setItem(key, JSON.stringify({ bySession: { [session]: invalid } }))
-  writeSidebarLayout('other', empty)
+  localStorage.setItem(key, JSON.stringify({ byScope: { [session]: invalid } }))
+  writeSidebarLayout('other', empty, 'other')
   expect(createSidebarRightStore(() => ({ kind: 'guide', title: 'Start' })).create(session).getSnapshot()).toEqual({ bySession: {} })
   expect(localStorage.getItem(key)).toBeNull()
-  expect(readSidebarLayout('other')).toEqual(empty)
+  expect(readSidebarLayout('other')).toEqual(restored)
   expect(new SidebarTabInventory().source.getSnapshot()).toEqual([])
 })
 
 it('discards structurally invalid JSON envelopes and keeps an empty saved Session usable', () => {
-  for (const raw of ['null', '{"bySession":null}', '{"bySession":[]}']) {
+  for (const raw of ['null', '{"byScope":null}', '{"byScope":[]}']) {
     localStorage.setItem(key, raw)
     expect(readSidebarLayout(session)).toBeUndefined()
     expect(localStorage.getItem(key)).toBeNull()
   }
-  localStorage.setItem(key, '{"bySession":{}}')
+  localStorage.setItem(key, '{"byScope":{}}')
   expect(readSidebarLayout(session)).toBeUndefined()
 })
 
@@ -100,7 +102,7 @@ it('contains inaccessible storage and failed removal while keeping memory state 
   expect(readSidebarLayout(session)).toBeUndefined()
   vi.stubGlobal('localStorage', undefined)
   expect(readSidebarLayout(session)).toBeUndefined()
-  expect(() => { writeSidebarLayout(session, empty); clearSidebarLayout(session) }).not.toThrow()
+  expect(() => { writeSidebarLayout(session, empty, session); clearSidebarLayout(session) }).not.toThrow()
 })
 
 it('does not persist a scope until the live store has a surface for it', () => {

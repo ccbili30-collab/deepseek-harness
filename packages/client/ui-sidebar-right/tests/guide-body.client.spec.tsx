@@ -68,7 +68,7 @@ function mountGuide(entries: readonly SidebarRightGuideBox[], custom?: (key: str
     useTabInfo: () => ({ sidebar: { expanded: true, fullscreen: false }, panel: { id: 'pane-guide' as PaneId },
       tab: { ...TAB, visible: true, signal: new AbortController().signal,
         navigation: { address: TAB.contentId, params: undefined, revision: 0 },
-        actions: { bindCommands: vi.fn(() => vi.fn()), openResource: vi.fn(), openTab, close: vi.fn() } } }),
+        actions: { bindCommands: vi.fn(() => vi.fn()), openResource: vi.fn(), openTab, close: vi.fn(), park: vi.fn() } } }),
     useGuideEntries: bindSnapshotSelector(guideEntries),
     renderSlotChain: renderSlot,
     renderSlot: vi.fn((_slot: string, _owner: unknown, options?: RenderOpts) =>

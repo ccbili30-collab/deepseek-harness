@@ -44,7 +44,25 @@ export interface SurfaceState {
   readonly history: History
   /** How many ids this surface has minted; carried so replay stays reproducible. */
   readonly minted: number
+  /**
+   * The float the canvas presents. The floats array is already the visit
+   * history — opens and focuses raise to the top — so a view cursor walks it
+   * without reordering: pages above the cursor stay mounted as forward
+   * entries. `undefined` presents the stack top.
+   */
+  readonly floatView: PaneId | undefined
+  /** Whether the canvas stands parked: its floats kept alive but its region released to the conversation. */
+  readonly canvasParked: boolean
+  /**
+   * The drawer's zone order: which of the product navigation (`top`) and the
+   * feature entries (`features`) stands first. Zone sort flips it; persisted
+   * with the surface.
+   */
+  readonly zoneOrder: readonly SidebarRightZone[]
 }
+
+/** A named navigation zone the drawer's upper column orders. */
+export type SidebarRightZone = 'top' | 'features'
 
 /**
  * Every session's surface, keyed by session id.
@@ -64,11 +82,13 @@ type SurfacePlan = (state: LayoutState, mint: Mint, makeTab: (id: TabId) => TabR
  * Decide whether an explicit close may remove a tab.
  * @param surface - current surface.
  * @param tabId - tab requested for closing.
- * @returns false for a missing tab or the guide standing as the only docked tab.
+ * @returns false for a missing tab or the guide standing as the surface's only
+ * tab; while the canvas holds floats the docked guide is invisible and closes.
  */
 export function canCloseTab(surface: SurfaceState, tabId: TabId): boolean {
   const tab = surface.layout.tabs[tabId]
-  return tab !== undefined && !(tab.kind === GUIDE_KIND && soleDockedTab(surface.layout, tabId))
+  return tab !== undefined
+    && !(tab.kind === GUIDE_KIND && soleDockedTab(surface.layout, tabId) && surface.layout.floats.length === 0)
 }
 
 /** Build the currently selected default tab. */
@@ -93,6 +113,8 @@ export interface OpenContentIntent {
   readonly replaceTab?: TabId
   /** Resource tabs reveal an existing identity by default; `false` permits duplicates. Pages always deduplicate within the target pane. */
   readonly revealIfOpened?: boolean
+  /** `false` opens on the canvas beside a collapsed column instead of expanding it first. */
+  readonly expandColumn?: boolean
 }
 
 /** A mint that counts, so the surface can carry its position forward. */
@@ -120,12 +142,32 @@ export function createSurface(): SurfaceState {
     layout: createInitialState({ next: counter.mint }),
     history: EMPTY_HISTORY,
     minted: counter.used(),
+    floatView: undefined,
+    canvasParked: false,
+    zoneOrder: ['top', 'features'],
   }
 }
 
 /** The tab showing `kind`'s page in a pane, if any. */
 function panePage(state: LayoutState, paneId: PaneId, kind: string): TabId | undefined {
   return findPaneContentTab(state, paneId, pageAddress(kind), kind)
+}
+
+/**
+ * The surface's copy of a page: the canvas's float wins over a docked seed —
+ * the docked column renders no bodies, so a seed standing there must never
+ * outrank the tab the user is looking at.
+ * @param state - current layout.
+ * @param contentId - the page's recorded address.
+ * @param kind - the page's kind.
+ * @returns the floating copy first, else the docked one.
+ */
+function surfacePage(state: LayoutState, contentId: string, kind: string): TabId | undefined {
+  for (const paneId of state.floats) {
+    const found = findPaneContentTab(state, paneId, contentId, kind)
+    if (found !== undefined) return found
+  }
+  return findContentTab(state, contentId, kind)
 }
 
 /**
@@ -196,9 +238,27 @@ function advance(surface: SurfaceState, plan: SurfacePlan, seed: () => SidebarRi
   // seed factory is withheld while the intent leaves the column collapsed:
   // an empty collapsed column stays empty until the expansion that shows it.
   const after = replay(surface.layout, planned)
-  const settled = planSettle(after, counter.mint, after.expanded ? makeTab : undefined)
+  // The canvas's floats hold the visible content, so while any stand the
+  // emptied docked root may stay empty; the seed returns only when the last
+  // float closes and the column would otherwise present nothing.
+  const settled = planSettle(after, counter.mint, after.expanded && after.floats.length === 0 ? makeTab : undefined)
   const stepped = record(surface.history, surface.layout, [...planned, ...settled])
-  return { layout: stepped.state, history: stepped.history, minted: counter.used() }
+  // The stack top itself is the freshest history entry: when it changes the
+  // view follows it (a new open, a raised reveal, a closed top), which also
+  // lifts a park. A mid-stack close keeps both the cursor and the park.
+  const floats = stepped.state.floats
+  const topChanged = floats[floats.length - 1] !== surface.layout.floats[surface.layout.floats.length - 1]
+  const floatView = topChanged || surface.floatView === undefined || !floats.includes(surface.floatView)
+    ? undefined
+    : surface.floatView
+  return {
+    layout: stepped.state,
+    history: stepped.history,
+    minted: counter.used(),
+    floatView,
+    canvasParked: topChanged ? false : surface.canvasParked,
+    zoneOrder: surface.zoneOrder,
+  }
 }
 
 /**
@@ -222,6 +282,12 @@ type SidebarRightActions = {
   open: (draft: SidebarRightState, sessionId: string) => void
   setExpanded: (draft: SidebarRightState, sessionId: string, expanded: boolean) => void
   toggleExpanded: (draft: SidebarRightState, sessionId: string) => void
+  /** Move the canvas's presented float to the named pane, or the stack top when undefined. */
+  setCanvasView: (draft: SidebarRightState, sessionId: string, paneId: PaneId | undefined) => void
+  /** Park or release the canvas: its floats stay mounted while the region frees. */
+  setCanvasParked: (draft: SidebarRightState, sessionId: string, parked: boolean) => void
+  /** Swap the drawer's zone order — the commit step of the zone-sort gesture. */
+  swapZones: (draft: SidebarRightState, sessionId: string) => void
   setMode: (draft: SidebarRightState, sessionId: string, mode: DockMode) => void
   splitPane: (draft: SidebarRightState, sessionId: string, paneId?: PaneId, settled?: (paneId: PaneId) => void) => void
   openContent: (
@@ -262,10 +328,13 @@ function stepped(surface: SurfaceState, step: HistoryStepper): SurfaceState {
  * expansion of an empty column needs one, which can be long after the store was
  * built and in a language the user has since changed to.
  * @param seed - the registered default page, read at each mint.
+ * @param persistScope - maps a session's memory key to its persisted scope;
+ *   sessions sharing a scope share one saved workbench. Defaults to identity.
  * @returns the handle (spec, type, identity, and factory in one).
  */
 export function createSidebarRightStore(
   seed: () => SidebarRightSeed,
+  persistScope: (scopeKey: string) => string = key => key,
 ): EngineStoreHandle<SidebarRightState, SidebarRightActions> {
   const handle = defineStore<SidebarRightState, SidebarRightActions>({
     init: (): SidebarRightState => ({ bySession: {} }),
@@ -278,6 +347,18 @@ export function createSidebarRightStore(
       },
       toggleExpanded: (d, sessionId: string) => {
         d.bySession = seat(d, sessionId, s => advance(s, state => planSetExpanded(state, !state.expanded), seed))
+      },
+      // View cursor and park are not layout ops — back/forward are their own
+      // undo — so they settle without a history entry.
+      setCanvasView: (d, sessionId: string, paneId: PaneId | undefined) => {
+        d.bySession = seat(d, sessionId, s =>
+          s.floatView === paneId || (paneId !== undefined && !s.layout.floats.includes(paneId)) ? s : { ...s, floatView: paneId })
+      },
+      setCanvasParked: (d, sessionId: string, parked: boolean) => {
+        d.bySession = seat(d, sessionId, s => (s.canvasParked === parked ? s : { ...s, canvasParked: parked }))
+      },
+      swapZones: (d, sessionId: string) => {
+        d.bySession = seat(d, sessionId, s => ({ ...s, zoneOrder: [...s.zoneOrder].reverse() }))
       },
       // Switching presentation is recorded like any other change, so stepping
       // back through the sequence puts the surface back the way it was drawn.
@@ -306,50 +387,71 @@ export function createSidebarRightStore(
       // closing the tab it replaces. `settled` reports the tab the planner
       // landed on, synchronously, because actions return nothing.
       openContent: (d, sessionId: string, intent, settled) => {
-        d.bySession = seat(d, sessionId, s => advance(s, (state, mint) => {
-          const { kind, contentId, title, replaceTab: replace } = intent
-          const ops: LayoutOp[] = [...planSetExpanded(state, true)]
-          // A replaced tab lends its pane and slot; one that floats cannot (a
-          // floating pane holds one tab), so the new tab lands as if unplaced.
-          const replaced = replace === undefined ? undefined : findTabPane(state, replace)
-          const lent = replace !== undefined && replaced !== undefined && replaced.host === 'dock' ? replaced : undefined
-          const paneId = lent?.id ?? intent.paneId
-          const index = lent === undefined || replace === undefined ? undefined : lent.tabs.indexOf(replace)
-          // A page is unique per pane, not per surface: the pane it would land
-          // in may already show it, which is then the tab this open settles on.
-          // The same page in another pane never draws the open away — the kit's
-          // cross-pane reveal is for resources only.
-          const page = contentId === pageAddress(kind)
-          const held = page ? panePage(state, paneId ?? activeDockPaneId(state), kind) : undefined
-          const revealed = page
-            ? held
-            : intent.revealIfOpened === false ? undefined : findContentTab(state, contentId, kind)
-          let openedInNewPane: TabId | undefined
-          const split = intent.preferNewPane === true && replace === undefined && revealed === undefined
-            ? planSplitPane(state, mint, paneId, (id) => {
-              openedInNewPane = id
-              return { id, kind, contentId, title }
-            })
-            : []
-          const planned = revealed !== undefined
-            ? { ops: [{ type: 'focusTab' as const, tabId: revealed }], tabId: revealed }
-            : openedInNewPane !== undefined
-              ? { ops: split, tabId: openedInNewPane }
-              : planOpenContent(state, mint, {
-                kind,
-                contentId,
-                title,
-                ...paneId === undefined ? {} : { paneId },
-                ...index === undefined ? {} : { index },
-                ...page
-                  ? { revealIfOpened: false }
-                  : intent.revealIfOpened === undefined ? {} : { revealIfOpened: intent.revealIfOpened },
+        d.bySession = seat(d, sessionId, (s) => {
+          // An open is always an ask to see the canvas: even a no-op reveal
+          // (the page already at the stack top) lifts the park.
+          const next = advance(s, (state, mint) => {
+            const { kind, contentId, title, replaceTab: replace } = intent
+            // A rail pick (`expandColumn: false`) leaves the column collapsed:
+            // the opened page floats to the canvas beside it. Everything else
+            // expands the column, because an open behind a collapsed panel is
+            // not an open.
+            const ops: LayoutOp[] = intent.expandColumn === false ? [] : [...planSetExpanded(state, true)]
+            // Dedupe and placement read the state the expansion leaves: an
+            // opening of the default page on a fresh surface must see the seed
+            // that expansion mints, or it opens a duplicate beside it.
+            const base = replay(state, ops)
+            // A replaced tab lends its pane and slot; one that floats cannot (a
+            // floating pane holds one tab), so the new tab lands as if unplaced.
+            const replaced = replace === undefined ? undefined : findTabPane(base, replace)
+            const lent = replace !== undefined && replaced !== undefined && replaced.host === 'dock' ? replaced : undefined
+            const paneId = lent?.id ?? intent.paneId
+            const index = lent === undefined || replace === undefined ? undefined : lent.tabs.indexOf(replace)
+            // A page is unique across the surface: the canvas is a single
+            // current view, so a second open of a page settles on the tab that
+            // already shows it — docked in the seed pane or floating on the
+            // canvas — rather than stacking a duplicate. The kit's cross-pane
+            // reveal is for resources only.
+            const page = contentId === pageAddress(kind)
+            const held = page ? surfacePage(base, contentId, kind) : undefined
+            const revealed = page
+              ? held
+              : intent.revealIfOpened === false ? undefined : findContentTab(base, contentId, kind)
+            let openedInNewPane: TabId | undefined
+            const split = intent.preferNewPane === true && replace === undefined && revealed === undefined
+              ? planSplitPane(base, mint, paneId, (id) => {
+                openedInNewPane = id
+                return { id, kind, contentId, title }
               })
-          ops.push(...planned.ops)
-          if (replace !== undefined && replace !== planned.tabId) ops.push({ type: 'closeTab', tabId: replace })
-          settled(planned.tabId)
-          return ops
-        }, seed))
+              : []
+            const planned = revealed !== undefined
+              ? { ops: [{ type: 'focusTab' as const, tabId: revealed }], tabId: revealed }
+              : openedInNewPane !== undefined
+                ? { ops: split, tabId: openedInNewPane }
+                : planOpenContent(base, mint, {
+                  kind,
+                  contentId,
+                  title,
+                  ...paneId === undefined ? {} : { paneId },
+                  ...index === undefined ? {} : { index },
+                  ...page
+                    ? { revealIfOpened: false }
+                    : intent.revealIfOpened === undefined ? {} : { revealIfOpened: intent.revealIfOpened },
+                })
+            ops.push(...planned.ops)
+            if (replace !== undefined && replace !== planned.tabId) ops.push({ type: 'closeTab', tabId: replace })
+            // Opened content lives on the canvas, which renders the floating
+            // pane stack; the docked column hosts only navigation. A revealed
+            // docked record (a restored layout) floats the same way.
+            const mid = replay(base, planned.ops)
+            if (findTabPane(mid, planned.tabId).host === 'dock') {
+              ops.push(...planFloatTab(mid, mint, planned.tabId).ops)
+            }
+            settled(planned.tabId)
+            return ops
+          }, seed)
+          return next.canvasParked ? { ...next, canvasParked: false } : next
+        })
       },
       // A page is never copied: the copy would sit beside it in the same pane.
       duplicateTab: (d, sessionId: string, tabId: TabId) => {
@@ -427,12 +529,15 @@ export function createSidebarRightStore(
   return { ...handle, create(scopeKey) {
     const instance = handle.create(scopeKey)
     if (scopeKey === undefined) return instance
-    const saved = readSidebarLayout(scopeKey)
+    // The surface lives under the session's memory key; the persisted record may
+    // carry a wider scope (a workspace) so sibling sessions share one workbench.
+    const scope = persistScope(scopeKey)
+    const saved = readSidebarLayout(scope)
     if (saved !== undefined) instance.store.set({ bySession: { [scopeKey]: saved } })
     instance.subscribe(() => {
       const surface = instance.getSnapshot().bySession[scopeKey]
-      if (surface !== undefined) writeSidebarLayout(scopeKey, surface)
+      if (surface !== undefined) writeSidebarLayout(scope, surface, scopeKey)
     })
-    return { ...instance, clearPersisted: () => { clearSidebarLayout(scopeKey) } }
+    return { ...instance, clearPersisted: () => { clearSidebarLayout(scope) } }
   } }
 }

@@ -31,6 +31,12 @@ export type ModuleRouting = 'DEFAULT' | 'PER_TURN' | 'STYLE' | 'STANDBY'
 /** 时间性：不变事实（压缩后可重注入）/ 开局快照（永不重注入）。 */
 export type ModuleTemporality = 'CONSTANT' | 'SNAPSHOT'
 
+/** 特殊模块的呈现载体：type 决定渲染器（'html' 走沙箱 iframe），height 为呈现高度。 */
+export interface ModuleWidget {
+  type: string
+  height?: number
+}
+
 export interface ContentModule {
   id: string
   name: string
@@ -43,6 +49,8 @@ export interface ContentModule {
   characterIds: string[]
   routing?: ModuleRouting
   temporality?: ModuleTemporality
+  /** 特殊模块：正文块承载小组件源码/数据而非文档。 */
+  widget?: ModuleWidget
 }
 
 export interface CardResource { id: string, content: ContentRef, mediaType: string }
@@ -69,6 +77,14 @@ export interface ContentDocument {
 
 export function mintId(): string {
   return randomUUID()
+}
+
+/** 一张空卡（新建世界/角色的起点文档）。 */
+export function emptyCardDocument(kind: CardKind, name: string): ContentDocument {
+  return {
+    id: `card-${randomUUID()}`, kind, name, modules: [], resources: [], internalCharacters: [], extensions: {},
+    appearance: { readingLayout: 'PAGED' },
+  }
 }
 
 /** 展平模块树（前序）。 */

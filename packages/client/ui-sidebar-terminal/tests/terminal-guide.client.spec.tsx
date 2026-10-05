@@ -46,7 +46,7 @@ function mount(description: string | undefined = en.description, shortcut?: Guid
       tab: { id: 'tab-guide' as TabId, kind: 'guide', contentId: 'sidebar://guide', title: 'Start',
         visible: true, signal: new AbortController().signal,
         navigation: { address: 'sidebar://guide', params: undefined, revision: 0 },
-        actions: { openTab, bindCommands: vi.fn(() => vi.fn()), openResource: vi.fn(), close: vi.fn() } } }),
+        actions: { openTab, bindCommands: vi.fn(() => vi.fn()), openResource: vi.fn(), close: vi.fn(), park: vi.fn() } } }),
     loadShells, selectShell,
   }
   const view = render(<TerminalGuide {...props} />)

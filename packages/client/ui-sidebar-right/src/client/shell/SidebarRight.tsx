@@ -12,22 +12,24 @@
  * the panel. A fullscreen opening reserves its underlying track only after
  * the panel covers the frame, without animating those hidden columns.
  *
- * The panel has no header of its own: its two controls — presentation switch
- * and collapse — ride the docking kit's chrome seat at the end of the top-right
- * pane's tab strip, so the strip is the panel's whole top edge. The way back in
- * while collapsed is not here either: it is one button in the conversation
- * header (`ExpandButton.tsx`), because it exists only while this panel is
- * hidden. Floating panels remain in the same content tree; untransformed
- * ancestors let their fixed-position frames cross the column and conversation.
+ * The panel is navigation, not content: the upper zone is the product's own
+ * navigation seat (`sidebar.right.pane.top`), the lower zone lists every
+ * registered feature entry. Its two controls — presentation switch and
+ * collapse — ride the panel's top row. Collapsed stands an icon rail at the
+ * drawer's anchored edge whose head button expands it again, so no other
+ * surface carries a way back in.
  *
- * Tab bodies do not live here. Each one is a registration under its type's kind,
- * dispatched through the keyed `sidebar.right.pane.tab` seat (and a live chip
- * title through `sidebar.right.pane.tab.title`), so a new tab type needs no edit
- * to this file. What a body receives beyond the record — navigation, lifetime
- * signal, actions — is read through the slot-owned useTabInfo hook. The Tab
- * domain follows each session's store commits, including sessions off screen.
+ * Content lives on the canvas, the floating pane stack drawn beside this
+ * panel inside the right column's track — a real layout region the
+ * conversation yields to, never an overlay. Tab bodies do not live here. Each
+ * one is a registration under its type's kind, dispatched through the keyed
+ * `sidebar.right.pane.tab` seat (and a live chip title through
+ * `sidebar.right.pane.tab.title`), so a new tab type needs no edit to this
+ * file. What a body receives beyond the record — navigation, lifetime signal,
+ * actions — is read through the slot-owned useTabInfo hook. The Tab domain
+ * follows each session's store commits, including sessions off screen.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
 import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/client'
 import { IconPanelLeftOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -35,19 +37,22 @@ import type {
   HostObservable, InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import type {} from '../contract/slots.ts'
-import type { DockIntents, DockMode, FloatRect, TabId, TabRecord, TabRenderer } from '@deepseek-ai/dsh-client-ui-dockkit'
-import { canSplit, dockPaneIds, DockLayout, findPaneContentTab } from '@deepseek-ai/dsh-client-ui-dockkit'
-import type { HalvesFit, LayoutState, PaneId } from '@deepseek-ai/dsh-client-ui-dockkit'
+import type { DockIntents, DockMode, FloatRect, LayoutState, TabId, TabRecord, TabRenderer } from '@deepseek-ai/dsh-client-ui-dockkit'
+import { TabMenu } from '@deepseek-ai/dsh-client-ui-dockkit'
+import type { PaneId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { GUIDE_KIND, pageAddress } from '../contract/seed.ts'
+import { GUIDE_KIND } from '../contract/seed.ts'
 import { dockLabels } from '../labels.ts'
 import type { SidebarRightOpenTabOptions } from '../service.ts'
 import type { SidebarRightTabDefinition } from '../tab-registry.ts'
-import type { createSidebarRightStore, SurfaceState } from '../stores.ts'
 import { canCloseTab } from '../stores.ts'
+import type { createSidebarRightStore, SurfaceState } from '../stores.ts'
 import type { TabOccurrence } from '../tab-domain.ts'
 import type { SidebarRightTabNavigation } from '../contract/slots.ts'
 import type { TabHookContext } from '../tab-info.ts'
+import { canvasSide } from './canvas.ts'
+import { useMemberSort } from './member-sort.ts'
+import { useZoneSort } from './zone-sort.ts'
 import css from './SidebarRight.module.css'
 import { closeWithPaneFocus, openWithPaneFocus } from './close-focus.ts'
 
@@ -55,16 +60,24 @@ import { closeWithPaneFocus, openWithPaneFocus } from './close-focus.ts'
 type Store = PropsStore<ReturnType<typeof createSidebarRightStore>>
 
 /** The child seats this component renders. */
-type Children = PropsRenderSlots<'sidebar.right.pane.tab' | 'sidebar.right.pane.tab.title' | 'sidebar.right.tab.menu.item'>
+type Children = PropsRenderSlots<'sidebar.right.pane.top' | 'sidebar.right.pane.tab' | 'sidebar.right.pane.tab.title' | 'sidebar.right.tab.menu.item'>
 
 /** What the panel reports to the frame: drawn or not, and whether it wants a track. */
 export interface SidebarRightPresentation {
-  /** Whether the panel is drawn at all. */
+  /** Whether the panel is drawn at all — the collapsed rail also counts as drawn. */
   readonly shown: boolean
   /** Whether the drawn panel wants the conversation to make room for it. */
   readonly track: boolean
   /** Whether the panel fills the viewport, independently of its retained track. */
   readonly fullscreen: boolean
+  /**
+   * Which side of the panel the canvas page occupies inside the right region;
+   * null when no canvas is open. A claimed canvas widens the right track to
+   * hold the canvas next to the panel rather than overlaying the conversation.
+   */
+  readonly canvas: 'left' | 'right' | null
+  /** Whether the shown panel stands collapsed to its icon rail (its track then holds the rail width). */
+  readonly rail: boolean
 }
 
 /** What this package needs from its host beyond the framework shares. */
@@ -110,6 +123,8 @@ export interface SidebarRightInjected {
   readonly splitPane: (paneId: PaneId) => void
   /** Toggle the dock panel using its current display mode. */
   readonly toggleFullscreen: () => void
+  /** Toggle the frame's left session sidebar; the canvas parks it while open. */
+  readonly toggleSidebar: () => void
   readonly hooks: {
     readonly shortcuts: HostObservable<readonly ShortcutCatalogEntry[]>
     readonly tabTypes: HostObservable<readonly SidebarRightTabDefinition[]>
@@ -149,13 +164,6 @@ interface PanelProps {
   readonly autoFullscreen: boolean
   readonly active: boolean
   readonly retainTab: RightbarSeatProps['retainTab']
-  /** Receives the kit's room-rule readings for the service's `split`. */
-  readonly reportRoom: (fits: ReadonlyMap<PaneId, HalvesFit>) => void
-}
-
-/** The guide tab one pane holds, if any: a pane holds at most one. */
-function guideIn(layout: LayoutState, paneId: PaneId): TabId | undefined {
-  return findPaneContentTab(layout, paneId, pageAddress(GUIDE_KIND), GUIDE_KIND)
 }
 
 /**
@@ -266,7 +274,7 @@ function ExitFullscreenGlyph(): ReactNode {
   )
 }
 
-/** The panel's two controls, placed by the kit at the top-right pane's strip end. */
+/** The panel's two controls, placed at the feature list's head. */
 function PanelChrome({ sessionId, fullscreen, actions, t, shortcuts, toggleFullscreen }: Pick<PanelProps, 'sessionId' | 'actions' | 't' | 'fullscreen' | 'shortcuts' | 'toggleFullscreen'>): ReactNode {
   const next: DockMode = fullscreen ? 'push' : 'fullscreen'
   const modeLabel = fullscreen ? t('chrome.exitFullscreen') : t('chrome.toFullscreen')
@@ -303,13 +311,421 @@ function PanelChrome({ sessionId, fullscreen, actions, t, shortcuts, toggleFulls
 }
 
 /**
- * The panel: the docked surface with the two controls in its top-right strip,
- * anchored to the frame's right edge and slid off it while collapsed.
+ * The feature entries the lower half of the panel lists: every registered
+ * type's guide entries as plain rows, visually parallel to the product
+ * navigation above the hairline. Picking a row opens that kind on the canvas.
  */
-function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<HTMLDivElement> }): ReactNode {
-  const { sessionId, surface, actions, t, renderSlot, openTab, width, reportRoom, fullscreen, panelRef } = panel
-  const { expanded } = surface.layout
+/** Every registered type's guide entries, in menu order — shared by the wide list and the rail. */
+function useFeatureEntries(panel: PanelProps) {
+  return panel.useTabTypes(types => types
+    .flatMap(definition => (definition.guide ?? []).map(entry => ({ ...entry, kind: definition.kind })))
+    .sort((left, right) => left.order - right.order))
+}
+
+/** The kind the canvas currently presents; a parked canvas presents nothing. */
+function shownCanvasKind(surface: SurfaceState): string | undefined {
+  if (surface.canvasParked) return undefined
+  const panes = surface.layout.floats
+    .map(paneId => surface.layout.nodes[paneId])
+    .filter(node => node?.kind === 'pane')
+  const shownPane = panes.find(pane => pane.id === surface.floatView) ?? panes[panes.length - 1]
+  const tab = shownPane?.kind === 'pane' && shownPane.activeTabId !== undefined
+    ? surface.layout.tabs[shownPane.activeTabId]
+    : undefined
+  return tab?.kind
+}
+
+/**
+ * Feature entries work like the navigation rows they sit beside: picking one
+ * opens its kind on the canvas and marks it active; picking the active kind
+ * again parks the canvas — the feature's way out without hunting the seam.
+ */
+function FeatureNav(panel: PanelProps): ReactNode {
+  const { openTab, actions, sessionId } = panel
+  const entries = useFeatureEntries(panel)
+  const activeKind = shownCanvasKind(panel.surface)
+  // The feature list doubles as its own zone grip: a blank press in the
+  // list's margins arms the zone-sort gesture for this half of the drawer.
+  return (
+    <div className={css.featureNav} data-zone="features" data-zone-grip="features">
+      <nav className={css.featureList}>
+        {entries.map((entry) => {
+          const Icon = entry.icon
+          return (
+            <button key={entry.id} type="button" className={css.featureRow}
+              data-feature-active={entry.kind === activeKind || undefined}
+              aria-current={entry.kind === activeKind ? 'page' : undefined}
+              onClick={() => {
+                if (entry.kind === activeKind) actions.setCanvasParked(sessionId, true)
+                else openTab(entry.kind)
+              }}>
+              <span className={css.featureGlyph} aria-hidden="true">
+                {Icon === undefined ? <FallbackGlyph /> : <Icon size={14} />}
+              </span>
+              <span className={css.featureLabel}>{entry.title()}</span>
+            </button>
+          )
+        })}
+      </nav>
+    </div>
+  )
+}
+
+/**
+ * The collapsed navigation column: an icon rail pinned to the panel's anchored
+ * edge. Its top control re-expands the panel; below it the product's own zone
+ * draws the icon form of the same navigation it owns expanded, then each
+ * feature icon opens its kind on the canvas — the same target the wide row
+ * picks, without unfolding the column first.
+ */
+function FeatureRail(panel: PanelProps): ReactNode {
+  const { t, openTab, sessionId, actions, renderSlot } = panel
+  const entries = useFeatureEntries(panel)
+  const activeKind = shownCanvasKind(panel.surface)
+  // Collapsed, the drawer and the canvas are one unit: the rail's grip moves
+  // the whole column against the conversation, never an inner sort.
+  return (
+    <div className={css.rail} data-region-grip="unit">
+      <Tooltip label={t('chrome.expand')} side="bottom" delayMs={500}>
+        <button
+          type="button"
+          className={css.iconButton}
+          aria-label={t('chrome.expandAria')}
+          data-sidebar-right-expand-rail
+          onClick={() => { actions.setExpanded(sessionId, true) }}
+        >
+          <IconPanelLeftOutlineRegular className={css.railExpandGlyph} />
+        </button>
+      </Tooltip>
+      <div className={css.railTop}>{renderSlot('sidebar.right.pane.top', { rail: true })}</div>
+      <nav className={css.railList}>
+        {entries.map((entry) => {
+          const Icon = entry.icon
+          const active = entry.kind === activeKind
+          return (
+            <Tooltip key={entry.id} label={entry.title()} side="bottom" delayMs={500}>
+              <button type="button" className={css.railRow}
+                aria-label={entry.title()}
+                data-feature-active={active || undefined}
+                aria-current={active ? 'page' : undefined}
+                onClick={() => {
+                  if (active) actions.setCanvasParked(sessionId, true)
+                  else openTab(entry.kind, { expandColumn: false })
+                }}>
+                {Icon === undefined ? <FallbackGlyph /> : <Icon size={14} />}
+              </button>
+            </Tooltip>
+          )
+        })}
+      </nav>
+    </div>
+  )
+}
+
+/** The row glyph a guide entry without its own icon draws. */
+function FallbackGlyph(): ReactNode {
+  return (
+    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+      <rect x="1.5" y="1.5" width="11" height="11" rx="2.5" stroke="currentColor" />
+    </svg>
+  )
+}
+
+/**
+ * The canvas: the floating pane stack's top, drawn inside the right column's
+ * track beside the panel — a real layout region, not an overlay. Every float's
+ * active body stays mounted under the top one — a page keeps its state while
+ * another covers it, the way a retained pane did in the docked column. Bodies
+ * come through the same keyed dispatch as the docked pane did, so a type's
+ * canvas page is its registered tab body — one that declares `selfChrome`
+ * draws its own top bar and the host's title, side toggle, and collapse
+ * control step out of its way.
+ */
+/**
+ * The canvas's exit shell: while the claim releases after the last page
+ * closes, an empty surface keeps the seam's hairline through the column's own
+ * fold — the track's contraction carries the box, so it renders at its
+ * resting edge with no motion of its own.
+ */
+function CanvasExit({ side, drawerW, sessionId }: { side: 'left' | 'right'; drawerW: number; sessionId: SessionId }): ReactNode {
+  const edge = side === 'right' ? { left: drawerW, right: 0 } : { left: 0, right: drawerW }
+  return <div className={css.canvas} data-canvas-side={side} data-canvas-exiting data-canvas-sliding
+    data-sidebar-right-canvas-host data-sidebar-right-session={sessionId} style={edge} />
+}
+
+function CanvasHost(panel: PanelProps & { width: number; toggleSidebar: () => void; held: boolean }): ReactNode {
+  const { surface, width, fullscreen, toggleSidebar, t, held } = panel
+  useSyncExternalStore(listener => canvasSide.subscribe(listener), () => canvasSide.getSnapshot())
+  const side = canvasSide.get()
   const types = panel.useTabTypes(value => value)
+
+  const panes = surface.layout.floats
+    .map(paneId => surface.layout.nodes[paneId])
+    .filter(node => node?.kind === 'pane')
+  // The presented pane is a cursor into the float stack — the stack itself is
+  // the visit order, so back/forward walk it without reordering anything.
+  const shownPane = panes.find(pane => pane.id === surface.floatView) ?? panes[panes.length - 1]
+  const tab = shownPane?.kind === 'pane' && shownPane.activeTabId !== undefined
+    ? surface.layout.tabs[shownPane.activeTabId]
+    : undefined
+  const open = tab !== undefined && panel.active && !surface.canvasParked
+  const definition = tab === undefined ? undefined : types.find(candidate => candidate.kind === tab.kind)
+  const shownIndex = shownPane === undefined ? -1 : panes.indexOf(shownPane)
+  const backTo = shownIndex > 0 ? panes[shownIndex - 1] : undefined
+  const forwardTo = shownIndex >= 0 && shownIndex < panes.length - 1 ? panes[shownIndex + 1] : undefined
+  const [menuAnchor, setMenuAnchor] = useState<HTMLElement | undefined>()
+
+  // The collapsed panel is its rail — still a column member with real width,
+  // so the canvas clears it in either expansion state.
+  const drawerW = fullscreen ? 0 : width
+
+  // The canvas parks the session rail for room while it is up, and restores
+  // whichever state it found on close — unless the user already unparked it.
+  useLayoutEffect(() => {
+    if (!open) return
+    if (document.querySelector('[data-sidebar-collapsed]') !== null) return
+    toggleSidebar()
+    return () => {
+      if (document.querySelector('[data-sidebar-collapsed]') !== null) toggleSidebar()
+    }
+  }, [toggleSidebar, open])
+
+  useLayoutEffect(() => {
+    if (!open || tab === undefined) return
+    const onKey = (event: KeyboardEvent): void => {
+      const target = event.target
+      if (event.key !== 'Escape' || (target instanceof Element && target.closest('input, textarea, [contenteditable]'))) return
+      panel.closeTab(tab.id)
+    }
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('keydown', onKey) }
+  }, [open, tab, panel])
+
+  // The surface stays drawn briefly after the canvas leaves (parked, or the
+  // last page closed): the claim itself releases at once, so the column's own
+  // track fold IS the exit animation — the box is pinned to the column's
+  // edges and the shrink carries it into the panel seam. `held` only keeps
+  // the box mounted through that fold.
+  const exiting = !open && held && panel.active
+  // Entry likewise needs no motion of its own — the returning track unfolds
+  // the box out of the seam. The sliding window just keeps the clip and the
+  // seam pill's fade on while the track is in flight; a mid-flight reversal
+  // is the track animating back, interruptible for free.
+  const wasOpen = useRef(open)
+  const [entering, setEntering] = useState(false)
+  useLayoutEffect(() => {
+    const was = wasOpen.current
+    wasOpen.current = open
+    if (!open || was) return
+    setEntering(true)
+    const timer = window.setTimeout(() =>{  setEntering(false) }, 340)
+    return () =>{  window.clearTimeout(timer) }
+  }, [open])
+
+  const edgeBase: CSSProperties = side === 'right' ? { left: drawerW, right: 0 } : { left: 0, right: drawerW }
+
+  return (
+    <>
+      {panes.length > 0 && (
+        <div className={css.canvas} data-canvas-side={side} data-sidebar-right-session={panel.sessionId}
+          data-sidebar-right-canvas-host data-region-grip="canvas"
+          data-canvas-sliding={(exiting || entering) || undefined}
+          data-canvas-exiting={exiting || undefined}
+          hidden={!open && !exiting}
+          style={edgeBase}>
+          {(open || exiting) && tab !== undefined && definition?.selfChrome !== true && (
+            <header className={css.canvasChrome} data-sidebar-right-canvas-chrome
+              onContextMenu={(event) => {
+                event.preventDefault()
+                setMenuAnchor(event.currentTarget)
+              }}>
+              <Tooltip label={t('canvas.back')} side="bottom" delayMs={500}>
+                <button type="button" className={css.iconButton}
+                  aria-label={t('canvas.back')}
+                  data-sidebar-right-canvas-back
+                  disabled={backTo === undefined}
+                  onClick={() => { panel.actions.setCanvasView(panel.sessionId, backTo?.id) }}>
+                  <BackGlyph />
+                </button>
+              </Tooltip>
+              <Tooltip label={t('canvas.forward')} side="bottom" delayMs={500}>
+                <button type="button" className={css.iconButton}
+                  aria-label={t('canvas.forward')}
+                  data-sidebar-right-canvas-forward
+                  disabled={forwardTo === undefined}
+                  onClick={() => { panel.actions.setCanvasView(panel.sessionId, forwardTo?.id) }}>
+                  <ForwardGlyph />
+                </button>
+              </Tooltip>
+              <span className={css.canvasTitle}>{titlesFor(panel)(tab)}</span>
+              <Tooltip label={t('dock.closeTab')} side="bottom" delayMs={500}>
+                <button type="button" className={css.iconButton}
+                  aria-label={t('dock.closeTab')}
+                  data-sidebar-right-canvas-close={tab.id}
+                  onClick={() => { panel.closeTab(tab.id) }}>
+                  <CloseGlyph />
+                </button>
+              </Tooltip>
+              <Tooltip label={t('canvas.collapse')} side="bottom" delayMs={500}>
+                <button type="button" className={css.iconButton}
+                  aria-label={t('canvas.collapse')}
+                  data-sidebar-right-canvas-park
+                  onClick={() => { panel.actions.setCanvasParked(panel.sessionId, true) }}>
+                  <ParkGlyph />
+                </button>
+              </Tooltip>
+            </header>
+          )}
+          {/* A page owning its own chrome gets the same affordance on the seam:
+          a pill straddling the canvas's drawer-facing edge. */}
+          {open && tab !== undefined && definition?.selfChrome === true && (
+            <Tooltip label={t('canvas.collapse')} side="bottom" delayMs={500}>
+              <button type="button" className={css.canvasEdgePark}
+                aria-label={t('canvas.collapse')}
+                data-sidebar-right-canvas-park
+                onClick={() => { panel.actions.setCanvasParked(panel.sessionId, true) }}>
+                <ParkGlyph />
+              </button>
+            </Tooltip>
+          )}
+          {open && menuAnchor !== undefined && tab !== undefined && (
+            <TabMenu
+              labels={dockLabels(t, undefined, panel.shortcuts.find(entry => entry.id === 'page.close'))}
+              anchor={menuAnchor}
+              onClose={canCloseTab(surface, tab.id)
+                ? () => { setMenuAnchor(undefined); panel.closeTab(tab.id) }
+                : undefined}
+              onDismiss={() => { setMenuAnchor(undefined) }}
+              extras={panel.renderSlot('sidebar.right.tab.menu.item',
+                { tab, dismiss: () => { setMenuAnchor(undefined) } })}
+            />
+          )}
+          {panes.map((pane) => {
+            const paneTab = pane.kind === 'pane' && pane.activeTabId !== undefined
+              ? surface.layout.tabs[pane.activeTabId]
+              : undefined
+            if (paneTab === undefined) return null
+            // The shown pane's body stays mounted while parked — parking hides
+            // the canvas box, not the page the cursor rests on.
+            const shown = pane === shownPane
+            return (
+              <CanvasPane key={pane.id} pane={pane} tab={paneTab} panel={panel}
+                visible={panel.active && shown}
+                retained={types.find(candidate => candidate.kind === paneTab.kind)?.keepMounted === true} />
+            )
+          })}
+        </div>
+      )}
+      {/* An empty shell carries the fold only when no page is left to ride it. */}
+      {exiting && panes.length === 0 && <CanvasExit side={side} drawerW={drawerW} sessionId={panel.sessionId} />}
+    </>
+  )
+}
+
+/** One canvas page: mounted once shown, kept while visible or retained, hidden under the stack top. */
+function CanvasPane({ pane, tab, panel, visible, retained }: {
+  readonly pane: Extract<LayoutState['nodes'][keyof LayoutState['nodes']], { kind: 'pane' }>
+  readonly tab: TabRecord
+  readonly panel: PanelProps
+  readonly visible: boolean
+  readonly retained: boolean
+}): ReactNode {
+  const [visited, setVisited] = useState(visible)
+  if (visible && !visited) setVisited(true)
+  const host = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    const element = host.current
+    if (element === null) return
+    element.inert = !visible
+    const focused = document.activeElement
+    if (!visible && focused instanceof HTMLElement && element.contains(focused)) focused.blur()
+  }, [visible])
+  return (
+    <div ref={host} tabIndex={-1} className={css.canvasBody} data-sidebar-right-canvas
+      data-dockkit-float={pane.id}
+      data-dockkit-float-active={visible || undefined}
+      data-canvas-top={visible || undefined}
+      hidden={!visible}>{visited && (retained || visible) ? bodiesFor(panel)(tab) : null}</div>
+  )
+}
+
+/** Canvas history glyphs and the park affordance: a chevron aimed at the panel's seam. */
+function BackGlyph(): ReactNode {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14.5 5.5 8 12l6.5 6.5" />
+    </svg>
+  )
+}
+
+function ForwardGlyph(): ReactNode {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9.5 5.5 16 12l-6.5 6.5" />
+    </svg>
+  )
+}
+
+/** Close the shown page. */
+function CloseGlyph(): ReactNode {
+  return (
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  )
+}
+
+/** The park chevron points toward the panel; a left-parked canvas collapses rightward, so it flips. */
+function ParkGlyph(): ReactNode {
+  return (
+    <svg className={css.parkGlyph} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14.5 5.5 8 12l6.5 6.5" />
+    </svg>
+  )
+}
+
+/**
+ * The panel: the navigation column anchored to the frame's right edge and
+ * slid off it while collapsed — product navigation above the hairline,
+ * feature entries below.
+ */
+function SidebarPanel(panel: PanelProps & { width: number; canvas: 'left' | 'right' | null; panelRef: RefObject<HTMLDivElement>; collapsePreview: boolean }): ReactNode {
+  const { sessionId, surface, renderSlot, width, canvas, fullscreen, panelRef, collapsePreview } = panel
+  const { expanded } = surface.layout
+  const navRef = useRef<HTMLDivElement | null>(null)
+  const swapZones = useCallback(() => {
+    panel.actions.swapZones(sessionId)
+  }, [panel.actions, sessionId])
+  useZoneSort(navRef, expanded && !fullscreen, swapZones)
+  // Collapsing swaps the navigation for the rail: hold the navigation through
+  // the width fold so it fades out inside the shrinking column instead of
+  // vanishing the frame before it; the rail fades in for the landing.
+  const [collapsing, setCollapsing] = useState(false)
+  const wasExpanded = useRef(expanded)
+  useLayoutEffect(() => {
+    if (expanded === wasExpanded.current) return
+    const was = wasExpanded.current
+    wasExpanded.current = expanded
+    if (!was) return
+    setCollapsing(true)
+    const timer = window.setTimeout(() =>{  setCollapsing(false) }, 240)
+    return () =>{  window.clearTimeout(timer) }
+  }, [expanded])
+  // A canvas alongside makes the drawer an inner member; alone it IS the
+  // unit, so its grip then lifts the whole column.
+  const nav = (fading: boolean): ReactNode => (
+    <div ref={navRef} className={css.navBody} data-region-grip={canvas !== null ? 'drawer' : 'unit'} data-collapsing={fading || undefined}>
+      <div className={css.panelHead}>
+        <PanelChrome
+          sessionId={sessionId} fullscreen={fullscreen} actions={panel.actions} t={panel.t}
+          shortcuts={panel.shortcuts} toggleFullscreen={panel.toggleFullscreen}
+        />
+      </div>
+      {surface.zoneOrder.map(zone => zone === 'top'
+        ? <div key="top" className={css.topZone} data-zone="top">{renderSlot('sidebar.right.pane.top', { rail: false })}</div>
+        : <FeatureNav key="features" {...panel} />)}
+    </div>
+  )
   return (
     <div
       ref={panelRef}
@@ -319,47 +735,38 @@ function SidebarPanel(panel: PanelProps & { width: number; panelRef: RefObject<H
       data-sidebar-right-session={sessionId}
       data-sidebar-right-panel={fullscreen ? 'fullscreen' : 'push'}
       data-sidebar-right-open={expanded || undefined}
-      // Off-edge is out of reach: the stylesheet's visibility flip takes the
-      // hidden panel out of the tab order, and this takes it out of the
-      // accessibility tree.
-      aria-hidden={!expanded || undefined}
+      data-sidebar-right-rail={!expanded && !fullscreen || undefined}
+      data-collapse-preview={collapsePreview || undefined}
+      data-canvas-side={canvas ?? undefined}
+      /* The drawer's anchored edge stands opposite the canvas's and exists even
+         with no canvas up — chrome glyphs key off it, not off canvas-side. */
+      data-drawer-side={canvasSide.get() === 'left' ? 'right' : 'left'}
     >
-      <div className={css.panelBody}>
-        <DockLayout
-          state={surface.layout}
-          canSplit={canSplit(surface.layout) && dockPaneIds(surface.layout).length < 2}
-          dropZones="horizontal"
-          minPaneFraction={0.2}
-          canAddTab={paneId => guideIn(surface.layout, paneId) === undefined}
-          canCloseTab={tabId => canCloseTab(surface, tabId)}
-          intents={intentsFor(sessionId, actions, openTab, panel.closeTab, panel.splitPane)}
-          labels={dockLabels(t, panel.shortcuts.find(entry => entry.id === 'pane.split'), panel.shortcuts.find(entry => entry.id === 'page.close'))}
-          renderTab={bodiesFor(panel)}
-          renderTabTitle={titlesFor(panel)}
-          active={panel.active}
-          keepMounted={tab => types.find(type => type.kind === tab.kind)?.keepMounted === true}
-          renderTabMenuItems={(tab, dismiss) =>
-            renderSlot('sidebar.right.tab.menu.item', { tab, dismiss })}
-          chrome={<PanelChrome
-            sessionId={sessionId} fullscreen={fullscreen} actions={actions} t={t}
-            shortcuts={panel.shortcuts} toggleFullscreen={panel.toggleFullscreen}
-          />}
-          onRoom={reportRoom}
-        />
-      </div>
+      {expanded || fullscreen ? nav(false) : collapsing ? nav(true) : <FeatureRail {...panel} />}
+      {/* A held-below-floor drag blurs the navigation under the rail's mark:
+          the preview is the panel announcing its own fold before release. */}
+      {collapsePreview && (
+        <div className={css.collapseMark} aria-hidden="true">
+          <IconPanelLeftOutlineRegular className={css.collapseMarkGlyph} />
+        </div>
+      )}
     </div>
   )
 }
 
 /**
- * The right column's occupant: stable tab containers, docked or floating.
- * It is also where the
- * frame learns the panel's presentation, and where `ctx.sidebarRight` learns
- * which session it is acting on, because this is the seat that knows both.
+ * The right column's occupant: the navigation panel and the canvas that hosts
+ * the floating tab stack. It is also where the frame learns the panel's
+ * presentation, and where `ctx.sidebarRight` learns which session it is acting
+ * on, because this is the seat that knows both.
  */
+/** How long the canvas claim outlives its last page: the exit slide's budget. */
+const CANVAS_EXIT_MS = 320
+
 export function RightbarSeat({
-  sessionId, width, viewportWidth, canShow, useStore, actions, t, renderSlot, syncPresentation, bindService, openTab, closeTab,
-  useTabTypes, useTabNavigation, occurrence, retainTab, active, useShortcuts, splitPane, toggleFullscreen,
+  sessionId, width, viewportWidth, canShow, collapsePreview, useStore, actions, t, renderSlot, syncPresentation, bindService,
+  openTab, closeTab, useTabTypes, useTabNavigation, occurrence, retainTab, active, useShortcuts, splitPane, toggleFullscreen,
+  toggleSidebar,
 }: RightbarSeatProps): ReactNode {
   // One store instance per session, so this map holds this session's surface.
   // The binding published below serves the public face's commands on the
@@ -368,15 +775,39 @@ export function RightbarSeat({
   const shortcuts = useShortcuts(entries => entries)
   const surfaces = useStore(state => state.bySession)
   const surface = surfaces[sessionId]
-  const shown = active && surface !== undefined && surface.layout.expanded
+  const expanded = surface !== undefined && surface.layout.expanded
+  // The collapsed panel is drawn as its icon rail: a mounted surface is shown
+  // either way, so a rail still claims its narrow track.
+  const shown = active && surface !== undefined
   const autoFullscreen = viewportWidth < 768
-  const fullscreen = autoFullscreen || surface?.layout.mode === 'fullscreen'
+  const fullscreen = expanded && (autoFullscreen || surface?.layout.mode === 'fullscreen')
+  const rail = shown && !expanded && !fullscreen
   const panelRef = useRef<HTMLDivElement | null>(null)
-  // The kit's room-rule readings, kept in a ref: the service reads them at
-  // call time through the binding, and a reading never re-renders anything.
-  const room = useRef<ReadonlyMap<PaneId, HalvesFit>>(new Map())
-  const reportRoom = useCallback((fits: ReadonlyMap<PaneId, HalvesFit>): void => { room.current = fits }, [])
   const track = shown && !autoFullscreen
+  useMemberSort(panelRef, shown && !fullscreen)
+  useSyncExternalStore(listener => canvasSide.subscribe(listener), () => canvasSide.getSnapshot())
+  // The canvas claim mirrors what CanvasHost draws: a presented float while
+  // the surface is unparked. Parked keeps the floats but frees the region.
+  const topFloatId = surface === undefined ? undefined : surface.layout.floats[surface.layout.floats.length - 1]
+  const topFloat = topFloatId === undefined || surface === undefined ? undefined : surface.layout.nodes[topFloatId]
+  const canvasOpen = active && topFloat?.kind === 'pane' && topFloat.activeTabId !== undefined && surface?.canvasParked !== true
+  // The claim releases the moment the canvas leaves: the column's track fold
+  // and the surface's exit are the same motion, so holding the track would
+  // serialize them into two disjoint steps. `canvasHeld` instead keeps the
+  // surface mounted — and the canvas-side attribute in place — through the
+  // fold so nothing snaps early.
+  const [canvasHeld, setCanvasHeld] = useState(false)
+  useEffect(() => {
+    if (canvasOpen) { setCanvasHeld(true); return }
+    if (!canvasHeld) return
+    const timer = window.setTimeout(() =>{  setCanvasHeld(false) }, CANVAS_EXIT_MS)
+    return () =>{  window.clearTimeout(timer) }
+  }, [canvasOpen, canvasHeld])
+  const canvas = canvasOpen ? canvasSide.get() : null
+  // What the panel and the exit shell draw: the claim's side while it lives,
+  // held through the fold — without it a canvas-side='right' drawer would
+  // teleport to the outer edge the instant the claim drops.
+  const canvasVisual = canvas ?? (canvasHeld ? canvasSide.get() : null)
 
   useEffect(() => {
     if (active && surface === undefined) actions.open(sessionId)
@@ -404,7 +835,7 @@ export function RightbarSeat({
           && animation.playState !== 'finished' && animation.playState !== 'idle')
         : []
       if (entering.length === 0) {
-        syncPresentation({ shown, track, fullscreen })
+        syncPresentation({ shown, track, fullscreen, canvas, rail })
         return
       }
       // Cancellation can replace the transition or remove it for reduced motion.
@@ -412,11 +843,11 @@ export function RightbarSeat({
     }
     reportWhenCovered()
     return () => { disposed = true }
-  }, [sessionId, shown, track, fullscreen, syncPresentation, active])
+  }, [sessionId, shown, track, fullscreen, canvas, rail, syncPresentation, active])
   // Leaving is part of that report: a seat that unmounts with its session must
   // hand the track back rather than leave one sized for a surface nobody draws.
   useLayoutEffect(() => active
-    ? () => { syncPresentation({ shown: false, track: false, fullscreen: false }) }
+    ? () => { syncPresentation({ shown: false, track: false, fullscreen: false, canvas: null, rail: false }) }
     : undefined, [syncPresentation, active])
 
   // Republished on every committed change: the service's readers answer from the
@@ -426,7 +857,7 @@ export function RightbarSeat({
       ? bindService({ sessionId, actions, surfaces, autoFullscreen,
         closeWithFocus: (paneId, close) => { closeWithPaneFocus(document, sessionId, paneId, close) },
         openWithFocus: (open) => { openWithPaneFocus(document, sessionId, open) },
-        canSplitPane: paneId => room.current.get(paneId)?.row !== false })
+        canSplitPane: () => false })
       : undefined,
     [bindService, sessionId, actions, surfaces, autoFullscreen, active],
   )
@@ -437,7 +868,15 @@ export function RightbarSeat({
   if (surface === undefined) return null
   const panel: PanelProps = {
     sessionId, actions, t, renderSlot, surface, openTab, closeTab, useTabTypes, useTabNavigation, useStore, occurrence,
-    fullscreen, autoFullscreen, reportRoom, active, retainTab, shortcuts, splitPane, toggleFullscreen,
+    fullscreen, autoFullscreen, active, retainTab, shortcuts, splitPane, toggleFullscreen,
   }
-  return <SidebarPanel {...panel} width={width} panelRef={panelRef} />
+  // The canvas is a sibling of the panel, never its descendant: the collapsed
+  // panel's transform must not pin it, and the flipped arrangement asks the
+  // panel to stand off the canvas's edge.
+  return (
+    <>
+      <SidebarPanel {...panel} width={width} canvas={canvasVisual} panelRef={panelRef} collapsePreview={collapsePreview} />
+      <CanvasHost {...panel} width={width} toggleSidebar={toggleSidebar} held={canvasHeld} />
+    </>
+  )
 }

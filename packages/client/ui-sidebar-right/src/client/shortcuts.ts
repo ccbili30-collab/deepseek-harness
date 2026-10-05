@@ -16,12 +16,13 @@ import type {} from './locales.ts'
  */
 export function registerSidebarShortcuts(shortcuts: Pick<Shortcuts, 'register' | 'runtime'>, sidebar: SidebarRightController,
   t: TranslateNS<'sidebarRight'>, closeWindow: () => void): () => void {
+  // Split stays a docked-pane gesture; fullscreen is the panel's own mode and
+  // accepts whichever pane — docked or the canvas's float — currently owns focus.
   const reason = (kind: 'split' | 'fullscreen', target: SidebarRightTarget): string | null => {
     if (kind === 'split') {
       const block = sidebar.splitBlock(target)
       return block === undefined ? null : t(`command.${block}`)
     }
-    if (target.host === 'float') return t('command.float')
     return null
   }
   const disposers = [shortcuts.register({

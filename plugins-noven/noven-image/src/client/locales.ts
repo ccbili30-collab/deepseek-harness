@@ -8,6 +8,7 @@ export type NovenImageSettingsLocaleKey =
   | 'apiKey' | 'apiKeyHint' | 'apiKeySet' | 'apiKeyUnset'
   | 'baseUrl' | 'baseUrlHint'
   | 'model' | 'modelHint'
+  | 'fetchModels' | 'fetching' | 'fetchFailed' | 'fetchEmpty' | 'pickModel'
   | 'outputDir' | 'outputDirHint'
   | 'apiKeyEnv' | 'apiKeyEnvHint'
   | 'overridden' | 'reset' | 'invalidValue' | 'readOnly' | 'unavailable'
@@ -26,6 +27,11 @@ export const en: Record<NovenImageSettingsLocaleKey, string> = {
   baseUrlHint: 'OpenAI-compatible base URL, e.g. https://api.openai.com/v1.',
   model: 'Image model',
   modelHint: 'The model name your provider serves, e.g. gpt-image-1.',
+  fetchModels: 'Fetch models',
+  fetching: 'Fetching…',
+  fetchFailed: 'Fetch failed',
+  fetchEmpty: 'The endpoint returned no models.',
+  pickModel: 'Pick a model…',
   outputDir: 'Output folder',
   outputDirHint: 'Project folder generated images are saved into.',
   apiKeyEnv: 'Key environment variable',
@@ -53,6 +59,11 @@ export const zh: Record<NovenImageSettingsLocaleKey, string> = {
   baseUrlHint: 'OpenAI 兼容基础 URL，如 https://api.openai.com/v1。',
   model: '图像模型',
   modelHint: '服务商提供的模型名，如 gpt-image-1。',
+  fetchModels: '拉取模型',
+  fetching: '拉取中…',
+  fetchFailed: '拉取失败',
+  fetchEmpty: '端点没有返回任何模型。',
+  pickModel: '选择模型…',
   outputDir: '落盘目录',
   outputDirHint: '生成的图片在项目内保存的文件夹。',
   apiKeyEnv: '密钥环境变量',

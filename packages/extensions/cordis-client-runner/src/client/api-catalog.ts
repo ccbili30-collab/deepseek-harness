@@ -104,9 +104,9 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         parameters: [],
       },
       {
-        signature: 'openRightbar(track: boolean, fullscreen: boolean): void',
+        signature: 'openRightbar(track: boolean, fullscreen: boolean, canvas: \'left\' | \'right\' | null, rail: boolean): void',
         description: 'Report the right panel\'s presentation without changing its expanded state.',
-        parameters: [{ name: 'track', description: 'whether the normal panel width reserves a grid track, including beneath a fullscreen overlay.' }, { name: 'fullscreen', description: 'whether the panel covers the frame and hides its outer resize handle; independent of the underlying grid track.' }],
+        parameters: [{ name: 'track', description: 'whether the normal panel width reserves a grid track, including beneath a fullscreen overlay.' }, { name: 'fullscreen', description: 'whether the panel covers the frame and hides its outer resize handle; independent of the underlying grid track.' }, { name: 'canvas', description: 'which side of the panel a canvas page occupies, or null when no canvas is open; a claimed canvas widens the right column to hold it in the layout.' }, { name: 'rail', description: 'whether the shown panel stands collapsed to its icon rail; the track then holds the rail width instead of the panel preference.' }],
       },
       {
         signature: 'closeRightbar(): void',

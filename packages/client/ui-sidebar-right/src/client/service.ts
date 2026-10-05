@@ -20,12 +20,13 @@
  * do nothing for a session whose store was never minted.
  *
  * `openResource` and `openTab` are the navigation controller, and every way
- * into the column is a call to one of them: the conversation's file links, a
- * tool row's line reference, the strip's add control, a guide entry box, a file
+ * into the surface is a call to one of them: the conversation's file links, a
+ * tool row's line reference, a feature entry row, a guide entry box, a file
  * tree's rows. A resource is claimed through the registry by address; a page is
  * named by kind and recorded at the address this package composes for it. Both
- * hand the store one settled intent and record the navigation in the Tab
- * domain. Placement is the caller's option, never a type's property.
+ * hand the store one settled intent — which floats the tab onto the canvas —
+ * and record the navigation in the Tab domain. Placement is the caller's
+ * option, never a type's property.
  *
  * The registration adopts Session stores and injects the mounted seat binding;
  * callers use the service's navigation methods.
@@ -42,6 +43,7 @@ import { pageAddress } from './contract/seed.ts'
 import type { SidebarRightTabClaim, SidebarRightTabRegistry } from './tab-registry.ts'
 import { canCloseTab, type SidebarRightState, type SurfaceState } from './stores.ts'
 import type { createSidebarRightStore } from './stores.ts'
+import { canvasSide } from './shell/canvas.ts'
 import { TabDomain, type PinResource } from './tab-domain.ts'
 import { SidebarTabInventory } from './tab-inventory.ts'
 
@@ -85,6 +87,7 @@ export function createSidebarRightController(tabs: SidebarRightTabRegistry, pin:
         const surface = store.getSnapshot().bySession[sessionId]
         inventory.update(sessionId, Object.values(surface?.layout.tabs ?? {}))
         if (surface !== undefined) controller.tabDomain.sync(sessionId, surface.layout)
+        controller.publishCanvas(sessionId)
       }
       const adoption: Adoption = { store, unsubscribe: store.subscribe(sync) }
       adopted.set(sessionId, adoption)
@@ -135,6 +138,12 @@ export interface SidebarRightPlacement {
    * permits duplicates. Pages always deduplicate within the target pane.
    */
   readonly revealIfOpened?: boolean
+  /**
+   * `false` leaves a collapsed column collapsed: the opened page lands on the
+   * canvas beside the rail instead of expanding the drawer first. Rail picks
+   * pass it so an icon switches the canvas page without unfolding the column.
+   */
+  readonly expandColumn?: boolean
 }
 
 /** How a caller wants a resource opened. */
@@ -168,6 +177,24 @@ export interface ISidebarRight {
    * publishes its binding from a passive effect of the same commit.
    */
   readonly mounted: ObservableSnapshot<SessionId | undefined>
+  /**
+   * Which side of the panel the canvas parks on: `left` keeps the panel at
+   * the frame's right edge; `right` parks the canvas there and the panel
+   * stands off it. One persisted preference, shared across sessions.
+   */
+  readonly canvasSide: {
+    get(): 'left' | 'right'
+    toggle(): void
+    getSnapshot(): number
+    subscribe(listener: () => void): () => void
+  }
+  /**
+   * The surface currently on the mounted session's canvas — the topmost
+   * floating pane's active tab — or `undefined` while the canvas is empty.
+   * Moves with layout commits, so navigation rows can tell live content
+   * from remembered picks.
+   */
+  readonly canvas: ObservableSnapshot<{ readonly kind: string; readonly contentId: string } | undefined>
   /**
    * Open a resource: claim it, place it, reveal the column, record the navigation.
    *
@@ -239,6 +266,11 @@ export class SidebarRightController implements ISidebarRight {
   private readonly mountedSession = createSnapshotStore<SessionId | undefined>(undefined)
   /** The mounted seat's session; see {@link ISidebarRight.mounted}. */
   readonly mounted: ObservableSnapshot<SessionId | undefined> = this.mountedSession
+  /** The canvas's side preference; see {@link ISidebarRight.canvasSide}. */
+  readonly canvasSide = canvasSide
+  private readonly canvasStore = createSnapshotStore<{ readonly kind: string; readonly contentId: string } | undefined>(undefined)
+  /** The mounted session's canvas surface; see {@link ISidebarRight.canvas}. */
+  readonly canvas: ObservableSnapshot<{ readonly kind: string; readonly contentId: string } | undefined> = this.canvasStore
   private binding: SidebarRightBinding | undefined
   private readonly closeHandlers = new Map<string, SidebarRightCloseHandler>()
 
@@ -295,13 +327,32 @@ export class SidebarRightController implements ISidebarRight {
   bind(binding: SidebarRightBinding): () => void {
     this.binding = binding
     this.publishMounted()
+    this.publishCanvas(binding.sessionId)
     return () => {
       // A newer seat may already have taken over; only the binding that is
       // still ours may be cleared.
       if (this.binding !== binding) return
       this.binding = undefined
       this.publishMounted()
+      this.canvasStore.set(undefined)
     }
+  }
+
+  /**
+   * Republish the canvas surface for a session after a store commit; only the
+   * mounted session's is observable.
+   * @param sessionId - the session whose store committed.
+   */
+  publishCanvas(sessionId: SessionId): void {
+    if (this.binding?.sessionId !== sessionId) return
+    const layout = this.mountedSurface()?.layout
+    const topPaneId = layout?.floats[layout.floats.length - 1]
+    const pane = topPaneId === undefined ? undefined : layout?.nodes[topPaneId]
+    const tabId = pane?.kind === 'pane' ? pane.activeTabId : undefined
+    const tab = tabId === undefined ? undefined : layout?.tabs[tabId]
+    const next = tab === undefined ? undefined : { kind: tab.kind, contentId: tab.contentId }
+    const current = this.canvasStore.getSnapshot()
+    if (current?.kind !== next?.kind || current?.contentId !== next?.contentId) this.canvasStore.set(next)
   }
 
   /** Publish the mounted session only when it changes; a republished binding for the same session is silent. */
@@ -369,7 +420,25 @@ export class SidebarRightController implements ISidebarRight {
     if (actions === undefined || surface === undefined) return
     const tab = surface.layout.tabs[tabId]
     if (tab === undefined || !canCloseTab(surface, tabId)) return
-    this.removeAfterCleanup(sessionId, tab, () => { actions.closeTab(sessionId, tabId) })
+    // Closing the stack top peels a layer off the canvas; focus continues onto
+    // the float it reveals so the keyboard keeps owning the visible page.
+    const binding = this.binding?.sessionId === sessionId ? this.binding : undefined
+    const close = (): PaneId | undefined => {
+      actions.closeTab(sessionId, tabId)
+      const after = this.adopted.get(sessionId)?.store.getSnapshot().bySession[sessionId]?.layout
+      return after?.floats[after.floats.length - 1]
+    }
+    this.removeAfterCleanup(sessionId, tab,
+      () => { if (binding === undefined) close(); else binding.openWithFocus(close) })
+  }
+
+  /**
+   * Park one session's canvas: the float stack survives and the region frees.
+   * Not part of `ISidebarRight`: the Tab domain's path.
+   * @param sessionId - the session the acting tab is in.
+   */
+  parkIn(sessionId: SessionId): void {
+    this.actionsFor(sessionId)?.setCanvasParked(sessionId, true)
   }
 
   private removeAfterCleanup(sessionId: SessionId, tab: TabRecord, commit: () => void): void {
@@ -426,6 +495,7 @@ export class SidebarRightController implements ISidebarRight {
       && dockPaneIds(surface.layout).length < 2
       && this.binding?.sessionId === sessionId
       && this.binding.canSplitPane(target.id)
+    let landed: TabId | undefined
     const commit = (): void => { actions.openContent(sessionId, {
       kind: claim.kind,
       contentId: claim.contentId,
@@ -434,13 +504,26 @@ export class SidebarRightController implements ISidebarRight {
       ...preferNewPane ? { preferNewPane: true } : {},
       ...placement.replaceTab === undefined ? {} : { replaceTab: placement.replaceTab },
       ...placement.revealIfOpened === undefined ? {} : { revealIfOpened: placement.revealIfOpened },
-    }, (tabId) => { this.tabDomain.navigate(sessionId, tabId, { address, params }) }) }
+      ...placement.expandColumn === undefined ? {} : { expandColumn: placement.expandColumn },
+    }, (tabId) => { landed = tabId; this.tabDomain.navigate(sessionId, tabId, { address, params }) }) }
+    // An open raises its canvas float; the binding hands DOM focus to it once
+    // the commit has rendered.
+    const commitFocused = (): void => {
+      const open = (): PaneId | undefined => {
+        commit()
+        const layout = this.adopted.get(sessionId)?.store.getSnapshot().bySession[sessionId]?.layout
+        return landed === undefined || layout === undefined ? undefined : findTabPane(layout, landed).id
+      }
+      const binding = this.binding?.sessionId === sessionId ? this.binding : undefined
+      if (binding === undefined) { open(); return }
+      binding.openWithFocus(open)
+    }
     const layout = surface?.layout
     const replaced = placement.replaceTab === undefined ? undefined : layout?.tabs[placement.replaceTab]
     const revealed = layout === undefined || placement.revealIfOpened === false
       ? undefined : findContentTab(layout, claim.contentId, claim.kind)
-    if (replaced === undefined || replaced.id === revealed) { commit(); return }
-    this.removeAfterCleanup(sessionId, replaced, commit)
+    if (replaced === undefined || replaced.id === revealed) { commitFocused(); return }
+    this.removeAfterCleanup(sessionId, replaced, commitFocused)
   }
 
   /**
@@ -609,10 +692,10 @@ export class SidebarRightController implements ISidebarRight {
 
   /**
    * Toggle the right panel's display mode through the same action as its chrome button.
-   * @param target - captured dock pane; floating and stale targets are unchanged.
+   * @param target - a current pane or page of the mounted Session; stale targets are unchanged.
    */
   toggleFullscreen(target: SidebarRightTarget): void {
-    if (!this.isTargetCurrent(target) || target.host === 'float' || !this.isExpanded()) return
+    if (!this.isTargetCurrent(target) || !this.isExpanded()) return
     const { sessionId, actions, autoFullscreen } = this.require()
     const fullscreen = autoFullscreen === true || this.mountedSurface()?.layout.mode === 'fullscreen'
     if (fullscreen && autoFullscreen === true) actions.setExpanded(sessionId, false)
