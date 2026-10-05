@@ -1,0 +1,1 @@
+CONTENT TREE: no group labels at all, only a single tiny gray centered line "还没有内容" in the tree area.

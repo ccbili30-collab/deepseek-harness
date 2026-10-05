@@ -1,0 +1,24 @@
+STYLE: High-fidelity desktop application UI screenshot, wide 16:9 macOS app window, Chinese interface, light mode. Modern, restrained, light, content-first creation tool. Window background very light warm gray #F4F5F4, panels pure white #FFFFFF, primary text near-black #16181A, secondary text neutral gray #8A8F94, hairline dividers #ECEEEF, brand accent mint green #34D399 used sparingly, dark green #0E3B2E text on mint elements. PingFang-style Chinese sans-serif, hierarchy by weight and color only, calm desktop text sizes, corner radius 10-14px, thin light borders, almost no shadow. macOS traffic lights top-left.
+
+LEFT SIDEBAR (about 1/6 width, very light gray bg, hairline right border): brand "诺文" bold with tiny gray "Noven"; full-width mint rounded pill "+ 创作"; nav rows "首页" "消息" "我的"; divider; small gray label "工作区"; one project row "ceshi" expanded with two small session rows "云上车站的检票员" and "雾港灯火"; bottom small round avatar "山也" and thin gear icon.
+
+MAIN PANEL (rest of window, pure white): the CHARACTER CARD EDITOR — the card IS the interface, one seamless surface top to bottom. Same layout skeleton as the world editor, but a character has an avatar instead of a wide cover.
+
+TOP CHROME BAR (slim, ~44px, hairline bottom border): left a thin "‹" back chevron; then a small rounded square avatar thumbnail (~26px, the character portrait) next to bold text "巡夜人阿迟" and a small dark pill chip "角色"; a subtle gray "草稿 r2" tag; right side: gray text button "预览", gray text "交给 AI", a "⋯" icon, and a mint filled rounded pill button "保存".
+
+HERO ZONE (typographic, no photo band — a character without cover gets type, not a fake image): generous white space at the top of the card surface. Left-aligned inside 28px padding: a large circular anime avatar (~84px) — a young man with tousled dark hair and calm gray eyes, a thin bandage wrapped on his left hand, soft anime watercolor style, dark sea-blue night background inside the circle — with a tiny frosted circular pencil-badge overlapping its bottom-right (edit affordance). To the avatar's right: a small dark pill chip "角色"; beneath the chip, very large bold name "巡夜人阿迟"; beneath the name a short mint accent bar (36px wide, 3px tall, rounded).
+
+BASIC INFO ZONE — a rounded rectangle outlined by a subtle dashed mint border marking "editable": two clean rows — row 1: gray label "姓名" then dark text "巡夜人阿迟" and a right chevron "›"; hairline divider; row 2: gray label "简介" then gray one-line excerpt "替灯塔收故事的人。" and a right chevron "›".
+
+BELOW — a two-column split inside the same card surface, hairline vertical divider between them:
+
+LEFT COLUMN (about 34%): structure of the character. A small tab strip: mint underlined active tab "主要", gray tabs "声纹" "关系", and a small "+" at the right end. Module rows separated by hairlines, each a small mint-tinted doc icon + bold title + one-line gray excerpt + "›":
+  - "开场白" (selected, very light mint tinted background), excerpt "潮水退下去的时候，灯塔会把灯…"
+  - "外貌与习惯" excerpt "短发，左手缠着绷带，巡夜时…"
+  - "记忆碎片" with a folder icon, expanded: beneath it one nested indented row "第二章 · 灯塔大火" with a "›"
+  - mint text row "+ 新增模块"
+  - hairline divider, small gray section label "所属世界": one row — small rounded square thumbnail of a floating-islands anime artwork + text "住在云上的第七天" + "›".
+
+RIGHT COLUMN (about 66%): the selected module's document editor — a page: large bold editable title "开场白" with a short mint underline; body rendered as finished prose with one live-markdown line: a paragraph "潮水退下去的时候，灯塔会把灯光折进雾里。阿迟提着一盏小灯走过栈桥，脚步比浪声还轻。", then one line showing raw markdown "- **语气** 平静里带一点潮湿的温度|" with a caret, then another paragraph "他不问你从哪里来，只问今晚想不想听一个海的故事。". Bottom of this column, a thin toolbar with small gray icons: image, "B", "H", list, "⋯".
+
+STRICTLY NO gold, brown, paper texture, serif/Song typeface, neon gradients, heavy shadows, emoji, code editor or terminal look. All Chinese text rendered exactly as given, crisp and legible, no garbled characters.

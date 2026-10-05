@@ -1,0 +1,5 @@
+[模式] 图生图，参考图 1 张: base.png
+[请求] sail/gpt-image-2.5-flare ratio=16:9 size=1536x1024
+[容灾] 切换备选: qianc/gpt-image-2.5-flare
+[请求] qianc/gpt-image-2.5-flare ratio=16:9 size=1536x1024（备选 sail/gpt-image-2.5-flare 连续失败）
+[失败] 全部目标均失败，最后错误: qianc: HTTP 404: {"error":{"message":"Model \"gpt-image-2.5-flare\" is not supported by any configured account in this group","type":"model_not_found"}}

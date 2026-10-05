@@ -1,0 +1,2 @@
+@tree:full
+SCREEN: a collection entry opened as its own page. Canvas tab strip: tabs "总览" "势力档案" and "沼泽部族" (active). Breadcrumb "势力档案 / 沼泽部族" with a back arrow. Page: a wide rounded cover image at the top (painted illustration of a misty swamp village on stilts) with a small white button "更换图片" on its corner; big title "沼泽部族"; a two-column field grid with labeled rows "首领" "据点" "人数" "立场" with values; below, a text body with two short Chinese paragraphs; below that a row of three small image tiles and a dashed tile "＋ 添加图片". Right chat: composer chip "已选中：条目「沼泽部族」".

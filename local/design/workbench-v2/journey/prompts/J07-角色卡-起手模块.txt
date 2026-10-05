@@ -1,0 +1,2 @@
+@tree:withChar
+SCREEN: the character card was just created. Canvas tab strip: tabs "蛮荒-404" and "艾莉缇" (active). Canvas: header with a small gray tag "角色卡", a dashed circular avatar placeholder with a camera icon and tiny text "添加头像", big title "艾莉缇". Below, three stacked white module blocks with titles and placeholders: "基本信息" (expanded, with two small input rows "年龄" "身份"), "性格" (placeholder "写下她是怎样的人…"), "背景" (placeholder "她从哪里来…"); under them a dashed "＋ 添加模块" row. Right chat: assistant message "要不要我先问你几个问题，帮她成形？" with two pills "好，问我吧" "我自己写".

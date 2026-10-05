@@ -1,0 +1,1 @@
+CONTENT TREE: only one group label "卡" with the globe-icon row "蛮荒-404" expanded; children: document-icon "设定总览" and a clock-icon row "时间线" that is being renamed inline (a small white text input with the text "时间线" selected, mint border) and highlighted. No other groups shown.

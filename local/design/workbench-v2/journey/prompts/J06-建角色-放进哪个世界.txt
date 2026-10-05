@@ -1,0 +1,2 @@
+@tree:noChar
+SCREEN: the user clicked "建一个角色". The canvas page behind (the world card) is dimmed. A small centered white panel (about 460px wide, rounded 14px, soft shadow) titled "建一个角色": a text input labeled "名字" containing "艾莉缇"; a label "放在哪里" with two radio rows: "放进世界 · 蛮荒-404 ▾" (SELECTED, mint radio) and "做成独立角色"; a label "怎么开始" with a small segmented control "空白 | 让 AI 问我几个问题 | 选模板" with 空白 selected; bottom right buttons: white outlined "取消" and mint "创建".

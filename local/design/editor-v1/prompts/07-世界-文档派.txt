@@ -1,0 +1,22 @@
+STYLE: High-fidelity desktop application UI screenshot, wide 16:9 macOS app window, Chinese interface, light mode. Modern, restrained, light, content-first creation tool, document-editor feel like Notion/Craft. Window background very light warm gray #F4F5F4, panels pure white #FFFFFF, primary text near-black #16181A, secondary text neutral gray #8A8F94, hairline dividers #ECEEEF, brand accent mint green #34D399 used sparingly, dark green #0E3B2E text on mint elements. PingFang-style Chinese sans-serif, hierarchy by weight and color only, calm desktop text sizes, corner radius 10-14px, thin light borders, almost no shadow. macOS traffic lights top-left.
+
+LEFT SIDEBAR (about 1/6 width, very light gray bg, hairline right border): brand "诺文" bold with tiny gray "Noven"; full-width mint rounded pill "+ 创作"; nav rows "首页" "消息" "我的"; divider; small gray label "工作区"; one project row "ceshi" expanded with two small session rows "云上车站的检票员" and "雾港灯火"; bottom small round avatar "山也" and thin gear icon.
+
+MAIN PANEL (rest of window, pure white): the WORLD CARD EDITOR as a SINGLE EDITABLE DOCUMENT — the card itself is the page; no side panels, no tree.
+
+TOP CHROME BAR (slim, ~44px, hairline bottom border): left a thin "‹" back chevron; then bold text "住在云上的第七天" and a small dark pill chip "世界" and a subtle gray "草稿 r3" tag; right side: gray text button "预览", gray text "交给 AI", a "⋯" icon, and a mint filled rounded pill button "保存".
+
+DOCUMENT SURFACE (one centered column about 58% of the panel width, generous air on both sides, comfortable 40px top padding):
+
+- HERO: a wide rounded rectangle (16px radius) anime watercolor illustration filling the column width — a long blue passenger train crossing a grand stone arch bridge high above white clouds, floating green islands with tiny castles, Ghibli-like bright palette; a small frosted circular pencil button at its top-right.
+- Below: small dark pill chip "世界"; then very large bold title "住在云上的第七天"; a short mint accent bar; one muted gray paragraph "每天醒来，列车都停在一个新的云端站台。".
+
+THEN THE CARD'S SECTIONS, each separated by a thin hairline, each section directly editable in place:
+- Section heading "车站规则" bold, with a faint six-dot drag handle "⠿" floating at its left edge and a subtle "⋯" at its right (visible affordances); under it typeset prose: "寒潭试炼十年一开，失败者退出内门，改列记名弟子。" then one line showing raw markdown with caret "- **开放时间** 每十年一次|" then "试炼期间，弟子需在寒潭中独自完成指定任务，方可获得传承资格。".
+- Section heading "登场角色" bold with the same faint drag handle and "⋯": inside it three small rounded chips in a row, each with a small round anime avatar + name: "检票员眠川" (young man in stationmaster cap), "气象员半格" (silver-haired youth with headphones), "巡夜人阿迟" (dark-haired young man with lantern); and a mint text "+ 加入角色".
+- Section heading "废案与轶闻" bold with drag handle and "⋯": one muted paragraph "车站南侧的旧月台在雨季会浮出水面……" with a subtle collapsed look.
+- Bottom: a dashed-border ghost row, mint text "+ 新增模块", centered, subtle.
+
+RIGHT EDGE: a very slim collapsible outline rail (~14% width, separated by hairline, small gray text list): "车站规则", "登场角色", "废案与轶闻", "世界中的角色" — the first item tinted mint, showing this rail is the optional structure outline.
+
+STRICTLY NO gold, brown, paper texture, serif/Song typeface, neon gradients, heavy shadows, emoji, code editor or terminal look. All Chinese text rendered exactly as given, crisp and legible, no garbled characters.

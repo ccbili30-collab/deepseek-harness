@@ -1,0 +1,21 @@
+STYLE: High-fidelity desktop application UI screenshot, wide 16:9 macOS app window, Chinese interface, light mode. Modern, restrained, light, content-first creation tool. Window background very light warm gray #F4F5F4, panels pure white #FFFFFF, primary text near-black #16181A, secondary text neutral gray #8A8F94, hairline dividers #ECEEEF, brand accent mint green #34D399 used sparingly, dark green #0E3B2E text on mint elements. PingFang-style Chinese sans-serif, hierarchy by weight and color only, calm desktop text sizes, corner radius 10-14px, thin light borders, almost no shadow. macOS traffic lights top-left.
+
+LEFT SIDEBAR (about 1/6 width, very light gray bg, hairline right border): brand "诺文" bold with tiny gray "Noven"; full-width mint rounded pill "+ 创作"; nav rows "首页" "消息" "我的"; divider; small gray label "工作区"; one project row "ceshi" expanded with two small session rows "云上车站的检票员" and "雾港灯火"; bottom small round avatar "山也" and thin gear icon.
+
+MAIN PANEL (rest of window): the WORLD CARD EDITOR — layout "left card, right document". The card itself stands large on the left; editing workspace fills the right.
+
+TOP CHROME BAR (slim, ~44px, hairline bottom border, white bg): left a thin "‹" back chevron; then bold text "住在云上的第七天" and a small dark pill chip "世界" and a subtle gray "草稿 r3" tag; right side: gray text button "预览", gray text "交给 AI", a "⋯" icon, and a mint filled rounded pill button "保存".
+
+BELOW THE CHROME, two zones side by side separated by a hairline vertical divider:
+
+LEFT CARD COLUMN (about 33% width, very light warm gray #F7F8F8 column, 24px padding): ONE tall white card surface (rounded 18px, hairline border) that IS the card — it scrolls internally if needed:
+  - top: the FULL cover artwork at natural aspect (about 4:5, fills the card's inner width edge to edge with rounded top corners): anime watercolor — a long blue passenger train crossing a grand stone arch bridge high above white clouds, floating green islands with tiny castles, bright blue sky, Ghibli-like bright airy palette. A small frosted-white circular pencil button floats at its top-right.
+  - under the artwork inside the same white surface: a small dark pill chip "世界", then big bold name "住在云上的第七天", then a short mint accent bar.
+  - a rounded rectangle outlined by a subtle dashed mint border (editable marker): row gray label "名称" + dark "住在云上的第七天" + "›"; hairline; row gray label "简介" + gray "每天醒来，列车都停在一个新的云端站台。" + "›".
+  - a small tab strip: mint underlined "主要", gray "站台手册", gray "废案轶闻", small "+".
+  - module rows with hairline separators — small mint-tinted doc icon + bold title + one-line gray excerpt + "›": "车站规则" (light mint tint bg, selected) excerpt "站台悬在云海上…"; "登场角色" folder icon expanded showing nested indented row: small round anime avatar (young man in stationmaster cap) + "检票员眠川" + "⋯"; "废案与轶闻"; mint text "+ 新增模块".
+  - divider then small gray label "世界中的角色": two rows, small round anime avatar + name ("气象员半格" silver-haired youth; "巡夜人阿迟" dark-haired young man) + "⋯"; mint text buttons "＋ 新建角色" and "从角色库复制".
+
+RIGHT WORKSPACE (about 67% width, white): the selected module's document editor — generous padding: large bold editable title "车站规则" with a short mint underline; body typeset as finished prose with one live-markdown line showing source: bold heading "试炼规则"; paragraph "寒潭试炼十年一开，失败者退出内门，改列记名弟子。"; raw line "- **开放时间** 每十年一次|" with caret; paragraph "试炼期间，弟子需在寒潭中独自完成指定任务，方可获得传承资格。". Bottom toolbar with small gray icons: image, "B", "H", list, "⋯".
+
+STRICTLY NO gold, brown, paper texture, serif/Song typeface, neon gradients, heavy shadows, emoji, code editor or terminal look. All Chinese text rendered exactly as given, crisp and legible, no garbled characters.

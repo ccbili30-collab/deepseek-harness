@@ -1,0 +1,2 @@
+@tree:full
+SCREEN: timeline while resizing an era. The boundary between the blue band "联盟纪" and the pink band "战争纪" is being dragged to the right: a left-right resize cursor sits on the boundary, a vertical dashed mint line runs through the whole timeline at the boundary, and a small black tooltip above it reads "联盟纪 神历 120 – 262". The blue band is visibly wider than the pink one, and the event chips below that now fall inside the widened blue band are tinted blue. Ticks "神历 1" "神历 120" "神历 240" "神历 342". Toolbar and title as before.

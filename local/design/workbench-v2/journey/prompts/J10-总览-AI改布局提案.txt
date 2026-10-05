@@ -1,0 +1,2 @@
+@tree:full
+SCREEN: the AI rearranging the overview as a proposal. Right chat: user message "把大陆图放大，放到左边", assistant message "我调整了布局，作为提议显示在画布上，你确认后生效。". Canvas: at the top a slim mint-tinted bar "AI 提议调整布局" with three small buttons "预览" "接受" "拒绝". Below, the overview shows the proposed arrangement as a lightly tinted overlay with dashed mint outlines: the map tile "大陆图" large on the left half, the timeline strip and faction cards on the right; the old arrangement is faintly visible beneath as gray ghost outlines. Small label "AI 提议的布局" at the top-left of the overlay.

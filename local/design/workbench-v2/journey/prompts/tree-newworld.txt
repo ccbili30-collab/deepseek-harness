@@ -1,0 +1,1 @@
+CONTENT TREE: only one group label "卡" with one globe-icon row "蛮荒-404" expanded, with a single child document-icon row "设定总览" highlighted. No other groups are shown (empty groups are hidden).

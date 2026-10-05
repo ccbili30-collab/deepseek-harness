@@ -1,0 +1,18 @@
+STYLE: High-fidelity desktop application UI screenshot, wide 16:9 macOS app window, Chinese interface, light mode. Modern, restrained, light, content-first creation tool. Window background very light warm gray #F4F5F4, panels pure white #FFFFFF, primary text near-black #16181A, secondary text neutral gray #8A8F94, hairline dividers #ECEEEF, brand accent mint green #34D399 used sparingly, dark green #0E3B2E text on mint elements. PingFang-style Chinese sans-serif, hierarchy by weight and color only, calm desktop text sizes, corner radius 10-14px, thin light borders, almost no shadow. macOS traffic lights top-left.
+
+LEFT SIDEBAR (about 1/6 width, very light gray bg, hairline right border): brand "诺文" bold with tiny gray "Noven"; full-width mint rounded pill "+ 创作"; nav rows "首页" "消息" "我的"; divider; small gray label "会话" with tiny search and "+" icons; conversation rows: "雾港灯火" chip "雾港 · GM" (selected light gray highlight, thumbnail: misty harbor watercolor), "云上车站的检票员" chip "住在云上的第七天 · GM", "阿迟的访谈" chip "阿迟 · 扮演"; bottom small round avatar "山也" and thin gear icon.
+
+CENTER COLUMN (widest, white): a fiction co-writing conversation. Small gray label at top "会话 · 雾港灯火". AI plain-text Chinese prose about the harbor city; a right-aligned light-gray user bubble "我想把阿迟的动机改一下，不是找父亲，是给灯塔复仇。"; AI reply acknowledges and continues. Bottom center: rounded input "继续…" with thin "+" and a round mint send button.
+
+RIGHT PANEL (about 28% width, white, only a hairline divider from center): the sidecar assistant pane — ONE seamless white surface, top artifact flows into chat with NO hard divider, only air.
+
+TOP of right panel — a raised artifact card (pure white paper, very soft shadow, 14px rounded corners, no titlebar): a compact character sheet mid-edit, showing a live streaming diff. Header row: bold "阿迟", gray "人物卡 · 雾港", and a tiny mint soft-pill "AI 正在修改". Field rows in clean sans-serif:
+  row 1 gray label "身份", value "灯塔守之女" — unchanged, normal charcoal text
+  row 2 gray label "动机", value shows the diff: "寻找失踪的父亲" struck through in soft red with light red tint, immediately followed by "为灯塔复仇" in charcoal on a soft mint-green highlight
+  row 3 gray label "关系", value "迟姐（姐妹）" — the whole value on soft mint-green highlight = newly added line
+  row 4 gray label "特征", value "短发，左手缠着绷带" — unchanged
+  Under the card one whisper-gray line: "这个世界已有 12 人物 · 5 地点".
+
+BOTTOM of right panel — compact chat stream on the same white surface: AI plain text "按你们刚才的讨论，我把阿迟的动机从寻父改成复仇了。标红的是删掉的旧设定，绿色是新写的。"; a right-aligned light-gray user bubble "可以，保留。"; AI reply "已提交。要我把这条改动同步到第三章吗？"; bottom rounded input "和设定助手聊聊…" with a round mint send button.
+
+STRICTLY NO gold, brown, paper texture, serif/Song typeface, neon gradients, heavy shadows, emoji, code editor or terminal look. All Chinese text rendered exactly as given, crisp and legible, no garbled characters.

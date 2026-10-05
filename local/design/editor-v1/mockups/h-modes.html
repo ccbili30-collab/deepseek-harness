@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>横排形态设计稿</title>
+<style>
+:root {
+  --nv-canvas: #F4F5F4;
+  --nv-surface: #FFFFFF;
+  --nv-divider: #ECEEEF;
+  --nv-primary-text: #16181A;
+  --nv-secondary-text: #8A8F94;
+  --nv-accent: #34D399;
+  --nv-accent-deep: #0E9F6E;
+  --nv-accent-soft: rgba(52, 211, 153, 0.12);
+  --nv-accent-line: rgba(52, 211, 153, 0.5);
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--nv-canvas); font-family: -apple-system, "PingFang SC", "Segoe UI", sans-serif; color: var(--nv-primary-text); font-size: 13px; padding: 32px; display: flex; flex-direction: column; gap: 40px; align-items: center; }
+.frame { background: var(--nv-canvas); width: 1240px; }
+.caption { font-size: 12px; color: var(--nv-secondary-text); margin-bottom: 14px; letter-spacing: 0.02em; }
+.caption b { color: var(--nv-primary-text); }
+
+/* ── 编辑器外壳 ─────────────────────────────── */
+.ed { background: var(--nv-surface); border: 0.5px solid var(--nv-divider); border-radius: 14px; overflow: hidden; display: flex; flex-direction: column; }
+.ed-top { display: flex; align-items: center; gap: 10px; padding: 12px 20px; border-bottom: 0.5px solid var(--nv-divider); }
+.ed-top .back { color: var(--nv-secondary-text); font-size: 15px; }
+.ed-top .title { font-weight: 600; }
+.ed-top .kind { font-size: 11px; padding: 2px 9px; border-radius: 999px; background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.ed-top .sp { flex: 1; }
+.ed-top .save { background: var(--nv-accent); color: #fff; border-radius: 999px; padding: 6px 18px; font-weight: 600; font-size: 12.5px; }
+
+/* ── ① 零级页面架 page rail ─────────────────── */
+.rail { display: flex; gap: 10px; padding: 14px 24px 16px; overflow-x: auto; border-bottom: 0.5px solid var(--nv-divider); }
+.rail::-webkit-scrollbar { display: none; }
+.pg { flex: none; width: 168px; background: var(--nv-surface); border: 0.5px solid var(--nv-divider); border-radius: 10px; padding: 10px 12px 11px; cursor: grab; position: relative; transition: border-color .15s, background .15s; }
+.pg:hover { border-color: #D6D9DA; }
+.pg .grip { position: absolute; top: 8px; right: 10px; color: #C8CCCE; font-size: 11px; letter-spacing: -1px; opacity: 0; transition: opacity .15s; }
+.pg:hover .grip { opacity: 1; }
+.pg .nm { font-weight: 600; font-size: 13px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.pg .meta { margin-top: 6px; font-size: 11px; color: var(--nv-secondary-text); }
+.pg.on { background: var(--nv-accent-soft); border-color: var(--nv-accent-line); }
+.pg.on .nm { color: var(--nv-accent-deep); }
+.pg.on .meta { color: var(--nv-accent-deep); opacity: .75; }
+.pg.on::after { content: ''; position: absolute; left: 12px; right: auto; width: 22px; bottom: 6px; height: 2.5px; border-radius: 2px; background: var(--nv-accent); }
+/* 拖动状态 */
+.pg.drag { opacity: .35; }
+.pg::before { content: ''; position: absolute; left: -6px; top: 8px; bottom: 8px; width: 2.5px; border-radius: 2px; background: transparent; }
+.pg.dropbefore::before { background: var(--nv-accent); }
+.ghost { position: absolute; left: 340px; top: 116px; background: var(--nv-primary-text); color: #fff; font-size: 12px; padding: 6px 12px; border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.18); opacity: .92; pointer-events: none; }
+.ghost small { color: #9BA0A3; }
+
+/* ── 文档体 ────────────────────────────────── */
+.doc { padding: 26px 64px 48px; }
+.doc h1 { font-size: 22px; margin-bottom: 14px; }
+.doc p { line-height: 1.85; color: #33373A; margin-bottom: 12px; }
+.sec h2 { font-size: 15.5px; margin: 26px 0 8px; display: flex; align-items: center; gap: 8px; }
+.sec h2 .grip { color: #C8CCCE; font-size: 11px; letter-spacing: -1px; }
+.htag { font-size: 10.5px; color: var(--nv-accent-deep); background: var(--nv-accent-soft); padding: 2px 8px; border-radius: 999px; font-weight: 500; }
+
+/* ── ②a 节内页签 in-section tabs（翻页态）────── */
+.sectabs { display: flex; gap: 4px; margin: 8px 0 4px; overflow-x: auto; }
+.sectabs::-webkit-scrollbar { display: none; }
+.stab { flex: none; padding: 6px 13px 8px; font-size: 12.5px; color: var(--nv-secondary-text); border-radius: 8px 8px 0 0; position: relative; white-space: nowrap; cursor: pointer; }
+.stab:hover { color: var(--nv-primary-text); background: #F7F8F7; }
+.stab.on { color: var(--nv-accent-deep); font-weight: 600; }
+.stab.on::after { content: ''; position: absolute; left: 13px; right: 13px; bottom: 2px; height: 2px; border-radius: 2px; background: var(--nv-accent); }
+.sectabs-wrap { display: flex; align-items: center; border-bottom: 0.5px solid var(--nv-divider); margin-bottom: 12px; }
+.fan { margin-left: auto; margin-bottom: 4px; flex: none; border: 0; background: none; cursor: pointer; color: var(--nv-secondary-text); display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; padding: 5px 10px; border-radius: 7px; }
+.fan:hover { background: #F2F3F3; color: var(--nv-primary-text); }
+.fan svg { display: block; }
+
+/* ── ② 横排卡架 card shelf（并列态）─────────── */
+.shelf { margin-top: 10px; background: #F7F8F7; border: 0.5px solid var(--nv-divider); border-radius: 12px; padding: 14px; }
+.shelf-row { display: flex; gap: 12px; overflow-x: auto; padding-bottom: 4px; }
+.shelf-row::-webkit-scrollbar { height: 4px; }
+.shelf-row::-webkit-scrollbar-thumb { background: #D9DCDD; border-radius: 2px; }
+.sc { flex: none; width: 244px; background: var(--nv-surface); border: 0.5px solid var(--nv-divider); border-radius: 10px; padding: 12px 14px; display: flex; flex-direction: column; cursor: grab; }
+.sc:hover { border-color: #D6D9DA; }
+.sc .hd { display: flex; align-items: center; gap: 7px; margin-bottom: 7px; }
+.sc .hd .grip { color: #C8CCCE; font-size: 11px; letter-spacing: -1px; }
+.sc .hd .nm { font-weight: 600; font-size: 12.5px; flex: 1; }
+.sc .hd .dots { color: var(--nv-secondary-text); font-size: 13px; letter-spacing: 1px; }
+.sc .bd { font-size: 12px; line-height: 1.7; color: #55595C; }
+.shelf-hint { text-align: center; font-size: 10.5px; color: #B9BDC0; margin-top: 8px; letter-spacing: .04em; }
+
+/* ── ③ 分栏左抽屉 compact rail ─────────────── */
+.split { display: flex; height: 560px; }
+.drawer { width: 320px; border-right: 0.5px solid var(--nv-divider); background: var(--nv-surface); display: flex; flex-direction: column; }
+.d-card { margin: 14px; height: 120px; border-radius: 10px; background: var(--nv-accent-soft); display: flex; align-items: center; justify-content: center; font-size: 30px; color: var(--nv-accent-deep); font-weight: 700; }
+.d-name { margin: 0 14px 4px; font-weight: 600; }
+.d-head { margin: 16px 14px 8px; font-size: 12px; color: var(--nv-secondary-text); }
+.crail { display: flex; gap: 8px; padding: 0 14px 12px; overflow-x: auto; border-bottom: 0.5px solid var(--nv-divider); }
+.crail::-webkit-scrollbar { display: none; }
+.cpg { flex: none; background: var(--nv-surface); border: 0.5px solid var(--nv-divider); border-radius: 8px; padding: 7px 12px; font-size: 12px; color: var(--nv-secondary-text); white-space: nowrap; cursor: grab; position: relative; }
+.cpg .n { color: #B9BDC0; font-size: 10.5px; margin-left: 4px; }
+.cpg.on { background: var(--nv-accent-soft); border-color: var(--nv-accent-line); color: var(--nv-accent-deep); font-weight: 600; }
+.cpg.on::after { content: ''; position: absolute; left: 12px; width: 16px; bottom: 3px; height: 2px; border-radius: 2px; background: var(--nv-accent); }
+.mrow { padding: 9px 18px; border-radius: 8px; margin: 3px 8px; }
+.mrow .nm { font-size: 13px; }
+.mrow .ex { font-size: 11px; color: var(--nv-secondary-text); margin-top: 2px; }
+.mrow.on { background: var(--nv-accent-soft); }
+.mrow.on .nm { color: var(--nv-accent-deep); font-weight: 600; }
+.pane { flex: 1; background: var(--nv-surface); padding: 28px 40px; }
+.pane h1 { font-size: 20px; margin-bottom: 12px; }
+</style>
+</head>
+<body>
+
+<div class="frame">
+  <div class="caption"><b>方案 · 文档模式</b> —— 零级模块 = 页面架（page rail），选中页薄荷底 + 短指示条；拖动整卡，落点竖线</div>
+  <div class="ed">
+    <div class="ed-top">
+      <span class="back">‹</span><span class="title">圣穹神隐学院：造神试炼</span><span class="kind">世界</span>
+      <span class="sp"></span><span class="save">保存</span>
+    </div>
+    <div class="rail" style="position:relative">
+      <div class="pg"><span class="grip">⠿</span><div class="nm">中土大陆试炼</div><div class="meta">4 节</div></div>
+      <div class="pg drag"><span class="grip">⠿</span><div class="nm">世界基础</div><div class="meta">3 节</div></div>
+      <div class="pg on"><span class="grip">⠿</span><div class="nm">学员与势力</div><div class="meta">6 节 · 当前页</div></div>
+      <div class="pg dropbefore"><span class="grip">⠿</span><div class="nm">事件时间线</div><div class="meta">5 节</div></div>
+      <div class="pg"><span class="grip">⠿</span><div class="nm">运营与后勤</div><div class="meta">2 节</div></div>
+      <div class="pg"><span class="grip">⠿</span><div class="nm">地理与位面</div><div class="meta">7 节</div></div>
+      <div class="pg"><span class="grip">⠿</span><div class="nm">神格与信仰机制</div><div class="meta">3 节</div></div>
+      <div class="pg"><span class="grip">⠿</span><div class="nm">位面法则</div><div class="meta">4 节</div></div>
+      <div class="ghost">世界基础 <small>→ 移到「事件时间线」之前</small></div>
+    </div>
+    <div class="doc">
+      <h1>艾莉娅·星咏</h1>
+      <p><b>契约种族：</b>绿皮兽人　<b>分配位面：</b>蛮荒-404 号，重度腐殖质沼泽，无原生铁矿</p>
+      <p><b>初始神职：</b>星辰与智慧（教务处初审待定）　<b>实际神格：</b>表层「星辉与智慧女神」，里层「荒原战争主宰」</p>
+      <div class="sec">
+        <h2><span class="grip">⠿</span>同期学员 <span class="htag">横排</span></h2>
+        <div class="sectabs-wrap">
+          <div class="sectabs">
+            <div class="stab">卡洛斯·梅林</div>
+            <div class="stab on">薇薇安·月歌</div>
+            <div class="stab">奥托·冯·莱茵哈特</div>
+            <div class="stab">艾瑞克·光辉</div>
+          </div>
+          <button class="fan"><svg width="13" height="11" viewBox="0 0 13 11"><rect x="0.75" y="0.75" width="4.8" height="9.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="7.45" y="0.75" width="4.8" height="9.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>并列</button>
+        </div>
+        <div class="sec">
+          <h2 style="font-size:14px"><span class="grip">⠿</span>薇薇安·月歌</h2>
+          <p><b>契约种族：</b>纯血晨曦精灵　<b>初始神职：</b>音乐与黎明</p>
+          <p>性格高傲，视艾莉娅为潜在盟友兼竞争对手。初始位面晨曦林地，原生魔法浓度极高，入学前已有私人信徒社群。</p>
+          <p><b>神格偏移过程</b>　信徒将她的「黎明之声」解读为「审判序曲」，神格开始向裁决方向偏移，与自我定位产生冲突。</p>
+        </div>
+      </div>
+          <div class="shelf-row">
+            <div class="sc">
+              <div class="hd"><span class="grip">⠿</span><span class="nm">卡洛斯·梅林</span><span class="dots">···</span></div>
+              <div class="bd">契约种族：原初人类（圣罗兰帝国，人口过剩型位面）。初始神职为丰收，实际神格偏向「丰饶与贪欲」双面。</div>
+            </div>
+            <div class="sc">
+              <div class="hd"><span class="grip">⠿</span><span class="nm">薇薇安·月歌</span><span class="dots">···</span></div>
+              <div class="bd">契约种族：纯血晨曦精灵。初始神职为音乐与黎明，性格高傲，视艾莉娅为潜在盟友兼竞争对手。</div>
+            </div>
+            <div class="sc">
+              <div class="hd"><span class="grip">⠿</span><span class="nm">奥托·冯·莱茵哈特</span><span class="dots">···</span></div>
+              <div class="bd">契约种族：地穴狗头人。初始神职为锻造与炉火，沉默寡言，工坊常驻，与艾莉娅有矿石交易往来。</div>
+            </div>
+            <div class="sc">
+              <div class="hd"><span class="grip">⠿</span><span class="nm">艾瑞克·光辉</span><span class="dots">···</span></div>
+              <div class="bd">契约种族：圣辉天族。初始神职为光与审判，学院风云人物，对蛮荒系学员持公开敌意。</div>
+            </div>
+          </div>
+          <div class="shelf-hint">左右滑动查看更多 · 拖动卡片排序或移出</div>
+        </div>
+      </div>
+      <div class="sec">
+        <h2><span class="grip">⠿</span>关键资产</h2>
+        <p>超重装大兽人、大技霸、魔改巨弩。神力色泽由星蓝变为暗绿，神术由星辰智慧系变为狂暴战吼、群体嗜血、武装降生。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="frame">
+  <div class="caption"><b>方案 · 分栏模式左抽屉</b> —— 同款页签架压缩成胶囊条，下面只列当前页子树</div>
+  <div class="ed">
+    <div class="ed-top">
+      <span class="back">‹</span><span class="title">圣穹神隐学院：造神试炼</span><span class="kind">世界</span>
+      <span class="sp"></span><span class="save">保存</span>
+    </div>
+    <div class="split">
+      <div class="drawer">
+        <div class="d-card">圣</div>
+        <div class="d-name">圣穹神隐学院：造神试炼</div>
+        <div class="d-head">模块</div>
+        <div class="crail">
+          <div class="cpg">中土大陆试炼</div>
+          <div class="cpg on">学员与势力<span class="n">6</span></div>
+          <div class="cpg">事件时间线</div>
+          <div class="cpg">运营与后勤</div>
+          <div class="cpg">地理与位面</div>
+          <div class="cpg">神格与信仰机制</div>
+        </div>
+        <div style="padding-top:6px">
+          <div class="mrow on"><div class="nm">艾莉娅·星咏</div><div class="ex">契约种族：绿皮兽人</div></div>
+          <div class="mrow"><div class="nm">卡洛斯·梅林</div><div class="ex">契约种族：原初人类（圣罗兰帝国…</div></div>
+          <div class="mrow"><div class="nm">薇薇安·月歌</div><div class="ex">契约种族：纯血晨曦精灵</div></div>
+          <div class="mrow"><div class="nm">奥托·冯·莱茵哈特</div><div class="ex">契约种族：地穴狗头人</div></div>
+          <div class="mrow"><div class="nm">艾瑞克·光辉</div><div class="ex">契约种族：圣辉天族</div></div>
+        </div>
+      </div>
+      <div class="pane">
+        <h1>艾莉娅·星咏</h1>
+        <p style="line-height:1.85;color:#33373A"><b>契约种族：</b>绿皮兽人　<b>分配位面：</b>蛮荒-404 号，重度腐殖质沼泽，无原生铁矿</p>
+        <p style="line-height:1.85;color:#33373A"><b>初始神职：</b>星辰与智慧（教务处初审待定）　<b>实际神格：</b>表层「星辉与智慧女神」，里层「荒原战争主宰」</p>
+        <p style="line-height:1.85;color:#33373A"><b>性格</b>　表面上试图维持正统法师形象，实际上被信徒的认知彻底裹挟。在摆烂与不服输之间反复横跳。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,1 @@
+CONTENT TREE: group label "卡": globe-icon row "蛮荒-404" expanded; children: document-icon "设定总览", clock-icon "时间线", map-icon "大陆图", stacked-cards-icon "势力档案", and a people-icon row "角色 1" expanded with one indented child, a person-icon row "艾莉缇", highlighted. No other groups shown.

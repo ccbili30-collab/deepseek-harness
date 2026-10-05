@@ -1,0 +1,2 @@
+@tree:full
+SCREEN: timeline while dragging an event. Same timeline as before (title "帝国编年史", ticks "神历 1" "神历 120" "神历 240" "神历 342", era bands "神话时代" "联盟纪" "战争纪"). The event chip "迁都" is lifted with a soft shadow, held by a grabbing hand cursor, positioned between two ticks; above it a small black tooltip bubble "神历 198 年"; a thin dashed line connects it down to the axis where a nearest tick is highlighted in mint (snapping); at its original position a faint dashed ghost outline of the chip remains with a thin gray arrow showing movement. The other chips stay still.

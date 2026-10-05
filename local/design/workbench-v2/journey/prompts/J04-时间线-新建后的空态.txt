@@ -1,0 +1,2 @@
+@tree:timeline
+SCREEN: the new timeline module was just added. Canvas tab strip: tabs "蛮荒-404" and "时间线" (active). Canvas toolbar row: title "时间线" (editable), segmented control "时间轴 | 列表", a mint "＋ 事件" button. Main area: an empty horizontal time axis line with no ticks across the middle, and above it centered gray text "还没有事件", below it a gray line "双击轴上任意位置添加，或贴一段编年史让 AI 整理", and two buttons side by side: mint "＋ 添加事件" and white outlined "贴入文字". Right chat: assistant message "时间线建好了，可以先告诉我这个世界最早发生的几件事。", empty composer.
