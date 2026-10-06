@@ -14,7 +14,7 @@ import { readLayoutInfo, writeLayoutInfo } from './persistence.ts'
  * Transient layout preferences. Responsive concessions never rewrite widths;
  * the right panel's expanded state belongs to its occupant.
  */
-type LayoutState = {
+export type LayoutState = {
   panelInfo: {
     /** Null selects the Conversation; global panels keep the current Session intact. */
     activePanelId: MainPanelId | null

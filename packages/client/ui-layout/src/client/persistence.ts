@@ -12,10 +12,10 @@ import type { LayoutState } from './stores.ts'
 export const layoutPersistence = 'dsh.layout.v1'
 
 interface SavedRecord {
-  sidebar?: number
-  rightbar?: number | null
-  unit?: number | null
-  rightbarCollapsed?: boolean
+  sidebar?: number | undefined
+  rightbar?: number | null | undefined
+  unit?: number | null | undefined
+  rightbarCollapsed?: boolean | undefined
 }
 
 type LayoutInfo = LayoutState['layoutInfo']

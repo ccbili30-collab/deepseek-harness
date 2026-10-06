@@ -1,14 +1,39 @@
 /**
  * Local slot declarations bridging the workspace shell and this plugin's
- * published dependency types: `sidebar.right.pane.top`, `selfChrome`, and
- * `ILayout.setUnitSide` exist in the workspace before its published package
+ * published dependency types: `sidebar.right.pane.top`,
+ * `sidebar.workspaces.workspace.menu.item`, `selfChrome`, and
+ * `ILayout.setUnitSide` exist in the runtime before its published package
  * types carry them. Remove this file once the dependency versions register
  * the seats and fields.
  */
+import type { SlotHookFactory } from '@deepseek-ai/dsh-client-ui-slots'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { MenuOpenState, UseMenuOpenState } from '@deepseek-ai/dsh-client-ui-workspace/client'
+
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     /** The drawer's upper zone above the feature entries: the product's permanent navigation (here, the content tree). */
     'sidebar.right.pane.top': { kind: 'single'; scope: 'session'; owner: { readonly rail: boolean } }
+    /**
+     * Extra rows of one Workspace header's "…" menu — the runtime seat
+     * ui-workspace registers; the published rc.2 types do not carry it yet.
+     */
+    'sidebar.workspaces.workspace.menu.item': {
+      kind: 'list'
+      scope: 'root'
+      owner: {
+        /** Workspace the row shows; real Workspaces only (the ungrouped bucket shows no menu). */
+        workspaceId: WorkspaceId
+        /** Workspace canonical path — the identity a contributed action addresses. */
+        path: string | undefined
+        /** Row display title. */
+        displayTitle: string
+      }
+      hookContext: MenuOpenState
+      inject: { hooks: {
+        menuOpenState: SlotHookFactory<'sidebar.workspaces.workspace.menu.item', UseMenuOpenState>
+      } }
+    }
   }
 }
 
