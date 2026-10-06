@@ -10,16 +10,18 @@ import type {} from '@deepseek-ai/dsh-client-connection'
 import type {} from '@deepseek-ai/dsh-session'
 import { registerCardTools } from './tools.ts'
 import { registerCardRoutes } from './routes.ts'
+import { registerTreeRoutes } from './tree.ts'
 import { registerBindingRoutes } from './bindings.ts'
 import { registerCardContext } from './context.ts'
 
 export const name = 'noven-cards'
 export const inject = ['tools', 'connection', 'sessions', 'agents', 'sessionProjections']
 
-/** Register the card tool family, the editor route, the session-binding route, and mounted-card context injection. */
+/** Register the card tool family, the editor route, the content-tree route, the session-binding route, and mounted-card context injection. */
 export function apply(ctx: Context): void {
   registerCardTools(ctx)
   registerCardRoutes(ctx)
+  registerTreeRoutes(ctx)
   registerBindingRoutes(ctx)
   registerCardContext(ctx)
 }

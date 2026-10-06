@@ -20,6 +20,8 @@ import { flattenModules, organizeFolders, assertValid, findTarget, emptyCardDocu
 import { BindingStore } from './bindings.ts'
 import { CardStore, cardsRoot, type SavedCard } from './store.ts'
 import { applyAndCommit, type EditorCommand } from './editor.ts'
+import { proposeEdit, proposeTransform, proposalChanges, proposalPreview } from './proposals.ts'
+import { aiTrustOf } from './trust.ts'
 import { buildBulkModules, parseBulkTree } from './bulk.ts'
 import { exportCard, importExchange, importForeignFile, readProjectFile } from './exchange.ts'
 import { dirExists, loadRegistry, normalizeRoot } from 'noven-ledger'
@@ -65,11 +67,13 @@ type CommandBuilder = (args: Record<string, unknown>) => EditorCommand
 export function registerCardTools(ctx: Context): void {
   const tools = ctx.tools
 
-  /** 读这张卡当前最新的内容：有未提交草稿用草稿，否则用 head。 */
+  /** 读这张卡当前最新的内容：草稿 > head，再叠加未确认的 AI 提案（模型应看见自己挂起的改动）。 */
   async function currentCard(store: CardStore, cardId: string): Promise<ContentDocument> {
     const saved = await store.open(cardId)
     if (saved === undefined) throw new Error(`卡不存在或已删除：${cardId}（先 list_cards）`)
-    return (await store.draft(cardId))?.document ?? saved.document
+    const base = (await store.draft(cardId))?.document ?? saved.document
+    const proposal = await store.proposal(cardId)
+    return proposal === undefined ? base : proposalPreview(base, proposal)
   }
 
   function locate(document: ContentDocument, targetId: string): ContentDocument {
@@ -163,7 +167,9 @@ export function registerCardTools(ctx: Context): void {
       const rootId = String(args.root_id)
       const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, rootId, optionalId(args.project) ?? undefined)
       const draft = await resolved.store.draft(rootId)
-      const card = draft?.document ?? resolved.saved.document
+      const proposal = await resolved.store.proposal(rootId)
+      const base = draft?.document ?? resolved.saved.document
+      const card = proposal === undefined ? base : proposalPreview(base, proposal)
       const dirName = await resolved.store.dirName(rootId)
       return {
         status: 'read',
@@ -173,6 +179,7 @@ export function registerCardTools(ctx: Context): void {
         draft_version: draft?.version ?? resolved.saved.version,
         has_unsaved_draft: draft !== undefined,
         source: draft?.source ?? resolved.saved.source,
+        ...(proposal !== undefined ? { pending_proposal: true, proposal_changes: proposalChanges(base, proposal).length } : {}),
         page_limit: PAGE_LIMIT,
         card: summarize(locate(card, String(args.target_id))),
       }
@@ -304,20 +311,41 @@ export function registerCardTools(ctx: Context): void {
       const root = String(args.root_id)
       const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
       const store = resolved.store
-      const { saved, nextDocument, target, createdModuleIds, createdBlockIds } = await store.exclusive(root, async () => {
-        const draft = await store.ensureDraft(root, 'AI')
-        const located = locate(draft.document, String(args.target_id))
-        const nodes = parseBulkTree(typeof args.module_json === 'string' ? `[${args.module_json}]` : [args.module_json], 'module')
-        const built = await buildBulkModules(nodes, text => store.receivePayload(root, new TextEncoder().encode(text)))
+      const nodes = parseBulkTree(typeof args.module_json === 'string' ? `[${args.module_json}]` : [args.module_json], 'module')
+      const built = await buildBulkModules(nodes, text => store.receivePayload(root, new TextEncoder().encode(text)))
+      const targetId = String(args.target_id)
+      const buildNext = (base: ContentDocument): { document: ContentDocument, located: ContentDocument } => {
+        const located = locate(base, targetId)
         const before = optionalId(args.before_id)
         const inserted = { ...located, modules: before === null ? [...located.modules, ...built.modules] : insertBefore(located.modules, built.modules, before) }
-        const document = replaceInTree(draft.document, located.id, organizeFolders(inserted))
+        const document = replaceInTree(base, located.id, organizeFolders(inserted))
         assertValid(document)
-        const updated = await store.updateDraft(root, undefined, document, 'AI')
-        return { saved: await store.commit(root, updated.version), nextDocument: document, target: located, createdModuleIds: built.createdModuleIds, createdBlockIds: built.createdBlockIds }
+        return { document, located }
+      }
+      if (await aiTrustOf(resolved.projectRoot, root) === 'auto') {
+        const { saved, nextDocument, target } = await store.exclusive(root, async () => {
+          const draft = await store.ensureDraft(root, 'AI')
+          const { document, located } = buildNext(draft.document)
+          const updated = await store.updateDraft(root, undefined, document, 'AI')
+          return { saved: await store.commit(root, updated.version), nextDocument: document, target: located }
+        })
+        await bindManaged(cwd, exec, root, resolved.projectRoot)
+        return { ...savedResult(root, saved, target.id), project_root: resolved.projectRoot, created_module_ids: built.createdModuleIds, created_block_ids: built.createdBlockIds, ...cardTag(nextDocument, target.id) }
+      }
+      let located: ContentDocument | undefined
+      const outcome = await proposeTransform(store, root, async preview => {
+        const built_doc = buildNext(preview)
+        located = built_doc.located
+        return built_doc.document
       })
       await bindManaged(cwd, exec, root, resolved.projectRoot)
-      return { ...savedResult(root, saved, target.id), project_root: resolved.projectRoot, created_module_ids: createdModuleIds, created_block_ids: createdBlockIds, ...cardTag(nextDocument, target.id) }
+      return {
+        status: 'proposed', pending: true, root_id: root, target_id: targetId,
+        project_root: resolved.projectRoot,
+        created_module_ids: built.createdModuleIds, created_block_ids: built.createdBlockIds,
+        ...(located !== undefined ? cardTag(proposalPreview(resolved.saved.document, outcome.proposal), located.id) : {}),
+        next: '改动已作为提案放在画布上，等待用户确认——不要宣称已完成',
+      }
     },
   }))
 
@@ -386,10 +414,10 @@ export function registerCardTools(ctx: Context): void {
       layout: { type: 'string', description: 'VERTICAL（竖向）或 HORIZONTAL（横向），缺省 VERTICAL' },
       widget: {
         type: 'string',
-        description: '特殊模块渲染器，缺省为普通文档模块。内置类型（正文块写版本化 JSON，与客户端编辑器同构）：' +
-          'timeline=时间线（{"version":1,"kind":"timeline","nodes":[{"time","title","description"}]}）、' +
-          'map=地图（{"version":1,"kind":"single_image","description":"…"}，另用 adopt_image 给模块加图片块）、' +
-          'collection=合集条目（{"version":1,"kind":"collection","items":[{"id","name","summary","description"}]}，语义名 region/faction/race/quotes 等同用此 kind）；' +
+        description: '特殊模块渲染器，缺省为普通文档模块。内置类型：' +
+          'timeline=时间线、collection=合集条目（语义名 region/faction/race/quotes 等同用此 kind）——' +
+          '这两类建好后**必须**用 timeline_*/collection_* 专用工具填数据，不要手写 JSON；' +
+          'map=地图（{"version":1,"kind":"single_image","description":"…"}，另用 adopt_image 给模块加图片块）；' +
           'html=自定义小组件（正文块直接写 HTML 源码，沙箱渲染，适合 vibecode 的交互组件）',
       },
     },
@@ -468,6 +496,186 @@ export function registerCardTools(ctx: Context): void {
         routing: args.routing === undefined ? undefined : routingOf(String(args.routing), 'routing'),
         temporality: args.temporality === undefined ? undefined : temporalityOf(String(args.temporality), 'temporality'),
       }
+    })
+
+  // ---------- 预制模块：时间线 ----------
+  const numOrNull = (raw: unknown): number | null => {
+    const value = Number(raw)
+    return Number.isFinite(value) ? value : null
+  }
+  const EVENT_ID = { module_id: { type: 'string' as const, required: true as const, description: '时间线模块编号' }, id: { type: 'string' as const, required: true as const, description: '事件/时代编号' } }
+  const eventPatch = (args: Record<string, unknown>): { title?: string, description?: string, at?: number | null, until?: number | null, characters?: string[] } => {
+    const patch: { title?: string, description?: string, at?: number | null, until?: number | null, characters?: string[] } = {}
+    if (args.title !== undefined) patch.title = String(args.title)
+    if (args.description !== undefined) patch.description = String(args.description)
+    if (args.at !== undefined) patch.at = numOrNull(args.at)
+    if (args.until !== undefined) patch.until = numOrNull(args.until)
+    if (Array.isArray(args.characters)) patch.characters = args.characters.map(String)
+    return patch
+  }
+
+  registerEditTool(tools, 'timeline_add_event',
+    '往时间线模块加一条事件并保存（专用工具，不要手写 JSON）。at 是数值时间（单位由历法决定），省略/at=null 表示事件存在但尚未放到轴上；until 给出则事件是一段时期。',
+    {
+      module_id: { type: 'string', required: true, description: '时间线模块编号' },
+      title: { type: 'string', required: true, description: '事件标题' },
+      at: { type: 'number', description: '数值时间；省略=未放置' },
+      until: { type: 'number', description: '持续终点；省略=点事件' },
+      description: { type: 'string', description: '事件描述' },
+      characters: { type: 'array', items: { type: 'string' }, description: '相关角色卡编号' },
+    },
+    args => ({
+      kind: 'timeline_add_event', moduleId: String(args.module_id),
+      event: {
+        title: String(args.title), at: numOrNull(args.at), until: numOrNull(args.until),
+        description: typeof args.description === 'string' ? args.description : undefined,
+        characters: Array.isArray(args.characters) ? args.characters.map(String) : undefined,
+      },
+    }))
+
+  registerEditTool(tools, 'timeline_update_event',
+    '修改时间线事件的标题、描述、位置或关联角色；只传要改的字段。',
+    { ...EVENT_ID, title: { type: 'string', description: '新标题' }, at: { type: 'number' }, until: { type: 'number' }, description: { type: 'string' }, characters: { type: 'array', items: { type: 'string' } } },
+    args => ({ kind: 'timeline_update_event', moduleId: String(args.module_id), id: String(args.id), patch: eventPatch(args) }))
+
+  registerEditTool(tools, 'timeline_move_event',
+    '把事件挪到新时间（拖动手感的工具版）；until 省略=保持原持续，传 null 值由 at 单独决定。',
+    { ...EVENT_ID, at: { type: 'number', required: true, description: '新的数值时间' }, until: { type: 'number' } },
+    args => ({ kind: 'timeline_move_event', moduleId: String(args.module_id), id: String(args.id), at: numOrNull(args.at), until: args.until === undefined ? undefined : numOrNull(args.until) }))
+
+  registerEditTool(tools, 'timeline_remove_event',
+    '从时间线删除一条事件（时代不受影响）。',
+    EVENT_ID,
+    args => ({ kind: 'timeline_remove_event', moduleId: String(args.module_id), id: String(args.id) }))
+
+  registerEditTool(tools, 'timeline_add_era',
+    '加一段时代色带（from/to 为数值范围，color 取 purple/blue/pink/green/amber/gray）。',
+    {
+      module_id: { type: 'string', required: true, description: '时间线模块编号' },
+      name: { type: 'string', required: true, description: '时代名' },
+      from: { type: 'number', required: true, description: '起点' },
+      to: { type: 'number', required: true, description: '终点' },
+      color: { type: 'string', description: '色带颜色' },
+    },
+    args => ({ kind: 'timeline_add_era', moduleId: String(args.module_id), era: { name: String(args.name), from: numOrNull(args.from) ?? 0, to: numOrNull(args.to) ?? 0, color: typeof args.color === 'string' ? args.color : 'gray' } }))
+
+  registerEditTool(tools, 'timeline_update_era',
+    '修改时代名、范围或颜色；只传要改的字段（拖时代边缘的工具版是改 from/to）。',
+    { ...EVENT_ID, name: { type: 'string' }, from: { type: 'number' }, to: { type: 'number' }, color: { type: 'string' } },
+    args => {
+      const patch: { name?: string, from?: number, to?: number, color?: string } = {}
+      if (args.name !== undefined) patch.name = String(args.name)
+      if (args.from !== undefined) patch.from = numOrNull(args.from) ?? 0
+      if (args.to !== undefined) patch.to = numOrNull(args.to) ?? 0
+      if (args.color !== undefined) patch.color = String(args.color)
+      return { kind: 'timeline_update_era', moduleId: String(args.module_id), id: String(args.id), patch }
+    })
+
+  registerEditTool(tools, 'timeline_remove_era',
+    '删除一段时代色带（事件不受影响）。',
+    EVENT_ID,
+    args => ({ kind: 'timeline_remove_era', moduleId: String(args.module_id), id: String(args.id) }))
+
+  registerEditTool(tools, 'timeline_set_calendar',
+    '设置时间线历法：name/unit/epoch/step（拖动吸附步长）/format（显示模板，含 {n} 占位）。精度由用户调，数值一律存数字。',
+    {
+      module_id: { type: 'string', required: true, description: '时间线模块编号' },
+      calendar_json: { type: 'string', required: true, description: '历法 JSON，如 {"name":"神历","unit":"年","epoch":0,"step":1,"format":"神历 {n} 年"}' },
+    },
+    args => {
+      const raw = JSON.parse(String(args.calendar_json)) as Record<string, unknown>
+      if (raw === null || typeof raw !== 'object') throw new Error('calendar_json 不是对象')
+      return {
+        kind: 'timeline_set_calendar', moduleId: String(args.module_id),
+        calendar: {
+          name: typeof raw.name === 'string' ? raw.name : '',
+          unit: typeof raw.unit === 'string' ? raw.unit : '年',
+          epoch: numOrNull(raw.epoch) ?? 0,
+          step: numOrNull(raw.step) ?? 1,
+          format: typeof raw.format === 'string' ? raw.format : '{n}',
+        },
+      }
+    })
+
+  // ---------- 预制模块：集合 ----------
+  const ITEM_ID = { module_id: { type: 'string' as const, required: true as const, description: '集合模块编号' }, id: { type: 'string' as const, required: true as const, description: '条目/字段编号' } }
+
+  registerEditTool(tools, 'collection_add_field',
+    '给集合模块加一个自定义字段。type：text/longtext/date/person（值为角色编号）/image（值为 {"resourceId":...}）/place/link。',
+    {
+      module_id: { type: 'string', required: true, description: '集合模块编号' },
+      name: { type: 'string', required: true, description: '字段名' },
+      type: { type: 'string', description: '字段类型（缺省 text）' },
+    },
+    args => ({ kind: 'collection_add_field', moduleId: String(args.module_id), field: { name: String(args.name), ...(typeof args.type === 'string' ? { type: args.type as 'text' | 'longtext' | 'date' | 'person' | 'image' | 'place' | 'link' } : {}) } }))
+
+  registerEditTool(tools, 'collection_update_field',
+    '改集合字段的名字或类型；只传要改的字段。',
+    { ...ITEM_ID, name: { type: 'string' }, type: { type: 'string' } },
+    args => {
+      const patch: { name?: string, type?: 'text' | 'longtext' | 'date' | 'person' | 'image' | 'place' | 'link' } = {}
+      if (args.name !== undefined) patch.name = String(args.name)
+      if (args.type !== undefined) patch.type = String(args.type) as 'text' | 'longtext' | 'date' | 'person' | 'image' | 'place' | 'link'
+      return { kind: 'collection_update_field', moduleId: String(args.module_id), id: String(args.id), patch }
+    })
+
+  registerEditTool(tools, 'collection_remove_field',
+    '删除一个集合字段，各条目上该字段的值一并清除。',
+    ITEM_ID,
+    args => ({ kind: 'collection_remove_field', moduleId: String(args.module_id), id: String(args.id) }))
+
+  registerEditTool(tools, 'collection_add_item',
+    '往集合加一个条目并保存（专用工具，不要手写 JSON）。返回的 created_block_ids/条目编号可继续用。',
+    {
+      module_id: { type: 'string', required: true, description: '集合模块编号' },
+      name: { type: 'string', required: true, description: '条目名' },
+      summary: { type: 'string', description: '摘要' },
+      description: { type: 'string', description: '正文描述' },
+    },
+    args => ({
+      kind: 'collection_add_item', moduleId: String(args.module_id),
+      item: { name: String(args.name), summary: typeof args.summary === 'string' ? args.summary : undefined, description: typeof args.description === 'string' ? args.description : undefined },
+    }))
+
+  registerEditTool(tools, 'collection_update_item',
+    '改条目的名字、摘要或正文；只传要改的字段。',
+    { ...ITEM_ID, name: { type: 'string' }, summary: { type: 'string' }, description: { type: 'string' } },
+    args => {
+      const patch: { name?: string, summary?: string, description?: string } = {}
+      if (args.name !== undefined) patch.name = String(args.name)
+      if (args.summary !== undefined) patch.summary = String(args.summary)
+      if (args.description !== undefined) patch.description = String(args.description)
+      return { kind: 'collection_update_item', moduleId: String(args.module_id), id: String(args.id), patch }
+    })
+
+  registerEditTool(tools, 'collection_remove_item',
+    '删除集合的一个条目，其自定义字段值一并清除。',
+    ITEM_ID,
+    args => ({ kind: 'collection_remove_item', moduleId: String(args.module_id), id: String(args.id) }))
+
+  registerEditTool(tools, 'collection_set_value',
+    '给某条目的某字段写值。value_json：文本字段传 "字符串"（含引号的 JSON），图片字段传 {"resourceId":"资源编号"}。',
+    {
+      ...ITEM_ID,
+      item_id: { type: 'string', required: true, description: '条目编号' },
+      field_id: { type: 'string', required: true, description: '字段编号' },
+      value_json: { type: 'string', required: true, description: 'JSON 值' },
+    },
+    args => {
+      const value = JSON.parse(String(args.value_json)) as unknown
+      return { kind: 'collection_set_value', moduleId: String(args.module_id), itemId: String(args.item_id), fieldId: String(args.field_id), value: value as string }
+    })
+
+  registerEditTool(tools, 'collection_set_view',
+    '设置集合的默认视图：list / cards（timeline、map 预留）。',
+    {
+      module_id: { type: 'string', required: true, description: '集合模块编号' },
+      view: { type: 'string', required: true, description: 'list / cards / timeline / map' },
+    },
+    args => {
+      const view = String(args.view)
+      if (!['list', 'cards', 'timeline', 'map'].includes(view)) throw new Error('view 必须是 list / cards / timeline / map')
+      return { kind: 'collection_set_view', moduleId: String(args.module_id), view: view as 'list' | 'cards' | 'timeline' | 'map' }
     })
 
   // ---------- 图片 ----------
@@ -772,18 +980,35 @@ async function resolveCard(cwd: string, sessionId: SessionId | undefined, cardId
     : `全部已注册项目和挂载引用里都没有这张卡：${cardId}（list_cards 看本项目，list_projects 看全部项目）`)
 }
 
-/** 编辑 + 提交一条命令；返回 saved 结果。跨项目照常——卡在哪就改哪。 */
+/**
+ * 编辑一条命令；卡的信任档（cardMeta.aiTrust）决定去向：'auto' 直接提交，
+ * 默认 'propose' 落成提案等用户确认。跨项目照常——卡在哪就改哪。
+ */
 async function editAndCommit(exec: { agent?: { session: { id?: string, header: { cwd?: string } } } }, root: string, target: string, command: EditorCommand, project?: string): Promise<Record<string, JsonValue>> {
   const cwd = sessionCwd(exec)
   const sessionId = exec.agent?.session?.id as SessionId | undefined
   const resolved = await resolveCard(cwd, sessionId, root, project)
-  const { outcome, saved } = await applyAndCommit(resolved.store, root, target, command, 'AI')
   await bindManaged(cwd, exec, root, resolved.projectRoot)
+  if (await aiTrustOf(resolved.projectRoot, root) === 'auto') {
+    const { outcome, saved } = await applyAndCommit(resolved.store, root, target, command, 'AI')
+    return {
+      status: 'saved', root_id: root, target_id: target, revision: saved.revision, next_draft_version: saved.version,
+      project_root: resolved.projectRoot,
+      created_module_ids: outcome.createdModuleIds, created_block_ids: outcome.createdBlockIds,
+      ...cardTag(outcome.draft.document, target),
+    }
+  }
+  const outcome = await proposeEdit(resolved.store, root, target, command)
+  const preview = proposalPreview(resolved.saved.document, outcome.proposal)
   return {
-    status: 'saved', root_id: root, target_id: target, revision: saved.revision, next_draft_version: saved.version,
+    status: 'proposed', pending: true, root_id: root, target_id: target,
     project_root: resolved.projectRoot,
+    proposal_changes: proposalChanges(resolved.saved.document, outcome.proposal).map(change => ({
+      module_id: change.moduleId, name: change.name, kind: change.kind, stale: change.stale,
+    })),
     created_module_ids: outcome.createdModuleIds, created_block_ids: outcome.createdBlockIds,
-    ...cardTag(outcome.draft.document, target),
+    ...cardTag(preview, target),
+    next: '改动已作为提案放在画布上，等待用户确认——不要宣称已完成；用户接受后才生效',
   }
 }
 

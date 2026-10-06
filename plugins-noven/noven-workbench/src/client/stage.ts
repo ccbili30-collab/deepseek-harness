@@ -16,6 +16,8 @@ export interface StageView {
   readonly mode: StageMode
   /** The staged workspace-relative file; null renders the workbench's home. */
   readonly selected: string | null
+  /** 设计稿 06d：资源树钉住时收成画布右缘的窄列，否则只从面包屑尾巴展开浮层。 */
+  readonly pinned: boolean
 }
 
 /** Cross-plugin open trigger: noven-shell dispatches it, this plugin listens. */
@@ -24,7 +26,7 @@ export const STAGE_OPEN_EVENT = 'noven:workbench-stage'
 /** The workbench's canvas kind on the sidebar's surface stack. */
 export const WORKBENCH_KIND = 'noven.workbench'
 
-const EMPTY_VIEW: StageView = { mode: 'home', selected: null }
+const EMPTY_VIEW: StageView = { mode: 'home', selected: null, pinned: false }
 const views = new Map<string, StageView>()
 let version = 0
 const listeners = new Set<() => void>()

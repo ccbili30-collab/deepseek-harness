@@ -60,6 +60,10 @@ import { cardSavedDefinition, savedMeta } from './card-receipt.ts'
 import { SlashChips } from './inputdock.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
 import { injectNovenStyles } from './style.ts'
+import { CanvasHost, createCanvasStore, type CanvasInjected, type ProjectFocus } from './canvas.tsx'
+import { ContentTree, type TreeInjected } from './tree.tsx'
+import type { CreateRequest } from './creation.tsx'
+import { novenTreeSource } from './tree-api.ts'
 import { capturePanelGhost, installPanelGhost } from './panel-ghost.ts'
 import { en, zh } from './locales.ts'
 
@@ -84,6 +88,9 @@ export const SIDECAR_TAB_ID = 'noven:sidecar'
 const CONTEXT_DEF_ID = 'noven-shell.context'
 const LIBRARY_DEF_ID = 'noven-shell.library'
 const SIDECAR_DEF_ID = 'noven-shell.sidecar'
+/** The canvas's tab type: `kind` is what `openTab` names, `id` keys its body under `sidebar.right.pane.tab`. */
+const CANVAS_KIND = 'noven.canvas'
+const CANVAS_DEF_ID = 'noven-shell.canvas'
 
 /** Which card the editor is showing — shared between 我的 and the editor entry. */
 interface CardRef { readonly cardId: string; readonly sessionId?: SessionId; readonly root: string }
@@ -237,7 +244,7 @@ function LibraryTabIcon({ size }: { size?: number }) { return glyph.book(size ??
 function SidecarTabIcon({ size }: { size?: number }) { return glyph.sparkle(size ?? 16) }
 
 /** Required browser services: slots, panel selection, theme, copy, right rail, session navigation, command and skill catalogs. */
-export const inject = ['slots', 'locale', 'layout', 'theme', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiWorkspace', 'remote', 'remote.commands', 'remote.skills', 'remote.workspaceFiles', 'sessions', 'workspaces']
+export const inject = ['slots', 'locale', 'layout', 'theme', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiWorkspace', 'uiSession', 'remote', 'remote.commands', 'remote.skills', 'remote.workspaceFiles', 'sessions', 'workspaces']
 
 interface ChipEntry { name: string; description: string }
 
@@ -797,8 +804,7 @@ export function apply(ctx: ClientContext): void {
   const face: ShellFace = {
     openCard: (id, addr) => {
       instance.actions.openCard({ cardId: id, sessionId: addr.sessionId, root: rootOf(addr) })
-      capturePanelGhost()
-      try { ctx.layout.selectPanel(CARD_EDITOR_ID) } catch { /* editor panel not live yet */ }
+      openCanvasCard(id, { sessionId: addr.sessionId, root: rootOf(addr) }, undefined, addr.sessionId)
     },
     openPanel: (id) => {
       capturePanelGhost()
@@ -814,7 +820,7 @@ export function apply(ctx: ClientContext): void {
   const newCard = (kind: 'world' | 'character', name: string): void => {
     void (async () => {
       const target = recentSession()
-      const sessionId = target?.id ?? await ctx.sessions.create({})
+      const sessionId = target?.id ?? await createSessionIn(undefined)
       const created = await cardOp({ sessionId }, { op: 'create', kind: kind === 'world' ? 'WORLD' : 'CHARACTER', name })
       cards.refresh()
       if (created.cardId !== undefined) face.openCard(created.cardId, { sessionId })
@@ -828,7 +834,7 @@ export function apply(ctx: ClientContext): void {
       let binary = ''
       for (const chunk of bytes) binary += String.fromCharCode(chunk)
       const target = recentSession()
-      const sessionId = target?.id ?? await ctx.sessions.create({})
+      const sessionId = target?.id ?? await createSessionIn(undefined)
       const imported = await cardOp({ sessionId }, { op: 'import', file: btoa(binary), name: file.name })
       cards.refresh()
       if (imported.cardId !== undefined) face.openCard(imported.cardId, { sessionId })
@@ -839,12 +845,211 @@ export function apply(ctx: ClientContext): void {
   const startPromptSession = (text: string): void => {
     const cwd = recentSession()?.cwd
     void (async () => {
-      const sessionId = await ctx.sessions.create(cwd === undefined ? {} : { cwd })
+      const sessionId = await createSessionIn(cwd)
       ctx.uiWorkspace.openSession(sessionId)
       await ctx.sessions.using(sessionId, { source: 'novenShell' }, async reference => {
         await reference.binding.session.prompt([{ type: 'text', text }], 'queue')
       })
     })().catch((reason: unknown) => { console.warn('noven-shell: prompt session failed:', reason) })
+  }
+
+  // ——— 四栏外壳：导航栏（图标 + 会话列表）原样不动；抽屉上区装内容树；
+  // 画布是 rightbar 单元里的一个 selfChrome 页签；会话走 main 的
+  // conversation 上游原样实现。零遮蔽，全部经原生座。
+
+  const canvasHandle = createCanvasStore()
+  const canvasInstance = canvasHandle.create()
+  const canvasStore: typeof canvasHandle = { ...canvasHandle, create: () => canvasInstance }
+
+  /** cwd → 已注册 workspace 的 id：上游会话分组靠 workspace 的 sessionIds 名单认领。 */
+  const workspaceIdFor = (root: string) =>
+    (ctx.get('workspaces') as IWorkspaces | undefined)?.list.getSnapshot().items
+      .find(w => w.path === root)?.workspaceId
+
+  /**
+   * 建会话：根下有注册 workspace 走 workspaceId（进分组名单），否则裸
+   * cwd。注意 workspaceId 与 cwd 在 create 载荷里互斥——传了 workspaceId
+   * 会丢 cwd，服务端从 workspace 解析。
+   */
+  const createSessionIn = (root: string | undefined): Promise<SessionId> => {
+    if (root === undefined) return ctx.sessions.create({})
+    const workspaceId = workspaceIdFor(root)
+    return ctx.sessions.create(workspaceId === undefined ? { cwd: root } : { workspaceId })
+  }
+
+  /** 当前项目坐标：跟随绑定会话的 cwd，标题取创作库登记名。 */
+  let focusSnapshot: ProjectFocus | undefined
+  const focusListeners = new Set<() => void>()
+  const computeFocus = (): void => {
+    const key = ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined
+    const cwd = key === undefined ? undefined : ctx.sessions.list.getSnapshot().byId[key]?.cwd
+    // 项目 = 注册表里的根，不是随便一个 cwd：会话落在没登记的目录上就没有
+    // 工作台——树清空、画布只留起点、写入口关闭（C6）。
+    const project = cwd === undefined ? undefined : projects.getSnapshot().find(row => row.root === cwd)
+    const next: ProjectFocus | undefined = project === undefined || key === undefined ? undefined : {
+      root: project.root,
+      sessionId: key,
+      title: project.title,
+    }
+    const same = next === undefined ? focusSnapshot === undefined
+      : focusSnapshot !== undefined && next.root === focusSnapshot.root && next.sessionId === focusSnapshot.sessionId && next.title === focusSnapshot.title
+    if (same) return
+    focusSnapshot = next
+    for (const listener of focusListeners) listener()
+  }
+  const projectFocus: ObservableSnapshot<ProjectFocus | undefined> = {
+    getSnapshot: () => focusSnapshot,
+    subscribe: listener => { focusListeners.add(listener); return () => { focusListeners.delete(listener) } },
+  }
+  ctx.effect(() => {
+    const offCurrent = ctx.uiSession.adapter.current.subscribe(computeFocus)
+    const offList = ctx.sessions.list.subscribe(computeFocus)
+    const offProjects = projects.subscribe(computeFocus)
+    computeFocus()
+    return () => { offCurrent(); offList(); offProjects() }
+  }, 'noven-shell: project focus')
+
+  /** 内容树轮询源：跟着当前项目走；未绑会话时按裸 root 聚合。 */
+  const treeSource = novenTreeSource(() => {
+    const focus = focusSnapshot
+    if (focus === undefined) return undefined
+    return focus.sessionId !== undefined ? { sessionId: focus.sessionId } : { root: focus.root }
+  })
+
+  // 启动时无绑定会话：回最近有工作区的会话；会话目录后到齐也补一次。只做一次。
+  ctx.effect(() => {
+    let tried = false
+    const maybeOpen = (): void => {
+      if (tried || ctx.uiSession.adapter.current.getSnapshot().key !== undefined) return
+      const recent = recentSession()
+      if (recent !== undefined) { tried = true; ctx.uiWorkspace.openSession(recent.id) }
+    }
+    const unsubscribe = ctx.sessions.list.subscribe(maybeOpen)
+    maybeOpen()
+    return unsubscribe
+  }, 'noven-shell: reopen recent session')
+
+  /** 当前项目的卡地址：绑了会话走 session，裸项目走 root。 */
+  const currentCardAddr = (): CardAddr => {
+    const focus = focusSnapshot
+    const addr: { sessionId?: SessionId; root?: string } = {}
+    if (focus?.sessionId !== undefined) addr.sessionId = focus.sessionId
+    if (focus !== undefined) addr.root = focus.root
+    return addr
+  }
+
+  /** canvasSide/canvas 在工作区的服务上有、发布版类型上还没有——全可选口径，旧版上自然缺席。 */
+  const rightExtras = ctx.sidebarRight as {
+    canvasSide?: { get(): 'left' | 'right'; toggle(): void }
+    canvas?: { getSnapshot(): { readonly kind: string } | undefined }
+  }
+
+  /** 抬起画布页签：页签在 rightbar 单元的画布面，openTab 顺带展开抽屉列。 */
+  const raiseCanvas = (): void => {
+    try { ctx.sidebarRight.openTab(CANVAS_KIND) }
+    catch { /* 座未挂（无绑定会话）——对象标签照开，画布等座出现再抬 */ }
+  }
+
+  /**
+   * 卡页打开统一走画布标签；标签标题等内容树轮询回写。`moduleId` 带模块行深链。
+   * 归属：`owner` 是这条标签所在的会话现场；卡片地址只存项目根——会话会
+   * 换绑、项目不会，打开时向当前会话解析访问路径（C9）。
+   */
+  const openCanvasCard = (cardId: string, addr: CardAddr, moduleId: string | undefined, owner: SessionId | undefined, addModule = false): void => {
+    const session = owner ?? (ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined) ?? addr.sessionId ?? recentSession()?.id
+    if (session === undefined) return
+    canvasInstance.actions.open({ key: `card:${cardId}`, kind: 'card', title: '', owner: session, cardId,
+      cardAddr: { root: rootOf(addr) }, ...(moduleId === undefined ? {} : { moduleId }), ...(addModule ? { addModule: true } : {}) })
+    raiseCanvas()
+  }
+
+  /** 切换左列项目：复用同 cwd 的会话，没有就为这个工作区建一个并绑定。 */
+  const switchProject = (root: string): void => {
+    const state = ctx.sessions.list.getSnapshot()
+    const hit = state.ids.find(id => state.byId[id]?.cwd === root)
+    if (hit !== undefined) { ctx.uiWorkspace.openSession(hit); return }
+    void createSessionIn(root)
+      .then(id => ctx.uiWorkspace.openSession(id))
+      .catch((reason: unknown) => { console.warn('noven-shell: project switch failed:', reason) })
+  }
+
+  /** 拿一个能读写文件的会话：绑定会话优先，其次最近工作区会话，最后按当前项目现建并绑定。 */
+  const ensureSession = async (): Promise<SessionId | undefined> => {
+    const bound = ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined
+    if (bound !== undefined) return bound
+    const recent = recentSession()
+    if (recent !== undefined) { ctx.uiWorkspace.openSession(recent.id); return recent.id }
+    if (focusSnapshot?.root !== undefined) {
+      const id = await createSessionIn(focusSnapshot.root).catch(() => undefined)
+      if (id !== undefined) ctx.uiWorkspace.openSession(id)
+      return id
+    }
+    return undefined
+  }
+
+  const readDoc = async (sessionId: SessionId, path: string): Promise<string | undefined> => {
+    const page = await ctx.remote.workspaceFiles.read(sessionId, path, {}, new AbortController().signal).catch(() => undefined)
+    return page !== undefined && page.ok ? page.value.text : undefined
+  }
+
+  const saveDoc = async (sessionId: SessionId, path: string, content: string, base: string | null): Promise<'ok' | 'conflict' | 'error'> => {
+    const response = await fetch(new URL(`api/noven-doc?session=${encodeURIComponent(sessionId)}`, document.baseURI).href, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ session: sessionId, path, content, base }),
+    }).catch(() => undefined)
+    if (response === undefined) return 'error'
+    if (response.status === 409) return 'conflict'
+    return response.ok ? 'ok' : 'error'
+  }
+
+  const listDir = async (sessionId: SessionId, path: string): Promise<readonly { name: string; type: string }[]> => {
+    const listing = await ctx.remote.workspaceFiles.list(sessionId, path, new AbortController().signal).catch(() => undefined)
+    if (listing === undefined || !listing.ok) return []
+    return listing.value.entries.map(entry => ({ name: entry.name, type: entry.type }))
+  }
+
+  /** interview 起手：建完卡把预设提示词排进对话，让 AI 开问。 */
+  const queueInterview = (request: CreateRequest): void => {
+    const thing = request.kind === 'world' ? '世界' : '角色'
+    const text = `我刚建了一个${thing}「${request.name}」。先问我几个最关键的问题，帮我把想法铺开；差不多了就把答案落成这张卡的模块。`
+    void (async () => {
+      const sessionId = await ensureSession()
+      if (sessionId === undefined) return
+      await ctx.sessions.using(sessionId, { source: 'novenShell' }, async reference => {
+        await reference.binding.session.prompt([{ type: 'text', text }], 'queue')
+      })
+    })().catch((reason: unknown) => { console.warn('noven-shell: interview prompt failed:', reason) })
+  }
+
+  /** 新建面板提交：文稿落 文稿/ 目录；角色选了世界就长进世界卡里；世界/独立角色走 create。 */
+  const submitCreate = (request: CreateRequest): void => {
+    void (async () => {
+      if (request.kind === 'doc') {
+        const sessionId = await ensureSession()
+        if (sessionId === undefined) return
+        const path = `文稿/${request.name}.md`
+        if (await saveDoc(sessionId, path, '', null) !== 'ok') return
+        canvasInstance.actions.open({ key: `doc:${path}`, kind: 'doc', title: request.name, owner: sessionId, path })
+        raiseCanvas()
+        treeSource.refresh()
+        return
+      }
+      if (request.kind === 'import') return
+      const addr = currentCardAddr()
+      if (request.kind === 'character' && request.worldCardId !== undefined) {
+        await cardOp(addr, { op: 'apply', cardId: request.worldCardId, command: { kind: 'add_character', name: request.name } })
+        openCanvasCard(request.worldCardId, addr, undefined, addr.sessionId)
+        treeSource.refresh()
+        return
+      }
+      const created = await cardOp(addr, {
+        op: 'create', kind: request.kind === 'world' ? 'WORLD' : 'CHARACTER', name: request.name, starter: request.starter,
+      })
+      treeSource.refresh()
+      if (created.cardId !== undefined) openCanvasCard(created.cardId, addr, undefined, addr.sessionId)
+      if (created.interview === true) queueInterview(request)
+    })().catch((reason: unknown) => { console.warn('noven-shell: create failed:', reason) })
   }
 
   const NAV: readonly { id: MainPanelId; order: number; label: () => string; Icon: (p: { size: number; active: boolean }) => React.ReactNode }[] = [
@@ -853,6 +1058,93 @@ export function apply(ctx: ClientContext): void {
     { id: MESSAGES_ID, order: 30, label: () => t('nav.messages'), Icon: BellIcon },
     { id: ME_ID, order: 40, label: () => t('nav.me'), Icon: MeIcon },
   ]
+
+  // 抽屉上区：内容树进 sidebar.right.pane.top（工作台导航的原座）。座是
+  // single，原来被无头 PresentWatcher 占着——它挪去了 shell.overlay。
+  ctx.slots.inject('sidebar.right.pane.top', () => ctx.slots.register({
+    name: 'sidebar.right.pane.top', locale: NS,
+    inject: (sessionId): TreeInjected => ({
+      hooks: { tree: treeSource, project: projectFocus, projects },
+      openCard: (cardId, moduleId) => openCanvasCard(cardId, { sessionId, root: focusSnapshot?.root }, moduleId, sessionId),
+      addModule: cardId => openCanvasCard(cardId, { sessionId, root: focusSnapshot?.root }, undefined, sessionId, true),
+      openDoc: (path, title) => {
+        canvasInstance.actions.open({ key: `doc:${path}`, kind: 'doc', title, owner: sessionId, path })
+        raiseCanvas()
+      },
+      openWork: (path, title) => {
+        canvasInstance.actions.open({ key: `work:${path}`, kind: 'work', title, owner: sessionId, path })
+        raiseCanvas()
+      },
+      openFiles: () => {
+        canvasInstance.actions.open({ key: 'files', kind: 'files', title: t('tree.files'), owner: sessionId })
+        raiseCanvas()
+      },
+      openCreate: kind => {
+        canvasInstance.actions.openDialog(sessionId, kind)
+        raiseCanvas()
+      },
+      switchProject,
+      expandDrawer: () => ctx.sidebarRight.toggleExpanded(),
+    }),
+  }, ContentTree))
+
+  // 画布：一个 selfChrome 页签类型，body 挂在 pane.tab 键控座下——openTab
+  // 落进单元的画布浮层、顺带展开抽屉，selfChrome 跳过宿主镀铬、标签条自绘。
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    id: CANVAS_DEF_ID,
+    kind: CANVAS_KIND,
+    title: () => t('canvas.page'),
+    selfChrome: true,
+  }), 'noven-shell: canvas tab type')
+  ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+    name: 'sidebar.right.pane.tab',
+    key: CANVAS_DEF_ID,
+    locale: NS,
+    store: canvasStore,
+    inject: (sessionId): CanvasInjected => ({
+      session: sessionId,
+      hooks: { project: projectFocus, tree: treeSource },
+      loadCard: fetchCard,
+      cardOp,
+      workspaceRoot: rootOf,
+      readDoc,
+      saveDoc,
+      listDir,
+      submitCreate,
+      importCard,
+    }),
+  }, CanvasHost))
+
+  // 产品默认布局：单元（抽屉 | 画布）贴会话左边，画布在单元的右半边。
+  // 只在用户从未摆过时播种——拖过的偏好不再碰。setUnitSide 是工作区
+  // 新加的 API，旧发布版上没有，可选调用。
+  ctx.effect(() => {
+    // 两个偏好键都是宿主在模块加载时读一次、改写时持久化：先写键保证下次
+    // 启动就位，再调 API 让本次会话立即生效（旧构建缺 API 时仅下次生效）。
+    if (localStorage.getItem('dsh.layout.unit-side.v1') === null) {
+      localStorage.setItem('dsh.layout.unit-side.v1', 'left')
+      ctx.layout.setUnitSide?.('left')
+    }
+    if (localStorage.getItem('dsh.rightbar.canvas-side.v1') === null) {
+      localStorage.setItem('dsh.rightbar.canvas-side.v1', 'right')
+      if (rightExtras.canvasSide?.get() !== 'right') rightExtras.canvasSide?.toggle()
+    }
+    return () => { /* 播种无清理 */ }
+  }, 'noven-shell: layout defaults')
+
+  // 会话座挂上且画布空着时开起点页——画布是工作区本体，不该等第一次点击。
+  // mounted 在每次 surface 提交都解绑重绑（绑定对象携带新 surfaces 快照），
+  // 且 mounted 的发射先于 canvas 的重新发布——中途读 canvas 恒为 undefined，
+  // 不设每会话一次的门会把 openTab 打进无限重试。
+  ctx.effect(() => {
+    const seeded = new Set<SessionId>()
+    return ctx.sidebarRight.mounted.subscribe(() => {
+      const sessionId = ctx.sidebarRight.mounted.getSnapshot()
+      if (sessionId === undefined || seeded.has(sessionId)) return
+      seeded.add(sessionId)
+      if (rightExtras.canvas?.getSnapshot() === undefined) raiseCanvas()
+    })
+  }, 'noven-shell: seed canvas')
 
   ctx.slots.inject('sidebar.panellist', function* () {
     for (const nav of NAV) {

@@ -5,16 +5,19 @@
  * sourced HUMAN, then commits — plus draft commit/discard and card creation.
  * @module noven-cards/routes
  */
+import { createHash } from 'node:crypto'
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { ledgerDir } from 'noven-ledger'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { emptyCardDocument, findTarget, type ContentDocument, type ContentModule } from './model.ts'
+import { emptyCardDocument, findTarget, mintId, type ContentDocument, type ContentModule } from './model.ts'
 import { CardStore, DraftConflict, EditConflict, type CardDraft, type SavedCard } from './store.ts'
 import { applyAndCommit, type EditorCommand } from './editor.ts'
 import { buildExportPackage, importExchange, importForeignFile } from './exchange.ts'
+import { acceptProposal, proposalChanges, proposalPreview, rejectProposal } from './proposals.ts'
+import { aiTrustOf, setAiTrust, type AiTrust } from './trust.ts'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -34,7 +37,7 @@ async function cwdForSession(ctx: Context, sessionId: SessionId): Promise<string
 }
 
 /** Workspace root for the card store: `session` maps to its cwd; `root` addresses a project directly. */
-async function rootFor(request: Request, ctx: Context): Promise<{ root: string } | Response> {
+export async function rootFor(request: Request, ctx: Context): Promise<{ root: string } | Response> {
   const url = new URL(request.url)
   const session = url.searchParams.get('session') as SessionId | null
   const root = (session === null ? undefined : await cwdForSession(ctx, session))
@@ -143,13 +146,16 @@ async function hydrateDocument(store: CardStore, cardId: string, document: Conte
   }
 }
 
-/** GET payload: the editable state — effective document, edit version, draft flag. */
-async function cardPayload(store: CardStore, cardId: string): Promise<Record<string, unknown> | Response> {
+/** GET payload: the editable state — effective document, edit version, draft flag, pending AI proposal. */
+async function cardPayload(store: CardStore, root: string, cardId: string, preview: boolean): Promise<Record<string, unknown> | Response> {
   const head = await store.open(cardId)
   if (head === undefined) return new Response('unknown card', { status: 404, headers: JSON_HEADERS })
   const draft: CardDraft | undefined = await store.draft(cardId)
-  const effective = draft ?? head
+  const proposal = await store.proposal(cardId)
   const undo = await store.undoState(cardId)
+  const effective = preview && proposal !== undefined
+    ? { ...head, document: proposalPreview((draft ?? head).document, proposal) }
+    : (draft ?? head)
   return {
     cardId,
     dir: await store.dirName(cardId),
@@ -162,6 +168,61 @@ async function cardPayload(store: CardStore, cardId: string): Promise<Record<str
     document: await hydrateDocument(store, cardId, effective.document),
     resources: effective.document.resources.map(r => ({ id: r.id, ref: r.content, mediaType: r.mediaType })),
     coverResourceId: effective.document.appearance.coverResourceId ?? null,
+    hasProposal: proposal !== undefined,
+    proposal: proposal === undefined ? null : { pending: true, baseRevision: proposal.baseRevision, changes: proposalChanges(head.document, proposal) },
+    aiTrust: await aiTrustOf(root, cardId),
+  }
+}
+
+/**
+ * `GET ?card=<id>&since=<rev>` 的轮询报告（契约 C8）：自某修订后变化的
+ * 模块编号。提案不写修订号，所以把提案摘要一并回——客户端把
+ * `proposalStamp` 也算进「有没有变」。
+ */
+async function revisionReport(store: CardStore, cardId: string, since: number): Promise<Record<string, unknown> | Response> {
+  const head = await store.open(cardId)
+  if (head === undefined) return new Response('unknown card', { status: 404, headers: JSON_HEADERS })
+  const proposal = await store.proposal(cardId)
+  const proposalStamp = proposal === undefined ? null : createHash('sha256').update(JSON.stringify(proposal)).digest('hex').slice(0, 12)
+  if (since >= head.revision && proposalStamp === null) {
+    return { revision: head.revision, changed: [], added: [], removed: [], cardChanged: false, hasProposal: false, proposalStamp }
+  }
+  const base = Number.isFinite(since) && since > 0 ? await store.revisionSnapshot(cardId, since) : undefined
+  if (base === undefined || since >= head.revision) {
+    return { revision: head.revision, changed: [], added: [], removed: [], cardChanged: false, full: since < head.revision, hasProposal: proposal !== undefined, proposalStamp }
+  }
+  const flat = (doc: ContentDocument): Map<string, string> => {
+    const map = new Map<string, string>()
+    const walk = (modules: readonly ContentModule[]): void => {
+      for (const module of modules) {
+        map.set(module.id, JSON.stringify(module))
+        walk(module.children)
+      }
+    }
+    walk(doc.modules)
+    for (const character of doc.internalCharacters) {
+      map.set(character.id, JSON.stringify({ name: character.name, appearance: character.appearance, extensions: character.extensions }))
+      walk(character.modules)
+    }
+    return map
+  }
+  const now = flat(head.document)
+  const was = flat(base.document)
+  const changed: string[] = []
+  const added: string[] = []
+  const removed: string[] = []
+  for (const [id, raw] of now) {
+    if (!was.has(id)) added.push(id)
+    else if (was.get(id) !== raw) changed.push(id)
+  }
+  for (const id of was.keys()) if (!now.has(id)) removed.push(id)
+  const surface = (doc: ContentDocument) => JSON.stringify({ name: doc.name, appearance: doc.appearance, extensions: doc.extensions, characters: doc.internalCharacters.map(c => c.id) })
+  return {
+    revision: head.revision, since,
+    changed, added, removed,
+    cardChanged: surface(head.document) !== surface(base.document),
+    hasProposal: proposal !== undefined,
+    proposalStamp,
   }
 }
 
@@ -224,6 +285,12 @@ const APPLY_COMMANDS = new Set([
   'move_module', 'place_module', 'copy_module', 'merge_child', 'set_module_layout', 'set_reading_layout', 'move_block',
   'remove_module', 'remove_block', 'module_options', 'appearance', 'insert_owned_image',
   'replace_block_image', 'remove_resource', 'place_character', 'add_character', 'remove_character',
+  'set_widget_data',
+  'timeline_set_calendar', 'timeline_add_event', 'timeline_update_event', 'timeline_move_event', 'timeline_remove_event',
+  'timeline_add_era', 'timeline_update_era', 'timeline_remove_era',
+  'collection_add_field', 'collection_update_field', 'collection_remove_field',
+  'collection_add_item', 'collection_update_item', 'collection_remove_item', 'collection_set_value', 'collection_set_view',
+  'set_layout',
 ])
 
 /** Reject malformed commands before applyEdit interprets them. */
@@ -246,6 +313,20 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
     case 'remove_resource': return needs(['resourceId'])
     case 'set_reading_layout': return needs(['layout'])
     case 'module_options': return needs(['moduleId'])
+    case 'set_widget_data': return needs(['moduleId', 'widget']) ?? ('data' in command ? undefined : 'missing data')
+    case 'timeline_set_calendar': return needs(['moduleId']) ?? ('calendar' in command ? undefined : 'missing calendar')
+    case 'timeline_add_event': return needs(['moduleId']) ?? ('event' in command ? undefined : 'missing event')
+    case 'timeline_update_event': case 'timeline_remove_event':
+    case 'timeline_update_era': case 'timeline_remove_era': return needs(['moduleId', 'id'])
+    case 'timeline_move_event': return needs(['moduleId', 'id'])
+    case 'timeline_add_era': return needs(['moduleId']) ?? ('era' in command ? undefined : 'missing era')
+    case 'collection_add_field': return needs(['moduleId']) ?? ('field' in command ? undefined : 'missing field')
+    case 'collection_update_field': case 'collection_remove_field':
+    case 'collection_update_item': case 'collection_remove_item': return needs(['moduleId', 'id'])
+    case 'collection_add_item': return needs(['moduleId']) ?? ('item' in command ? undefined : 'missing item')
+    case 'collection_set_value': return needs(['moduleId', 'itemId', 'fieldId'])
+    case 'collection_set_view': return needs(['moduleId', 'view'])
+    case 'set_layout': return needs(['layoutKey']) ?? ('layout' in command ? undefined : 'missing layout')
     default: return undefined
   }
 }
@@ -262,7 +343,13 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
       const rows = await cardList(store)
       return new Response(request.method === 'HEAD' ? null : JSON.stringify({ cards: rows }), { headers: JSON_HEADERS })
     }
-    const payload = await cardPayload(store, cardId)
+    const since = url.searchParams.get('since')
+    if (since !== null) {
+      const report = await revisionReport(store, cardId, Number(since))
+      if (report instanceof Response) return report
+      return new Response(request.method === 'HEAD' ? null : JSON.stringify(report), { headers: JSON_HEADERS })
+    }
+    const payload = await cardPayload(store, resolved.root, cardId, url.searchParams.get('preview') === '1')
     if (payload instanceof Response) return payload
     return new Response(request.method === 'HEAD' ? null : JSON.stringify(payload), { headers: JSON_HEADERS })
   }
@@ -283,10 +370,19 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
       case 'create': {
         const kind = String(body.kind ?? '')
         const name = String(body.name ?? '').trim()
+        const starter = String(body.starter ?? 'blank')
         if (kind !== 'WORLD' && kind !== 'CHARACTER') return bad('invalid kind')
         if (name.length === 0) return bad('missing name')
-        const saved: SavedCard = await store.saveNew(emptyCardDocument(kind, name), 'HUMAN')
-        return new Response(JSON.stringify({ ok: true, cardId: saved.cardId, revision: saved.revision }), { headers: JSON_HEADERS })
+        if (!['blank', 'interview'].includes(starter) && !starter.startsWith('template:')) return bad('invalid starter')
+        if (starter.startsWith('template:')) return new Response('模板库尚未实现（P0.7 预留）', { status: 501, headers: JSON_HEADERS })
+        const document = emptyCardDocument(kind, name)
+        if (kind === 'WORLD') {
+          // 契约 C7：世界卡的 blank/interview 起手带一个「设定总览」空文档模块
+          // （总览布局本身是 extensions 数据，模块只是树的锚点）；角色卡保持空卡（Q4）。
+          document.modules.push({ id: mintId(), name: '设定总览', tags: [], children: [], layout: 'VERTICAL', characterIds: [], blocks: [] })
+        }
+        const saved: SavedCard = await store.saveNew(document, 'HUMAN')
+        return new Response(JSON.stringify({ ok: true, cardId: saved.cardId, revision: saved.revision, starter, ...(starter === 'interview' ? { interview: true } : {}) }), { headers: JSON_HEADERS })
       }
       case 'apply': {
         const command = body.command
@@ -336,6 +432,36 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
         await store.discardDraft(cardId)
         const head = await store.open(cardId)
         return new Response(JSON.stringify({ ok: true, revision: head?.revision ?? 0 }), { headers: JSON_HEADERS })
+      }
+      // ---------- AI 提案 ----------
+      case 'diff': {
+        if (cardId.length === 0) return bad('missing cardId')
+        const head = await store.open(cardId)
+        const proposal = await store.proposal(cardId)
+        if (head === undefined || proposal === undefined) {
+          return new Response(JSON.stringify({ pending: false, changes: [] }), { headers: JSON_HEADERS })
+        }
+        return new Response(JSON.stringify({ pending: true, source: proposal.source, baseRevision: proposal.baseRevision, changes: proposalChanges(head.document, proposal) }), { headers: JSON_HEADERS })
+      }
+      case 'accept': {
+        if (cardId.length === 0) return bad('missing cardId')
+        const moduleIds = Array.isArray(body.moduleIds) ? body.moduleIds.map(String) : undefined
+        const saved = await acceptProposal(store, cardId, moduleIds)
+        return new Response(JSON.stringify({ ok: true, revision: saved.revision, version: saved.version }), { headers: JSON_HEADERS })
+      }
+      case 'reject': {
+        if (cardId.length === 0) return bad('missing cardId')
+        const moduleIds = Array.isArray(body.moduleIds) ? body.moduleIds.map(String) : undefined
+        await rejectProposal(store, cardId, moduleIds)
+        const head = await store.open(cardId)
+        return new Response(JSON.stringify({ ok: true, revision: head?.revision ?? 0 }), { headers: JSON_HEADERS })
+      }
+      case 'trust': {
+        if (cardId.length === 0) return bad('missing cardId')
+        const mode = String(body.mode ?? '') as AiTrust
+        if (mode !== 'propose' && mode !== 'auto') return bad('mode 必须是 propose 或 auto')
+        await setAiTrust(resolved.root, cardId, mode)
+        return new Response(JSON.stringify({ ok: true, aiTrust: mode }), { headers: JSON_HEADERS })
       }
       case 'delete': {
         if (cardId.length === 0) return bad('missing cardId')

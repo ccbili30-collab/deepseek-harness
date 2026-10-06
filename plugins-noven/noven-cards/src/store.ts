@@ -21,13 +21,64 @@
 
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { createHash, randomUUID } from 'node:crypto'
-import { cp, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { cardsDir, legacyCardsDir, sanitizeDirName, uniqueDirName } from 'noven-ledger'
-import { assertValid, type ContentDocument } from './model.ts'
+import { assertValid, type CardAppearance, type ContentDocument, type ContentModule, type ContentRef } from './model.ts'
 
 /** 编辑来源：人工 / AI / 导入。 */
 export type ChangeSource = 'HUMAN' | 'AI' | 'IMPORT'
+
+// ---------- AI 提案（proposal.json） ----------
+
+/**
+ * 单个模块的提案补丁：`before`/`after` 是整棵模块子树的快照——
+ * null 分别表示「AI 新增」与「AI 删除」。`parentId`/`beforeId` 记
+ * `after` 在父级里的位置：parentId null = 卡根部模块列；index = 在兄弟
+ * 中的序号（移动检测用）；beforeId = 后继兄弟 id（插到它前面，null =
+ * 队尾，重新插入的锚点）。
+ * 同一提案内的快照取自同一棵预览树，天然自洽。
+ */
+export interface ModulePatch {
+  readonly before: ContentModule | null
+  readonly after: ContentModule | null
+  readonly parentId?: string | null
+  readonly index?: number
+  readonly beforeId?: string | null
+}
+
+/** 世界内角色的整卡补丁（before null = 新增角色，after null = 移除）。 */
+export interface CharacterPatch {
+  readonly before: ContentDocument | null
+  readonly after: ContentDocument | null
+}
+
+/** 卡层字段（名字、外观、扩展）快照。 */
+export interface CardSurface {
+  readonly name: string
+  readonly appearance: CardAppearance
+  readonly extensions: Record<string, ContentRef>
+}
+
+export interface SurfacePatch {
+  readonly before: CardSurface
+  readonly after: CardSurface
+}
+
+/** 一个目标卡（根卡或某个内部角色）上的全部补丁。 */
+export interface TargetPatch {
+  readonly modules: Record<string, ModulePatch>
+  readonly characters: Record<string, CharacterPatch>
+  readonly card?: SurfacePatch
+}
+
+/** proposal.json：挂起的 AI 提案 = 目标卡 → 补丁集。预览 = head + 补丁。 */
+export interface ProposalFile {
+  readonly version: 1
+  readonly baseRevision: number
+  readonly source: 'AI'
+  readonly targets: Record<string, TargetPatch>
+}
 
 /** 一张已保存的卡。 */
 export interface SavedCard {
@@ -176,14 +227,28 @@ export class CardStore {
     return typeof draft?.document === 'object' && draft.document !== null ? draft : undefined
   }
 
-  /** 解析卡的目录；不存在返回 undefined。 */
+  /**
+   * 解析卡的目录；不存在返回 undefined。索引指向的目录已被（另一实例
+   * 或 Finder）挪走时作废缓存重扫一次——改名/搬家换实例后仍找得到。
+   */
   private async dirFor(cardId: string): Promise<string | undefined> {
     const name = (await this.scan()).get(cardId)
-    return name === undefined ? undefined : join(cardsRoot(this.projectRoot), name)
+    if (name !== undefined) {
+      const dir = join(cardsRoot(this.projectRoot), name)
+      try {
+        if ((await stat(dir)).isDirectory()) return dir
+      } catch { /* 索引指向的目录已挪走——作废缓存重扫 */ }
+    }
+    this.index = undefined
+    const rescanned = (await this.scan()).get(cardId)
+    return rescanned === undefined ? undefined : join(cardsRoot(this.projectRoot), rescanned)
   }
 
   /** 卡的目录名（`卡/` 下的一级目录，客户端拼媒体路径用）。 */
   async dirName(cardId: string): Promise<string | undefined> {
+    const name = (await this.scan()).get(cardId)
+    if (name !== undefined) return name
+    this.index = undefined
     return (await this.scan()).get(cardId)
   }
 
@@ -314,6 +379,19 @@ export class CardStore {
     })
   }
 
+  /** 读一份历史修订快照（`revisions/r<N>.json`）；不存在/损坏返回 undefined。 */
+  async revisionSnapshot(cardId: string, revision: number): Promise<SavedCard | undefined> {
+    const dir = await this.dirFor(cardId)
+    if (dir === undefined) return undefined
+    try {
+      const head = JSON.parse(await readFile(join(dir, 'revisions', `r${String(revision)}.json`), 'utf8')) as HeadFile
+      if (typeof head?.document !== 'object' || head.document === null) return undefined
+      return { cardId, revision: head.revision, version: `v${String(head.seq)}`, document: head.document, source: head.source }
+    } catch {
+      return undefined
+    }
+  }
+
   /** 撤销游标（无文件返回 undefined）。 */
   async undoState(cardId: string): Promise<UndoFile | undefined> {
     const dir = await this.dirFor(cardId)
@@ -384,6 +462,42 @@ export class CardStore {
       const dir = await this.dirFor(cardId)
       if (dir !== undefined) await rm(join(dir, 'draft.json'), { force: true })
     })
+  }
+
+  // ---------- AI 提案 ----------
+
+  /** 读挂起的提案；没有返回 undefined。 */
+  async proposal(cardId: string): Promise<ProposalFile | undefined> {
+    const dir = await this.dirFor(cardId)
+    if (dir === undefined) return undefined
+    try {
+      const raw = JSON.parse(await readFile(join(dir, 'proposal.json'), 'utf8')) as ProposalFile
+      return raw.version === 1 && typeof raw.targets === 'object' && raw.targets !== null ? raw : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  /** 写提案（undefined = 清除）；始终在卡的串行链里调用。 */
+  async writeProposal(cardId: string, proposal: ProposalFile | undefined): Promise<void> {
+    return withCard(cardId, async () => {
+      const dir = await this.dirFor(cardId)
+      if (dir === undefined) throw new Error('卡片不存在')
+      if (proposal === undefined || Object.keys(proposal.targets).length === 0) {
+        await rm(join(dir, 'proposal.json'), { force: true })
+        return
+      }
+      await writeFileAtomic(join(dir, 'proposal.json'), `${JSON.stringify(proposal, null, 2)}\n`)
+    })
+  }
+
+  /**
+   * 把一份完整文档提交为新修订（接受提案用）：校验 + 修订快照 + head +
+   * 目录跟随。与 commit 的区别：不走 draft.json，不碰撤销游标。
+   */
+  async commitDocument(cardId: string, document: ContentDocument, source: ChangeSource): Promise<SavedCard> {
+    assertValid(document)
+    return this.commitSnapshot(cardId, document, source)
   }
 
   /** 软删除（保留目录与历史，可读回）。 */

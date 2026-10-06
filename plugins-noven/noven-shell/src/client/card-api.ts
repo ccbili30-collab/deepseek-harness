@@ -10,6 +10,8 @@ export interface CardBlockView {
   readonly id: string
   /** Text payload for text blocks. */
   readonly text?: string
+  /** Text block's content ref — echo it as `expectedContent` so a write only conflicts if this block changed meanwhile. */
+  readonly ref?: string
   /** Resource id and decoded caption for image blocks. */
   readonly resourceId?: string
   readonly caption?: string
@@ -107,6 +109,8 @@ export interface CardOp {
   readonly command?: CardCommand
   readonly kind?: 'WORLD' | 'CHARACTER'
   readonly name?: string
+  /** Create op: how the new card starts ('blank' | 'interview' | 'template:*'). */
+  readonly starter?: string
   /** Import op: the uploaded package's base64 bytes; `name` carries the file name. */
   readonly file?: string
   /** Move op: the session whose workspace receives the card, or `targetRoot` for session-less targets. */
@@ -127,6 +131,8 @@ export interface CardOpResult {
   readonly version?: string
   /** Import op echoes the landed card's name. */
   readonly name?: string
+  /** Create op with starter 'interview': the client should send the preset prompt. */
+  readonly interview?: boolean
 }
 
 /** Apply one card op; throws CardConflict on a stale version so callers can refetch. */

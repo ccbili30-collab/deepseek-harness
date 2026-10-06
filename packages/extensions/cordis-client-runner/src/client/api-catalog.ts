@@ -113,6 +113,11 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Report the right panel as hidden: no track, no handle.',
         parameters: [],
       },
+      {
+        signature: 'setUnitSide(side: UnitSide): void',
+        description: 'Move the navigation+canvas unit to a side of the conversation column — the same persisted preference the region-sort gesture flips.',
+        parameters: [{ name: 'side', description: "'left' parks the unit against the sidebar; 'right' is the shipping order." }],
+      },
     ],
   },
   {

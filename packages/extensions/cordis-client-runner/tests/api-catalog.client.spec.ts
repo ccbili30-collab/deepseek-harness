@@ -10,6 +10,7 @@ describe('Client Cordis inspect catalog', () => {
         'toggleSidebar(): void',
         'openRightbar(track: boolean, fullscreen: boolean, canvas: \'left\' | \'right\' | null, rail: boolean): void',
         'closeRightbar(): void',
+        'setUnitSide(side: UnitSide): void',
       ])
     expect(SERVICE_API.find(service => service.key === 'workspaces')?.methods.map(method => method.signature))
       .toEqual([

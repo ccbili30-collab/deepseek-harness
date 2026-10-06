@@ -115,50 +115,36 @@ const CSS = `
 .noven-stage-tree-tools input { flex: 1; min-width: 0; border: 0.5px solid var(--nv-divider, rgba(128,128,128,.35)); border-radius: 999px; padding: 5px 12px; font-size: 12px; background: var(--nv-surface); color: var(--nv-primary-text); outline: none; }
 .noven-stage-tree-tools input::placeholder { color: var(--nv-secondary-text); }
 .noven-stage-tree-scroll { overflow-y: auto; padding: 6px; min-height: 0; }
-.noven-stage .noven-wb-tree-row { gap: 7px; padding: 6px 10px; border-radius: 8px; font-size: 12.5px; color: var(--nv-primary-text); }
-.noven-stage .noven-wb-tree-row:hover { background: rgba(128,128,128,.1); }
-.noven-stage .noven-wb-tree-file[data-selected='true'] { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.noven-stage .noven-wb-tree-label { flex: 1; }
-.noven-stage .noven-wb-tree-glyph { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; color: var(--nv-secondary-text); flex: none; }
-.noven-stage .noven-wb-tree-file[data-selected='true'] .noven-wb-tree-glyph { color: var(--nv-accent-deep); }
-.noven-stage .noven-wb-tree-chevron { color: var(--nv-secondary-text); width: 8px; flex: none; }
-.noven-stage .noven-wb-tree-dir { color: var(--nv-primary-text); }
+.noven-stage-main .noven-wb-tree-row { gap: 7px; padding: 6px 10px; border-radius: 8px; font-size: 12.5px; color: var(--nv-primary-text); }
+.noven-stage-main .noven-wb-tree-row:hover { background: rgba(128,128,128,.1); }
+.noven-stage-main .noven-wb-tree-file[data-selected='true'] { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.noven-stage-main .noven-wb-tree-label { flex: 1; }
+.noven-stage-main .noven-wb-tree-glyph { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; color: var(--nv-secondary-text); flex: none; }
+.noven-stage-main .noven-wb-tree-file[data-selected='true'] .noven-wb-tree-glyph { color: var(--nv-accent-deep); }
+.noven-stage-main .noven-wb-tree-chevron { color: var(--nv-secondary-text); width: 8px; flex: none; }
+.noven-stage-main .noven-wb-tree-dir { color: var(--nv-primary-text); }
+.noven-stage-tree-status { padding: 6px 12px; font-size: 11px; color: var(--nv-secondary-text); }
+.noven-stage-tree-status[data-tone="warn"] { color: var(--nv-warn-text, #b07d2b); }
+.noven-stage-tree-rec { display: flex; align-items: center; justify-content: space-between; gap: 6px; width: 100%; flex: none; border: 0; border-bottom: 0.5px solid var(--nv-divider, rgba(128,128,128,.25)); background: transparent; padding: 9px 12px; font-size: 12.5px; font-weight: 600; color: var(--nv-primary-text); cursor: pointer; text-align: left; }
+.noven-stage-tree-rec:hover { background: rgba(128,128,128,.08); }
+.noven-stage-tree-rec-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .noven-stage-tree-count { margin-left: auto; flex: none; font-size: 11px; color: var(--nv-secondary-text); }
 .noven-stage-all { margin-top: 2px; color: var(--nv-secondary-text); }
+/* The canvas's mid row: the stage body plus, while the tree is pinned
+   (06d), the narrow tree column docked at the canvas's right edge. */
+.noven-stage-mid { display: flex; flex: 1; min-height: 0; min-width: 0; }
+.noven-stage-mid > .noven-stage-canvas { flex: 1; min-width: 0; }
+.noven-stage-treepin { flex: none; width: min(228px, 30%); min-width: 160px; display: flex; flex-direction: column; min-height: 0; border-left: 0.5px solid var(--nv-divider, rgba(128,128,128,.25)); background: var(--nv-surface, transparent); }
+.noven-stage-treepin-head { display: flex; align-items: center; gap: 8px; padding: 9px 10px 8px 12px; flex: none; }
+.noven-stage-treepin-titles { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; border: 0; background: transparent; padding: 0; cursor: pointer; text-align: left; font: inherit; border-radius: 6px; }
+.noven-stage-treepin-titles:hover strong { color: var(--nv-accent-deep); }
+.noven-stage-treepin-titles .noven-wb-tree-chevron { margin-left: 5px; }
+.noven-stage-treepin-titles strong { font-size: 12.5px; font-weight: 600; color: var(--nv-primary-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.noven-stage-treepin-titles small { font-size: 10.5px; color: var(--nv-secondary-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.noven-stage-tree-pinbtn { width: 24px; height: 24px; flex: none; }
+.noven-stage-tree-pinbtn[data-active='true'] { color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
+.noven-stage-treepin .noven-stage-tree-scroll { flex: 1; }
 .noven-stage-files { overflow-y: auto; min-height: 0; }
-/* The drawer's upper zone: the resident workbench directory — one row per
-   workbench, each expanding its file tree in place. The zone carries its own
-   enclosure so zone reordering never merges it into the feature zone. */
-.noven-wbnav { display: flex; flex-direction: column; min-height: 0; background: var(--nv-surface, transparent); margin: 6px 8px; border: 0.5px solid var(--nv-divider, rgba(128,128,128,.25)); border-radius: var(--nv-radius, 10px); overflow: hidden; }
-.noven-wbnav-zone { padding: 8px 12px 2px; font-size: 11px; font-weight: 600; letter-spacing: .04em; color: var(--nv-secondary-text); flex: none; }
-.noven-wbnav-list { flex: none; padding: 2px 6px 4px; display: flex; flex-direction: column; gap: 1px; }
-.noven-wbnav-glyph { display: inline-flex; width: 13px; height: 13px; flex: none; color: var(--nv-secondary-text); }
-.noven-wbnav-wb-row { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: transparent; padding: 5px 8px; border-radius: 8px; font-size: 12.5px; font-weight: 500; color: var(--nv-primary-text); cursor: pointer; text-align: left; }
-.noven-wbnav-wb-row:hover { background: rgba(128,128,128,.1); }
-.noven-wbnav-wb-row[data-active='true'] { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.noven-wbnav-wb-row[data-active='true'] .noven-wbnav-glyph { color: var(--nv-accent-deep); }
-.noven-wbnav-wb-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.noven-wbnav-wb-files { padding-left: 6px; flex: 1; min-height: 0; overflow-y: auto; }
-.noven-wbnav-wb-files .noven-stage-tree-scroll { padding: 0; }
-.noven-wbnav-wb-status { padding: 4px 10px 6px 16px; font-size: 11px; color: var(--nv-secondary-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.noven-wbnav-wb-status[data-tone="warn"] { color: var(--nv-warn-text, #b07d2b); }
-.noven-wbnav .noven-wb-tree-row { gap: 7px; padding: 5px 10px; border-radius: 8px; font-size: 12.5px; color: var(--nv-primary-text); }
-.noven-wbnav .noven-wb-tree-row:hover { background: rgba(128,128,128,.1); }
-.noven-wbnav .noven-wb-tree-file[data-selected='true'] { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.noven-wbnav .noven-wb-tree-file[data-selected='true'] .noven-wb-tree-glyph { color: var(--nv-accent-deep); }
-/* A pick remembered while the canvas is down: muted, never mint. */
-.noven-wbnav .noven-wb-tree-file[data-stale='true'] { background: rgba(128,128,128,.1); color: var(--nv-secondary-text); }
-
-/* The zone's rail form: the same rows as an icon column inside the host's
-   28px row rhythm. */
-.noven-wbnav-rail { display: flex; flex-direction: column; align-items: center; gap: 1px; min-height: 0; }
-.noven-wbnav-rail-row { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 6px; border: 0; border-radius: 6px; background: transparent; color: var(--nv-secondary-text, rgba(128,128,128,.9)); cursor: pointer; }
-.noven-wbnav-rail-row:hover { background: rgba(128,128,128,.12); }
-.noven-wbnav-rail-row[data-selected='true'] { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.noven-wbnav .noven-wb-tree-file[data-stale='true'] .noven-wb-tree-glyph { color: var(--nv-secondary-text); }
-.noven-wbnav .noven-wb-tree-label { flex: 1; }
-.noven-wbnav .noven-wb-tree-glyph { display: inline-flex; align-items: center; justify-content: center; width: 14px; height: 14px; color: var(--nv-secondary-text); flex: none; }
-.noven-wbnav .noven-wb-tree-chevron { color: var(--nv-secondary-text); width: 8px; flex: none; }
 .noven-wb-docview { width: 100%; max-width: 660px; margin: 0 auto; padding: 40px 28px 90px; box-sizing: border-box; }
 .noven-wb-html { display: block; width: 100%; height: 100%; border: 0; background: transparent; }
 .noven-wb-doc { display: flex; flex-direction: column; flex: 1; min-height: 0; height: 100%; overflow: auto; }

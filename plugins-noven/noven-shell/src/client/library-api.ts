@@ -156,33 +156,66 @@ export function projectsCatalog(sessions: ClientContext['sessions']): Observable
   let snapshot: readonly ProjectRow[] = []
   const listeners = new Set<() => void>()
   let started = false
-  let generation = 0
-  const compute = async () => {
-    const gen = ++generation
-    const response = await fetch('/api/noven-projects').catch(() => undefined)
-    if (response === undefined || !response.ok) return
-    const { projects } = await response.json() as { projects: readonly (Omit<ProjectRow, 'sessionId'> & { sessionId?: SessionId })[] }
-    // A session bound to the root makes API calls cheap; rows without one go by root.
-    const state = sessions.list.getSnapshot()
-    const byRoot = new Map<string, SessionId>()
-    for (const id of state.ids) {
-      const cwd = state.byId[id]?.cwd
-      if (cwd !== undefined && !byRoot.has(cwd)) byRoot.set(cwd, id)
-    }
-    const rows = projects.map(p => ({ ...p, sessionId: byRoot.get(p.root) }))
-    rows.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
-    if (gen !== generation) return
+  let inFlight = false
+  let queued = false
+  const sameRows = (a: readonly ProjectRow[], b: readonly ProjectRow[]): boolean =>
+    a.length === b.length && a.every((row, i) => row.root === b[i]?.root && row.title === b[i]?.title
+      && row.sessionId === b[i]?.sessionId && row.missing === b[i]?.missing && row.updatedAt === b[i]?.updatedAt)
+  const publish = (rows: readonly ProjectRow[]): void => {
+    if (sameRows(rows, snapshot)) return
     snapshot = rows
     for (const listener of listeners) listener()
   }
+  // 单飞 + 尾随：会话通知是风暴源（活动会话每次状态跳动都触发），在飞的
+  // 请求被丢弃会让快照永远停在旧数据——必须让最后一次取回的结果落地。
+  const compute = async (): Promise<void> => {
+    if (inFlight) { queued = true; return }
+    inFlight = true
+    try {
+      for (;;) {
+        queued = false
+        const response = await fetch('/api/noven-projects').catch(() => undefined)
+        if (response === undefined || !response.ok) return
+        const { projects } = await response.json() as { projects: readonly (Omit<ProjectRow, 'sessionId'> & { sessionId?: SessionId })[] }
+        // A session bound to the root makes API calls cheap; rows without one go by root.
+        const state = sessions.list.getSnapshot()
+        const byRoot = new Map<string, SessionId>()
+        for (const id of state.ids) {
+          const cwd = state.byId[id]?.cwd
+          if (cwd !== undefined && !byRoot.has(cwd)) byRoot.set(cwd, id)
+        }
+        const rows = projects.map(p => ({ ...p, sessionId: byRoot.get(p.root) }))
+        rows.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+        publish(rows)
+        if (!queued) return
+      }
+    } finally {
+      inFlight = false
+    }
+  }
+  // 注册表在服务端也会被改写（autoClaim 重新认领、别的窗口注销），
+  // 会话通知覆盖不到这些——按树的节奏轮询兜底，全体订阅者共享一条。
+  let timer: ReturnType<typeof setInterval> | undefined
+  let disposeSessions: (() => void) | undefined
   return {
     getSnapshot: () => snapshot,
     refresh: () => { void compute() },
     subscribe: (listener: () => void) => {
       listeners.add(listener)
       if (!started) { started = true; void compute() }
-      const dispose = sessions.list.subscribe(() => { void compute() })
-      return () => { listeners.delete(listener); if (listeners.size === 0) dispose() }
+      if (timer === undefined) {
+        timer = setInterval(() => { void compute() }, 2000)
+        disposeSessions = sessions.list.subscribe(() => { void compute() })
+      }
+      return () => {
+        listeners.delete(listener)
+        if (listeners.size === 0) {
+          clearInterval(timer)
+          timer = undefined
+          disposeSessions?.()
+          disposeSessions = undefined
+        }
+      }
     },
   }
 }

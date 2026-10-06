@@ -1,12 +1,12 @@
 /**
- * noven-workbench browser half: the 工作台 split across the drawer's upper
- * zone and the canvas — the two-layer shape of the legacy desktop
- * (ProjectNavigation's section tree + WorkspaceShell's CreationStage).
+ * noven-workbench browser half: the 工作台 on the canvas — 设计稿 06c/06d's
+ * shape, where the resource tree and the workbench switcher live inside the
+ * stage (breadcrumb dropdown, or the narrow column pinned at the canvas's
+ * right edge) and the drawer below is the ordinary tab panel.
  *
- * - the `sidebar.right.pane.top` seat hosts the permanent workbench
- *   navigation: a switcher over the workspace's registered workbenches and
- *   the current one's grouped, counted section tree. Picking a row raises
- *   the canvas with that item staged.
+ * - a headless watcher on `shell.overlay` keeps AI presents raising the
+ *   canvas; the `sidebar.right.pane.top` seat belongs to the shell's
+ *   content tree.
  * - the workbench's own tab type (`noven.workbench`, `selfChrome`) carries the
  *   stage onto the sidebar's canvas — the floating stack beside the drawer —
  *   and the stage's side toggle parks the canvas at the window edge with the
@@ -23,7 +23,7 @@
  * @module noven-workbench/client
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import { useEffect } from 'react'
+import { useEffect, useRef, useSyncExternalStore } from 'react'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { fileAddressFor, parseFileAddress } from '@deepseek-ai/dsh-util-workspace-path'
@@ -42,7 +42,7 @@ import type {} from 'dsh-better-sidebar'
 import { bookGlyph } from './book-glyph.tsx'
 import { CreationStage } from './CreationStage.tsx'
 import { BUILTIN_FILES, createWorkbenchApi, isHtmlEntry, isImageName, isTextCandidate } from './api.ts'
-import { DrawerNav, type DrawerNavProps } from './DrawerNav.tsx'
+import { useWorkbenchRegistry } from './nav-tree.tsx'
 import { en, zh } from './locales.ts'
 import { NovenImageViewer } from './NovenImageViewer.tsx'
 import { presentSavedDefinition } from './present-receipt.ts'
@@ -69,7 +69,7 @@ export const NOVEN_FILE_KIND = 'noven.file'
 const TERMINAL_OFF_MARKER = 'noven.sidebar.terminal-off.v1'
 
 /** Required browser services: the sidebar registry, the main seat, the Remote carrier, layout chrome, and copy. */
-export const inject = ['betterSidebar', 'slots', 'locale', 'layout', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'remote', 'remote.workspaceFiles']
+export const inject = ['betterSidebar', 'slots', 'locale', 'layout', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiSession', 'remote', 'remote.workspaceFiles']
 
 /**
  * Client plugin body: register the dictionaries, the sidebar view, the
@@ -82,11 +82,6 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'noven-workbench: dictionaries')
 
   const api = createWorkbenchApi(ctx.remote)
-
-  // The published package predates the canvas surface: the runtime object
-  // carries `canvas`, the shipped types do not. Read it through the declared
-  // face rather than casting the controller.
-  const canvasCtl = Reflect.get(ctx.sidebarRight, 'canvas') as ISidebarRight['canvas']
 
   /** Open a workspace-relative document on the canvas stage; the `file:` claim below routes it there. */
   const openDocument = (sessionId: SessionId, cwd: string, rel: string): void => {
@@ -157,14 +152,20 @@ export function apply(ctx: ClientContext): void {
     inject: () => ({ api }),
   }, FileStageCanvas))
 
-  // The drawer's upper zone: the workbench's permanent navigation — switcher,
-  // section tree, counted rows. The built-in files floor means the zone always
-  // has content once a session is bound.
-  ctx.slots.inject('sidebar.right.pane.top', () => ctx.slots.register({
-    name: 'sidebar.right.pane.top',
+  // The drawer's upper zone belongs to the shell's content tree now, so the
+  // headless watcher — a one-shot `present` still selecting the workbench,
+  // staging its file, and raising the canvas — lives on the root overlay
+  // seat, session-bound through the UI session adapter. The seat takes no
+  // inject face; the component closes over the plugin's own services.
+  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay',
+    id: 'noven-workbench.present-watcher',
     locale: NS,
-    inject: () => ({ api, sidebarRight: ctx.sidebarRight, canvas: canvasCtl }),
-  }, DrawerNavSeat))
+  }, () => PresentWatcher({
+    api,
+    sidebarRight: ctx.sidebarRight,
+    session: ctx.uiSession.adapter.current,
+  })))
 
   ctx.slots.inject('main', () => ctx.slots.register({
     name: 'main',
@@ -213,20 +214,45 @@ export function apply(ctx: ClientContext): void {
 }
 
 /**
- * The seat wrapper feeding the drawer's workbench navigation: resolves the
- * seat's session and its workspace cwd through the standing hooks.
+ * The headless `shell.overlay` occupant: mounts the registry poll for the
+ * bound session so a one-shot `present` still selects the workbench, stages
+ * its file, and raises the canvas — the behavior the drawer's navigation
+ * used to carry. Renders nothing.
  * @param props - the seat's runtime shares plus the injected workspace face.
- * @returns the navigation zone, or nothing without a session.
+ * @returns nothing — the overlay stays empty by design.
  */
-function DrawerNavSeat(props: PropsRuntime<'sidebar.right.pane.top'> & PropsLocale<typeof NS> & InjectFace<{
+function PresentWatcher(props: {
   api: ReturnType<typeof createWorkbenchApi>
-  sidebarRight: DrawerNavProps['sidebarRight']
-  canvas: DrawerNavProps['canvas']
-}>) {
-  const sessionId = props.sessionId as SessionId | undefined
-  const cwd = props.useSessions(state => sessionId === undefined ? undefined : state.byId[sessionId]?.cwd)
-  return <DrawerNav t={props.t} api={props.api} sessionId={sessionId} cwd={cwd} rail={props.rail}
-    sidebarRight={props.sidebarRight} canvas={props.canvas} />
+  sidebarRight: Pick<ISidebarRight, 'openTab'>
+  session: { getSnapshot(): { readonly key?: string | undefined }; subscribe(listener: () => void): () => void }
+}) {
+  const sessionId = useSyncExternalStore(
+    props.session.subscribe,
+    () => props.session.getSnapshot().key,
+  ) as SessionId | undefined
+  const records = useWorkbenchRegistry(props.api, sessionId)
+  const presentSeen = useRef<Map<string, string> | null>(null)
+
+  useEffect(() => {
+    if (records === undefined || sessionId === undefined) return
+    if (presentSeen.current === null) {
+      presentSeen.current = new Map(
+        records.filter(r => r.present !== undefined).map(r => [`${sessionId}:${r.id}`, r.present!.at]),
+      )
+      return
+    }
+    for (const candidate of records) {
+      if (candidate.present === undefined) continue
+      const key = `${sessionId}:${candidate.id}`
+      if (presentSeen.current.get(key) === candidate.present.at) continue
+      presentSeen.current.set(key, candidate.present.at)
+      workbenchSelection.set(sessionId, candidate.id)
+      workbenchStage.patch(candidate.id, { selected: candidate.present.path })
+      try { props.sidebarRight.openTab(WORKBENCH_KIND) }
+      catch { /* surface unavailable — the selection still shows in the tree */ }
+    }
+  }, [records, sessionId, props.sidebarRight])
+  return null
 }
 
 /**

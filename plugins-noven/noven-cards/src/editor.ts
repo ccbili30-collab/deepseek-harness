@@ -11,6 +11,7 @@
 import { mintId, flattenModules, editBlocks, findTarget, replaceTarget, insertModule, updateModule, removeModule, parentOfModule, placeModule, organizeFolders, assertValid, type ContentBlock, type ContentDocument, type ContentModule, type ModuleLayout, type ModuleRouting, type ModuleTemporality, type ModuleUse } from './model.ts'
 import { CardStore, EditConflict, type CardDraft, type ChangeSource, type SavedCard } from './store.ts'
 import { parseModuleMarkdown } from './markdown.ts'
+import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeLayout, encodeLayout, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type TimelineCalendar } from './formats.ts'
 
 /** 编辑命令全集（工具与未来的人工界面共用）。 */
 export type EditorCommand =
@@ -40,6 +41,25 @@ export type EditorCommand =
   | { kind: 'add_character', name: string }
   | { kind: 'copy_character', source: ContentDocument }
   | { kind: 'remove_character', characterId: string }
+  // ---------- 预制模块的结构化命令（契约 C2）：人、AI、提案共用 ----------
+  | { kind: 'set_widget_data', moduleId: string, widget: 'timeline' | 'collection', data: unknown }
+  | { kind: 'timeline_set_calendar', moduleId: string, calendar: TimelineCalendar }
+  | { kind: 'timeline_add_event', moduleId: string, event: { id?: string, at: number | null, until?: number | null, title: string, description?: string, characters?: string[] } }
+  | { kind: 'timeline_update_event', moduleId: string, id: string, patch: { at?: number | null, until?: number | null, title?: string, description?: string, characters?: string[] } }
+  | { kind: 'timeline_move_event', moduleId: string, id: string, at: number | null, until?: number | null }
+  | { kind: 'timeline_remove_event', moduleId: string, id: string }
+  | { kind: 'timeline_add_era', moduleId: string, era: { id?: string, name: string, from: number, to: number, color: string } }
+  | { kind: 'timeline_update_era', moduleId: string, id: string, patch: { name?: string, from?: number, to?: number, color?: string } }
+  | { kind: 'timeline_remove_era', moduleId: string, id: string }
+  | { kind: 'collection_add_field', moduleId: string, field: { id?: string, name: string, type?: CollectionFieldType } }
+  | { kind: 'collection_update_field', moduleId: string, id: string, patch: { name?: string, type?: CollectionFieldType } }
+  | { kind: 'collection_remove_field', moduleId: string, id: string }
+  | { kind: 'collection_add_item', moduleId: string, item: { id?: string, name: string, summary?: string, description?: string } }
+  | { kind: 'collection_update_item', moduleId: string, id: string, patch: { name?: string, summary?: string, description?: string, visualKey?: string | null } }
+  | { kind: 'collection_remove_item', moduleId: string, id: string }
+  | { kind: 'collection_set_value', moduleId: string, itemId: string, fieldId: string, value: CollectionValue }
+  | { kind: 'collection_set_view', moduleId: string, view: CollectionView }
+  | { kind: 'set_layout', layoutKey: 'overview' | 'player', layout: unknown }
 
 /** 一次编辑产生的新块/新模块（saved-with-ids 直链用）。 */
 export interface EditOutcome {
@@ -100,7 +120,44 @@ async function applyEditLocked(
   source: ChangeSource,
 ): Promise<EditOutcome> {
   const draft = await store.ensureDraft(cardId, source)
-  const card = findTarget(draft.document, targetId)
+  const { root, createdModuleIds, createdBlockIds } = await transformCard(store, cardId, draft.document, targetId, command)
+  const draft2 = await store.updateDraft(cardId, undefined, root, source)
+  return { draft: draft2, createdModuleIds, createdBlockIds }
+}
+
+/** 一次变换的产出：整卡新文档 + 新块/新模块编号。 */
+export interface TransformResult {
+  readonly root: ContentDocument
+  readonly createdModuleIds: string[]
+  readonly createdBlockIds: string[]
+}
+
+/**
+ * 把一条命令套用到任意一份卡文档上（不读写 draft.json）：变换 + 文件夹整理 +
+ * 校验。草稿路径（applyEditLocked）和提案路径（proposals.ts）共用。
+ * @param document - 作为基底的整卡文档（调用方决定是 head、草稿还是提案预览）。
+ */
+export async function transformCard(
+  store: CardStore,
+  cardId: string,
+  document: ContentDocument,
+  targetId: string,
+  command: EditorCommand,
+): Promise<TransformResult> {
+  const transformed = await transformDocument(store, cardId, document, targetId, command)
+  const root = organizeFolders(transformed.root)
+  assertValid(root)
+  return { root, createdModuleIds: transformed.createdModuleIds, createdBlockIds: transformed.createdBlockIds }
+}
+
+async function transformDocument(
+  store: CardStore,
+  cardId: string,
+  document: ContentDocument,
+  targetId: string,
+  command: EditorCommand,
+): Promise<TransformResult> {
+  const card = findTarget(document, targetId)
   const createdModules: string[] = []
   const createdBlocks: string[] = []
   const textRef = async (text: string): Promise<string> => store.receivePayload(cardId, new TextEncoder().encode(text))
@@ -110,7 +167,38 @@ async function applyEditLocked(
     if (found === undefined) throw new Error('目标模块不存在或不属于当前卡片')
     return found
   }
-  const put = (next: ContentDocument): ContentDocument => replaceTarget(draft.document, targetId, next)
+  const put = (next: ContentDocument): ContentDocument => replaceTarget(document, targetId, next)
+
+  // ---------- 预制模块载荷（widget JSON 存在模块的第一个文字块里） ----------
+  const widgetModule = (id: string, widgetType: string): ContentModule => {
+    const target = module(id)
+    if (target.widget?.type !== widgetType) throw new Error(`目标模块不是 ${widgetType} 类型`)
+    return target
+  }
+  const widgetJson = async (target: ContentModule): Promise<string | undefined> => {
+    const block = target.blocks.find(candidate => candidate.kind === 'text')
+    return block === undefined ? undefined : new TextDecoder().decode(await store.readPayload(cardId, block.content))
+  }
+  /** 把 JSON 写回模块的第一个文字块；没有就新建一个（模块内只允许一个 JSON 块——其余文字块按文档正文处理）。 */
+  const putWidgetJson = async (target: ContentModule, text: string): Promise<ContentModule[]> => {
+    const ref = await textRef(text)
+    const existing = target.blocks.find(candidate => candidate.kind === 'text')
+    if (existing !== undefined) {
+      return updateModule(card.modules, target.id, original => ({
+        ...original,
+        blocks: original.blocks.map(block => block.id === existing.id ? { kind: 'text', id: block.id, content: ref } : block),
+      }))
+    }
+    const block: ContentBlock = { kind: 'text', id: mintId(), content: ref }
+    createdBlocks.push(block.id)
+    return updateModule(card.modules, target.id, original => ({ ...original, blocks: [...original.blocks, block] }))
+  }
+  /** 读载荷 → 变换 → 写回，预制模块命令的公共骨架。 */
+  const mutateWidget = async <T>(moduleId: string, widgetType: string, decode: (raw: string | undefined) => T, encode: (data: T) => string, mutate: (data: T) => T): Promise<ContentModule[]> => {
+    const target = widgetModule(moduleId, widgetType)
+    const data = decode(await widgetJson(target))
+    return putWidgetJson(target, encode(mutate(data)))
+  }
 
   let next = card
   switch (command.kind) {
@@ -364,12 +452,129 @@ async function applyEditLocked(
       })
       break
     }
+    // ---------- 时间线 v2 ----------
+    case 'set_widget_data': {
+      const raw = typeof command.data === 'string' ? command.data : JSON.stringify(command.data)
+      next = put({ ...card, modules: command.widget === 'collection'
+        ? await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, () => decodeCollection(raw))
+        : await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, () => decodeTimeline(raw)) })
+      break
+    }
+    case 'timeline_set_calendar':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({ ...data, calendar: command.calendar })) })
+      break
+    case 'timeline_add_event':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
+        ...data,
+        events: [...data.events, {
+          id: command.event.id ?? mintPayloadId(),
+          at: command.event.at, until: command.event.until ?? null,
+          title: command.event.title, description: command.event.description ?? '',
+          characters: command.event.characters ?? [],
+        }],
+      })) })
+      break
+    case 'timeline_update_event':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
+        ...data,
+        events: data.events.map(event => event.id === command.id ? { ...event, ...command.patch, id: event.id } : event),
+      })) })
+      break
+    case 'timeline_move_event':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
+        ...data,
+        events: data.events.map(event => event.id === command.id
+          ? { ...event, at: command.at, until: command.until === undefined ? event.until : command.until }
+          : event),
+      })) })
+      break
+    case 'timeline_remove_event':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
+        ...data,
+        events: data.events.filter(event => event.id !== command.id),
+      })) })
+      break
+    case 'timeline_add_era':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
+        ...data,
+        eras: [...data.eras, { id: command.era.id ?? mintPayloadId(), name: command.era.name, from: command.era.from, to: command.era.to, color: command.era.color }],
+      })) })
+      break
+    case 'timeline_update_era':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
+        ...data,
+        eras: data.eras.map(era => era.id === command.id ? { ...era, ...command.patch, id: era.id } : era),
+      })) })
+      break
+    case 'timeline_remove_era':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
+        ...data,
+        eras: data.eras.filter(era => era.id !== command.id),
+      })) })
+      break
+    // ---------- 集合 v2 ----------
+    case 'collection_add_field':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({
+        ...data,
+        fields: [...data.fields, { id: command.field.id ?? mintPayloadId(), name: command.field.name, type: command.field.type ?? 'text' }],
+      })) })
+      break
+    case 'collection_update_field':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({
+        ...data,
+        fields: data.fields.map(field => field.id === command.id ? { ...field, ...command.patch, id: field.id } : field),
+      })) })
+      break
+    case 'collection_remove_field':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({
+        ...data,
+        fields: data.fields.filter(field => field.id !== command.id),
+        values: Object.fromEntries(Object.entries(data.values).map(([itemId, byField]) => {
+          const rest = { ...byField }
+          delete rest[command.id]
+          return [itemId, rest]
+        })),
+      })) })
+      break
+    case 'collection_add_item':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({
+        ...data,
+        items: [...data.items, { id: command.item.id ?? mintPayloadId(), name: command.item.name, summary: command.item.summary ?? '', description: command.item.description ?? '', visualKey: null }],
+      })) })
+      break
+    case 'collection_update_item':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({
+        ...data,
+        items: data.items.map(item => item.id === command.id ? { ...item, ...command.patch, id: item.id } : item),
+      })) })
+      break
+    case 'collection_remove_item':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({
+        ...data,
+        items: data.items.filter(item => item.id !== command.id),
+        values: Object.fromEntries(Object.entries(data.values).filter(([itemId]) => itemId !== command.id)),
+      })) })
+      break
+    case 'collection_set_value':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => {
+        if (!data.fields.some(field => field.id === command.fieldId)) throw new Error('字段不存在')
+        if (!data.items.some(item => item.id === command.itemId)) throw new Error('条目不存在')
+        return { ...data, values: { ...data.values, [command.itemId]: { ...data.values[command.itemId], [command.fieldId]: command.value } } }
+      }) })
+      break
+    case 'collection_set_view':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({ ...data, view: command.view })) })
+      break
+    // ---------- 总览 / 玩家布局（extensions 引用载荷） ----------
+    case 'set_layout': {
+      const text = encodeLayout(typeof command.layout === 'string' ? decodeLayout(command.layout) : command.layout as LayoutData)
+      const ref = await textRef(text)
+      next = put({ ...card, extensions: { ...card.extensions, [`noven.layout.${command.layoutKey}`]: ref } })
+      break
+    }
   }
 
-  next = organizeFolders(next)
-  assertValid(next)
-  const draft2 = await store.updateDraft(cardId, undefined, replaceTarget(draft.document, targetId, next), source)
-  return { draft: draft2, createdModuleIds: createdModules, createdBlockIds: createdBlocks }
+  return { root: next, createdModuleIds: createdModules, createdBlockIds: createdBlocks }
 }
 
 /** 从全部模块的展示位里摘掉一个角色（递归）。 */

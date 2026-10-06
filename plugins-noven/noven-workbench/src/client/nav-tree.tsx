@@ -1,10 +1,10 @@
 /**
- * The workbench's navigation tree, shared by the drawer's top zone
- * (DrawerNav) and the canvas's breadcrumb dropdown (WorkbenchStage): one
- * grouped, counted model over the workbench folder's walked entries, one set
- * of rows. Also owns the small data hooks both surfaces need — the registry
- * feed (`/api/noven-workbenches` + its poll), the folder walk, and the
- * bound-card chip.
+ * The workbench's navigation tree, shared by the canvas's two tree surfaces
+ * (the breadcrumb dropdown and the pinned right-edge column in
+ * WorkbenchStage): one grouped, counted model over the workbench folder's
+ * walked entries, one set of rows. Also owns the small data hooks both
+ * surfaces need — the registry feed (`/api/noven-workbenches` + its poll),
+ * the folder walk, and the bound-card chip.
  * @module noven-workbench/client/nav-tree
  */
 import { useCallback, useEffect, useState } from 'react'
@@ -210,7 +210,7 @@ export interface TreeView {
   readonly selected: string | null
 }
 
-/** The grouped tree body shared by the drawer top zone and the canvas's breadcrumb dropdown (06c). */
+/** The grouped tree body shared by the canvas's dropdown (06c) and pinned column (06d). */
 export function StageTreeRows(props: {
   readonly t: (key: NovenWorkbenchKey) => string
   readonly record: WorkbenchRecordView

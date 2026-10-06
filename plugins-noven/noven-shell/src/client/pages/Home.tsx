@@ -14,7 +14,8 @@ export type ShellT = (key: NovenShellLocaleKey) => string
 
 interface Props { readonly t: ShellT }
 
-const fmt = (t: ShellT, key: NovenShellLocaleKey, vars: Record<string, string | number>): string =>
+/** `{var}` interpolation over a locale string — the only formatter this plugin uses. */
+export const fmt = (t: ShellT, key: NovenShellLocaleKey, vars: Record<string, string | number>): string =>
   Object.entries(vars).reduce((s, [k, v]) => s.replace(`{${k}}`, String(v)), t(key))
 
 function KindTag({ t, kind, dot }: { readonly t: ShellT; readonly kind: FeedCard['kind']; readonly dot?: boolean }) {

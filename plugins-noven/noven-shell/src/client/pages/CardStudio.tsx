@@ -132,7 +132,7 @@ interface DropSpec {
 interface MdLabels { readonly code: { copyLabel: string; copiedLabel: string; toolbarLabels: { codeLabel: string; wrapLabel: string; unwrapLabel: string } }; readonly footnotes: string }
 
 /** Read-side of a module: text blocks render as Markdown, image blocks as captioned figures. */
-export function CardStudio({ t, useStore, loadCard, op, workspaceRoot, back }: CardEditorProps) {
+export function CardStudio({ t, useStore, loadCard, op, workspaceRoot, back, focusModuleId }: CardEditorProps & { readonly focusModuleId?: string }) {
   const card = useStore(s => s.card)
   const [state, setState] = useState<CardState | 'loading' | undefined>(undefined)
   const [targetId, setTargetId] = useState<string | undefined>(undefined)
@@ -244,6 +244,13 @@ export function CardStudio({ t, useStore, loadCard, op, workspaceRoot, back }: C
   /** PAGED cards present their top-level modules as horizontal pages; doc mode renders them as a tab strip. */
   const paged = target?.readingLayout === 'PAGED' && sections.length > 1
   const activeTab = paged ? (sections.find(m => m.id === tabId) ?? sections[0]).id : undefined
+
+  // 抽屉树的模块行是深链：打开卡页后直接落位到那个模块（分页切页、连续滚动）。
+  useEffect(() => {
+    if (focusModuleId === undefined || state === 'loading' || doc === undefined) return
+    if (paged) { setTabId(focusModuleId); return }
+    document.getElementById(`nv-ed-sec-${focusModuleId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [focusModuleId, doc, paged, state])
 
   const switchView = (next: ViewMode) => {
     commitEditing()

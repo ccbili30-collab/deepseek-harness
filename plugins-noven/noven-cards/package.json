@@ -10,7 +10,11 @@
       "types": "./lib/index.d.ts",
       "default": "./lib/index.js"
     },
-    "./package.json": "./package.json"
+    "./package.json": "./package.json",
+    "./selection": {
+      "types": "./lib/selection.d.ts",
+      "default": "./lib/selection.js"
+    }
   },
   "files": [
     "lib",
@@ -18,7 +22,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node tests/round-trip.mjs"
+    "test": "node tests/round-trip.mjs && node tests/proposals.mjs && node tests/selection.mjs && node tests/routes.mjs"
   },
   "engines": {
     "node": ">=20"

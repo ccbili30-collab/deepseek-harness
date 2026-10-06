@@ -18,6 +18,7 @@ import { registerCardTools } from '../lib/tools.js'
 import { buildBulkModules, parseBulkTree } from '../lib/bulk.js'
 import { exportCard, importExchange, importForeignFile } from '../lib/exchange.js'
 import { applyAndCommit, applyEdit } from '../lib/editor.js'
+import { setAiTrust } from '../lib/trust.js'
 
 const CRC_TABLE = new Int32Array(256).map((_, n) => {
   let c = n
@@ -198,6 +199,8 @@ try {
   check(read.card.modules[0].routing === 'PER_TURN', 'bulk 携带的 routing 生效')
 
   // 11. 版本接力不靠猜：上一次写的 next_draft_version 直接喂下一次写
+  //     （本段断言直接提交链路，先把这张卡的信任档切到 auto；提案语义在 proposals.mjs）
+  await setAiTrust(root, bulkSaved.root_id, 'auto')
   const added = await registered.get('add_module_bulk').execute({
     root_id: bulkSaved.root_id, target_id: bulkSaved.root_id, draft_version: read.draft_version,
     module_json: JSON.stringify({ name: '附录', text: '补遗' }),
@@ -229,6 +232,7 @@ try {
     root_id: 'ref-card-1', target_id: 'ref-card-1', draft_version: refRead.draft_version, module_id: 'm1', block_id: 'b1',
   }, exec)
   check(refBlock.text === '远方正文', 'read_text_block 读引用卡正文')
+  await setAiTrust(refRoot, 'ref-card-1', 'auto')
   const remoteWrite = await registered.get('rename_card').execute({
     root_id: 'ref-card-1', target_id: 'ref-card-1', draft_version: refRead.draft_version, name: '远端世界改名',
   }, exec)

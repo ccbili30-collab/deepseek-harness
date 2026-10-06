@@ -10,6 +10,7 @@
  */
 import type { BoundActions, HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { Branded } from '@deepseek-ai/dsh-brand'
+import { unitSide, type UnitSide } from './arrangement.ts'
 import type { createLayoutStore } from './stores.ts'
 
 /** Identity shared by a sidebar panel entry and its main-slot occupant. */
@@ -56,6 +57,12 @@ export interface ILayout {
   openRightbar(track: boolean, fullscreen: boolean, canvas: 'left' | 'right' | null, rail: boolean): void
   /** Report the right panel as hidden: no track, no handle. */
   closeRightbar(): void
+  /**
+   * Move the navigation+canvas unit to a side of the conversation column —
+   * the same persisted preference the region-sort gesture flips.
+   * @param side - 'left' parks the unit against the sidebar; 'right' is the shipping order.
+   */
+  setUnitSide(side: UnitSide): void
 }
 
 /** Cross-plugin panel-action face (ctx.layout). */
@@ -107,5 +114,10 @@ export class LayoutController implements ILayout {
   /** Report the right panel as hidden: no track, no handle. */
   closeRightbar(): void {
     this.panels.closeRightbar()
+  }
+
+  /** Move the unit to the named side of the conversation; persists across launches. */
+  setUnitSide(side: UnitSide): void {
+    unitSide.set(side)
   }
 }

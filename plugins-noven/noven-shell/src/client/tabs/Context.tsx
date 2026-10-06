@@ -79,7 +79,7 @@ const PERMISSIONS: readonly ManagePermission[] = ['read', 'approve', 'free']
 /** `@ref:<root>:<cardId>` — a foreign catalog entry in the background picker. */
 const REF_PREFIX = '@ref:'
 
-export function ContextTab({ t, useTabInfo, useOutputs, useBinding, useCards, useForeign, useProject, bind, openCard }: Props) {
+export function ContextTab({ t, useTabInfo, useOutputs, useBinding, useCards, useForeign, useProject, bind, openWorkbench, openCard }: Props) {
   useTabInfo()
   const outputs = useOutputs(state => state)
   const state = useBinding(s => s)
@@ -215,7 +215,9 @@ export function ContextTab({ t, useTabInfo, useOutputs, useBinding, useCards, us
             </>
           )}
       </Section>
-      <Section title={t('ctx.outputs')}>
+      <Section title={t('ctx.outputs')} action={(
+        <button type="button" className="nv-btn-ghost nv-ctx-wb" onClick={openWorkbench}>{t('ctx.workbench')}</button>
+      )}>
         {outputs.length === 0
           ? <div className="nv-ctx-row nv-ctx-empty">{t('ctx.outputsEmpty')}</div>
           : outputs.map(row => (
