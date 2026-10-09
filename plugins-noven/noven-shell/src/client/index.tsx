@@ -15,7 +15,10 @@
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { IWorkspaces } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { IWorkspaces, WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { ModelCatalog, ModelSelection, PromptContentPart } from '@deepseek-ai/dsh-api-session-controller/types'
+import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
+import type {} from '@deepseek-ai/dsh-client-file-upload/client'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
@@ -42,7 +45,7 @@ import { ProjectPage } from './pages/Library.tsx'
 import type { ProjectRef } from './pages/Library.tsx'
 import { fetchLibrary, libraryOp, projectOp, projectsCatalog } from './library-api.ts'
 import type { LibraryOp, LibraryPayload, ProjectAddr, ProjectRow } from './library-api.ts'
-import { cardOp, exportCardPackage, fetchCard, fetchCardList } from './card-api.ts'
+import { cardOp, exportCardPackage, fetchCard, fetchCardList, type CardCommand } from './card-api.ts'
 import type { CardAddr, CardOp } from './card-api.ts'
 import { bindingOp, fetchBinding } from './bindings-api.ts'
 import type { BindingOp, BindingState } from './bindings-api.ts'
@@ -60,10 +63,10 @@ import { cardSavedDefinition, savedMeta } from './card-receipt.ts'
 import { SlashChips } from './inputdock.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
 import { injectNovenStyles } from './style.ts'
-import { CanvasHost, createCanvasStore, type CanvasInjected, type ProjectFocus } from './canvas.tsx'
+import { CanvasHost, createCanvasStore, fileTabKind, type CanvasInjected, type ProjectFocus } from './canvas.tsx'
 import { ContentTree, type TreeInjected } from './tree.tsx'
 import type { CreateRequest } from './creation.tsx'
-import { novenTreeSource } from './tree-api.ts'
+import { novenTreeSource, treeOp } from './tree-api.ts'
 import { capturePanelGhost, installPanelGhost } from './panel-ghost.ts'
 import { en, zh } from './locales.ts'
 
@@ -177,12 +180,24 @@ export interface MePageInjected extends ShellFace {
   readonly moveCard: (addr: CardAddr, cardId: string, target: ProjectAddr) => Promise<void>
 }
 
+/** 创作页发送参数：目标工作区、模型选择（含推理档）、待发附件。 */
+export interface CreateSend {
+  readonly workspaceId?: WorkspaceId
+  readonly model?: ModelSelection
+  readonly files?: readonly File[]
+}
+
 /** Injected face for 创作: real session/prompt start, card creation, and the drafts catalog. */
 export interface CreatePageInjected extends ShellFace {
   readonly hooks: { readonly cards: ObservableSnapshot<readonly CardRow[]> }
-  readonly startPrompt: (text: string) => void
-  readonly newCard: (kind: 'world' | 'character', name: string) => void
-  readonly importCard: (file: File) => void
+  /** 建/复用所选工作区的会话 → 应用模型选择 → 上传附件 → 排队 prompt → 揭开对话。失败回 false 让页面解除淡出。 */
+  readonly startPrompt: (text: string, send: CreateSend) => Promise<boolean>
+  readonly newCard: (kind: 'world' | 'character', name: string, workspaceId?: WorkspaceId) => void
+  readonly importCard: (file: File, workspaceId?: WorkspaceId) => void
+  /** Host 代际的模型目录（默认路由 + 各提供商清单）。 */
+  readonly loadModels: () => Promise<ModelCatalog | undefined>
+  /** 弹宿主目录选择并把所选目录注册成 Workspace。 */
+  readonly pickWorkspace: () => Promise<WorkspaceId | undefined>
 }
 
 /** Injected face for the project page: the manifest observable plus mutation/read callbacks. */
@@ -244,7 +259,7 @@ function LibraryTabIcon({ size }: { size?: number }) { return glyph.book(size ??
 function SidecarTabIcon({ size }: { size?: number }) { return glyph.sparkle(size ?? 16) }
 
 /** Required browser services: slots, panel selection, theme, copy, right rail, session navigation, command and skill catalogs. */
-export const inject = ['slots', 'locale', 'layout', 'theme', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiWorkspace', 'uiSession', 'remote', 'remote.commands', 'remote.skills', 'remote.workspaceFiles', 'sessions', 'workspaces']
+export const inject = ['slots', 'locale', 'layout', 'theme', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiWorkspace', 'uiSession', 'remote', 'remote.commands', 'remote.session', 'remote.skills', 'remote.workspaceFiles', 'sessions', 'workspaces']
 
 interface ChipEntry { name: string; description: string }
 
@@ -816,41 +831,106 @@ export function apply(ctx: ClientContext): void {
     face.openPanel(LIBRARY_PROJECT_ID)
   }
 
-  /** Create a durable card in the recent workspace (blank session when none exists), then open the editor. */
-  const newCard = (kind: 'world' | 'character', name: string): void => {
-    void (async () => {
+  /** 选定工作区的根路径；未选或未登记时回退 undefined（走最近会话路径）。 */
+  const workspaceRootFor = (workspaceId: WorkspaceId | undefined): string | undefined =>
+    workspaceId === undefined ? undefined
+      : ctx.workspaces.list.getSnapshot().items.find(w => w.workspaceId === workspaceId)?.path
+
+  /** 建卡后要打开画布编辑器：拿到落在该工作区的会话（无则 connect 出/复用一个 blank）。 */
+  const cardSessionFor = async (workspaceId: WorkspaceId | undefined): Promise<{ sessionId?: SessionId; root?: string }> => {
+    if (workspaceId === undefined) {
       const target = recentSession()
-      const sessionId = target?.id ?? await createSessionIn(undefined)
-      const created = await cardOp({ sessionId }, { op: 'create', kind: kind === 'world' ? 'WORLD' : 'CHARACTER', name })
+      return { sessionId: target?.id ?? await createSessionIn(undefined) }
+    }
+    const root = workspaceRootFor(workspaceId)
+    if (root === undefined) return { sessionId: recentSession()?.id ?? await createSessionIn(undefined) }
+    const sessionId = await ctx.uiWorkspace.connectWorkspace(workspaceId).catch(() => undefined)
+    if (sessionId !== undefined) ctx.uiWorkspace.openSession(sessionId)
+    return sessionId === undefined ? { root } : { sessionId, root }
+  }
+
+  /** Create a durable card in the chosen (or recent) workspace, then open the editor. */
+  const newCard = (kind: 'world' | 'character', name: string, workspaceId?: WorkspaceId): void => {
+    void (async () => {
+      const target = await cardSessionFor(workspaceId)
+      const created = await cardOp(target.sessionId !== undefined ? { sessionId: target.sessionId } : { root: target.root },
+        { op: 'create', kind: kind === 'world' ? 'WORLD' : 'CHARACTER', name })
       cards.refresh()
-      if (created.cardId !== undefined) face.openCard(created.cardId, { sessionId })
+      if (created.cardId !== undefined) face.openCard(created.cardId, target)
     })().catch((reason: unknown) => { console.warn('noven-shell: card create failed:', reason) })
   }
 
-  /** Import a card package (.novex.zip / PNG / text) into the recent workspace, then open the editor. */
-  const importCard = (file: File): void => {
+  /** Import a card package (.novex.zip / PNG / text) into the chosen (or recent) workspace, then open the editor. */
+  const importCard = (file: File, workspaceId?: WorkspaceId): void => {
     void (async () => {
       const bytes = new Uint8Array(await file.arrayBuffer())
       let binary = ''
       for (const chunk of bytes) binary += String.fromCharCode(chunk)
-      const target = recentSession()
-      const sessionId = target?.id ?? await createSessionIn(undefined)
-      const imported = await cardOp({ sessionId }, { op: 'import', file: btoa(binary), name: file.name })
+      const target = await cardSessionFor(workspaceId)
+      const imported = await cardOp(target.sessionId !== undefined ? { sessionId: target.sessionId } : { root: target.root },
+        { op: 'import', file: btoa(binary), name: file.name })
       cards.refresh()
-      if (imported.cardId !== undefined) face.openCard(imported.cardId, { sessionId })
+      if (imported.cardId !== undefined) face.openCard(imported.cardId, target)
     })().catch((reason: unknown) => { console.warn('noven-shell: card import failed:', reason) })
   }
 
-  /** Open a fresh session in the recent workspace and queue the prompt through the real session path. */
-  const startPromptSession = (text: string): void => {
-    const cwd = recentSession()?.cwd
-    void (async () => {
-      const sessionId = await createSessionIn(cwd)
+  /** 图片附件走内联 image part；其余文件经 fileUpload 暂存拿 receipt（服务缺席时丢弃并告警）。 */
+  const fileToPart = async (sessionId: SessionId, file: File): Promise<PromptContentPart | undefined> => {
+    const imageTypes = new Set<string>(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+    if (imageTypes.has(file.type)) {
+      const bytes = new Uint8Array(await file.arrayBuffer())
+      let binary = ''
+      for (const b of bytes) binary += String.fromCharCode(b)
+      return { type: 'image', mediaType: file.type as ImageMediaType, data: btoa(binary), name: file.name }
+    }
+    const uploader = ctx.get('fileUpload')
+    if (uploader === undefined) return undefined
+    const res = await uploader.upload(sessionId, file, file.name)
+    return res.ok ? { type: 'file', receiptId: res.value.receiptId } : undefined
+  }
+
+  /** 发送管线：连接所选工作区的会话 → 应用模型 → 传附件 → prompt → 揭开对话面板。 */
+  const startPromptSession = (text: string, send: CreateSend): Promise<boolean> =>
+    (async () => {
+      const sessionId = send.workspaceId !== undefined
+        ? await ctx.uiWorkspace.connectWorkspace(send.workspaceId)
+        : await createSessionIn(recentSession()?.cwd)
+      if (send.model !== undefined) {
+        const applied = await ctx.remote.session.selectModel({ sessionId, ...send.model })
+        if (!applied.ok) console.warn('noven-shell: model selection failed:', applied.error.message)
+      }
+      const parts: PromptContentPart[] = []
+      for (const file of send.files ?? []) {
+        const part = await fileToPart(sessionId, file).catch((reason: unknown) => {
+          console.warn('noven-shell: attachment upload failed:', reason)
+          return undefined
+        })
+        if (part !== undefined) parts.push(part)
+      }
+      if (text !== '') parts.push({ type: 'text', text })
       ctx.uiWorkspace.openSession(sessionId)
       await ctx.sessions.using(sessionId, { source: 'novenShell' }, async reference => {
-        await reference.binding.session.prompt([{ type: 'text', text }], 'queue')
+        const result = await reference.binding.session.prompt(parts, 'queue')
+        if (!result.ok) throw new Error(result.error.message)
       })
-    })().catch((reason: unknown) => { console.warn('noven-shell: prompt session failed:', reason) })
+      return true
+    })().catch((reason: unknown) => {
+      console.warn('noven-shell: prompt session failed:', reason)
+      return false
+    })
+
+  /** Host 代际模型目录（默认路由 + 提供商清单）。 */
+  const loadModels = async (): Promise<ModelCatalog | undefined> => {
+    const res = await ctx.remote.session.modelCatalog()
+    return res.ok ? res.value : undefined
+  }
+
+  /** 目录选择 + 注册成 Workspace（追随上游添加路径的唯一入口：挑宿主目录）。 */
+  const pickWorkspace = async (): Promise<WorkspaceId | undefined> => {
+    const path = await ctx.uiWorkspace.pickDirectory()
+    if (path === null) return undefined
+    const workspace = await ctx.workspaces.create({ path })
+    return workspace.workspaceId
   }
 
   // ——— 四栏外壳：导航栏（图标 + 会话列表）原样不动；抽屉上区装内容树；
@@ -963,6 +1043,16 @@ export function apply(ctx: ClientContext): void {
     raiseCanvas()
   }
 
+  /** 模块级命令的公共通道：先 loadCard 拿 version 再 apply（树行 ⋯ 菜单走这里）。 */
+  const moduleCommand = async (addr: CardAddr, cardId: string, build: (state: import('./card-api.ts').CardState) => CardCommand | undefined): Promise<void> => {
+    const state = await fetchCard(addr, cardId)
+    if (state === undefined) return
+    const command = build(state)
+    if (command === undefined) return
+    await cardOp(addr, { op: 'apply', cardId, version: state.version, command })
+      .catch((reason: unknown) => { console.warn('noven-shell: module command failed:', reason) })
+  }
+
   /** 切换左列项目：复用同 cwd 的会话，没有就为这个工作区建一个并绑定。 */
   const switchProject = (root: string): void => {
     const state = ctx.sessions.list.getSnapshot()
@@ -1022,13 +1112,32 @@ export function apply(ctx: ClientContext): void {
     })().catch((reason: unknown) => { console.warn('noven-shell: interview prompt failed:', reason) })
   }
 
-  /** 新建面板提交：文稿落 文稿/ 目录；角色选了世界就长进世界卡里；世界/独立角色走 create。 */
+  /** 新建面板提交：文稿落 文稿/ 目录；角色选了世界就长进世界卡里；世界/独立角色走 create。
+      无项目态（抽屉中部新建球）下点新建本身就是立项动作：把当前会话目录注册成
+      项目、以所建对象命名，再走各 kind 的落点——此后抽屉进入有项目态。 */
   const submitCreate = (request: CreateRequest): void => {
     void (async () => {
-      if (request.kind === 'doc') {
+      let ensured: CardAddr = {}
+      if (focusSnapshot === undefined && request.kind !== 'import') {
         const sessionId = await ensureSession()
+        const cwd = sessionId === undefined ? undefined : ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
+        if (cwd === undefined) return
+        if ((await projectOp({ op: 'register', root: cwd, title: request.name })) === undefined) return
+        projects.refresh()
+        ensured = { sessionId, root: cwd }
+      }
+      if (request.kind === 'group') {
+        // 顶层目录即分组：mkdir 后下一轮树轮询把它渲染成和「卡」平级的分组头。
+        const addr: CardAddr = { ...currentCardAddr(), ...ensured }
+        if (!(await treeOp(addr, { op: 'mkdir', name: request.name }))) return
+        treeSource.refresh()
+        return
+      }
+      if (request.kind === 'doc') {
+        const sessionId = ensured.sessionId ?? await ensureSession()
         if (sessionId === undefined) return
-        const path = `文稿/${request.name}.md`
+        const dir = request.dir ?? '文稿'
+        const path = `${dir}/${request.name}.md`
         if (await saveDoc(sessionId, path, '', null) !== 'ok') return
         canvasInstance.actions.open({ key: `doc:${path}`, kind: 'doc', title: request.name, owner: sessionId, path })
         raiseCanvas()
@@ -1036,7 +1145,7 @@ export function apply(ctx: ClientContext): void {
         return
       }
       if (request.kind === 'import') return
-      const addr = currentCardAddr()
+      const addr: CardAddr = { ...currentCardAddr(), ...ensured }
       if (request.kind === 'character' && request.worldCardId !== undefined) {
         await cardOp(addr, { op: 'apply', cardId: request.worldCardId, command: { kind: 'add_character', name: request.name } })
         openCanvasCard(request.worldCardId, addr, undefined, addr.sessionId)
@@ -1067,8 +1176,18 @@ export function apply(ctx: ClientContext): void {
       hooks: { tree: treeSource, project: projectFocus, projects },
       openCard: (cardId, moduleId) => openCanvasCard(cardId, { sessionId, root: focusSnapshot?.root }, moduleId, sessionId),
       addModule: cardId => openCanvasCard(cardId, { sessionId, root: focusSnapshot?.root }, undefined, sessionId, true),
+      renameModule: (cardId, moduleId, name) => {
+        void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'rename_module', moduleId, name }))
+      },
+      copyModule: (cardId, moduleId) => {
+        void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'copy_module', moduleId }))
+      },
+      deleteModule: (cardId, moduleId) => {
+        void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'remove_module', moduleId }))
+      },
       openDoc: (path, title) => {
-        canvasInstance.actions.open({ key: `doc:${path}`, kind: 'doc', title, owner: sessionId, path })
+        const kind = fileTabKind(path)
+        canvasInstance.actions.open({ key: `${kind}:${path}`, kind, title, owner: sessionId, path })
         raiseCanvas()
       },
       openWork: (path, title) => {
@@ -1079,8 +1198,8 @@ export function apply(ctx: ClientContext): void {
         canvasInstance.actions.open({ key: 'files', kind: 'files', title: t('tree.files'), owner: sessionId })
         raiseCanvas()
       },
-      openCreate: kind => {
-        canvasInstance.actions.openDialog(sessionId, kind)
+      openCreate: (kind, dir) => {
+        canvasInstance.actions.openDialog(sessionId, kind, dir)
         raiseCanvas()
       },
       switchProject,
@@ -1110,6 +1229,11 @@ export function apply(ctx: ClientContext): void {
       readDoc,
       saveDoc,
       listDir,
+      ask: async (text) => {
+        await ctx.sessions.using(sessionId, { source: 'novenShell' }, async reference => {
+          await reference.binding.session.prompt([{ type: 'text', text }], 'queue')
+        })
+      },
       submitCreate,
       importCard,
     }),
@@ -1164,10 +1288,13 @@ export function apply(ctx: ClientContext): void {
         startPrompt: startPromptSession,
         newCard,
         importCard,
+        loadModels,
+        pickWorkspace,
       }),
     }, (p: FacePageProps & InjectFace<CreatePageInjected>) => (
-      <Create t={p.t} onStartPrompt={p.startPrompt} onNewCard={p.newCard}
-        onImportCard={p.importCard}
+      <Create t={p.t} useWorkspaces={p.useWorkspaces} useSessions={p.useSessions}
+        onStartPrompt={p.startPrompt} onNewCard={p.newCard}
+        onImportCard={p.importCard} loadModels={p.loadModels} pickWorkspace={p.pickWorkspace}
         useCards={p.useCards} onOpenCard={row => { face.openCard(row.cardId, { sessionId: row.sessionId, root: row.workspaceRoot }) }} />
     ))
     yield ctx.slots.register({ name: 'main', key: MESSAGES_ID, locale: NS },

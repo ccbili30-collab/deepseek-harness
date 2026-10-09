@@ -235,9 +235,15 @@ importers:
       '@deepseek-ai/dsh-api-workspace-files':
         specifier: ^0.1.7-rc.1
         version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)
+      '@deepseek-ai/dsh-attachment':
+        specifier: ^0.1.7-rc.1
+        version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-brand@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4))
       '@deepseek-ai/dsh-client-connection':
         specifier: ^0.1.7-rc.1
         version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4))(@deepseek-ai/dsh-scope@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)))
+      '@deepseek-ai/dsh-client-file-upload':
+        specifier: ^0.1.7-rc.1
+        version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-scope@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)))
       '@deepseek-ai/dsh-client-locale':
         specifier: ^0.1.7-rc.1
         version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)
@@ -289,6 +295,9 @@ importers:
       '@types/react':
         specifier: ^18.3.12
         version: 18.3.31
+      perfect-freehand:
+        specifier: 1.2.2
+        version: 1.2.2
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -2081,6 +2090,9 @@ packages:
 
   path-data-parser@0.1.0:
     resolution: {integrity: sha512-NOnmBpt5Y2RWbuv0LMzsayp3lVylAHLPUTut412ZA3l+C4uw4ZVkQbjShYCQ8TCpUMdPapr4YjUqLYD6v68j+w==}
+
+  perfect-freehand@1.2.2:
+    resolution: {integrity: sha512-eh31l019WICQ03pkF3FSzHxB8n07ItqIQ++G5UV8JX0zVOXzgTGCqnRR0jJ2h9U8/2uW4W4mtGJELt9kEV0CFQ==}
 
   picomatch@4.0.7:
     resolution: {integrity: sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==}
@@ -4017,6 +4029,8 @@ snapshots:
   package-manager-detector@1.8.0: {}
 
   path-data-parser@0.1.0: {}
+
+  perfect-freehand@1.2.2: {}
 
   picomatch@4.0.7: {}
 

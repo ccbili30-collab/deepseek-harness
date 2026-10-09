@@ -14,6 +14,8 @@ export interface TreeModuleRow {
   readonly name: string
   readonly type: string
   readonly children: readonly TreeModuleRow[]
+  /** 注入去向；'STANDBY' = 已归档（待命，不进上下文）。 */
+  readonly routing?: string
 }
 
 /** 树里的一张卡：封面是 payload ref，`pending` 标记有挂起的 AI 提案。 */
@@ -45,13 +47,36 @@ export interface TreeWorkRow {
   readonly mtime: number
 }
 
+/** 用户分组（顶层目录即分组）：卡/、文稿/ 出现时表示该内置分组已建，
+    rows 恒空——它们的行由 cards/docs 字段给；其余目录 rows 是组内文件。 */
+export interface TreeSection {
+  readonly name: string
+  readonly rows: readonly { readonly path: string; readonly title: string; readonly mtime: number }[]
+}
+
 /** `GET /api/noven-tree` 的完整载荷。 */
 export interface NovenTree {
   readonly revision: string
   readonly cards: readonly TreeCardRow[]
   readonly docs: readonly TreeDocRow[]
   readonly works: readonly TreeWorkRow[]
+  readonly sections: readonly TreeSection[]
   readonly files: { readonly count: number }
+}
+
+/**
+ * 树的写面：目前只有 `mkdir`（新建顶层分组目录）。
+ * @param addr - 会话或裸项目根。
+ * @param op - mkdir：name 校验与冲突（409）由路由负责。
+ * @returns 是否成功。
+ */
+export async function treeOp(addr: CardAddr, op: { readonly op: 'mkdir'; readonly name: string }): Promise<boolean> {
+  const response = await fetch(api(addr), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(op),
+  }).catch(() => undefined)
+  return response?.ok === true
 }
 
 const POLL_MS = 2000

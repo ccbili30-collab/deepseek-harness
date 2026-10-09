@@ -11,12 +11,17 @@ import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import { defineStore } from '@deepseek-ai/dsh-client-store'
 import type { PropsLocale, PropsRuntime, PropsStore, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { CardAddr, CardOp, CardOpResult, CardState } from './card-api.ts'
-import { CardStudio } from './pages/CardStudio.tsx'
+
 import { CardPage } from './card-page.tsx'
 import { BlockEditor, metaOf, wordCount, type EditableBlock, type MdLabels } from './editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import type { NovenTree } from './tree-api.ts'
 import { CreateDialog, type CreateKind, type CreateRequest } from './creation.tsx'
+import { glyph } from './icons.tsx'
+
+/** 文件行的标签种类：可编辑文本走文稿编辑器，其余（HTML/图片/二进制）走画框预览。 */
+export const fileTabKind = (path: string): 'doc' | 'work' =>
+  !path.includes('.') || /\.(md|markdown|mdx|txt)$/i.test(path) ? 'doc' : 'work'
 
 /** 画布上一个打开的对象：key 去重，kind 派发体组件，owner 归属会话（C9）。 */
 export interface CanvasTab {
@@ -45,8 +50,8 @@ type CanvasState = {
   tabs: CanvasTab[]
   /** 每会话的活动标签：owner → tab key。 */
   active: Record<string, string>
-  /** 新建面板：挂在发起它的会话名下。 */
-  dialog: { readonly owner: SessionId; readonly kind: CreateKind } | null
+  /** 新建面板：挂在发起它的会话名下；dir 是文稿要落的分组目录。 */
+  dialog: { readonly owner: SessionId; readonly kind: CreateKind; readonly dir?: string } | null
 }
 
 type CanvasActions = {
@@ -56,7 +61,7 @@ type CanvasActions = {
   /** 树刷新后同步存活对象的标题（重命名等）。 */
   retitle: (draft: CanvasState, owner: SessionId, key: string, title: string) => void
   /** 打开/关闭新建面板（起点页动作与树底「＋ 新建」共用）。 */
-  openDialog: (draft: CanvasState, owner: SessionId, kind: CreateKind) => void
+  openDialog: (draft: CanvasState, owner: SessionId, kind: CreateKind, dir?: string) => void
   closeDialog: (draft: CanvasState) => void
 }
 
@@ -90,7 +95,7 @@ export function createCanvasStore() {
         const index = d.tabs.findIndex(t => t.key === key && t.owner === owner)
         if (index >= 0) d.tabs[index] = { ...d.tabs[index], title }
       },
-      openDialog: (d, owner, kind) => { d.dialog = { owner, kind } },
+      openDialog: (d, owner, kind, dir) => { d.dialog = { owner, kind, dir } },
       closeDialog: (d) => { d.dialog = null },
     },
   })
@@ -121,6 +126,8 @@ export interface CanvasInjected {
   readonly saveDoc: (sessionId: SessionId, path: string, content: string, base: string | null) => Promise<'ok' | 'conflict' | 'error'>
   /** 素材列表：一级目录条目。 */
   readonly listDir: (sessionId: SessionId, path: string) => Promise<readonly { name: string; type: string }[]>
+  /** 让画布里的模块把一句话排进本会话对话队列（如地图的「直接生成底图」）。 */
+  readonly ask: (text: string) => Promise<void>
   /** 新建面板提交：宿主决定落到哪条路由。 */
   readonly submitCreate: (request: CreateRequest) => void
   /** 导入卡包文件（隐藏 input 的 onChange 直达）。 */
@@ -153,19 +160,19 @@ function StartTab({ t, empty, noProject, onCreate }: {
         <div className="nv-start-sub">{t('canvas.start.sub')}</div>
         <div className="nv-start-grid">
           <button type="button" className="nv-start-card" onClick={() => onCreate('world')}>
-            <span className="nv-start-glyph">◎</span>
+            <span className="nv-start-glyph">{glyph.globe(22)}</span>
             <span>{t('canvas.start.world')}</span>
           </button>
           <button type="button" className="nv-start-card" onClick={() => onCreate('character')}>
-            <span className="nv-start-glyph">♙</span>
+            <span className="nv-start-glyph">{glyph.user(22)}</span>
             <span>{t('canvas.start.character')}</span>
           </button>
           <button type="button" className="nv-start-card" onClick={() => onCreate('doc')}>
-            <span className="nv-start-glyph">✎</span>
+            <span className="nv-start-glyph">{glyph.file(22)}</span>
             <span>{t('canvas.start.doc')}</span>
           </button>
           <button type="button" className="nv-start-card" onClick={() => onCreate('import')}>
-            <span className="nv-start-glyph">⇪</span>
+            <span className="nv-start-glyph">{glyph.download(22)}</span>
             <span>{t('canvas.start.import')}</span>
           </button>
         </div>
@@ -176,21 +183,18 @@ function StartTab({ t, empty, noProject, onCreate }: {
 }
 
 /**
- * 卡体：默认是卡页（模块列表 + 通用编辑器）；头栏「管理」切到 CardStudio
- * 做卡级操作（角色、封面、模块增删、草稿提交）。`useStore` 桥接给
- * CardStudio 一个稳定的快照——内联对象会触发无限重渲。
+ * 卡体：卡页（设定总览 + 分页模块）。
  */
-function CardTab({ tab, t, loadCard, op, workspaceRoot, close, consumeAddModule }: {
+function CardTab({ tab, t, loadCard, op, ask, close, consumeAddModule }: {
   readonly tab: CanvasTab
   readonly t: ShellT
   readonly loadCard: CanvasInjected['loadCard']
   readonly op: CanvasInjected['cardOp']
-  readonly workspaceRoot: CanvasInjected['workspaceRoot']
+  readonly ask: CanvasInjected['ask']
   readonly close: () => void
   /** 清掉标签上的 addModule 信号（一次性）。 */
   readonly consumeAddModule: () => void
 }) {
-  const [admin, setAdmin] = useState(false)
   const [autoLib, setAutoLib] = useState(false)
   useEffect(() => {
     if (tab.addModule !== true) return
@@ -198,37 +202,19 @@ function CardTab({ tab, t, loadCard, op, workspaceRoot, close, consumeAddModule 
     consumeAddModule()
   }, [tab.addModule, consumeAddModule])
   const addr: CardAddr = tab.cardAddr ?? {}
-  const card = useMemo(
-    () => ({ cardId: tab.cardId ?? '', sessionId: addr.sessionId, root: addr.root ?? '' }),
-    [addr.root, addr.sessionId, tab.cardId],
-  )
-  const snapshot = useMemo(() => ({ card }), [card])
-  const useCardStore = useCallback(<T,>(sel: (s: { card: typeof card }) => T) => sel(snapshot), [snapshot])
   if (tab.cardId === undefined) return null
   return (
     <div className="nv-canvas-cardbody">
-      {admin ? (
-        <CardStudio
-          t={t}
-          useStore={useCardStore}
-          focusModuleId={tab.moduleId}
-          loadCard={loadCard}
-          op={op}
-          workspaceRoot={workspaceRoot}
-          back={() => setAdmin(false)}
-        />
-      ) : (
-        <CardPage
-          addr={addr}
-          cardId={tab.cardId}
-          focusModuleId={tab.moduleId}
-          autoLibrary={autoLib}
-          t={t}
-          loadCard={loadCard}
-          op={op}
-          onAdmin={() => setAdmin(true)}
-        />
-      )}
+      <CardPage
+        addr={addr}
+        cardId={tab.cardId}
+        focusModuleId={tab.moduleId}
+        autoLibrary={autoLib}
+        t={t}
+        loadCard={loadCard}
+        op={op}
+        ask={ask}
+      />
     </div>
   )
 }
@@ -353,11 +339,12 @@ export function CanvasHost(props: CanvasProps) {
     return rows.some(row => row.kind === 'start') ? rows : [startTab(session), ...rows]
   }, [allTabs, session])
   const active = activeMap[session] ?? 'start'
-  const dialog = dialogRow !== null && dialogRow.owner === session ? dialogRow.kind : null
+  const dialog = dialogRow !== null && dialogRow.owner === session ? dialogRow : null
   const tab = tabs.find(row => row.key === active) ?? tabs[0]
   const importRef = useRef<HTMLInputElement | null>(null)
   const openDoc = useCallback((path: string, title: string) => {
-    actions.open({ key: `doc:${path}`, kind: 'doc', title, owner: session, path })
+    const kind = fileTabKind(path)
+    actions.open({ key: `${kind}:${path}`, kind, title, owner: session, path })
   }, [actions, session])
   const closeActive = useCallback(() => { if (tab !== undefined) actions.close(session, tab.key) }, [actions, session, tab])
   // 树「＋」开的卡带 addModule 信号——卡页消费一次即清，不留在持久态。
@@ -369,7 +356,7 @@ export function CanvasHost(props: CanvasProps) {
     props.submitCreate(request)
   }, [actions, props])
   useEffect(() => {
-    if (dialog === 'import') { actions.closeDialog(); importRef.current?.click() }
+    if (dialog?.kind === 'import') { actions.closeDialog(); importRef.current?.click() }
   }, [dialog, actions])
   // 卡标签的标题以内容树为准：打开时拿不到卡名，树轮询到达后回写。
   useEffect(() => {
@@ -406,9 +393,8 @@ export function CanvasHost(props: CanvasProps) {
             onCreate={kind => { if (kind === 'import') importRef.current?.click(); else actions.openDialog(session, kind) }} />
         )}
         {tab !== undefined && tab.kind === 'card' && (
-          <CardTab tab={tab} t={t} loadCard={props.loadCard} op={props.cardOp}
-            workspaceRoot={props.workspaceRoot} close={closeActive}
-            consumeAddModule={consumeAddModule} />
+          <CardTab tab={tab} t={t} loadCard={props.loadCard} op={props.cardOp} ask={props.ask}
+            close={closeActive} consumeAddModule={consumeAddModule} />
         )}
         {tab !== undefined && tab.kind === 'doc' && (
           <DocTab key={tab.key} tab={tab} t={t} sessionId={session} readDoc={props.readDoc} saveDoc={props.saveDoc} />
@@ -420,8 +406,8 @@ export function CanvasHost(props: CanvasProps) {
           <WorkTab tab={tab} t={t} sessionId={session} />
         )}
       </div>
-      {dialog !== null && dialog !== 'import' && (
-        <CreateDialog kind={dialog} t={t}
+      {dialog !== null && dialog.kind !== 'import' && (
+        <CreateDialog kind={dialog.kind} dir={dialog.dir} t={t}
           worlds={(tree?.cards ?? []).filter(c => c.kind === 'WORLD').map(c => ({ cardId: c.cardId, name: c.name }))}
           onSubmit={submit} onCancel={actions.closeDialog} />
       )}

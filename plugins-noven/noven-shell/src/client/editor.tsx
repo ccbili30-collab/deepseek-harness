@@ -108,11 +108,6 @@ export function BlockEditor({ blocks, labels, t, onSaveBlock, onAdd }: {
           onChange={e => setDraft(e.target.value)} onBlur={commit}
           onKeyDown={e => { if (e.key === 'Escape') { setEditing(null); setDraft('') } }} />
       )}
-      {blocks.length > 0 && editing === null && onAdd !== undefined && (
-        <button type="button" className="nv-blk-add" onClick={() => { setConflict(false); setEditing('new'); setDraft('') }}>
-          ＋ {t('editor.module.addPara')}
-        </button>
-      )}
     </div>
   )
 }
