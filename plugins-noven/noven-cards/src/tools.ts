@@ -20,6 +20,7 @@ import { flattenModules, organizeFolders, assertValid, findTarget, emptyCardDocu
 import { BindingStore } from './bindings.ts'
 import { CardStore, cardsRoot, type SavedCard } from './store.ts'
 import { applyAndCommit, type EditorCommand } from './editor.ts'
+import { calendarOf } from './formats.ts'
 import { proposeEdit, proposeTransform, proposalChanges, proposalPreview } from './proposals.ts'
 import { aiTrustOf } from './trust.ts'
 import { buildBulkModules, parseBulkTree } from './bulk.ts'
@@ -417,7 +418,8 @@ export function registerCardTools(ctx: Context): void {
         description: '特殊模块渲染器，缺省为普通文档模块。内置类型：' +
           'timeline=时间线、collection=合集条目（语义名 region/faction/race/quotes 等同用此 kind）——' +
           '这两类建好后**必须**用 timeline_*/collection_* 专用工具填数据，不要手写 JSON；' +
-          'map=地图（{"version":1,"kind":"single_image","description":"…"}，另用 adopt_image 给模块加图片块）；' +
+          'map=地图（先 adopt_image 给模块加一张图片块当底图，再用 widget_set_data 写 description/objects/draft；objects 是矢量标注：face=闭合轮廓 pts、line=骨架 pts+逐点 widths、mark=pos 地标，坐标均 0..1 归一化，旧 markers 字段兼容）；' +
+          'relation=人物关系图（用 widget_set_data 写 nodes/edges，节点带 x/y 摆位 0..1）；' +
           'html=自定义小组件（正文块直接写 HTML 源码，沙箱渲染，适合 vibecode 的交互组件）',
       },
     },
@@ -500,17 +502,21 @@ export function registerCardTools(ctx: Context): void {
 
   // ---------- 预制模块：时间线 ----------
   const numOrNull = (raw: unknown): number | null => {
+    // null/undefined/'' 是「未放置」「开放端」的语义值——Number(null) 是 0，必须先挡。
+    if (raw === null || raw === undefined || raw === '' || typeof raw === 'boolean') return null
     const value = Number(raw)
     return Number.isFinite(value) ? value : null
   }
   const EVENT_ID = { module_id: { type: 'string' as const, required: true as const, description: '时间线模块编号' }, id: { type: 'string' as const, required: true as const, description: '事件/时代编号' } }
-  const eventPatch = (args: Record<string, unknown>): { title?: string, description?: string, at?: number | null, until?: number | null, characters?: string[] } => {
-    const patch: { title?: string, description?: string, at?: number | null, until?: number | null, characters?: string[] } = {}
+  const eventPatch = (args: Record<string, unknown>): { title?: string, description?: string, at?: number | null, until?: number | null, ongoing?: boolean, characters?: string[], color?: string | null } => {
+    const patch: { title?: string, description?: string, at?: number | null, until?: number | null, ongoing?: boolean, characters?: string[], color?: string | null } = {}
     if (args.title !== undefined) patch.title = String(args.title)
     if (args.description !== undefined) patch.description = String(args.description)
     if (args.at !== undefined) patch.at = numOrNull(args.at)
     if (args.until !== undefined) patch.until = numOrNull(args.until)
+    if (args.ongoing !== undefined) patch.ongoing = args.ongoing === true
     if (Array.isArray(args.characters)) patch.characters = args.characters.map(String)
+    if (args.color !== undefined) patch.color = args.color === '' ? null : String(args.color)
     return patch
   }
 
@@ -519,28 +525,32 @@ export function registerCardTools(ctx: Context): void {
     {
       module_id: { type: 'string', required: true, description: '时间线模块编号' },
       title: { type: 'string', required: true, description: '事件标题' },
-      at: { type: 'number', description: '数值时间；省略=未放置' },
-      until: { type: 'number', description: '持续终点；省略=点事件' },
+      at: { oneOf: [{ type: 'number' }, { type: 'null' }], description: '数值时间；null/省略=事件存在但未放到轴上' },
+      until: { oneOf: [{ type: 'number' }, { type: 'null' }], description: '持续终点；null/省略=点事件' },
       description: { type: 'string', description: '事件描述' },
       characters: { type: 'array', items: { type: 'string' }, description: '相关角色卡编号' },
+      color: { type: 'string', description: '事件颜色 purple/blue/pink/green/amber/gray；省略=跟随所属纪元' },
+      ongoing: { type: 'boolean', description: 'true=开放事件（向未来延伸，与 until 互斥）' },
     },
     args => ({
       kind: 'timeline_add_event', moduleId: String(args.module_id),
       event: {
         title: String(args.title), at: numOrNull(args.at), until: numOrNull(args.until),
+        ...(args.ongoing === true ? { ongoing: true } : {}),
         description: typeof args.description === 'string' ? args.description : undefined,
         characters: Array.isArray(args.characters) ? args.characters.map(String) : undefined,
+        color: typeof args.color === 'string' && args.color !== '' ? args.color : undefined,
       },
     }))
 
   registerEditTool(tools, 'timeline_update_event',
-    '修改时间线事件的标题、描述、位置或关联角色；只传要改的字段。',
-    { ...EVENT_ID, title: { type: 'string', description: '新标题' }, at: { type: 'number' }, until: { type: 'number' }, description: { type: 'string' }, characters: { type: 'array', items: { type: 'string' } } },
+    '修改时间线事件的标题、描述、位置、颜色或关联角色；只传要改的字段。color 传空字符串表示回到「跟随纪元」。',
+    { ...EVENT_ID, title: { type: 'string', description: '新标题' }, at: { oneOf: [{ type: 'number' }, { type: 'null' }], description: 'null=从轴上取下' }, until: { oneOf: [{ type: 'number' }, { type: 'null' }], description: 'null=收敛成点事件' }, ongoing: { type: 'boolean', description: 'true=延伸到未来的开放事件' }, description: { type: 'string' }, characters: { type: 'array', items: { type: 'string' } }, color: { type: 'string', description: 'purple/blue/pink/green/amber/gray；空串=跟随纪元' } },
     args => ({ kind: 'timeline_update_event', moduleId: String(args.module_id), id: String(args.id), patch: eventPatch(args) }))
 
   registerEditTool(tools, 'timeline_move_event',
     '把事件挪到新时间（拖动手感的工具版）；until 省略=保持原持续，传 null 值由 at 单独决定。',
-    { ...EVENT_ID, at: { type: 'number', required: true, description: '新的数值时间' }, until: { type: 'number' } },
+    { ...EVENT_ID, at: { type: 'number', required: true, description: '新的数值时间' }, until: { oneOf: [{ type: 'number' }, { type: 'null' }], description: 'null=收敛成点事件' } },
     args => ({ kind: 'timeline_move_event', moduleId: String(args.module_id), id: String(args.id), at: numOrNull(args.at), until: args.until === undefined ? undefined : numOrNull(args.until) }))
 
   registerEditTool(tools, 'timeline_remove_event',
@@ -549,24 +559,24 @@ export function registerCardTools(ctx: Context): void {
     args => ({ kind: 'timeline_remove_event', moduleId: String(args.module_id), id: String(args.id) }))
 
   registerEditTool(tools, 'timeline_add_era',
-    '加一段时代色带（from/to 为数值范围，color 取 purple/blue/pink/green/amber/gray）。',
+    '加一段时代色带。from/to 为数值范围，传 null 表示开放端（延伸到过去/未来，图上末端消散成粒子）；color 取 purple/blue/pink/green/amber/gray。',
     {
       module_id: { type: 'string', required: true, description: '时间线模块编号' },
       name: { type: 'string', required: true, description: '时代名' },
-      from: { type: 'number', required: true, description: '起点' },
-      to: { type: 'number', required: true, description: '终点' },
+      from: { oneOf: [{ type: 'number' }, { type: 'null' }], description: '起点；null=向过去开放' },
+      to: { oneOf: [{ type: 'number' }, { type: 'null' }], description: '终点；null=向未来开放' },
       color: { type: 'string', description: '色带颜色' },
     },
-    args => ({ kind: 'timeline_add_era', moduleId: String(args.module_id), era: { name: String(args.name), from: numOrNull(args.from) ?? 0, to: numOrNull(args.to) ?? 0, color: typeof args.color === 'string' ? args.color : 'gray' } }))
+    args => ({ kind: 'timeline_add_era', moduleId: String(args.module_id), era: { name: String(args.name), from: args.from === null ? null : (numOrNull(args.from) ?? 0), to: numOrNull(args.to), color: typeof args.color === 'string' ? args.color : 'gray' } }))
 
   registerEditTool(tools, 'timeline_update_era',
-    '修改时代名、范围或颜色；只传要改的字段（拖时代边缘的工具版是改 from/to）。',
-    { ...EVENT_ID, name: { type: 'string' }, from: { type: 'number' }, to: { type: 'number' }, color: { type: 'string' } },
+    '修改时代名、范围或颜色；只传要改的字段。from/to 传 null = 开放端（延伸到过去/未来）。',
+    { ...EVENT_ID, name: { type: 'string' }, from: { oneOf: [{ type: 'number' }, { type: 'null' }], description: 'null=向过去开放' }, to: { oneOf: [{ type: 'number' }, { type: 'null' }], description: 'null=向未来开放' }, color: { type: 'string' } },
     args => {
-      const patch: { name?: string, from?: number, to?: number, color?: string } = {}
+      const patch: { name?: string, from?: number | null, to?: number | null, color?: string } = {}
       if (args.name !== undefined) patch.name = String(args.name)
-      if (args.from !== undefined) patch.from = numOrNull(args.from) ?? 0
-      if (args.to !== undefined) patch.to = numOrNull(args.to) ?? 0
+      if (args.from !== undefined) patch.from = args.from === null ? null : (numOrNull(args.from) ?? 0)
+      if (args.to !== undefined) patch.to = numOrNull(args.to)
       if (args.color !== undefined) patch.color = String(args.color)
       return { kind: 'timeline_update_era', moduleId: String(args.module_id), id: String(args.id), patch }
     })
@@ -577,45 +587,84 @@ export function registerCardTools(ctx: Context): void {
     args => ({ kind: 'timeline_remove_era', moduleId: String(args.module_id), id: String(args.id) }))
 
   registerEditTool(tools, 'timeline_set_calendar',
-    '设置时间线历法：name/unit/epoch/step（拖动吸附步长）/format（显示模板，含 {n} 占位）。精度由用户调，数值一律存数字。',
+    `设置时间线历法。轴上数值一律存「最小单位」的数，历法是数↔文字的格式化器，由三种原语组成：
+- units：固定比单位链，粗→细，[{name,per}] per=折合最小单位数（如 [{name:"年",per:360},{name:"月",per:30},{name:"日",per:1}]；自定义单位随便起名，per 自定义）
+- cycles：循环命名，[{unit,names,offset}]，把某单位的数值取模换成名字。干支纪年 = 年上 60 名循环：{"unit":"年","names":["甲子","乙丑",…,"癸亥"],"offset":3}；生肖、星期、月相同理
+- epoch：纪元偏移（元年分界），format：显示模板 {n}=复合串或数值，formatBefore：纪元前模板（如 "前{n}年"）
+切换显示视图（如公元纪年/干支）时：事件与纪元的位置存在最小单位里，units 的 per 换算必须保持原样（年仍是 360、月仍是 30），只改 format/formatBefore/cycles/epoch；把 units 改成 [{name:"年",per:1}] 会把日值当年值放大 360 倍。
+多视图：给历法一个 "name"（如 "公元纪年"、"干支纪年"）就会存成命名视图并切换过去，同名覆盖；用户在工具栏历法菜单里可以来回切换视图。切换已存视图用 timeline_switch_view。
+旧写法 {"unit":"日"} 兼容，等价于 units:[{name:"日",per:1}]。`,
     {
       module_id: { type: 'string', required: true, description: '时间线模块编号' },
-      calendar_json: { type: 'string', required: true, description: '历法 JSON，如 {"name":"神历","unit":"年","epoch":0,"step":1,"format":"神历 {n} 年"}' },
+      calendar_json: {
+        type: 'string', required: true,
+        description: '历法 JSON。"name" 非空=存成命名视图（同名覆盖）。简单历：{"name":"神历","units":[{"name":"日","per":1}],"epoch":0,"step":1,"format":"神历第{n}日"}；复合历：{"name":"公元纪年","units":[{"name":"年","per":360},{"name":"月","per":30},{"name":"日","per":1}],"format":"公元{n}年","formatBefore":"公元前{n}年"}；干支：在 units 上加 cycles:[{"unit":"年","names":[60干支名],"offset":3}]',
+      },
     },
     args => {
       const raw = JSON.parse(String(args.calendar_json)) as Record<string, unknown>
       if (raw === null || typeof raw !== 'object') throw new Error('calendar_json 不是对象')
-      return {
-        kind: 'timeline_set_calendar', moduleId: String(args.module_id),
-        calendar: {
-          name: typeof raw.name === 'string' ? raw.name : '',
-          unit: typeof raw.unit === 'string' ? raw.unit : '年',
-          epoch: numOrNull(raw.epoch) ?? 0,
-          step: numOrNull(raw.step) ?? 1,
-          format: typeof raw.format === 'string' ? raw.format : '{n}',
-        },
-      }
+      return { kind: 'timeline_set_calendar', moduleId: String(args.module_id), calendar: calendarOf(raw) }
     })
+
+  registerEditTool(tools, 'timeline_switch_view',
+    '切换时间线的历法视图（只换显示，位置数据不动）。name 是 timeline_set_calendar 存过的命名视图。',
+    {
+      module_id: { type: 'string', required: true, description: '时间线模块编号' },
+      name: { type: 'string', required: true, description: '要切换到的历法视图名' },
+    },
+    args => ({ kind: 'timeline_switch_view', moduleId: String(args.module_id), name: String(args.name) }))
+
+  registerEditTool(tools, 'timeline_add_mark',
+    '在时间线标尺上插一个刻度标记：某个有意义的时间点的小旗（如「现在」「转折点」）。at 是数值位置，label 可留空。',
+    {
+      module_id: { type: 'string', required: true, description: '时间线模块编号' },
+      at: { type: 'number', required: true, description: '轴上位置（数值）' },
+      label: { type: 'string', description: '标记名' },
+    },
+    args => ({
+      kind: 'timeline_add_mark', moduleId: String(args.module_id),
+      mark: { at: numOrNull(args.at) ?? 0, ...(typeof args.label === 'string' ? { label: args.label } : {}) },
+    }))
+
+  registerEditTool(tools, 'timeline_update_mark',
+    '改刻度标记的位置或名字；只传要改的字段。',
+    {
+      module_id: { type: 'string', required: true, description: '时间线模块编号' },
+      id: { type: 'string', required: true, description: '标记编号' },
+      at: { type: 'number' }, label: { type: 'string' },
+    },
+    args => {
+      const patch: { at?: number, label?: string } = {}
+      const at = numOrNull(args.at); if (at !== null) patch.at = at
+      if (args.label !== undefined) patch.label = String(args.label)
+      return { kind: 'timeline_update_mark', moduleId: String(args.module_id), id: String(args.id), patch }
+    })
+
+  registerEditTool(tools, 'timeline_remove_mark',
+    '删除一个刻度标记（不影响任何事件）。',
+    EVENT_ID,
+    args => ({ kind: 'timeline_remove_mark', moduleId: String(args.module_id), id: String(args.id) }))
 
   // ---------- 预制模块：集合 ----------
   const ITEM_ID = { module_id: { type: 'string' as const, required: true as const, description: '集合模块编号' }, id: { type: 'string' as const, required: true as const, description: '条目/字段编号' } }
 
   registerEditTool(tools, 'collection_add_field',
-    '给集合模块加一个自定义字段。type：text/longtext/date/person（值为角色编号）/image（值为 {"resourceId":...}）/place/link。',
+    '给集合模块加一个自定义字段。type：text/longtext/date/person（值为角色编号）/image（值为 {"resourceId":...}）/place/link/number（数值，供图表与体量排版）/time（时间点，数值，与时间线历法同轴，供长卷视图定位）。',
     {
       module_id: { type: 'string', required: true, description: '集合模块编号' },
       name: { type: 'string', required: true, description: '字段名' },
       type: { type: 'string', description: '字段类型（缺省 text）' },
     },
-    args => ({ kind: 'collection_add_field', moduleId: String(args.module_id), field: { name: String(args.name), ...(typeof args.type === 'string' ? { type: args.type as 'text' | 'longtext' | 'date' | 'person' | 'image' | 'place' | 'link' } : {}) } }))
+    args => ({ kind: 'collection_add_field', moduleId: String(args.module_id), field: { name: String(args.name), ...(typeof args.type === 'string' ? { type: args.type as 'text' | 'longtext' | 'date' | 'person' | 'image' | 'place' | 'link' | 'number' | 'time' } : {}) } }))
 
   registerEditTool(tools, 'collection_update_field',
     '改集合字段的名字或类型；只传要改的字段。',
     { ...ITEM_ID, name: { type: 'string' }, type: { type: 'string' } },
     args => {
-      const patch: { name?: string, type?: 'text' | 'longtext' | 'date' | 'person' | 'image' | 'place' | 'link' } = {}
+      const patch: { name?: string, type?: 'text' | 'longtext' | 'date' | 'person' | 'image' | 'place' | 'link' | 'number' | 'time' } = {}
       if (args.name !== undefined) patch.name = String(args.name)
-      if (args.type !== undefined) patch.type = String(args.type) as 'text' | 'longtext' | 'date' | 'person' | 'image' | 'place' | 'link'
+      if (args.type !== undefined) patch.type = String(args.type) as 'text' | 'longtext' | 'date' | 'person' | 'image' | 'place' | 'link' | 'number' | 'time'
       return { kind: 'collection_update_field', moduleId: String(args.module_id), id: String(args.id), patch }
     })
 
@@ -625,16 +674,19 @@ export function registerCardTools(ctx: Context): void {
     args => ({ kind: 'collection_remove_field', moduleId: String(args.module_id), id: String(args.id) }))
 
   registerEditTool(tools, 'collection_add_item',
-    '往集合加一个条目并保存（专用工具，不要手写 JSON）。返回的 created_block_ids/条目编号可继续用。',
+    '往集合加一个条目并保存（专用工具，不要手写 JSON）。返回的 created_block_ids/条目编号可继续用。' +
+    'values 一次把各字段值写齐（键用字段名），不用再逐格调 collection_set_value。',
     {
       module_id: { type: 'string', required: true, description: '集合模块编号' },
       name: { type: 'string', required: true, description: '条目名' },
       summary: { type: 'string', description: '摘要' },
       description: { type: 'string', description: '正文描述' },
+      values: { type: 'json', description: '字段值表，键为字段名，如 {"时间":"1129","类别":"财政","岁入":660}；number/time 字段传数值' },
     },
     args => ({
       kind: 'collection_add_item', moduleId: String(args.module_id),
       item: { name: String(args.name), summary: typeof args.summary === 'string' ? args.summary : undefined, description: typeof args.description === 'string' ? args.description : undefined },
+      ...(args.values !== undefined ? { values: (typeof args.values === 'string' ? JSON.parse(args.values) : args.values) as Record<string, string> } : {}),
     }))
 
   registerEditTool(tools, 'collection_update_item',
@@ -666,8 +718,47 @@ export function registerCardTools(ctx: Context): void {
       return { kind: 'collection_set_value', moduleId: String(args.module_id), itemId: String(args.item_id), fieldId: String(args.field_id), value: value as string }
     })
 
+  tools.register(defineTool({
+    name: 'collection_set_item_image',
+    description: '设置条目的主图（卡片/长卷视图的配图）。resource_id 用卡内已有图片资源；' +
+      '或 image_path 给项目内图片路径（generate_image 的落盘路径），自动收进卡片再绑定。两参二选一。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '集合模块编号' },
+      item_id: { type: 'string', required: true, description: '条目编号' },
+      resource_id: { type: 'string', description: '本卡已有图片资源编号' },
+      image_path: { type: 'string', description: '项目内图片相对路径（如 视觉/盐田.png）' },
+    },
+    output: WRITE_OUTPUT,
+    async execute(args, exec) {
+      const resourceId = optionalId(args.resource_id) ?? undefined
+      const imagePath = optionalId(args.image_path)
+      if ((resourceId === undefined) === (imagePath === undefined)) throw new Error('resource_id 与 image_path 必须且只能给一个')
+      if (resourceId !== undefined) {
+        return editAndCommit(exec, String(args.root_id), String(args.target_id), {
+          kind: 'collection_set_item_image', moduleId: String(args.module_id), itemId: String(args.item_id), resourceId,
+        }, optionalId(args.project) ?? undefined)
+      }
+      const path = imagePath ?? ''
+      const bytes = await readProjectFile(sessionCwd(exec), path)
+      const mediaType = IMAGE_MEDIA[path.split('.').pop()?.toLowerCase() ?? '']
+      if (mediaType === undefined) throw new Error(`不支持的图片类型：${path}`)
+      return editAndCommit(exec, String(args.root_id), String(args.target_id), {
+        kind: 'collection_set_item_image', moduleId: String(args.module_id), itemId: String(args.item_id), bytes, mediaType,
+      }, optionalId(args.project) ?? undefined)
+    },
+  }))
+
+  registerEditTool(tools, 'collection_set_style',
+    '设置本模块条目配图的统一画风提示词（art_style）。生图时把它拼在每条配图描述前，保证整排卡同一系列。',
+    {
+      module_id: { type: 'string', required: true, description: '集合模块编号' },
+      art_style: { type: 'string', required: true, description: '画风描述，如「柔和水墨插画，淡彩，宋代风物」' },
+    },
+    args => ({ kind: 'collection_set_style', moduleId: String(args.module_id), artStyle: String(args.art_style) }))
+
   registerEditTool(tools, 'collection_set_view',
-    '设置集合的默认视图：list / cards（timeline、map 预留）。',
+    '设置集合的默认视图：list 表格 / cards 图鉴卡 / timeline 编年长卷 / map（预留）。',
     {
       module_id: { type: 'string', required: true, description: '集合模块编号' },
       view: { type: 'string', required: true, description: 'list / cards / timeline / map' },
@@ -676,6 +767,25 @@ export function registerCardTools(ctx: Context): void {
       const view = String(args.view)
       if (!['list', 'cards', 'timeline', 'map'].includes(view)) throw new Error('view 必须是 list / cards / timeline / map')
       return { kind: 'collection_set_view', moduleId: String(args.module_id), view: view as 'list' | 'cards' | 'timeline' | 'map' }
+    })
+
+  registerEditTool(tools, 'widget_set_data',
+    '整体改写 map / relation 模块的结构化数据（timeline/collection 请用各自的专用工具）。' +
+    'map: {"description":"…","markers":[{"x":0.5,"y":0.4,"label":"王都","description":"…"}]}——markers 的 x/y 是底图归一化坐标 0..1，id 留空自动生成，传回读到的 id 即更新原位。' +
+    'relation: {"nodes":[{"name":"艾莉娅","note":"…","x":0.3,"y":0.5}],"edges":[{"from":"节点id","to":"节点id","label":"师徒"}]}。',
+    {
+      module_id: { type: 'string', required: true, description: 'map / relation 模块编号' },
+      widget: { type: 'string', required: true, description: 'map 或 relation' },
+      data: { type: 'json', required: true, description: '该类型的整份数据对象' },
+    },
+    args => {
+      const moduleId = String(args.module_id)
+      const raw = typeof args.data === 'string' ? args.data : JSON.stringify(args.data)
+      const widget = String(args.widget)
+      if (widget !== 'map' && widget !== 'relation') {
+        throw new Error('widget 必须是 map 或 relation（timeline/collection 用各自的专用工具）')
+      }
+      return { kind: 'set_widget_data', moduleId, widget, data: raw }
     })
 
   // ---------- 图片 ----------

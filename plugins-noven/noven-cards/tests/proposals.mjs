@@ -15,7 +15,7 @@ import { registerCardTools } from '../lib/tools.js'
 import { applyAndCommit } from '../lib/editor.js'
 import { acceptProposal, proposalChanges, proposalPreview, proposeEdit, rejectProposal } from '../lib/proposals.js'
 import { aiTrustOf, setAiTrust } from '../lib/trust.js'
-import { decodeCollection, decodeLayout, decodeTimeline, encodeCollection, encodeLayout, encodeTimeline } from '../lib/formats.js'
+import { decodeCollection, decodeLayout, decodeTimeline, encodeCollection, encodeLayout, encodeTimeline, formatTime } from '../lib/formats.js'
 
 const root = mkdtempSync(join(tmpdir(), 'noven-cards-proposals-'))
 let failures = 0
@@ -89,6 +89,13 @@ try {
   await rejectProposal(store, 'card-p')
   check(await store.proposal('card-p') === undefined && !(await store.open('card-p')).document.modules.some(m => m.name === '提案模块二'), '拒绝丢弃剩余补丁')
 
+  // 5b. 素材资源改动也要进提案——不然接受后 visualKey 指向不存在的资源
+  const png1x1 = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  await proposeEdit(store, 'card-p', 'card-p', { kind: 'adopt_image', bytes: png1x1, mediaType: 'image/png', moduleId: null })
+  const saved5b = await acceptProposal(store, 'card-p')
+  check(saved5b.document.resources.length === 1 && saved5b.document.resources[0].mediaType === 'image/png', '素材资源补丁随提案接受落地')
+  check((await store.open('card-p')).document.resources.length === 1, '接受的资源写入 head')
+
   // 6. 信任档：默认 propose → 工具回 proposed；auto → 工具直接 saved
   check(await aiTrustOf(root, 'card-p') === 'propose', '信任档缺省为 propose')
   const registered = new Map()
@@ -108,18 +115,35 @@ try {
   // 7. 时间线 v2 编解码
   const timeline = {
     version: 2,
-    calendar: { name: '神历', unit: '年', epoch: 0, step: 1, format: '神历 {n} 年' },
-    eras: [{ id: 'era-1', name: '第一纪', from: 0, to: 300, color: 'purple' }],
+    calendar: { name: '神历', units: [{ name: '年', per: 1 }], cycles: [], epoch: 0, step: 1, format: '神历 {n} 年', formatBefore: '前 {n} 年', unit: '年' },
+    views: [
+      { name: '公元纪年', units: [{ name: '年', per: 360 }, { name: '日', per: 1 }], cycles: [], epoch: 0, step: 1, format: '公元{n}年', formatBefore: '公元前{n}年', unit: '日' },
+      { units: [], cycles: [], epoch: 0, step: 1, format: '{n}', formatBefore: '前{n}' },
+    ],
+    eras: [
+      { id: 'era-1', name: '第一纪', from: 0, to: 300, color: 'purple' },
+      { id: 'era-2', name: '未竟之世', from: 400, to: null, color: 'blue', description: '向未来开放' },
+    ],
     events: [
       { id: 'ev-1', at: 42, until: null, title: '大雪', description: '纪元的开端', characters: [] },
       { id: 'ev-2', at: null, until: null, title: '未定', description: '', characters: [] },
+      { id: 'ev-3', at: 500, until: null, ongoing: true, title: '进行中的革命', description: '', characters: [], color: 'pink' },
     ],
   }
   const encoded = encodeTimeline(timeline)
   const decoded = decodeTimeline(encoded)
-  check(decoded.events.length === 2 && decoded.eras.length === 1 && decoded.calendar.step === 1, '时间线 v2 往返一致')
+  check(decoded.events.length === 3 && decoded.eras.length === 2 && decoded.calendar.step === 1, '时间线 v2 往返一致')
+  check(decoded.events[1].at === null && decoded.eras[1].to === null, 'null 端点/未放置不被解码成 0')
+  check(decoded.events[2].ongoing === true && decoded.events[2].color === 'pink', 'ongoing 与事件色往返一致')
+  check(decoded.calendar.unit === '年' && decoded.calendar.units[0].per === 1, '历法单位链与兼容 unit 往返一致')
+  check(decoded.views.length === 1 && decoded.views[0].name === '公元纪年' && decoded.views[0].units[0].per === 360, '命名历法视图往返、无名视图丢弃')
   const projection = JSON.parse(encoded)
-  check(projection.nodes.length === 2 && projection.nodes[0].time === '神历 42 年' && projection.nodes[1].time === '', 'nodes 投影按 at 排序、未放置置底')
+  check(projection.nodes.length === 3 && projection.nodes[0].time === '神历 42 年' && projection.nodes[1].time === '神历 500 年' && projection.nodes[2].time === '', 'nodes 投影按 at 排序、未放置置底')
+  const greg = { ...timeline.calendar, format: '公元{n}年', formatBefore: '公元前{n}年' }
+  check(formatTime(greg, -5) === '公元前5年', 'formatBefore 模板自带单位名不再叠单位')
+  check(formatTime({ ...timeline.calendar, formatBefore: '前 {n}' }, -5) === '前 5年', 'formatBefore 不带单位时仍补单位名')
+  const multi = { ...timeline.calendar, units: [{ name: '年', per: 360 }, { name: '月', per: 30 }, { name: '日', per: 1 }], unit: '日', formatBefore: '公元前{n}年' }
+  check(formatTime(multi, -79560) === '公元前221年' && formatTime(multi, -79700) === '公元前221年4月20日', '多单位复合串剥掉模板重复单位后缀')
   const v1 = decodeTimeline(JSON.stringify({ version: 1, kind: 'timeline', nodes: [{ time: '元年', title: '旧节点', description: 'v1' }] }))
   check(v1.events.length === 1 && v1.events[0].at === null && v1.events[0].title === '旧节点', 'v1 nodes 读成未放置事件')
   const external = decodeTimeline(JSON.stringify({
@@ -128,6 +152,29 @@ try {
     noven: { calendar: timeline.calendar, eras: [], events: [timeline.events[0]] },
   }))
   check(external.events.length === 2 && external.events.some(e => e.title === '外部新增' && e.at === null), '投影对账：外部新增的 node 回收为未放置事件')
+
+  // 7b. 历法命令：set_calendar 带名入视图库，switch_view 切视图不碰轴值
+  await store.create('历法卡', 'AI', async receive => ({
+    id: 'card-tl', kind: 'WORLD', name: '历法卡', resources: [], internalCharacters: [], extensions: {},
+    appearance: { readingLayout: 'PAGED' },
+    modules: [{
+      id: 'm-tl', name: '时间线', tags: [], children: [], layout: 'VERTICAL', characterIds: [],
+      widget: { type: 'timeline' },
+      blocks: [{ kind: 'text', id: 'm-tl-b', content: await receive(new TextEncoder().encode(encodeTimeline(timeline))) }],
+    }],
+  }))
+  const tlOf = async () => decodeTimeline(new TextDecoder().decode(
+    await store.readPayload('card-tl', (await store.open('card-tl')).document.modules[0].blocks[0].content)))
+  const gregorian = { name: '公元纪年', units: [{ name: '年', per: 360 }, { name: '日', per: 1 }], cycles: [], epoch: 0, step: 1, format: '公元{n}年', formatBefore: '公元前{n}年', unit: '日' }
+  await applyAndCommit(store, 'card-tl', 'card-tl', { kind: 'timeline_set_calendar', moduleId: 'm-tl', calendar: gregorian }, 'AI')
+  const afterSet = await tlOf()
+  check(afterSet.calendar.name === '公元纪年' && afterSet.views.some(v => v.name === '公元纪年'), 'set_calendar 带名：切过去并进视图库')
+  check(afterSet.events[0].at === 42 && afterSet.eras[0].from === 0, '换历法不动轴上数值')
+  await applyAndCommit(store, 'card-tl', 'card-tl', { kind: 'timeline_switch_view', moduleId: 'm-tl', name: '公元纪年' }, 'AI')
+  check((await tlOf()).calendar.format === '公元{n}年', 'switch_view 切到命名视图')
+  const beforeNoop = await tlOf()
+  await applyAndCommit(store, 'card-tl', 'card-tl', { kind: 'timeline_switch_view', moduleId: 'm-tl', name: '不存在的历法' }, 'AI')
+  check((await tlOf()).calendar.name === beforeNoop.calendar.name, 'switch_view 未知名不动当前历法')
 
   // 8. 集合 v2 编解码
   const collection = {

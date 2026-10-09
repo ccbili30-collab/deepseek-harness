@@ -79,8 +79,9 @@ export function diffTarget(before: ContentDocument, after: ContentDocument): Tar
     if (!beforeChars.has(id)) characters[id] = { before: null, after: a }
   }
   const card = !sameJson(surfaceOf(before), surfaceOf(after)) ? { before: surfaceOf(before), after: surfaceOf(after) } : undefined
-  if (Object.keys(modules).length === 0 && Object.keys(characters).length === 0 && card === undefined) return undefined
-  return { modules, characters, ...(card !== undefined ? { card } : {}) }
+  const resources = !sameJson(before.resources, after.resources) ? { before: before.resources, after: after.resources } : undefined
+  if (Object.keys(modules).length === 0 && Object.keys(characters).length === 0 && card === undefined && resources === undefined) return undefined
+  return { modules, characters, ...(card !== undefined ? { card } : {}), ...(resources !== undefined ? { resources } : {}) }
 }
 
 /** 把补丁集套到模块树上（预览 / 接受共用的纯函数）。 */
@@ -124,6 +125,9 @@ function applyTargetPatch(document: ContentDocument, targetId: string, patch: Ta
   }
   if (patch.card !== undefined) {
     next = { ...next, name: patch.card.after.name, appearance: patch.card.after.appearance, extensions: patch.card.after.extensions }
+  }
+  if (patch.resources !== undefined) {
+    next = { ...next, resources: [...patch.resources.after] }
   }
   return replaceTarget(document, targetId, next)
 }
@@ -174,6 +178,9 @@ export function proposalChanges(head: ContentDocument, proposal: ProposalFile): 
       const current = target === undefined ? undefined : surfaceOf(target)
       changes.push({ targetId, moduleId: targetId, name: patch.card.after.name, kind: 'changed', stale: current !== undefined && !sameJson(current, patch.card.before) })
     }
+    if (patch.resources !== undefined) {
+      changes.push({ targetId, moduleId: targetId, name: `${patch.resources.after.length} → 素材`, kind: 'changed', stale: target !== undefined && !sameJson(target.resources, patch.resources.before) })
+    }
     for (const [moduleId, module] of Object.entries(patch.modules)) {
       const before = module.before
       const after = module.after
@@ -197,7 +204,7 @@ function emptyProposal(baseRevision: number): ProposalFile {
 }
 
 function hasPatches(patch: TargetPatch): boolean {
-  return Object.keys(patch.modules).length > 0 || Object.keys(patch.characters).length > 0 || patch.card !== undefined
+  return Object.keys(patch.modules).length > 0 || Object.keys(patch.characters).length > 0 || patch.card !== undefined || patch.resources !== undefined
 }
 
 /**

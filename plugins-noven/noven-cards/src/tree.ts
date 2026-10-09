@@ -5,7 +5,7 @@
  * @module noven-cards/tree
  */
 import { createHash } from 'node:crypto'
-import { readdir, readFile, stat } from 'node:fs/promises'
+import { mkdir, readdir, readFile, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { cardsDir, ledgerDir } from 'noven-ledger'
 import type { Context } from '@deepseek-ai/cordis'
@@ -25,6 +25,7 @@ function moduleRows(modules: readonly ContentModule[]): Record<string, unknown>[
     name: module.name,
     type: module.widget?.type ?? 'document',
     children: moduleRows(module.children),
+    ...(module.routing !== undefined ? { routing: module.routing } : {}),
   }))
 }
 
@@ -59,6 +60,62 @@ async function scanDocs(root: string, registered: ReadonlySet<string>): Promise<
 
 const EXCLUDED_DIRS = new Set(['.noven', '.git', 'node_modules', '卡', '文稿'])
 
+/** 顶层目录扫描要跳过的名字：账本、版本库与依赖。 */
+const RESERVED_DIRS = new Set(['.noven', '.git', 'node_modules'])
+
+/** 一个用户分组的文件行上限，防巨型目录拖慢轮询。 */
+const SECTION_FILE_CAP = 500
+
+interface SectionRow { readonly path: string; readonly title: string; readonly mtime: number }
+interface TreeSection { readonly name: string; readonly rows: readonly SectionRow[] }
+
+/** 递归收一个分组目录里的文件（跳过点文件）；rel 带上分组名前缀。 */
+async function scanSectionFiles(dir: string, prefix: string, rows: SectionRow[]): Promise<void> {
+  let entries
+  try {
+    entries = await readdir(dir, { withFileTypes: true })
+  } catch {
+    /* 目录中途被删或权限不够：这份子树扫不到就当空 */
+    return
+  }
+  for (const entry of entries) {
+    if (rows.length >= SECTION_FILE_CAP) return
+    if (entry.name.startsWith('.')) continue
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) {
+      await scanSectionFiles(full, `${prefix}/${entry.name}`, rows)
+      continue
+    }
+    rows.push({ path: `${prefix}/${entry.name}`, title: entry.name, mtime: (await stat(full)).mtimeMs })
+  }
+}
+
+/**
+ * 顶层目录即分组：卡/、文稿/ 各有专属行格式（cards/docs 字段覆盖），
+ * 其余目录逐目录出一个用户分组。卡/、文稿/ 也进 sections（rows 留空），
+ * 前端靠存在性把空分组头渲染出来——用户新建的组必须立刻可见。
+ */
+async function scanSections(root: string): Promise<TreeSection[]> {
+  let entries
+  try {
+    entries = await readdir(root, { withFileTypes: true })
+  } catch {
+    return []
+  }
+  const sections: TreeSection[] = []
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.name.startsWith('.') || RESERVED_DIRS.has(entry.name)) continue
+    if (entry.name === '卡' || entry.name === '文稿') {
+      sections.push({ name: entry.name, rows: [] })
+      continue
+    }
+    const rows: SectionRow[] = []
+    await scanSectionFiles(join(root, entry.name), entry.name, rows)
+    sections.push({ name: entry.name, rows })
+  }
+  return sections.sort((a, b) => a.name.localeCompare(b.name))
+}
+
 /** 素材与文件的计数：项目里刨掉卡目录、文稿、账本与依赖后剩下的文件数（上限封顶防巨型目录）。 */
 async function countLooseFiles(root: string, registered: ReadonlySet<string>): Promise<number> {
   let count = 0
@@ -80,10 +137,35 @@ async function countLooseFiles(root: string, registered: ReadonlySet<string>): P
   return count
 }
 
+/** 分组名校验：非点开头（挡住 .. 与账本目录）、无路径分隔符、限长。 */
+const GROUP_NAME = /^(?!\.)(?!.*\.\.)[^/\\:*?"<>|]{1,64}$/u
+
 async function serve(request: Request, ctx: Context): Promise<Response> {
   const resolved = await rootFor(request, ctx)
   if (resolved instanceof Response) return resolved
   const root = resolved.root
+  if (request.method === 'POST') {
+    let body: Record<string, unknown>
+    try {
+      body = JSON.parse(await request.text()) as Record<string, unknown>
+    } catch {
+      return new Response('body is not valid JSON', { status: 400, headers: JSON_HEADERS })
+    }
+    if (body.op !== 'mkdir') return new Response('unknown op', { status: 400, headers: JSON_HEADERS })
+    const name = String(body.name ?? '').trim()
+    if (!GROUP_NAME.test(name) || RESERVED_DIRS.has(name)) {
+      return new Response('invalid group name', { status: 400, headers: JSON_HEADERS })
+    }
+    try {
+      await mkdir(join(root, name))
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+        return new Response('group already exists', { status: 409, headers: JSON_HEADERS })
+      }
+      throw error
+    }
+    return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS })
+  }
   const store = new CardStore(root)
   const manifest = await readManifest(root)
   const registered = new Set<string>()
@@ -116,6 +198,7 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
   ]
   const workRows = manifest.works.filter(w => w.kind !== 'text' && w.archived !== true)
     .map(w => ({ id: w.id, path: w.primary?.path ?? '', title: w.title ?? basename(w.primary?.path ?? ''), kind: w.kind ?? 'other', mtime: Date.parse(w.updatedAt ?? '') || 0 }))
+  const sections = await scanSections(root)
   const files = await countLooseFiles(root, registered)
 
   const token = createHash('sha256').update(JSON.stringify({
@@ -123,6 +206,7 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
     l: manifest.revision,
     d: docRows.map(d => [d.path, d.mtime]),
     w: workRows.map(w => [w.id, w.mtime]),
+    s: sections.map(s => [s.name, s.rows.map(r => [r.path, r.mtime])]),
     f: files,
   })).digest('hex').slice(0, 16)
 
@@ -130,7 +214,7 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
   if (url.searchParams.get('since') === token) {
     return new Response(null, { status: 304, headers: JSON_HEADERS })
   }
-  const body = { revision: token, cards, docs: docRows, works: workRows, files: { count: files } }
+  const body = { revision: token, cards, docs: docRows, works: workRows, sections, files: { count: files } }
   return new Response(request.method === 'HEAD' ? null : JSON.stringify(body), { headers: JSON_HEADERS })
 }
 
@@ -138,7 +222,7 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
 export function registerTreeRoutes(ctx: Context): void {
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/noven-tree',
-    methods: ['GET', 'HEAD'],
+    methods: ['GET', 'HEAD', 'POST'],
     requestBody: 'buffered',
     fetch: request => serve(request, ctx),
   }), 'noven-cards: /api/noven-tree')

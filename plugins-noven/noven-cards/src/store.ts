@@ -24,7 +24,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { cardsDir, legacyCardsDir, sanitizeDirName, uniqueDirName } from 'noven-ledger'
-import { assertValid, type CardAppearance, type ContentDocument, type ContentModule, type ContentRef } from './model.ts'
+import { assertValid, type CardAppearance, type CardResource, type ContentDocument, type ContentModule, type ContentRef } from './model.ts'
 
 /** 编辑来源：人工 / AI / 导入。 */
 export type ChangeSource = 'HUMAN' | 'AI' | 'IMPORT'
@@ -65,11 +65,18 @@ export interface SurfacePatch {
   readonly after: CardSurface
 }
 
+/** 素材资源整表快照；资源只随卡级命令增减，不做逐项合并。 */
+export interface ResourcePatch {
+  readonly before: readonly CardResource[]
+  readonly after: readonly CardResource[]
+}
+
 /** 一个目标卡（根卡或某个内部角色）上的全部补丁。 */
 export interface TargetPatch {
   readonly modules: Record<string, ModulePatch>
   readonly characters: Record<string, CharacterPatch>
   readonly card?: SurfacePatch
+  readonly resources?: ResourcePatch
 }
 
 /** proposal.json：挂起的 AI 提案 = 目标卡 → 补丁集。预览 = head + 补丁。 */

@@ -15,6 +15,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { emptyCardDocument, findTarget, mintId, type ContentDocument, type ContentModule } from './model.ts'
 import { CardStore, DraftConflict, EditConflict, type CardDraft, type SavedCard } from './store.ts'
 import { applyAndCommit, type EditorCommand } from './editor.ts'
+import { decodeCollection, decodeMap, decodeRelation, decodeTimeline } from './formats.ts'
 import { buildExportPackage, importExchange, importForeignFile } from './exchange.ts'
 import { acceptProposal, proposalChanges, proposalPreview, rejectProposal } from './proposals.ts'
 import { aiTrustOf, setAiTrust, type AiTrust } from './trust.ts'
@@ -93,23 +94,51 @@ interface HydratedModule {
   /** Characters placed inside this module, in placement order. */
   readonly characterIds: readonly string[]
   readonly layout: string
-  readonly widget?: { readonly type: string, readonly height?: number }
+  /** 预制模块：type 决定渲染器；data 是首个文字块 JSON 按类型解码后的结构。 */
+  readonly widget?: { readonly type: string, readonly height?: number, readonly data?: unknown }
+  /** Options round-trip fields: `module_options` rewrites them wholesale, so the client must echo the current values back. */
+  readonly tags: readonly string[]
+  readonly use?: ContentModule['use']
+  readonly routing?: ContentModule['routing']
+  readonly temporality?: ContentModule['temporality']
+}
+
+/** 预制模块的解码表：widget.type → 首个文字块 JSON 的结构化解码器。 */
+const WIDGET_DECODERS: Record<string, (raw: string | undefined) => unknown> = {
+  timeline: decodeTimeline,
+  collection: decodeCollection,
+  map: decodeMap,
+  relation: decodeRelation,
 }
 
 /** Resolve one module tree's text payloads and captions to plain text. */
 async function hydrateModules(store: CardStore, cardId: string, modules: readonly ContentModule[]): Promise<HydratedModule[]> {
   const text = async (ref: string): Promise<string> => new TextDecoder().decode(await store.readPayload(cardId, ref))
-  const walk = async (module: ContentModule): Promise<HydratedModule> => ({
-    id: module.id,
-    name: module.name,
-    blocks: await Promise.all(module.blocks.map(async (block): Promise<HydratedBlock> => block.kind === 'text'
+  const walk = async (module: ContentModule): Promise<HydratedModule> => {
+    const blocks = await Promise.all(module.blocks.map(async (block): Promise<HydratedBlock> => block.kind === 'text'
       ? { kind: 'text', id: block.id, text: await text(block.content), ref: block.content }
-      : { kind: 'image', id: block.id, resourceId: block.resourceId, ...(block.caption !== undefined ? { caption: await text(block.caption) } : {}) })),
-    children: await Promise.all(module.children.map(walk)),
-    characterIds: [...module.characterIds],
-    layout: module.layout,
-    ...(module.widget !== undefined ? { widget: { type: module.widget.type, ...(module.widget.height !== undefined ? { height: module.widget.height } : {}) } } : {}),
-  })
+      : { kind: 'image', id: block.id, resourceId: block.resourceId, ...(block.caption !== undefined ? { caption: await text(block.caption) } : {}) }))
+    const decode = module.widget === undefined ? undefined : WIDGET_DECODERS[module.widget.type]
+    return {
+      id: module.id,
+      name: module.name,
+      blocks,
+      children: await Promise.all(module.children.map(walk)),
+      characterIds: [...module.characterIds],
+      layout: module.layout,
+      ...(module.widget !== undefined ? {
+        widget: {
+          type: module.widget.type,
+          ...(module.widget.height !== undefined ? { height: module.widget.height } : {}),
+          ...(decode !== undefined ? { data: decode(blocks.find(b => b.kind === 'text')?.text) } : {}),
+        },
+      } : {}),
+      tags: [...module.tags],
+      ...(module.use !== undefined ? { use: module.use } : {}),
+      ...(module.routing !== undefined ? { routing: module.routing } : {}),
+      ...(module.temporality !== undefined ? { temporality: module.temporality } : {}),
+    }
+  }
   return Promise.all(modules.map(walk))
 }
 
@@ -286,10 +315,12 @@ const APPLY_COMMANDS = new Set([
   'remove_module', 'remove_block', 'module_options', 'appearance', 'insert_owned_image',
   'replace_block_image', 'remove_resource', 'place_character', 'add_character', 'remove_character',
   'set_widget_data',
-  'timeline_set_calendar', 'timeline_add_event', 'timeline_update_event', 'timeline_move_event', 'timeline_remove_event',
+  'timeline_set_calendar', 'timeline_switch_view', 'timeline_add_event', 'timeline_update_event', 'timeline_move_event', 'timeline_remove_event',
   'timeline_add_era', 'timeline_update_era', 'timeline_remove_era',
+  'timeline_add_mark', 'timeline_update_mark', 'timeline_remove_mark',
   'collection_add_field', 'collection_update_field', 'collection_remove_field',
   'collection_add_item', 'collection_update_item', 'collection_remove_item', 'collection_set_value', 'collection_set_view',
+  'collection_set_style',
   'set_layout',
 ])
 
@@ -315,17 +346,21 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
     case 'module_options': return needs(['moduleId'])
     case 'set_widget_data': return needs(['moduleId', 'widget']) ?? ('data' in command ? undefined : 'missing data')
     case 'timeline_set_calendar': return needs(['moduleId']) ?? ('calendar' in command ? undefined : 'missing calendar')
+    case 'timeline_switch_view': return needs(['moduleId', 'name'])
     case 'timeline_add_event': return needs(['moduleId']) ?? ('event' in command ? undefined : 'missing event')
     case 'timeline_update_event': case 'timeline_remove_event':
     case 'timeline_update_era': case 'timeline_remove_era': return needs(['moduleId', 'id'])
     case 'timeline_move_event': return needs(['moduleId', 'id'])
     case 'timeline_add_era': return needs(['moduleId']) ?? ('era' in command ? undefined : 'missing era')
+    case 'timeline_add_mark': return needs(['moduleId']) ?? ('mark' in command ? undefined : 'missing mark')
+    case 'timeline_update_mark': case 'timeline_remove_mark': return needs(['moduleId', 'id'])
     case 'collection_add_field': return needs(['moduleId']) ?? ('field' in command ? undefined : 'missing field')
     case 'collection_update_field': case 'collection_remove_field':
     case 'collection_update_item': case 'collection_remove_item': return needs(['moduleId', 'id'])
     case 'collection_add_item': return needs(['moduleId']) ?? ('item' in command ? undefined : 'missing item')
     case 'collection_set_value': return needs(['moduleId', 'itemId', 'fieldId'])
     case 'collection_set_view': return needs(['moduleId', 'view'])
+    case 'collection_set_style': return needs(['moduleId', 'artStyle'])
     case 'set_layout': return needs(['layoutKey']) ?? ('layout' in command ? undefined : 'missing layout')
     default: return undefined
   }
@@ -377,9 +412,9 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
         if (starter.startsWith('template:')) return new Response('模板库尚未实现（P0.7 预留）', { status: 501, headers: JSON_HEADERS })
         const document = emptyCardDocument(kind, name)
         if (kind === 'WORLD') {
-          // 契约 C7：世界卡的 blank/interview 起手带一个「设定总览」空文档模块
-          // （总览布局本身是 extensions 数据，模块只是树的锚点）；角色卡保持空卡（Q4）。
-          document.modules.push({ id: mintId(), name: '设定总览', tags: [], children: [], layout: 'VERTICAL', characterIds: [], blocks: [] })
+          // 契约 C7：世界卡的 blank/interview 起手带一个「设定总览」模块——
+          // widget.type='overview' 标它是卡的聚合页（重命名不失效）；角色卡保持空卡（Q4）。
+          document.modules.push({ id: mintId(), name: '设定总览', tags: [], children: [], layout: 'VERTICAL', characterIds: [], blocks: [], widget: { type: 'overview' } })
         }
         const saved: SavedCard = await store.saveNew(document, 'HUMAN')
         return new Response(JSON.stringify({ ok: true, cardId: saved.cardId, revision: saved.revision, starter, ...(starter === 'interview' ? { interview: true } : {}) }), { headers: JSON_HEADERS })

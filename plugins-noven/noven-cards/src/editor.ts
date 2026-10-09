@@ -11,7 +11,7 @@
 import { mintId, flattenModules, editBlocks, findTarget, replaceTarget, insertModule, updateModule, removeModule, parentOfModule, placeModule, organizeFolders, assertValid, type ContentBlock, type ContentDocument, type ContentModule, type ModuleLayout, type ModuleRouting, type ModuleTemporality, type ModuleUse } from './model.ts'
 import { CardStore, EditConflict, type CardDraft, type ChangeSource, type SavedCard } from './store.ts'
 import { parseModuleMarkdown } from './markdown.ts'
-import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeLayout, encodeLayout, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type TimelineCalendar } from './formats.ts'
+import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type TimelineCalendar } from './formats.ts'
 
 /** 编辑命令全集（工具与未来的人工界面共用）。 */
 export type EditorCommand =
@@ -42,22 +42,28 @@ export type EditorCommand =
   | { kind: 'copy_character', source: ContentDocument }
   | { kind: 'remove_character', characterId: string }
   // ---------- 预制模块的结构化命令（契约 C2）：人、AI、提案共用 ----------
-  | { kind: 'set_widget_data', moduleId: string, widget: 'timeline' | 'collection', data: unknown }
+  | { kind: 'set_widget_data', moduleId: string, widget: 'timeline' | 'collection' | 'map' | 'relation', data: unknown }
   | { kind: 'timeline_set_calendar', moduleId: string, calendar: TimelineCalendar }
-  | { kind: 'timeline_add_event', moduleId: string, event: { id?: string, at: number | null, until?: number | null, title: string, description?: string, characters?: string[] } }
-  | { kind: 'timeline_update_event', moduleId: string, id: string, patch: { at?: number | null, until?: number | null, title?: string, description?: string, characters?: string[] } }
+  | { kind: 'timeline_switch_view', moduleId: string, name: string }
+  | { kind: 'timeline_add_event', moduleId: string, event: { id?: string, at: number | null, until?: number | null, ongoing?: boolean, title: string, description?: string, characters?: string[], color?: string } }
+  | { kind: 'timeline_update_event', moduleId: string, id: string, patch: { at?: number | null, until?: number | null, ongoing?: boolean, title?: string, description?: string, characters?: string[], color?: string | null } }
   | { kind: 'timeline_move_event', moduleId: string, id: string, at: number | null, until?: number | null }
   | { kind: 'timeline_remove_event', moduleId: string, id: string }
-  | { kind: 'timeline_add_era', moduleId: string, era: { id?: string, name: string, from: number, to: number, color: string } }
-  | { kind: 'timeline_update_era', moduleId: string, id: string, patch: { name?: string, from?: number, to?: number, color?: string } }
+  | { kind: 'timeline_add_era', moduleId: string, era: { id?: string, name: string, from: number | null, to: number | null, color: string, description?: string } }
+  | { kind: 'timeline_update_era', moduleId: string, id: string, patch: { name?: string, from?: number | null, to?: number | null, color?: string, description?: string } }
   | { kind: 'timeline_remove_era', moduleId: string, id: string }
+  | { kind: 'timeline_add_mark', moduleId: string, mark: { id?: string, at: number, label?: string } }
+  | { kind: 'timeline_update_mark', moduleId: string, id: string, patch: { at?: number, label?: string } }
+  | { kind: 'timeline_remove_mark', moduleId: string, id: string }
   | { kind: 'collection_add_field', moduleId: string, field: { id?: string, name: string, type?: CollectionFieldType } }
   | { kind: 'collection_update_field', moduleId: string, id: string, patch: { name?: string, type?: CollectionFieldType } }
   | { kind: 'collection_remove_field', moduleId: string, id: string }
-  | { kind: 'collection_add_item', moduleId: string, item: { id?: string, name: string, summary?: string, description?: string } }
+  | { kind: 'collection_add_item', moduleId: string, item: { id?: string, name: string, summary?: string, description?: string }, values?: Record<string, CollectionValue> }
   | { kind: 'collection_update_item', moduleId: string, id: string, patch: { name?: string, summary?: string, description?: string, visualKey?: string | null } }
   | { kind: 'collection_remove_item', moduleId: string, id: string }
   | { kind: 'collection_set_value', moduleId: string, itemId: string, fieldId: string, value: CollectionValue }
+  | { kind: 'collection_set_item_image', moduleId: string, itemId: string, resourceId?: string, bytes?: Uint8Array, mediaType?: string }
+  | { kind: 'collection_set_style', moduleId: string, artStyle: string }
   | { kind: 'collection_set_view', moduleId: string, view: CollectionView }
   | { kind: 'set_layout', layoutKey: 'overview' | 'player', layout: unknown }
 
@@ -455,13 +461,31 @@ async function transformDocument(
     // ---------- 时间线 v2 ----------
     case 'set_widget_data': {
       const raw = typeof command.data === 'string' ? command.data : JSON.stringify(command.data)
-      next = put({ ...card, modules: command.widget === 'collection'
+      const modules = command.widget === 'collection'
         ? await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, () => decodeCollection(raw))
-        : await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, () => decodeTimeline(raw)) })
+        : command.widget === 'map'
+          ? await mutateWidget(command.moduleId, 'map', decodeMap, encodeMap, () => decodeMap(raw))
+          : command.widget === 'relation'
+            ? await mutateWidget(command.moduleId, 'relation', decodeRelation, encodeRelation, () => decodeRelation(raw))
+            : await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, () => decodeTimeline(raw))
+      next = put({ ...card, modules })
       break
     }
     case 'timeline_set_calendar':
-      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({ ...data, calendar: command.calendar })) })
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => {
+        const calendar = calendarOf(command.calendar)
+        // 带名字的历法进视图库（同名覆盖）；无名的只切当前显示。
+        const views = calendar.name === ''
+          ? data.views
+          : [...data.views.filter(v => v.name !== calendar.name), calendar]
+        return { ...data, calendar, views }
+      }) })
+      break
+    case 'timeline_switch_view':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => {
+        const view = data.views.find(v => v.name === command.name)
+        return view === undefined ? data : { ...data, calendar: view }
+      }) })
       break
     case 'timeline_add_event':
       next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
@@ -469,15 +493,22 @@ async function transformDocument(
         events: [...data.events, {
           id: command.event.id ?? mintPayloadId(),
           at: command.event.at, until: command.event.until ?? null,
+          ...(command.event.ongoing === true ? { ongoing: true as const } : {}),
           title: command.event.title, description: command.event.description ?? '',
           characters: command.event.characters ?? [],
+          ...(command.event.color !== undefined ? { color: command.event.color } : {}),
         }],
       })) })
       break
     case 'timeline_update_event':
       next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
         ...data,
-        events: data.events.map(event => event.id === command.id ? { ...event, ...command.patch, id: event.id } : event),
+        // patch.color === null 表示「跟随纪元」——摘掉字段而不是存 null。
+        events: data.events.map(event => {
+          if (event.id !== command.id) return event
+          const { color, ...rest } = { ...event, ...command.patch, id: event.id }
+          return color === null || color === undefined ? rest : { ...rest, color }
+        }),
       })) })
       break
     case 'timeline_move_event':
@@ -497,7 +528,8 @@ async function transformDocument(
     case 'timeline_add_era':
       next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
         ...data,
-        eras: [...data.eras, { id: command.era.id ?? mintPayloadId(), name: command.era.name, from: command.era.from, to: command.era.to, color: command.era.color }],
+        // from/to null = 开放端（向过去/未来延伸）；两端都空按全开放保留。
+        eras: [...data.eras, { id: command.era.id ?? mintPayloadId(), name: command.era.name, from: command.era.from ?? null, to: command.era.to ?? null, color: command.era.color, description: command.era.description ?? '' }],
       })) })
       break
     case 'timeline_update_era':
@@ -510,6 +542,24 @@ async function transformDocument(
       next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
         ...data,
         eras: data.eras.filter(era => era.id !== command.id),
+      })) })
+      break
+    case 'timeline_add_mark':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
+        ...data,
+        marks: [...data.marks, { id: command.mark.id ?? mintPayloadId(), at: command.mark.at, label: command.mark.label ?? '' }],
+      })) })
+      break
+    case 'timeline_update_mark':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
+        ...data,
+        marks: data.marks.map(mark => mark.id === command.id ? { ...mark, ...command.patch, id: mark.id } : mark),
+      })) })
+      break
+    case 'timeline_remove_mark':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => ({
+        ...data,
+        marks: data.marks.filter(mark => mark.id !== command.id),
       })) })
       break
     // ---------- 集合 v2 ----------
@@ -537,10 +587,18 @@ async function transformDocument(
       })) })
       break
     case 'collection_add_item':
-      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({
-        ...data,
-        items: [...data.items, { id: command.item.id ?? mintPayloadId(), name: command.item.name, summary: command.item.summary ?? '', description: command.item.description ?? '', visualKey: null }],
-      })) })
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => {
+        const itemId = command.item.id ?? mintPayloadId()
+        const items = [...data.items, { id: itemId, name: command.item.name, summary: command.item.summary ?? '', description: command.item.description ?? '', visualKey: null }]
+        const byField: Record<string, CollectionValue> = {}
+        for (const [key, value] of Object.entries(command.values ?? {})) {
+          const field = data.fields.find(candidate => candidate.id === key || candidate.name === key)
+          if (field === undefined) throw new Error(`字段不存在：${key}`)
+          byField[field.id] = value
+        }
+        const values = Object.keys(byField).length > 0 ? { ...data.values, [itemId]: byField } : data.values
+        return { ...data, items, values }
+      }) })
       break
     case 'collection_update_item':
       next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({
@@ -561,6 +619,28 @@ async function transformDocument(
         if (!data.items.some(item => item.id === command.itemId)) throw new Error('条目不存在')
         return { ...data, values: { ...data.values, [command.itemId]: { ...data.values[command.itemId], [command.fieldId]: command.value } } }
       }) })
+      break
+    case 'collection_set_item_image': {
+      let resourceId = command.resourceId
+      let resources = card.resources
+      if (resourceId === undefined) {
+        if (command.bytes === undefined || command.mediaType === undefined) throw new Error('需要 resourceId 或图片字节')
+        const ref = await store.receivePayload(cardId, command.bytes)
+        resourceId = mintId()
+        resources = [...resources, { id: resourceId, content: ref, mediaType: command.mediaType }]
+      } else if (!resources.some(candidate => candidate.id === resourceId && candidate.mediaType.startsWith('image/'))) {
+        throw new Error('图片资源不属于目标卡或类型不符')
+      }
+      const bound = resourceId
+      const modules = await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => {
+        if (!data.items.some(item => item.id === command.itemId)) throw new Error('条目不存在')
+        return { ...data, items: data.items.map(item => item.id === command.itemId ? { ...item, visualKey: bound } : item) }
+      })
+      next = put({ ...card, resources, modules })
+      break
+    }
+    case 'collection_set_style':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({ ...data, artStyle: command.artStyle })) })
       break
     case 'collection_set_view':
       next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({ ...data, view: command.view })) })
