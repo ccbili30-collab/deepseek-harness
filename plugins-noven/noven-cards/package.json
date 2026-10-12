@@ -22,12 +22,13 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node tests/round-trip.mjs && node tests/proposals.mjs && node tests/selection.mjs && node tests/routes.mjs"
+    "test": "node tests/round-trip.mjs && node tests/proposals.mjs && node tests/selection.mjs && node tests/routes.mjs && node tests/map.mjs"
   },
   "engines": {
     "node": ">=20"
   },
   "dependencies": {
+    "noven-draw-map": "workspace:*",
     "noven-ledger": "workspace:*",
     "zod": "^4.4.3"
   },

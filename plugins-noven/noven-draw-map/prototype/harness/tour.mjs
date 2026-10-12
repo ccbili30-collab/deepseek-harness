@@ -23,10 +23,22 @@ const drag = async (pts) => {
   await page.mouse.up()
 }
 const at = (x, y) => [cv.x + x * cv.width, cv.y + y * cv.height]
-await page.getByText('海').click()
-await drag([at(.15, .75), at(.3, .8), at(.5, .82), at(.65, .78)])
-await page.getByText('陆').click()
-await drag([at(.4, .35), at(.55, .3), at(.7, .36), at(.55, .45)])
+const panel = page.locator('.nv-maped-panel')
+// 底行验证：自动铺海应在（进入即蓝）；再切「陆」底验证可换，然后换回海。
+await shot('s2b-base-row')
+await panel.locator('.nv-maped-row').first().getByRole('button', { name: '陆' }).click()
+await shot('s2c-base-land')
+await panel.locator('.nv-maped-row').first().getByRole('button', { name: '海' }).click()
+// 圈地工具画一块大陆（lasso→shape）；色板行 = 第二个 row（第一行是底）
+const colorRow = panel.locator('.nv-maped-row').nth(1)
+await panel.getByRole('button', { name: '圈地' }).click()
+await colorRow.locator('.nv-maped-swatch', { hasText: '陆' }).click()
+await drag([at(.38, .3), at(.55, .26), at(.72, .34), at(.62, .46), at(.42, .44), at(.38, .3)])
+await shot('s2d-lasso-shape')
+// 抹：海笔刷画一个内海（挖进陆地里）
+await panel.getByRole('button', { name: '抹' }).click()
+await colorRow.locator('.nv-maped-swatch', { hasText: '海' }).click()
+await drag([at(.3, .7), at(.5, .75), at(.68, .72)])
 await shot('s3-draft-painted')
 
 // 3. 标注：圈一个王国面

@@ -314,7 +314,7 @@ const APPLY_COMMANDS = new Set([
   'move_module', 'place_module', 'copy_module', 'merge_child', 'set_module_layout', 'set_reading_layout', 'move_block',
   'remove_module', 'remove_block', 'module_options', 'appearance', 'insert_owned_image',
   'replace_block_image', 'remove_resource', 'place_character', 'add_character', 'remove_character',
-  'set_widget_data',
+  'set_widget_data', 'map_spawn_view',
   'timeline_set_calendar', 'timeline_switch_view', 'timeline_add_event', 'timeline_update_event', 'timeline_move_event', 'timeline_remove_event',
   'timeline_add_era', 'timeline_update_era', 'timeline_remove_era',
   'timeline_add_mark', 'timeline_update_mark', 'timeline_remove_mark',
@@ -345,6 +345,7 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
     case 'set_reading_layout': return needs(['layout'])
     case 'module_options': return needs(['moduleId'])
     case 'set_widget_data': return needs(['moduleId', 'widget']) ?? ('data' in command ? undefined : 'missing data')
+    case 'map_spawn_view': return needs(['moduleId'])
     case 'timeline_set_calendar': return needs(['moduleId']) ?? ('calendar' in command ? undefined : 'missing calendar')
     case 'timeline_switch_view': return needs(['moduleId', 'name'])
     case 'timeline_add_event': return needs(['moduleId']) ?? ('event' in command ? undefined : 'missing event')

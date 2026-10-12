@@ -437,8 +437,30 @@ export interface MapData {
   /** 兼容投影 = objects 里的 mark；真数据在 objects。 */
   readonly markers: readonly MapMarker[]
   readonly objects: readonly MapObject[]
-  readonly draft: readonly MapDraftStroke[]
+  readonly draft: readonly MapDraftEntry[]
   readonly palette: readonly MapPaletteEntry[]
+  /** 草稿底层：铺满整张图的语义色（默认海洋）；空 = 无底层，露出羊皮纸。 */
+  readonly base?: MapBase
+  /** 子视图来源：由 map_spawn_view 记入，父模块 + 取景框（父图归一化坐标）。 */
+  readonly parent?: MapViewParent
+  /** 显示窗口：底图归一化坐标里的取景框；子视图复用父图时按它裁画面。 */
+  readonly window?: readonly [number, number, number, number]
+  /** 固定宽高比：缺省时由底图实测推出；子视图（裁窗口或尚无图）必须带上。 */
+  readonly aspect?: number
+}
+
+/** 草稿底层记录：就是一条语义色（海/陆/虚空或自定义）。 */
+export interface MapBase {
+  readonly name: string
+  readonly desc: string
+  readonly color: string
+}
+
+/** 子视图溯源：回到父图定位时用它把子图坐标换算回父图归一化坐标。 */
+export interface MapViewParent {
+  readonly moduleId: string
+  readonly objectId?: string
+  readonly bbox: readonly [number, number, number, number]
 }
 
 /** 底图上的点：归一化坐标（0..1，左上原点）。 */
@@ -489,11 +511,36 @@ export type MapObject = MapFaceObj | MapLineObj | MapMarkObj
 
 /** 草稿笔触：语义色 + 半径（图高比例）+ 圆心轨迹；erase 笔在渲染时按序擦掉下方草稿。 */
 export interface MapDraftStroke {
+  readonly kind?: 'stroke'
   readonly color: string
   readonly r: number
   readonly pts: readonly MapXY[]
   readonly erase?: boolean
 }
+
+/**
+ * 草稿面：粗控制点 ctrl + roughness/seed，渲染方用 noven-draw-map/mapgeom
+ * 的 expandShape 展开成包边闭合多边形——AI 写少量点即可得到自然海岸线。
+ * op='subtract' 表示挖洞：把这块面从下方草稿里减掉，露出底层。
+ */
+export interface MapDraftShape {
+  readonly kind: 'shape'
+  readonly color: string
+  readonly ctrl: readonly MapXY[]
+  readonly roughness: number
+  readonly seed: number
+  readonly op?: 'add' | 'subtract'
+}
+
+/** 草稿静多边形：展开后或裁剪后的成品轮廓（子视图裁形状面时落成它）。 */
+export interface MapDraftPoly {
+  readonly kind: 'poly'
+  readonly color: string
+  readonly pts: readonly MapXY[]
+  readonly op?: 'add' | 'subtract'
+}
+
+export type MapDraftEntry = MapDraftStroke | MapDraftShape | MapDraftPoly
 
 /** 语义色：草稿图生图时把 desc 拼进提示词；没有 desc 的自定义色不建。 */
 export interface MapPaletteEntry {
@@ -569,11 +616,29 @@ function objectOf(raw: unknown, index: number): MapObject | null {
   return null
 }
 
-function strokeOf(raw: unknown): MapDraftStroke | null {
+function draftEntryOf(raw: unknown): MapDraftEntry | null {
   const source = record(raw)
+  const kind = str(source.kind)
+  const op = source.op === 'subtract' ? 'subtract' as const : undefined
+  if (kind === 'shape' || Array.isArray(source.ctrl)) {
+    const ctrl = xyListOf(source.ctrl)
+    if (ctrl.length < 3) return null
+    return {
+      kind: 'shape', color: colorOf(source.color, '#8A8F94'), ctrl,
+      roughness: Math.min(1, Math.max(0, num(source.roughness, 0.3))),
+      seed: Math.trunc(num(source.seed, 0)),
+      ...(op !== undefined ? { op } : {}),
+    }
+  }
+  if (kind === 'poly' && !Array.isArray(source.pts)) return null
   const pts = xyListOf(source.pts)
+  if (kind === 'poly') {
+    if (pts.length < 3) return null
+    return { kind: 'poly', color: colorOf(source.color, '#8A8F94'), pts, ...(op !== undefined ? { op } : {}) }
+  }
   if (pts.length < 2) return null
   return {
+    kind: 'stroke',
     color: colorOf(source.color, '#8A8F94'),
     r: Math.min(0.4, Math.max(0.001, num(source.r, 0.02))),
     pts,
@@ -586,6 +651,33 @@ function paletteOf(raw: unknown): MapPaletteEntry | null {
   const name = str(source.name), desc = str(source.desc)
   if (name === '' || desc === '') return null
   return { name, desc, color: colorOf(source.color, '#8A8F94') }
+}
+
+function bboxOf(raw: unknown): readonly [number, number, number, number] | undefined {
+  const b = Array.isArray(raw) ? raw : []
+  if (b.length < 4) return undefined
+  const box: [number, number, number, number] = [num(b[0], 0), num(b[1], 0), num(b[2], 0), num(b[3], 0)]
+  return box[2] - box[0] > 0 && box[3] - box[1] > 0 ? box : undefined
+}
+
+function baseOf(raw: unknown): MapBase | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const source = record(raw)
+  const name = str(source.name)
+  return { name, desc: str(source.desc), color: colorOf(source.color, '#6D9DC5') }
+}
+
+function parentOf(raw: unknown): MapViewParent | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined
+  const source = record(raw)
+  const moduleId = str(source.moduleId)
+  const bbox = bboxOf(source.bbox)
+  if (moduleId === '' || bbox === undefined) return undefined
+  const objectId = str(source.objectId)
+  return {
+    moduleId, bbox,
+    ...(objectId !== '' ? { objectId } : {}),
+  }
 }
 
 /** 兼容读法：老 payload 只有 markers 时，把它们升级成 landmark 对象。 */
@@ -625,9 +717,13 @@ export function decodeMap(raw: string | undefined): MapData {
     markers: objects.filter((o): o is MapMarkObj => o.type === 'mark').map(markToMarker),
     objects,
     draft: (Array.isArray(noven.draft) ? noven.draft : (Array.isArray(payload.draft) ? payload.draft : []))
-      .map(strokeOf).filter((s): s is MapDraftStroke => s !== null),
+      .map(draftEntryOf).filter((s): s is MapDraftEntry => s !== null),
     palette: (Array.isArray(noven.palette) ? noven.palette : (Array.isArray(payload.palette) ? payload.palette : []))
       .map(paletteOf).filter((p): p is MapPaletteEntry => p !== null),
+    ...(baseOf(noven.base ?? payload.base) !== undefined ? { base: baseOf(noven.base ?? payload.base) } : {}),
+    ...(parentOf(noven.parent ?? payload.parent) !== undefined ? { parent: parentOf(noven.parent ?? payload.parent) } : {}),
+    ...(bboxOf(noven.window ?? payload.window) !== undefined ? { window: bboxOf(noven.window ?? payload.window) } : {}),
+    ...(num(noven.aspect ?? payload.aspect, NaN) > 0 ? { aspect: num(noven.aspect ?? payload.aspect, 1.6) } : {}),
   }
 }
 
@@ -653,8 +749,16 @@ export function encodeMap(data: MapData): string {
       description: data.description,
       markers,
       objects,
-      draft: data.draft.map(s => ({ color: s.color, r: s.r, pts: s.pts, ...(s.erase === true ? { erase: true } : {}) })),
+      draft: data.draft.map(s => s.kind === 'shape'
+        ? { kind: 'shape', color: s.color, ctrl: s.ctrl, roughness: s.roughness, seed: s.seed, ...(s.op !== undefined ? { op: s.op } : {}) }
+        : s.kind === 'poly'
+          ? { kind: 'poly', color: s.color, pts: s.pts, ...(s.op !== undefined ? { op: s.op } : {}) }
+          : { kind: 'stroke', color: s.color, r: s.r, pts: s.pts, ...(s.erase === true ? { erase: true } : {}) }),
       palette: data.palette.map(p => ({ name: p.name, desc: p.desc, color: p.color })),
+      ...(data.base !== undefined ? { base: { name: data.base.name, desc: data.base.desc, color: data.base.color } } : {}),
+      ...(data.parent !== undefined ? { parent: data.parent } : {}),
+      ...(data.window !== undefined ? { window: data.window } : {}),
+      ...(data.aspect !== undefined ? { aspect: data.aspect } : {}),
     },
   }, null, 2)}\n`
 }

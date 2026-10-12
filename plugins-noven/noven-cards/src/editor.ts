@@ -11,7 +11,8 @@
 import { mintId, flattenModules, editBlocks, findTarget, replaceTarget, insertModule, updateModule, removeModule, parentOfModule, placeModule, organizeFolders, assertValid, type ContentBlock, type ContentDocument, type ContentModule, type ModuleLayout, type ModuleRouting, type ModuleTemporality, type ModuleUse } from './model.ts'
 import { CardStore, EditConflict, type CardDraft, type ChangeSource, type SavedCard } from './store.ts'
 import { parseModuleMarkdown } from './markdown.ts'
-import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type TimelineCalendar } from './formats.ts'
+import { expandShape, bboxOf as geomBBox, padBBox, clipPolygonRect, clipPolylineRect, toChild, type GBBox } from 'noven-draw-map/mapgeom'
+import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type MapData, type TimelineCalendar } from './formats.ts'
 
 /** 编辑命令全集（工具与未来的人工界面共用）。 */
 export type EditorCommand =
@@ -43,6 +44,8 @@ export type EditorCommand =
   | { kind: 'remove_character', characterId: string }
   // ---------- 预制模块的结构化命令（契约 C2）：人、AI、提案共用 ----------
   | { kind: 'set_widget_data', moduleId: string, widget: 'timeline' | 'collection' | 'map' | 'relation', data: unknown }
+  /** 从地图模块生一个局部视图子模块：裁取景框内的对象与草稿、重归一化、复用底图 + window 取景框，并记 parent 溯源。 */
+  | { kind: 'map_spawn_view', moduleId: string, name?: string, objectId?: string, bbox?: readonly [number, number, number, number], aspect?: number }
   | { kind: 'timeline_set_calendar', moduleId: string, calendar: TimelineCalendar }
   | { kind: 'timeline_switch_view', moduleId: string, name: string }
   | { kind: 'timeline_add_event', moduleId: string, event: { id?: string, at: number | null, until?: number | null, ongoing?: boolean, title: string, description?: string, characters?: string[], color?: string } }
@@ -469,6 +472,81 @@ async function transformDocument(
             ? await mutateWidget(command.moduleId, 'relation', decodeRelation, encodeRelation, () => decodeRelation(raw))
             : await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, () => decodeTimeline(raw))
       next = put({ ...card, modules })
+      break
+    }
+    case 'map_spawn_view': {
+      const source = widgetModule(command.moduleId, 'map')
+      const data = decodeMap(await widgetJson(source))
+      const parentAspect = command.aspect !== undefined && command.aspect > 0 ? command.aspect : 1.6
+      // 取景框：显式 bbox 优先，否则由 objectId 对象的归一化外接框外扩留白推出。
+      let bbox: GBBox
+      if (command.bbox !== undefined) {
+        const [x0, y0, x1, y1] = command.bbox
+        if (!(x1 > x0 && y1 > y0)) throw new Error('bbox 必须是 [x0,y0,x1,y1] 且非空')
+        const cl = (v: number): number => Math.min(1, Math.max(0, v))
+        bbox = [cl(x0), cl(y0), cl(x1), cl(y1)]
+      } else {
+        const obj = data.objects.find(o => o.id === command.objectId)
+        if (obj === undefined) throw new Error('生成视图需要 objectId（对象编号）或显式 bbox')
+        const pts = obj.type === 'mark' ? [obj.pos] : obj.pts
+        bbox = padBBox(geomBBox(pts), .18, .15)
+      }
+      const childAspect = Math.max(.05, parentAspect * (bbox[2] - bbox[0]) / (bbox[3] - bbox[1]))
+      const norm = (p: readonly [number, number]): readonly [number, number] => toChild(p, bbox)
+
+      // 对象裁剪：面按框裁多边形、线拆成框内段、地标只留框内；全裁掉的不带子图。
+      const objects: MapData['objects'][number][] = []
+      for (const o of data.objects) {
+        if (o.type === 'face') {
+          const clipped = clipPolygonRect(o.pts, bbox)
+          if (clipped.length >= 3) objects.push({ ...o, pts: clipped.map(norm) })
+        } else if (o.type === 'line') {
+          const median = [...o.widths].sort((a, b) => a - b)[Math.floor(o.widths.length / 2)] ?? .01
+          for (const seg of clipPolylineRect(o.pts, bbox)) {
+            objects.push({ ...o, id: mintId(), pts: seg.map(norm), widths: seg.map(() => median), attachStart: undefined, attachEnd: undefined })
+          }
+        } else if (o.type === 'mark' && o.pos[0] >= bbox[0] && o.pos[0] <= bbox[2] && o.pos[1] >= bbox[1] && o.pos[1] <= bbox[3]) {
+          objects.push({ ...o, pos: norm(o.pos) })
+        }
+      }
+      // 草稿裁剪：shape 先确定性展开再裁（落 poly 静多边形）；stroke 拆框内段。
+      const draft: MapData['draft'][number][] = []
+      for (const e of data.draft) {
+        if (e.kind === 'shape') {
+          const expanded = expandShape(e.ctrl, parentAspect, e.roughness, e.seed)
+            .map((p): readonly [number, number] => [p[0] / parentAspect, p[1]])
+          const clipped = clipPolygonRect(expanded, bbox)
+          if (clipped.length >= 3) draft.push({ kind: 'poly', color: e.color, pts: clipped.map(norm), ...(e.op !== undefined ? { op: e.op } : {}) })
+        } else if (e.kind === 'poly') {
+          const clipped = clipPolygonRect(e.pts, bbox)
+          if (clipped.length >= 3) draft.push({ kind: 'poly', color: e.color, pts: clipped.map(norm), ...(e.op !== undefined ? { op: e.op } : {}) })
+        } else {
+          for (const seg of clipPolylineRect(e.pts, bbox)) {
+            draft.push({ kind: 'stroke', color: e.color, r: e.r, pts: seg.map(norm), ...(e.erase === true ? { erase: true } : {}) })
+          }
+        }
+      }
+      const objectName = data.objects.find(o => o.id === command.objectId)?.name
+      const childData: MapData = {
+        ...data, markers: [], objects, draft,
+        parent: { moduleId: source.id, ...(command.objectId !== undefined ? { objectId: command.objectId } : {}), bbox },
+        window: bbox, aspect: childAspect,
+      }
+      const child: ContentModule = {
+        id: mintId(), name: command.name ?? `${source.name} · ${objectName ?? '局部视图'}`,
+        blocks: source.blocks.filter(block => block.kind === 'image').map(block => ({ ...block, id: mintId() })),
+        tags: [], children: [], layout: 'VERTICAL', characterIds: [], widget: { type: 'map' },
+      }
+      createdModules.push(child.id)
+      createdBlocks.push(...child.blocks.map(block => block.id))
+      const widgetBlock: ContentBlock = { kind: 'text', id: mintId(), content: await textRef(encodeMap(childData)) }
+      createdBlocks.push(widgetBlock.id)
+      child.blocks.push(widgetBlock)
+      // 紧跟源模块之后插入：同一层级的下一个兄弟就是 beforeId。
+      const parentId = parentOfModule(card.modules, source.id) ?? null
+      const siblings = parentId === null ? card.modules : (flattenModules(card.modules).find(candidate => candidate.id === parentId)?.children ?? [])
+      const beforeId = siblings.slice(siblings.findIndex(candidate => candidate.id === source.id) + 1)[0]?.id ?? null
+      next = put({ ...card, modules: insertModule(card.modules, parentId, child, beforeId) })
       break
     }
     case 'timeline_set_calendar':

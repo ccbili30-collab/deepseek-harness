@@ -8,6 +8,8 @@
  * @module noven-shell/client/map-editor
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { getStroke } from 'perfect-freehand'
+import { expandShape } from 'noven-draw-map/mapgeom'
 import type { CardCommand, CardModuleDoc } from './card-api.ts'
 import type { ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
@@ -23,13 +25,26 @@ interface LineObj {
 }
 interface MarkObj { id: string, type: 'mark', layer: string, name: string, color: string, pos: XY, description: string }
 type MapObject = FaceObj | LineObj | MarkObj
-interface DraftStroke { readonly color: string, readonly r: number, readonly pts: XY[] }
+interface DraftStroke { readonly kind?: 'stroke', readonly color: string, readonly r: number, readonly pts: XY[], readonly erase?: boolean }
+/** 草稿面：AI 写粗控制点 + roughness/seed，expandShape 展开成包边轮廓；subtract 挖洞露底。 */
+interface DraftShape { readonly kind: 'shape', readonly color: string, readonly ctrl: XY[], readonly roughness: number, readonly seed: number, readonly op?: 'add' | 'subtract' }
+/** 草稿静多边形：展开后/裁剪后的成品轮廓。 */
+interface DraftPoly { readonly kind: 'poly', readonly color: string, readonly pts: XY[], readonly op?: 'add' | 'subtract' }
+type DraftEntry = DraftStroke | DraftShape | DraftPoly
 interface PaletteEntry { readonly name: string, readonly desc: string, readonly color: string }
+/** 草稿底层：铺满整张图的语义色；undefined = 无底层。 */
+interface MapBase { readonly name: string, readonly desc: string, readonly color: string }
 interface EditorDoc {
   readonly description: string
   readonly objects: MapObject[]
-  readonly draft: DraftStroke[]
+  readonly draft: DraftEntry[]
   readonly palette: PaletteEntry[]
+  readonly base?: MapBase
+  readonly parent?: { readonly moduleId: string, readonly objectId?: string, readonly bbox: readonly [number, number, number, number] }
+  /** 底图归一化取景框：子视图裁画面用。 */
+  readonly window?: readonly [number, number, number, number]
+  /** 固定宽高比：缺省由底图实测。 */
+  readonly aspect?: number
 }
 
 const LAYERS = [
@@ -47,8 +62,17 @@ const DEFAULT_PALETTE: PaletteEntry[] = [
   { name: '沙漠', desc: 'desert', color: '#D8BE78' },
 ]
 
+/** 底层预设：虚空 = 未创造的留白（羊皮纸色），生图时不会被骗成地形。 */
+const BASE_PRESETS: MapBase[] = [
+  { name: '海', desc: 'ocean water', color: '#6D9DC5' },
+  { name: '陆', desc: 'land', color: '#B8A888' },
+  { name: '虚空', desc: 'uncreated void, blank parchment', color: '#E7DCC3' },
+]
+
 const ACCENT = '#0E9F6E'
 const INK = '#16181A'
+/** 草稿离屏层的像素高度（画布宽度 = DRAFT_RES × aspect）；笔迹轮廓在这个分辨率上生成。 */
+const DRAFT_RES = 1024
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v))
 let seq = 0
 const nid = (): string => `mo-${Date.now().toString(36)}-${(seq++).toString(36)}`
@@ -58,13 +82,18 @@ function editorData(raw: unknown): EditorDoc {
   const d = (raw ?? {}) as {
     description?: string
     objects?: unknown[]; draft?: unknown[]; palette?: unknown[]; markers?: unknown[]
+    base?: MapBase; parent?: EditorDoc['parent']; window?: readonly [number, number, number, number]; aspect?: number
   }
   const objects = Array.isArray(d.objects) ? (d.objects as MapObject[]).filter(o => o !== null && typeof o === 'object') : []
   return {
     description: typeof d.description === 'string' ? d.description : '',
     objects: objects.map(o => ({ ...o, ...(o.type === 'mark' ? { pos: [...o.pos] as XY } : {}) })),
-    draft: (Array.isArray(d.draft) ? d.draft : []) as DraftStroke[],
+    draft: (Array.isArray(d.draft) ? d.draft : []) as DraftEntry[],
     palette: (Array.isArray(d.palette) && d.palette.length > 0 ? d.palette : DEFAULT_PALETTE) as PaletteEntry[],
+    ...(d.base !== null && typeof d.base === 'object' ? { base: d.base } : {}),
+    ...(d.parent !== null && typeof d.parent === 'object' ? { parent: d.parent } : {}),
+    ...(Array.isArray(d.window) ? { window: d.window } : {}),
+    ...(typeof d.aspect === 'number' && d.aspect > 0 ? { aspect: d.aspect } : {}),
   }
 }
 
@@ -158,6 +187,60 @@ function maintain(pts: readonly XY[], closed: boolean, maxSeg: number, eps: numb
 
 const raster = document.createElement('canvas')
 const rctx = raster.getContext('2d', { willReadFrequently: true })
+
+/* ---------- 草稿笔迹：工作坐标输入，perfect-freehand 轮廓，画进离屏层 ---------- */
+
+function draftOutline(pts: readonly XY[], r: number, done: boolean): number[][] {
+  return getStroke(pts.map(p => [p[0] * DRAFT_RES, p[1] * DRAFT_RES, .5]), {
+    size: r * 2 * DRAFT_RES, thinning: .45, smoothing: .6, streamline: .42, simulatePressure: true, last: done,
+  })
+}
+
+/** 把一笔草稿画进离屏层；erase 笔用 destination-out 按序擦掉下面的笔触。 */
+function paintDraftStroke(ctx: CanvasRenderingContext2D, pts: readonly XY[], r: number, color: string, erase: boolean, done: boolean): void {
+  const outline = draftOutline(pts, r, done)
+  ctx.globalCompositeOperation = erase ? 'destination-out' : 'source-over'
+  ctx.fillStyle = color
+  ctx.beginPath()
+  if (outline.length < 3) {
+    const p = pts[pts.length - 1]
+    if (p !== undefined) ctx.arc(p[0] * DRAFT_RES, p[1] * DRAFT_RES, r * DRAFT_RES, 0, 7)
+  } else {
+    outline.forEach((p, i) => { i === 0 ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]) })
+    ctx.closePath()
+  }
+  ctx.fill()
+  ctx.globalCompositeOperation = 'source-over'
+}
+
+/** #rrggbb 按比例调暗，给草稿面描略深的包边。 */
+function darken(hex: string, f: number): string {
+  const n = parseInt(hex.slice(1), 16)
+  const c = (v: number): number => Math.max(0, Math.min(255, Math.round(v * f)))
+  return `#${((c(n >> 16) << 16) | (c((n >> 8) & 255) << 8) | c(n & 255)).toString(16).padStart(6, '0')}`
+}
+
+/** 把一条草稿图元画进离屏层：笔触走 perfect-freehand，面/多边形填色+深描边，subtract/erase 都挖到透明露底层。 */
+function paintDraftEntry(ctx: CanvasRenderingContext2D, e: DraftEntry, aspect: number): void {
+  if (e.kind === 'shape' || e.kind === 'poly') {
+    const pts = e.kind === 'shape' ? expandShape(e.ctrl, aspect, e.roughness, e.seed) : e.pts.map(p => [p[0] * aspect, p[1]] as XY)
+    if (pts.length < 3) return
+    ctx.globalCompositeOperation = e.op === 'subtract' ? 'destination-out' : 'source-over'
+    ctx.beginPath()
+    pts.forEach((p, i) => { i === 0 ? ctx.moveTo(p[0] * DRAFT_RES, p[1] * DRAFT_RES) : ctx.lineTo(p[0] * DRAFT_RES, p[1] * DRAFT_RES) })
+    ctx.closePath()
+    ctx.fillStyle = e.color
+    ctx.fill()
+    if (e.op !== 'subtract') {
+      ctx.strokeStyle = darken(e.color, .8)
+      ctx.lineWidth = Math.max(1.5, DRAFT_RES * .002)
+      ctx.stroke()
+    }
+    ctx.globalCompositeOperation = 'source-over'
+    return
+  }
+  paintDraftStroke(ctx, e.pts, e.r, e.color, e.erase === true, true)
+}
 
 function extractOuterContour(alpha: Uint8Array, w: number, h: number): XY[] | null {
   const segs: { a: XY, b: XY, ea: string, eb: string, used: boolean }[] = []
@@ -279,7 +362,7 @@ type Mode = 'draft' | 'annotate' | 'edit'
 type DrawLayer = LayerId
 
 interface Gesture {
-  readonly kind: 'stroke' | 'stretch' | 'move' | 'pan' | 'paint' | 'facepaint' | 'none'
+  readonly kind: 'stroke' | 'stretch' | 'move' | 'pan' | 'paint' | 'facepaint' | 'shape' | 'none'
   readonly obj?: MapObject
   readonly grab?: number
   sigma?: number
@@ -322,6 +405,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const [brushPx, setBrushPx] = useState(24)
   const [pal, setPal] = useState<PaletteEntry | null>(null)
   const [erasing, setErasing] = useState(false)
+  /** 草稿子工具：抹 = 自由笔触，圈 = 套索出草稿面（落成 shape 图元，边缘由 expandShape 包）。 */
+  const [draftHow, setDraftHow] = useState<'brush' | 'lasso'>('brush')
   const [grid, setGrid] = useState(false)
   const [editPaint, setEditPaint] = useState(false)
   const [picking, setPicking] = useState(false)
@@ -330,10 +415,14 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const [genAsked, setGenAsked] = useState(false)
   const [objForm, setObjForm] = useState<{ name: string, color: string, width: number } | null>(null)
   const [palForm, setPalForm] = useState<{ name: string, desc: string, color: string } | null>(null)
+  const [baseForm, setBaseForm] = useState<{ name: string, desc: string, color: string } | null>(null)
 
   const viewRef = useRef({ s: 200, x: 0, y: 0 })   // s = px per work unit
   const gestureRef = useRef<Gesture>({ kind: 'none' })
   const cursorRef = useRef<XY | null>(null)
+  const draftLayerRef = useRef<HTMLCanvasElement | null>(null)
+  const draftSrcRef = useRef<readonly DraftEntry[] | null>(null)
+  const scratchRef = useRef<HTMLCanvasElement | null>(null)
   const toWork = useCallback((p: XY): XY => [p[0] * aspectRef.current, p[1]], [])
   const toStore = useCallback((p: XY): XY => [clamp01(p[0] / aspectRef.current), clamp01(p[1])], [])
   const objWorkPts = useCallback((o: FaceObj | LineObj): XY[] => o.pts.map(toWork), [toWork])
@@ -347,6 +436,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   }, [data])
 
   const sel = docRef.current.objects.find(o => o.id === selId) ?? null
+  /** 笔刷态：草稿笔、标注涂抹、编辑抹面，都隐藏原生光标改画笔刷圈。 */
+  const brushCursor = mode === 'draft' || mode === 'annotate' || (mode === 'edit' && editPaint)
 
   // 草稿默认取第一个语义色。
   useEffect(() => {
@@ -368,6 +459,10 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           }),
       draft: doc.draft,
       palette: doc.palette,
+      ...(doc.base !== undefined ? { base: doc.base } : {}),
+      ...(doc.parent !== undefined ? { parent: doc.parent } : {}),
+      ...(doc.window !== undefined ? { window: doc.window } : {}),
+      ...(doc.aspect !== undefined ? { aspect: doc.aspect } : {}),
     }
     void send({ kind: 'set_widget_data', moduleId: module.id, widget: 'map', data: payload })
   }, [module.id, send])
@@ -473,6 +568,26 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
 
   /* ---------- 渲染 ---------- */
 
+  /** 草稿离屏层：草稿数组变了才整层重画（撤销、AI 写入、清空都走这里）。 */
+  const ensureDraftLayer = useCallback((): HTMLCanvasElement | null => {
+    const src = docRef.current.draft
+    let cv = draftLayerRef.current
+    if (cv === null) { cv = document.createElement('canvas'); draftLayerRef.current = cv }
+    const w = Math.max(8, Math.round(DRAFT_RES * aspectRef.current))
+    if (cv.width !== w || cv.height !== DRAFT_RES) { cv.width = w; cv.height = DRAFT_RES; draftSrcRef.current = null }
+    if (draftSrcRef.current === src) return cv
+    const ctx = cv.getContext('2d')
+    if (ctx === null) return null
+    ctx.setTransform(1, 0, 0, 1, 0, 0)
+    ctx.clearRect(0, 0, cv.width, cv.height)
+    for (const s of src) {
+      if (s.kind === 'shape' || s.kind === 'poly') paintDraftEntry(ctx, s, aspectRef.current)
+      else paintDraftStroke(ctx, s.pts.map(toWork), s.r, s.color, s.erase === true, true)
+    }
+    draftSrcRef.current = src
+    return cv
+  }, [toWork])
+
   const draw = useCallback((): void => {
     const cv = cvRef.current, stage = stageRef.current
     if (cv === null || stage === null) return
@@ -491,25 +606,47 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     g0.addColorStop(0, '#EFE6D0'); g0.addColorStop(1, '#E2D6B8')
     c.fillStyle = g0; c.fillRect(0, 0, W, H)
     const img = imgRef.current
+    const win = docRef.current.window
     c.setTransform(dpr * v.s, 0, 0, dpr * v.s, dpr * v.x, dpr * v.y)
     if (img !== null && img.complete && img.naturalWidth > 0) {
-      c.drawImage(img, 0, 0, aspect, 1)
+      if (win !== undefined) c.drawImage(img, win[0] * img.naturalWidth, win[1] * img.naturalHeight, (win[2] - win[0]) * img.naturalWidth, (win[3] - win[1]) * img.naturalHeight, 0, 0, aspect, 1)
+      else c.drawImage(img, 0, 0, aspect, 1)
     } else {
       c.strokeStyle = 'rgba(22,24,26,.16)'; c.lineWidth = 1 / v.s
       c.strokeRect(0, 0, aspect, 1)
     }
 
-    // 草稿笔触（存储就是语义色矢量；图生图由外部流程消费）。
+    // 草稿：base 底层先铺满（没涂到的地方显示底色），离屏层攒落定图元，
+    // 正在画的笔走 scratch 合成——落笔即显色，不是松手才出。
     const draftVisible = mode === 'draft'
-    for (const s of docRef.current.draft) {
-      c.strokeStyle = s.color; c.lineCap = 'round'; c.lineJoin = 'round'
-      c.globalAlpha = draftVisible ? .85 : .35
-      c.lineWidth = s.r * 2
-      c.beginPath()
-      s.pts.forEach((p, i) => { const w = toWork(p); i === 0 ? c.moveTo(w[0], w[1]) : c.lineTo(w[0], w[1]) })
-      c.stroke()
+    const draftAlpha = draftVisible ? .9 : .35
+    if (docRef.current.base !== undefined) {
+      c.globalAlpha = draftAlpha
+      c.fillStyle = docRef.current.base.color
+      c.fillRect(0, 0, aspect, 1)
+      c.globalAlpha = 1
     }
-    c.globalAlpha = 1
+    const dl = ensureDraftLayer()
+    if (dl !== null) {
+      const g0 = gestureRef.current
+      let source: HTMLCanvasElement = dl
+      if (g0.kind === 'paint' && g0.path !== undefined && g0.path.length > 0) {
+        let scratch = scratchRef.current
+        if (scratch === null) { scratch = document.createElement('canvas'); scratchRef.current = scratch }
+        if (scratch.width !== dl.width || scratch.height !== dl.height) { scratch.width = dl.width; scratch.height = dl.height }
+        const sctx = scratch.getContext('2d')
+        if (sctx !== null) {
+          sctx.setTransform(1, 0, 0, 1, 0, 0)
+          sctx.clearRect(0, 0, scratch.width, scratch.height)
+          sctx.drawImage(dl, 0, 0)
+          paintDraftStroke(sctx, g0.path, brushPx / v.s, pal?.color ?? '#8A8F94', erasing, false)
+          source = scratch
+        }
+      }
+      c.globalAlpha = draftAlpha
+      c.drawImage(source, 0, 0, source.width, source.height, 0, 0, aspect, 1)
+      c.globalAlpha = 1
+    }
 
     // 坐标网格（默认关，给人参考；模型不靠它对齐）。
     if (grid) {
@@ -602,26 +739,47 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       }
     }
 
-    // 手势预览：进行中的轨迹 + 笔刷圈 + 吸附点。
+    // 手势预览：涂抹/加减面画自由轮廓预览；套索和线仍是虚线轨迹；草稿画笔已实时上色不重复画。
     const g = gestureRef.current
     if (g.path !== undefined && g.path.length > 0) {
-      c.strokeStyle = ACCENT; c.lineWidth = 1.5 / v.s
-      c.setLineDash([5 / v.s, 4 / v.s])
-      c.beginPath()
-      g.path.forEach((p, i) => { i === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
-      c.stroke(); c.setLineDash([])
+      const smear = g.kind === 'facepaint' || (g.kind === 'stroke' && layerKind(drawLayer) === 'face' && how !== 'lasso')
+      if (smear && g.path.length > 1) {
+        const outline = draftOutline(g.path, brushPx / v.s, false)
+        if (outline.length >= 3) {
+          c.save()
+          c.scale(1 / DRAFT_RES, 1 / DRAFT_RES)
+          c.beginPath()
+          outline.forEach((p, i) => { i === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
+          c.closePath()
+          c.fillStyle = g.kind === 'facepaint' ? (g.sign === -1 ? 'rgba(214,69,65,.28)' : 'rgba(14,159,110,.25)') : 'rgba(127,191,142,.38)'
+          c.fill()
+          c.restore()
+        }
+      } else if (g.kind !== 'paint') {
+        c.strokeStyle = ACCENT; c.lineWidth = 1.5 / v.s
+        c.setLineDash([5 / v.s, 4 / v.s])
+        c.beginPath()
+        g.path.forEach((p, i) => { i === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
+        c.stroke(); c.setLineDash([])
+      }
       if (g.snapped != null) {
         c.fillStyle = ACCENT
         c.beginPath(); c.arc(g.snapped.point[0], g.snapped.point[1], 5 / v.s, 0, 7); c.fill()
       }
     }
+    // 笔刷光标：隐藏原生指针，画当前语义色/墨色的空心圈 + 中心点——一眼看到画在哪、画多大。
     const cp = cursorRef.current
-    if (cp !== null && mode !== 'edit') {
-      const r = mode === 'annotate' && (drawLayer === 'landmark' || (layerKind(drawLayer) === 'face' && how === 'lasso')) ? 3 / v.s : brushPx / v.s
+    if (cp !== null && brushCursor) {
+      const small = mode === 'annotate' && (drawLayer === 'landmark' || (layerKind(drawLayer) === 'face' && how === 'lasso'))
+      const r = small ? 4 / v.s : brushPx / v.s
+      const col = mode === 'draft' ? (erasing ? '#D64541' : pal?.color ?? INK) : INK
       c.beginPath(); c.arc(cp[0], cp[1], r, 0, 7)
-      c.strokeStyle = 'rgba(22,24,26,.4)'; c.lineWidth = 1 / v.s; c.stroke()
+      c.fillStyle = `${col}26`; c.fill()
+      c.strokeStyle = col; c.lineWidth = 1.5 / v.s; c.stroke()
+      c.beginPath(); c.arc(cp[0], cp[1], 1.5 / v.s, 0, 7)
+      c.fillStyle = col; c.fill()
     }
-  }, [brushPx, drawLayer, grid, hidden, how, markWork, mode, objWorkPts, resolvedPts, selId, toWork])
+  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, markWork, mode, objWorkPts, pal?.color, resolvedPts, selId, toWork])
 
   useEffect(() => { draw() })
 
@@ -637,10 +795,18 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     v.y = (stage.clientHeight - v.s) / 2
     return true
   }, [])
+  // 子视图（带 window/固定 aspect）的宽高比不从底图实测——几何是按取景框归一化的。
+  const aspectOf = useCallback((imgW: number, imgH: number): number => {
+    const doc = docRef.current
+    if (doc.aspect !== undefined) return doc.aspect
+    const win = doc.window
+    if (win !== undefined) return (win[2] - win[0]) * (imgW / imgH) / (win[3] - win[1])
+    return imgW / imgH
+  }, [])
   const fitIfNeeded = useCallback((): void => {
     const key = image?.resourceId ?? 'blank'
     if (fitRef.current === key) return
-    if (image?.resourceId === undefined) { imgRef.current = null; aspectRef.current = 1.6 }
+    if (image?.resourceId === undefined) { imgRef.current = null; aspectRef.current = docRef.current.aspect ?? 1.6 }
     if (fitView()) fitRef.current = key
   }, [image?.resourceId, fitView])
   useEffect(() => {
@@ -649,13 +815,13 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     const el = new Image()
     el.onload = () => {
       imgRef.current = el
-      aspectRef.current = el.naturalWidth / el.naturalHeight
+      aspectRef.current = aspectOf(el.naturalWidth, el.naturalHeight)
       fitIfNeeded()
       draw()
     }
     el.src = imageUrl(key)
     return () => { el.onload = null }
-  }, [image?.resourceId, imageUrl, draw, fitIfNeeded])
+  }, [image?.resourceId, imageUrl, draw, fitIfNeeded, aspectOf])
 
   useEffect(() => {
     const stage = stageRef.current
@@ -673,7 +839,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     if (e.button === 2) { gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY] }; return }
     if (mode === 'draft') {
       busyRef.current = true
-      gestureRef.current = { kind: 'paint', path: [p], moved: false }
+      gestureRef.current = { kind: draftHow === 'lasso' ? 'shape' : 'paint', path: [p], moved: false }
       return
     }
     if (mode === 'annotate') {
@@ -747,7 +913,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       if (bi === o.pts.length - 1) o.attachEnd = undefined
       gestureRef.current = { kind: 'stretch', obj: o, grab: bi, last: p, alt: e.altKey, moved: false }
     } else gestureRef.current = { kind: 'move', obj: o, last: p }
-  }, [commit, drawLayer, hitTest, markWork, mode, objWorkPts, resolvedPts, snapTarget, toStore, workOfEvent])
+  }, [commit, draftHow, drawLayer, hitTest, markWork, mode, objWorkPts, resolvedPts, snapTarget, toStore, workOfEvent])
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const p = workOfEvent(e)
@@ -766,11 +932,11 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       g.moved = true
       draw(); return
     }
-    if (g.kind === 'stroke' && g.path !== undefined) {
+    if ((g.kind === 'stroke' || g.kind === 'shape') && g.path !== undefined) {
       const last = g.path[g.path.length - 1]
       if (last === undefined || d2(p, last) > (3 / viewRef.current.s) ** 2) g.path.push(p)
       g.moved = true
-      if (layerKind(drawLayer) === 'line') g.snapped = snapTarget(p)
+      if (g.kind === 'stroke' && layerKind(drawLayer) === 'line') g.snapped = snapTarget(p)
       draw(); return
     }
     if (g.kind === 'move' && g.obj !== undefined) {
@@ -811,24 +977,27 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     const releaseBusy = (): void => { busyRef.current = false }
     if (g.kind === 'pan') { draw(); return }
     if (g.kind === 'paint' && g.path !== undefined && g.path.length > 1) {
-      if (erasing) {
-        // 橡皮：抹过即整笔删除（原型粒度按笔不按像素）。
-        const lim = brushPx / viewRef.current.s
-        const draft = docRef.current.draft.filter(s =>
-          !s.pts.some(q => g.path !== undefined && g.path.some(p => {
-            const qw = toWork(q)
-            return Math.hypot(p[0] - qw[0], p[1] - qw[1]) < lim + s.r
-          })))
-        docRef.current = { ...docRef.current, draft }
-      } else {
-        const stroke: DraftStroke = {
-          color: pal?.color ?? '#8A8F94',
-          r: brushPx / viewRef.current.s,
-          pts: g.path.map(toStore),
-        }
-        docRef.current = { ...docRef.current, draft: [...docRef.current.draft, stroke] }
+      // 橡皮也是一笔：渲染时 destination-out 擦掉下方草稿，撤销粒度仍是一笔。
+      const stroke: DraftStroke = {
+        color: erasing ? '#000000' : pal?.color ?? '#8A8F94',
+        r: brushPx / viewRef.current.s,
+        pts: g.path.map(toStore),
+        ...(erasing ? { erase: true } : {}),
       }
+      docRef.current = { ...docRef.current, draft: [...docRef.current.draft, stroke] }
       commit(); releaseBusy(); bump(); return
+    }
+    if (g.kind === 'shape' && g.path !== undefined && g.path.length > 2) {
+      // 圈地：套索轨迹抽稀成控制点 → shape 图元，边缘由 expandShape 确定性展开。
+      const ctrl = simplify(g.path, .015).slice(0, 20).map(toStore)
+      if (ctrl.length >= 3) {
+        const shape: DraftShape = {
+          kind: 'shape', color: pal?.color ?? '#8A8F94', ctrl,
+          roughness: .28, seed: (Math.random() * 0xFFFFFFFF) >>> 0,
+        }
+        docRef.current = { ...docRef.current, draft: [...docRef.current.draft, shape] }
+        commit(); releaseBusy(); bump(); return
+      }
     }
     if (g.kind === 'stroke' && g.path !== undefined && g.moved === true) {
       const layer = drawLayer
@@ -927,7 +1096,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   /* ---------- 无底图：两个入口——手绘草稿 / 直接生成（也可挑一张已有图） ---------- */
 
   const bare = image === undefined || image.resourceId === undefined
-  if (bare && !started && data.objects.length === 0 && data.draft.length === 0) {
+  if (bare && !started && data.objects.length === 0 && data.draft.length === 0 && data.base === undefined) {
     return (
       <div className="nv-wg nv-map">
         <div className="nv-map-empty">
@@ -935,7 +1104,14 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           <span>{t('wg.map.noImage')}</span>
           <div className="nv-map-entries">
             <button type="button" className="nv-map-entry"
-              onClick={() => { setStarted(true); setMode('draft') }}>
+              onClick={() => {
+                setStarted(true); setMode('draft')
+                // 默认底层铺海：画布不再是"未知"，手绘往海上加陆地。
+                if (docRef.current.base === undefined) {
+                  docRef.current = { ...docRef.current, base: BASE_PRESETS[0] }
+                  commit()
+                }
+              }}>
               <span className="nv-map-entryicon">{glyph.layers(20)}</span>
               <span className="nv-map-entryname">{t('wg.map.entry.draw')}</span>
               <span className="nv-map-entrydesc">{t('wg.map.entry.drawDesc')}</span>
@@ -996,6 +1172,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       </div>
       <div className="nv-maped-stage" ref={stageRef}>
         <canvas ref={cvRef} className="nv-maped-canvas"
+          style={brushCursor ? { cursor: 'none' } : undefined}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
           onPointerLeave={() => { cursorRef.current = null; draw() }}
           onWheel={onWheel} onContextMenu={e => e.preventDefault()} />
@@ -1017,6 +1194,12 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
                 commit(); bump()
               }
             }}>{t('wg.save')}</button>
+            {sel.type === 'face' && (
+              <button type="button" className="nv-maped-ok" title={t('wg.map.spawnDesc')}
+                onClick={() => { void send({ kind: 'map_spawn_view', moduleId: module.id, objectId: sel.id, aspect: aspectRef.current }) }}>
+                {t('wg.map.spawnView')}
+              </button>
+            )}
             <button type="button" className="nv-maped-del" onClick={deleteSel}>{t('wg.del')}</button>
           </div>
         )}
@@ -1051,7 +1234,43 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           {mode === 'draft' && (
             <>
               <div className="nv-maped-row">
+                <span className="nv-maped-lab">{t('wg.map.base')}</span>
+                {BASE_PRESETS.map(b => (
+                  <button key={b.name} type="button"
+                    className={`nv-maped-swatch${docRef.current.base?.name === b.name && docRef.current.base?.color === b.color ? ' on' : ''}`}
+                    title={b.desc}
+                    onClick={() => { docRef.current = { ...docRef.current, base: b }; commit(); bump() }}>
+                    <span className="nv-maped-dot" style={{ background: b.color }} />
+                    {b.name}
+                  </button>
+                ))}
+                <button type="button"
+                  className={`nv-maped-swatch${docRef.current.base === undefined ? ' on' : ''}`}
+                  title={t('wg.map.baseNoneDesc')}
+                  onClick={() => { const { base: _drop, ...rest } = docRef.current; docRef.current = rest; commit(); bump() }}>
+                  {t('wg.map.baseNone')}
+                </button>
+                <button type="button" onClick={() => setBaseForm(v => v === null ? { name: '', desc: '', color: '#8A8F94' } : null)}>＋</button>
+              </div>
+              {baseForm !== null && (
+                <div className="nv-maped-row">
+                  <input value={baseForm.name} placeholder={t('wg.map.palName')} style={{ width: 70 }}
+                    onChange={e => setBaseForm({ ...baseForm, name: e.target.value })} />
+                  <input value={baseForm.desc} placeholder={t('wg.map.palDesc')} style={{ flex: 1 }}
+                    onChange={e => setBaseForm({ ...baseForm, desc: e.target.value })} />
+                  <input type="color" value={baseForm.color} onChange={e => setBaseForm({ ...baseForm, color: e.target.value })} />
+                  <button type="button" className="nv-maped-ok" onClick={() => {
+                    if (baseForm.name.trim() !== '') {
+                      docRef.current = { ...docRef.current, base: { name: baseForm.name.trim(), desc: baseForm.desc.trim(), color: baseForm.color } }
+                      setBaseForm(null); commit(); bump()
+                    }
+                  }}>{t('wg.map.palAdd')}</button>
+                </div>
+              )}
+              <div className="nv-maped-row">
                 <span className="nv-maped-lab">{t('wg.map.colors')}</span>
+                <button type="button" className={draftHow === 'brush' ? 'on' : ''} onClick={() => setDraftHow('brush')}>{t('wg.map.draftBrush')}</button>
+                <button type="button" className={draftHow === 'lasso' ? 'on' : ''} onClick={() => setDraftHow('lasso')}>{t('wg.map.draftLasso')}</button>
                 {docRef.current.palette.map(p => (
                   <button key={p.name} type="button" className={`nv-maped-swatch${pal?.name === p.name ? ' on' : ''}`}
                     title={p.desc}
