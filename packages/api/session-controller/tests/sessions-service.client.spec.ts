@@ -962,6 +962,17 @@ describe('fork', () => {
     expect(b.mock.remote.session.fork).toHaveBeenCalledExactlyOnceWith({ sessionId: 'source', atSeq: 41 })
   })
 
+  it('forwards a service origin to the remote fork and the placeholder row', async ({ bench }) => {
+    const b = bench()
+    await feedList(b, [{ id: 'source', cwd: '/work' }])
+    b.mock.remote.session.fork.mockResolvedValue(ok({ sessionId: sid('child') }))
+
+    await expect(b.svc.fork({ sessionId: sid('source'), atSeq: 7, origin: 'service' })).resolves.toBe('child')
+
+    expect(b.mock.remote.session.fork).toHaveBeenCalledExactlyOnceWith({ sessionId: 'source', atSeq: 7, origin: 'service' })
+    expect(b.svc.list.getSnapshot().byId[sid('child')]).toMatchObject({ origin: 'service' })
+  })
+
   it('does not rename without the title policy or a durable source title', async ({ bench }) => {
     const b = bench()
     await feedList(b, [{ id: 'source', cwd: '/work' }])

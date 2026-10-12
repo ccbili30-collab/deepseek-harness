@@ -130,6 +130,7 @@ async function hydrateModules(store: CardStore, cardId: string, modules: readonl
         widget: {
           type: module.widget.type,
           ...(module.widget.height !== undefined ? { height: module.widget.height } : {}),
+          ...(module.widget.path !== undefined ? { path: module.widget.path } : {}),
           ...(decode !== undefined ? { data: decode(blocks.find(b => b.kind === 'text')?.text) } : {}),
         },
       } : {}),
@@ -321,6 +322,7 @@ const APPLY_COMMANDS = new Set([
   'collection_add_field', 'collection_update_field', 'collection_remove_field',
   'collection_add_item', 'collection_update_item', 'collection_remove_item', 'collection_set_value', 'collection_set_view',
   'collection_set_style',
+  'embed_file',
   'set_layout',
 ])
 
@@ -361,6 +363,7 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
     case 'collection_add_item': return needs(['moduleId']) ?? ('item' in command ? undefined : 'missing item')
     case 'collection_set_value': return needs(['moduleId', 'itemId', 'fieldId'])
     case 'collection_set_view': return needs(['moduleId', 'view'])
+    case 'embed_file': return needs(['path'])
     case 'collection_set_style': return needs(['moduleId', 'artStyle'])
     case 'set_layout': return needs(['layoutKey']) ?? ('layout' in command ? undefined : 'missing layout')
     default: return undefined

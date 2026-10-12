@@ -144,6 +144,7 @@ root
 │     │  └─ conversation.view
 │     │     ├─ conversation.chat.node
 │     │     │  ├─ conversation.chat.assistant-actions
+│     │     │  ├─ conversation.chat.user-actions
 │     │     │  ├─ conversation.chat.commandview
 │     │     │  ├─ conversation.chat.turnTail
 │     │     │  └─ tool.call.toolview

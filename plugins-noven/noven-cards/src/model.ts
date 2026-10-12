@@ -35,6 +35,13 @@ export type ModuleTemporality = 'CONSTANT' | 'SNAPSHOT'
 export interface ModuleWidget {
   type: string
   height?: number
+  /** 'html' 模块的项目内文件活引用：渲染时实时读这份文件，文件更新模块跟着变。 */
+  path?: string
+}
+
+/** 图片扩展名 → mediaType（embed_file / save_conversation_image 共用）。 */
+export const IMAGE_MEDIA: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', bmp: 'image/bmp', avif: 'image/avif',
 }
 
 export interface ContentModule {

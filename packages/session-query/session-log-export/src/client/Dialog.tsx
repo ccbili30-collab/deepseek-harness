@@ -1,7 +1,7 @@
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { Button, Modal } from '@deepseek-ai/dsh-client-ui-primitives'
-import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import type { InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SessionLogDownloadState } from './controller.ts'
 import { NS } from './locales.ts'
 
@@ -16,6 +16,7 @@ export type SessionLogDownloadDialogProps =
   PropsRuntime<'conversation.session.header.utilities'>
   & PropsLocale<typeof NS>
   & InjectFace<SessionLogDownloadDialogInjected>
+  & PropsRenderSlots<'conversation.session.header.more.item'>
 
 /**
  * Modal shared by the Session Header download menu item and this browser's `/export` command.

@@ -34,6 +34,20 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
         menuOpenState: SlotHookFactory<'sidebar.workspaces.workspace.menu.item', UseMenuOpenState>
       } }
     }
+    /**
+     * Ordered actions for one durable user message — lands in ui-chat source
+     * ahead of its published package types.
+     */
+    'conversation.chat.user-actions': {
+      kind: 'list'
+      scope: 'session'
+      owner: {
+        /** Durable `user/message` event seq — the rewind/edit fork boundary minus one. */
+        seq: number
+        /** The message's clipboard text, as rendered for copy. */
+        text: string
+      }
+    }
   }
 }
 

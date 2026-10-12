@@ -47,7 +47,7 @@ const fmt = (t: ShellT, key: NovenShellLocaleKey, vars: Record<string, string | 
   Object.entries(vars).reduce((s, [k, v]) => s.replace(`{${k}}`, String(v)), t(key))
 
 /** Bundled skills surfaced as tool rows and composer chips — all real slash commands. */
-const TOOL_COMMANDS = {
+export const TOOL_COMMANDS = {
   organize: 'card-organizer',
   study: 'noven-study',
   map: 'noven-draw-map',
@@ -56,9 +56,9 @@ const TOOL_COMMANDS = {
   writing: 'human-writing',
 } as const
 
-type ToolId = keyof typeof TOOL_COMMANDS
+export type ToolId = keyof typeof TOOL_COMMANDS
 
-const TOOLS: readonly { id: ToolId; label: NovenShellLocaleKey; icon: (s: number) => ReactNode }[] = [
+export const TOOLS: readonly { id: ToolId; label: NovenShellLocaleKey; icon: (s: number) => ReactNode }[] = [
   { id: 'organize', label: 'create.tool.organize', icon: glyph.sparkle },
   { id: 'study', label: 'create.tool.study', icon: glyph.book },
   { id: 'map', label: 'create.tool.map', icon: glyph.map },

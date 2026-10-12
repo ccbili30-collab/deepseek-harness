@@ -124,12 +124,13 @@ export interface ISessions {
    * @param opts - source session id, the optional exact inclusive boundary
    *   seq (a real event seq the caller already knows; a cut inside an open
    *   turn is balanced Host-side with synthetic closers, and omission selects
-   *   the latest completed-turn prefix), and whether to increment an
-   *   inherited durable title before resolving.
+   *   the latest completed-turn prefix), whether to increment an inherited
+   *   durable title before resolving, and the optional `service` origin that
+   *   keeps the child out of ordinary session navigation.
    * @returns the child session id.
    * @throws when the fork fails, or when a requested child-title rename fails after creation.
    */
-  fork(opts: { sessionId: SessionId; atSeq?: number; increaseTitle?: boolean }): Promise<SessionId>
+  fork(opts: { sessionId: SessionId; atSeq?: number; increaseTitle?: boolean; origin?: 'service' }): Promise<SessionId>
   /**
    * Borrow an already-retained Agent-scoped Context without extending its lifetime.
    * @param id - session id.

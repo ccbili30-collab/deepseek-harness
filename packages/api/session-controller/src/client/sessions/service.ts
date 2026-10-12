@@ -442,8 +442,9 @@ export class ClientSessions implements ISessions {
    * @param opts - source session id, the optional exact inclusive boundary
    *   seq (a real event seq the caller already knows; a cut inside an open
    *   turn is balanced Host-side with synthetic closers, and omission selects
-   *   the latest completed-turn prefix), and whether to increment an
-   *   inherited durable title before resolving.
+   *   the latest completed-turn prefix), whether to increment an inherited
+   *   durable title before resolving, and the optional `service` origin that
+   *   keeps the child out of ordinary session navigation.
    * @returns the child session id.
    * @throws {SessionForkError} with the source id.
    * @throws {Error} when a requested child-title rename fails after creation.
@@ -452,6 +453,7 @@ export class ClientSessions implements ISessions {
     sessionId: SessionId
     atSeq?: number
     increaseTitle?: boolean
+    origin?: 'service'
   }): Promise<SessionId> {
     const sourceTitle = opts.increaseTitle
       ? this.list.getSnapshot().byId[opts.sessionId]?.title
@@ -459,6 +461,7 @@ export class ClientSessions implements ISessions {
     const result = await this.manager.fork({
       sessionId: opts.sessionId,
       ...(opts.atSeq === undefined ? {} : { atSeq: SessionSeq(opts.atSeq) }),
+      ...(opts.origin === undefined ? {} : { origin: opts.origin }),
     })
     if (!result.ok) throw new SessionForkError(result.error, opts.sessionId)
     this.projectList()

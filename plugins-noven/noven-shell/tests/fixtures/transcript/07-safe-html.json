@@ -1,0 +1,8 @@
+{
+  "name": "安全子集：**粗**→b、*斜*→i、换行→br，其余（含 script）全转义",
+  "cast": [],
+  "input": [{ "id": "12", "role": "assistant", "turnId": "5", "text": "**粗** 与 *斜*\n<script>alert(1)</script>" }],
+  "expected": [
+    { "id": "12#0", "messageId": "12", "segment": 0, "turnId": "5", "role": "assistant", "kind": "narration", "text": "**粗** 与 *斜*\n<script>alert(1)</script>", "html": "<b>粗</b> 与 <i>斜</i><br>&lt;script&gt;alert(1)&lt;/script&gt;", "src": null, "streaming": false }
+  ]
+}

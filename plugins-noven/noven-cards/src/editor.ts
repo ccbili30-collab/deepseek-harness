@@ -8,9 +8,10 @@
  * @module noven-cards/editor
  */
 
-import { mintId, flattenModules, editBlocks, findTarget, replaceTarget, insertModule, updateModule, removeModule, parentOfModule, placeModule, organizeFolders, assertValid, type ContentBlock, type ContentDocument, type ContentModule, type ModuleLayout, type ModuleRouting, type ModuleTemporality, type ModuleUse } from './model.ts'
+import { mintId, flattenModules, editBlocks, findTarget, replaceTarget, insertModule, updateModule, removeModule, parentOfModule, placeModule, organizeFolders, assertValid, IMAGE_MEDIA, type ContentBlock, type ContentDocument, type ContentModule, type ModuleLayout, type ModuleRouting, type ModuleTemporality, type ModuleUse } from './model.ts'
 import { CardStore, EditConflict, type CardDraft, type ChangeSource, type SavedCard } from './store.ts'
 import { parseModuleMarkdown } from './markdown.ts'
+import { readProjectFile } from './exchange.ts'
 import { expandShape, bboxOf as geomBBox, padBBox, clipPolygonRect, clipPolylineRect, toChild, type GBBox } from 'noven-draw-map/mapgeom'
 import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type MapData, type TimelineCalendar } from './formats.ts'
 
@@ -38,6 +39,8 @@ export type EditorCommand =
   | { kind: 'replace_block_image', moduleId: string, blockId: string, resourceId: string }
   | { kind: 'remove_resource', resourceId: string, removeUses: boolean }
   | { kind: 'adopt_image', bytes: Uint8Array, mediaType: string, moduleId?: string | null, afterBlockId?: string | null }
+  /** 把项目内文件嵌入模块：图片收成卡资源 + 图片块；.html/.htm 记 widget.path 活引用；.md/.txt 快照成文字块。moduleId 省略时以文件名建一个新模块。 */
+  | { kind: 'embed_file', path: string, moduleId?: string | null }
   | { kind: 'place_character', characterId: string, moduleId?: string | null }
   | { kind: 'add_character', name: string }
   | { kind: 'copy_character', source: ContentDocument }
@@ -69,6 +72,11 @@ export type EditorCommand =
   | { kind: 'collection_set_style', moduleId: string, artStyle: string }
   | { kind: 'collection_set_view', moduleId: string, view: CollectionView }
   | { kind: 'set_layout', layoutKey: 'overview' | 'player', layout: unknown }
+
+/** embed_file 认的文本类后缀 → mediaType：html 记 widget.path 活引用，md/txt 快照成文字块。 */
+const EMBED_FILE_MEDIA: Record<string, string> = {
+  html: 'text/html', htm: 'text/html', md: 'text/markdown', markdown: 'text/markdown', txt: 'text/plain',
+}
 
 /** 一次编辑产生的新块/新模块（saved-with-ids 直链用）。 */
 export interface EditOutcome {
@@ -177,6 +185,21 @@ async function transformDocument(
     return found
   }
   const put = (next: ContentDocument): ContentDocument => replaceTarget(document, targetId, next)
+
+  /** embed_file 的落块尾巴：图片进卡资源 + 图片块；其余（md/txt）快照成文字块。模块必须已在 working 里。 */
+  const embedInto = async (working: ContentDocument, moduleId: string, bytes: Uint8Array, imageMedia: string | undefined): Promise<ContentDocument> => {
+    const ref = await store.receivePayload(cardId, bytes)
+    if (imageMedia !== undefined) {
+      const resource = { id: mintId(), content: ref, mediaType: imageMedia }
+      const block: ContentBlock = { kind: 'image', id: mintId(), resourceId: resource.id }
+      createdBlocks.push(block.id)
+      const withResource: ContentDocument = { ...working, resources: [...working.resources, resource] }
+      return editBlocks(withResource, [{ kind: 'insert', moduleId, block, beforeBlockId: null }])
+    }
+    const block: ContentBlock = { kind: 'text', id: mintId(), content: ref }
+    createdBlocks.push(block.id)
+    return editBlocks(working, [{ kind: 'insert', moduleId, block, beforeBlockId: null }])
+  }
 
   // ---------- 预制模块载荷（widget JSON 存在模块的第一个文字块里） ----------
   const widgetModule = (id: string, widgetType: string): ContentModule => {
@@ -419,6 +442,41 @@ async function transformDocument(
         working = editBlocks(working, [{ kind: 'insert', moduleId: target.id, block, beforeBlockId: target.blocks.at(at)?.id ?? null }])
       }
       next = put(working)
+      break
+    }
+    case 'embed_file': {
+      const extension = command.path.split('.').pop()?.toLowerCase() ?? ''
+      const base = command.path.split('/').pop() ?? command.path
+      const stem = base.replace(/\.[^.]*$/u, '')
+      const imageMedia = IMAGE_MEDIA[extension]
+      const fileMedia = EMBED_FILE_MEDIA[extension]
+      if (imageMedia === undefined && fileMedia === undefined) throw new Error(`不支持嵌入的文件类型：${extension === '' ? base : extension}`)
+      const bytes = await readProjectFile(store.projectRoot, command.path)
+      const targetId = command.moduleId ?? null
+      if (targetId === null) {
+        // 嵌到卡根：以文件名新建一个模块；html 建活引用模块，其余建正文模块。
+        const created: ContentModule = {
+          id: mintId(), name: stem === '' ? base : stem, blocks: [], tags: [], children: [],
+          layout: 'VERTICAL', characterIds: [],
+          ...(fileMedia === 'text/html' ? { widget: { type: 'html', path: command.path } } : {}),
+        }
+        let working: ContentDocument = { ...card, modules: insertModule(card.modules, null, created, null) }
+        createdModules.push(created.id)
+        // html 是活引用——不留快照块；图片/文本才落块。
+        if (fileMedia !== 'text/html') working = await embedInto(working, created.id, bytes, imageMedia)
+        next = put(working)
+        break
+      }
+      const target = module(targetId)
+      if (fileMedia === 'text/html') {
+        // 活引用改写模块呈现载体；已有正文的模块拒绝改型——内容会不可见。
+        if (target.widget?.type !== 'html' && target.blocks.length > 0) {
+          throw new Error('目标模块已有正文——选一个空模块，或省略 module_id 新建嵌入模块')
+        }
+        next = put({ ...card, modules: updateModule(card.modules, target.id, original => ({ ...original, widget: { ...original.widget, type: 'html', path: command.path } })) })
+        break
+      }
+      next = put(await embedInto(card, target.id, bytes, imageMedia))
       break
     }
     case 'place_character': {

@@ -329,6 +329,11 @@ export interface SessionForkRequest {
   readonly sessionId: SessionId
   /** Exact inclusive source event seq; omission selects the latest completed-turn prefix. */
   readonly atSeq?: number
+  /**
+   * `service` marks a product-internal fork a feature owns: it stays out of
+   * ordinary session navigation like a created `service` Session does.
+   */
+  readonly origin?: 'service'
 }
 
 /** Identity of a newly forked Session. */

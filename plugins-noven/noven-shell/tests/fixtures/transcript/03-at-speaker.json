@@ -1,0 +1,9 @@
+{
+  "name": "@写法：行首 @名字 成台词；句中 @名字 不触发",
+  "cast": ["阿七"],
+  "input": [{ "id": "12", "role": "assistant", "turnId": "5", "text": "@阿七：快看。\n\n他喊着 @阿七 追了出去。" }],
+  "expected": [
+    { "id": "12#0", "messageId": "12", "segment": 0, "turnId": "5", "role": "assistant", "kind": "dialogue", "speaker": "阿七", "text": "快看。", "html": "快看。", "src": null, "streaming": false },
+    { "id": "12#1", "messageId": "12", "segment": 1, "turnId": "5", "role": "assistant", "kind": "narration", "text": "他喊着 @阿七 追了出去。", "html": "他喊着 @阿七 追了出去。", "src": null, "streaming": false }
+  ]
+}

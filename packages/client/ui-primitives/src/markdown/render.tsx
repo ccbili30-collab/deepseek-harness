@@ -569,13 +569,50 @@ function MarkdownAnchor({ href, glyph, children }: {
   )
 }
 
-/** Local destinations use the scoped file delegate after settlement. */
+/** Schemes the renderer itself emits as anchors; everything else is inert unless the delegate claims it. */
+const BUILTIN_LINK_PROTOCOLS = new Set(['http:', 'https:', 'mailto:'])
+
+function urlProtocol(url: string): string | undefined {
+  try {
+    return new URL(url).protocol
+  } catch {
+    // Relative destinations and malformed URLs never reach this branch.
+    return undefined
+  }
+}
+
+/** Local destinations use the scoped file delegate after settlement; other non-builtin schemes consult the delegate's linkProtocols. */
 function renderAnchor(url: string, children: ReactNode[], key: Key, glyph = true, streaming = false): ReactNode {
   const file = streaming ? undefined : parseFileLink(url)
   if (file !== undefined) {
     return <MarkdownFileLink key={key} file={file} glyph={glyph}>{children}</MarkdownFileLink>
   }
-  return renderSafeLink(normalizeUri(url), children, key, glyph)
+  const href = normalizeUri(url)
+  const protocol = urlProtocol(href)
+  if (!streaming && protocol !== undefined && !BUILTIN_LINK_PROTOCOLS.has(protocol)) {
+    return <MarkdownProtocolLink key={key} href={href} glyph={glyph}>{children}</MarkdownProtocolLink>
+  }
+  return renderSafeLink(href, children, key, glyph)
+}
+
+/** Anchor for a delegate-claimed custom protocol; stays plain text when no owner declares the scheme. */
+function MarkdownProtocolLink({ href, glyph, children }: {
+  readonly href: string
+  readonly glyph: boolean
+  readonly children: ReactNode[]
+}): ReactNode {
+  const { linkProtocols, openLink } = useMarkdownDelegate()
+  if (openLink === undefined || linkProtocols?.includes(urlProtocol(href) ?? '') !== true) return <>{children}</>
+  return (
+    <a href={href} onClick={(event) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
+      event.preventDefault()
+      openLink(href)
+    }}>
+      {glyph && <LinkIconMedium kind="url" href={href} className={css.linkIcon} />}
+      {children}
+    </a>
+  )
 }
 
 function MarkdownFileLink({ file, glyph, children }: {

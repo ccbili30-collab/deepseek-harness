@@ -1,0 +1,9 @@
+{
+  "name": "纯旁白：空行分段，每段一个 narration",
+  "cast": [],
+  "input": [{ "id": "12", "role": "assistant", "turnId": "5", "text": "第一段旁白。\n\n第二段旁白。" }],
+  "expected": [
+    { "id": "12#0", "messageId": "12", "segment": 0, "turnId": "5", "role": "assistant", "kind": "narration", "text": "第一段旁白。", "html": "第一段旁白。", "src": null, "streaming": false },
+    { "id": "12#1", "messageId": "12", "segment": 1, "turnId": "5", "role": "assistant", "kind": "narration", "text": "第二段旁白。", "html": "第二段旁白。", "src": null, "streaming": false }
+  ]
+}

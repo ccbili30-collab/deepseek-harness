@@ -1,5 +1,5 @@
 /**
- * 会话顶栏卡片标签 — the 项目 / 背景 / 管理 chips on the conversation header
+ * 会话顶栏卡片标签 — the 项目 / 背景 chips on the conversation header
  * (design 01b). They read the session's mounted card context from
  * `/api/noven-bindings`; clicking opens the 本会话 rail tab where the context
  * is managed. A session with nothing mounted shows just its project chip.
@@ -34,8 +34,6 @@ export function HeaderChips({ useSession, useSessions, useBinding, openContext, 
   if (project !== undefined) chips.push(chip(`${t('chip.project')} · ${project}`))
   const background = b?.backgroundCardIds.map(id => cards[id]?.name).find(n => n !== undefined)
   if (background !== undefined) chips.push(chip(`${t('chip.background')} · ${background}`))
-  const managed = b?.managed === undefined ? undefined : cards[b.managed.cardId]?.name ?? b.managed.cardId
-  if (managed !== undefined) chips.push(chip(`${t('chip.managed')} · ${managed}`))
   if (chips.length === 0) return null
   return <>{chips}</>
 }

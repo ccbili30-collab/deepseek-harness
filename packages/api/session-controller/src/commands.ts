@@ -276,6 +276,7 @@ export class SessionCommandController {
           ...(source.header.cwd === undefined ? {} : { cwd: source.header.cwd }),
           parentSession: source.header.id,
           isSeeded: true,
+          ...(request.origin === undefined ? {} : { origin: request.origin }),
           ...(composition.agentPreset === undefined
             ? {}
             : { agentPreset: composition.agentPreset }),

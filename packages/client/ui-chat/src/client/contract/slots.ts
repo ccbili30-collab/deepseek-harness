@@ -55,6 +55,20 @@ export interface TurnTailOwnerProps {
 /** Owner currency of finalized-assistant actions. */
 export interface AssistantActionOwnerProps {
   messageId: MessageId
+  /**
+   * Durable seq of the owning Turn's `turn/start`, when that Turn is located;
+   * a rewind action forks at one below it, keeping the prompting user message
+   * and dropping the Turn.
+   */
+  turnStartSeq?: number
+}
+
+/** Owner share for user-message action entries: the durable event seq and the message's copy text. */
+export interface UserActionOwnerProps {
+  /** Durable `user/message` (or admitted steering) event seq — the rewind/edit fork boundary minus one. */
+  seq: number
+  /** The message's clipboard text, as rendered for copy. */
+  text: string
 }
 
 /** Stable quota failure codes retained in the Session log; both raise the frame-wide notice. */
@@ -319,6 +333,14 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * that entry. With no entries, the standard action row remains unchanged.
      */
     'conversation.chat.assistant-actions': { kind: 'list'; scope: 'session'; owner: AssistantActionOwnerProps }
+    /**
+     * Ordered actions for one durable user (or admitted steering) message,
+     * rendered inside the standard action row between copy and the clock.
+     * Each entry receives the event seq and copy text; a fresh `id` adds an
+     * action and reusing one replaces that entry. With no entries, the
+     * standard action row remains unchanged.
+     */
+    'conversation.chat.user-actions': { kind: 'list'; scope: 'session'; owner: UserActionOwnerProps }
     /**
      * Frame-wide quota notice chain. The Chat-owned host in `shell.overlay`
      * offers the one live notice; the first entry whose selector claims its

@@ -97,6 +97,30 @@ describe('Markdown file links', () => {
     expect(openFile).not.toHaveBeenCalled()
   })
 
+  it('routes delegate-claimed custom protocols through openLink', () => {
+    const openLink = vi.fn()
+    const view = render(
+      <MarkdownDelegateProvider linkProtocols={['noven:']} openLink={openLink}>
+        <MarkdownText text={'[card](noven://card/c-1/module/m-2)'} />
+      </MarkdownDelegateProvider>,
+    )
+    fireEvent.click(view.getByRole('link', { name: 'card' }))
+    expect(openLink).toHaveBeenCalledExactlyOnceWith('noven://card/c-1/module/m-2')
+  })
+
+  it('keeps custom protocols inert without a declared delegate', () => {
+    const openLink = vi.fn()
+    const view = render(
+      <MarkdownDelegateProvider openLink={openLink}>
+        <MarkdownText text={'[card](noven://card/c-1)\n\n[raw](vscode:open)'} />
+      </MarkdownDelegateProvider>,
+    )
+    expect(view.getByText('card')).toBeTruthy()
+    expect(view.getByText('raw')).toBeTruthy()
+    expect(view.container.querySelector('a, button')).toBeNull()
+    expect(openLink).not.toHaveBeenCalled()
+  })
+
   it('preserves external links and leaves local links inert without an opener', () => {
     const view = render(<MarkdownText text={'[web](https://example.com/a#L1) [mail](mailto:a@example.com) [file](src/a.ts)'} />)
     expect(view.getByRole('link', { name: 'web' }).getAttribute('target')).toBe('_blank')

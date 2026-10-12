@@ -79,7 +79,7 @@ This section explains how the package wires the export control and points at the
 
 The package has two halves. The Host half ([`src/index.ts`](src/index.ts)) registers the `/export` command and contributes the exact `GET`/`HEAD /api/session.export` Fetch route to Connection; [`src/archive.ts`](src/archive.ts) builds the bounded ZIP stream. The browser half ([`src/client/index.ts`](src/client/index.ts)) provides the shared download controller and UI, and observes `command/executed` so only the submitting browser starts a download.
 
-The Header’s More action uses the shared compact Button, with a 28px square target and the same radius and hover fill as the right-sidebar expand control.
+The Header’s More action uses the shared compact Button, with a 28px square target and the same radius and hover fill as the right-sidebar expand control. The menu also declares `conversation.session.header.more.item`, a session-scoped list whose contributed rows render after the shipped download and feedback items; each row reads the menu’s open state through the injected `useMenuOpenState` hook and dismisses it after acting.
 
 ### Download flow
 

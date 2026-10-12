@@ -131,7 +131,8 @@ function withCard<T>(cardId: string, work: () => Promise<T>): Promise<T> {
 }
 
 export class CardStore {
-  constructor(private readonly projectRoot: string) {}
+  /** 所在项目根；embed_file 等命令据此读项目内文件。 */
+  constructor(readonly projectRoot: string) {}
 
   /**
    * 在这张卡的串行链里执行一整段读改写（可重入：块内的 store 调用不再排队）。
@@ -143,59 +144,68 @@ export class CardStore {
     return withCard(cardId, work)
   }
 
-  /** cardId → `卡/` 下的目录名；扫描时构建并缓存（实例随请求短命）。 */
+  /** cardId → `卡/` 下的相对目录路径（可含架层，如 `大包/白起`）；扫描时构建并缓存（实例随请求短命）。 */
   private index?: Map<string, string>
 
   /**
    * 建/刷编号→目录索引。顺带做三件自愈：旧 `.noven/cards/<id>` 目录迁进
    * `卡/`；Finder 侧改过的目录名接管为卡名；复制的目录（同 id）领新编号。
+   * 扫描是递归的：`卡/` 下含 card.json/draft.json 的目录是卡（终点），
+   * 其余目录是架层（文档架）——继续下钻，任意嵌套都算数。
    */
   private async scan(): Promise<Map<string, string>> {
     if (this.index !== undefined) return this.index
     const map = new Map<string, string>()
     const target = cardsRoot(this.projectRoot)
     await this.liftLegacy(target)
-    let entries: { name: string; dir: string }[] = []
-    try {
-      entries = (await readdir(target, { withFileTypes: true }))
-        .filter(e => e.isDirectory() && !e.name.startsWith('.'))
-        .map(e => ({ name: e.name, dir: join(target, e.name) }))
-    } catch { /* no card store yet */ }
-    entries.sort((a, b) => a.name.localeCompare(b.name))
     const seenIds = new Set<string>()
-    for (const entry of entries) {
-      const head = await this.readHead(entry.dir).catch(() => undefined)
-      if (head === undefined) {
-        // 未提交的导入草稿：只有 draft.json 的目录也是卡——head 没写之前
-        // commit/discard 换进程、换实例也要找得到它。
-        const draft = await this.readDraftFile(entry.dir).catch(() => undefined)
-        const draftId = draft?.document.id
-        if (draft !== undefined && typeof draftId === 'string' && draftId.length > 0 && !seenIds.has(draftId)) {
-          seenIds.add(draftId)
-          map.set(draftId, entry.name)
+    const descend = async (dir: string, rel: string): Promise<void> => {
+      let entries
+      try {
+        entries = (await readdir(dir, { withFileTypes: true }))
+          .filter(e => e.isDirectory() && !e.name.startsWith('.'))
+          .sort((a, b) => a.name.localeCompare(b.name))
+      } catch { return /* 目录不可读——这一层当空 */ }
+      for (const entry of entries) {
+        const name = rel === '' ? entry.name : `${rel}/${entry.name}`
+        const entryDir = join(dir, entry.name)
+        const head = await this.readHead(entryDir).catch(() => undefined)
+        if (head === undefined) {
+          // 未提交的导入草稿：只有 draft.json 的目录也是卡——head 没写之前
+          // commit/discard 换进程、换实例也要找得到它。
+          const draft = await this.readDraftFile(entryDir).catch(() => undefined)
+          const draftId = draft?.document.id
+          if (draft !== undefined && typeof draftId === 'string' && draftId.length > 0 && !seenIds.has(draftId)) {
+            seenIds.add(draftId)
+            map.set(draftId, name)
+            continue
+          }
+          await descend(entryDir, name) // 非卡目录 = 架层：继续下钻找卡
+          continue
         }
-        continue // 非卡目录（用户随手放的文件夹）不认领
-      }
-      let id = head.document.id
-      if (typeof id !== 'string' || id.length === 0 || seenIds.has(id)) {
-        id = randomUUID()
-        head.document = { ...head.document, id }
-        await writeFileAtomic(join(entry.dir, 'card.json'), `${JSON.stringify(head, null, 2)}\n`).catch(() => {})
-      }
-      seenIds.add(id)
-      map.set(id, entry.name)
-      // Finder 改名接管：目录名与卡名分叉时以目录名为准（sanitize 差异不算分叉）。
-      const expected = sanitizeDirName(head.document.name)
-      if (entry.name !== expected) {
-        head.document = { ...head.document, name: entry.name }
-        await writeFileAtomic(join(entry.dir, 'card.json'), `${JSON.stringify(head, null, 2)}\n`).catch(() => {})
-        const draft = join(entry.dir, 'draft.json')
-        try {
-          const d = JSON.parse(await readFile(draft, 'utf8')) as DraftFile
-          await writeFileAtomic(draft, `${JSON.stringify({ ...d, document: { ...d.document, name: entry.name } }, null, 2)}\n`)
-        } catch { /* 无草稿或不可读——下次提交时自然对齐 */ }
+        let id = head.document.id
+        if (typeof id !== 'string' || id.length === 0 || seenIds.has(id)) {
+          id = randomUUID()
+          head.document = { ...head.document, id }
+          await writeFileAtomic(join(entryDir, 'card.json'), `${JSON.stringify(head, null, 2)}\n`).catch(() => {})
+        }
+        seenIds.add(id)
+        map.set(id, name)
+        // Finder 改名接管：目录名与卡名分叉时以目录名为准（sanitize 差异不算分叉）。
+        const base = basename(name)
+        const expected = sanitizeDirName(head.document.name)
+        if (base !== expected) {
+          head.document = { ...head.document, name: base }
+          await writeFileAtomic(join(entryDir, 'card.json'), `${JSON.stringify(head, null, 2)}\n`).catch(() => {})
+          const draft = join(entryDir, 'draft.json')
+          try {
+            const d = JSON.parse(await readFile(draft, 'utf8')) as DraftFile
+            await writeFileAtomic(draft, `${JSON.stringify({ ...d, document: { ...d.document, name: base } }, null, 2)}\n`)
+          } catch { /* 无草稿或不可读——下次提交时自然对齐 */ }
+        }
       }
     }
+    await descend(target, '')
     this.index = map
     return map
   }
@@ -251,7 +261,7 @@ export class CardStore {
     return rescanned === undefined ? undefined : join(cardsRoot(this.projectRoot), rescanned)
   }
 
-  /** 卡的目录名（`卡/` 下的一级目录，客户端拼媒体路径用）。 */
+  /** 卡的相对目录路径（`卡/` 下可含架层，如 `大包/白起`；客户端拼媒体路径用）。 */
   async dirName(cardId: string): Promise<string | undefined> {
     const name = (await this.scan()).get(cardId)
     if (name !== undefined) return name

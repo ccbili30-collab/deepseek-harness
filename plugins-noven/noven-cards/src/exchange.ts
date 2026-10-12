@@ -358,7 +358,6 @@ function remapAllIds(card: ContentDocument, freshCardId: string, refMap: Map<str
  */
 export async function importForeignFile(store: CardStore, bytes: Uint8Array, fileName: string): Promise<{ cardId: string, version: string, name: string, kind: string }> {
   const isPng = bytes.length > 8 && bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47
-  const name = fileName.replace(/\.[^.]+$/u, '') || '导入卡'
   let rawText: string | undefined
   if (isPng) {
     rawText = extractPngCardText(bytes)
@@ -367,6 +366,13 @@ export async function importForeignFile(store: CardStore, bytes: Uint8Array, fil
   else {
     rawText = new TextDecoder('utf-8', { fatal: true }).decode(bytes)
   }
+  // 卡名优先取数据里的名字（chara JSON 的 data.name/name），文件名只是兜底。
+  let name = fileName.replace(/\.[^.]+$/u, '') || '导入卡'
+  try {
+    const parsed = JSON.parse(rawText) as { name?: unknown, data?: { name?: unknown } }
+    const inner = parsed.data?.name ?? parsed.name
+    if (typeof inner === 'string' && inner.trim().length > 0) name = inner
+  } catch { /* 原文不是 JSON——用文件名 */ }
   const cardId = mintId()
   const draft = await store.ensureDraft(cardId, 'IMPORT', {
     kind: 'CHARACTER',
@@ -397,7 +403,7 @@ export async function importForeignFile(store: CardStore, bytes: Uint8Array, fil
 }
 
 /** 从 PNG 的 tEXt/zTXt 块里找 SillyTavern 卡数据（base64 JSON 原文）。 */
-function extractPngCardText(bytes: Uint8Array): string | undefined {
+export function extractPngCardText(bytes: Uint8Array): string | undefined {
   const buffer = Buffer.from(bytes)
   let offset = 8
   while (offset + 12 <= buffer.length) {

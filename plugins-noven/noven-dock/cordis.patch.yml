@@ -1,0 +1,4 @@
+# noven-dock bundle patch — mount the host row; the browser half ships via exports["./client"].
+- insert:
+    - id: noven-dock
+      name: 'noven-dock'

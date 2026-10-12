@@ -30,8 +30,6 @@ export const TurnTailNodeView = memo(function TurnTailNodeView({
 }: TurnTailNodeViewProps) {
   const detailed = usePerformanceUsage(mode => mode) === 'detailed'
   const data = node.data
-  const hasLaterChatNode = useChat(snapshot =>
-    (lastContent(snapshot, data.turn, true)?.anchorSeq ?? -1) > (data.closing?.finalNode.seq ?? data.seq))
   const endsWithResponse = useChat((snapshot) => {
     if (snapshot.timeline.turnOrder.at(-1) !== data.turn) return false
     const last = lastContent(snapshot, data.turn, false)
@@ -50,9 +48,10 @@ export const TurnTailNodeView = memo(function TurnTailNodeView({
   // Interruption-frozen partials carry no messageId, so they address no
   // durable message and contribute no per-message actions.
   const messageId = closing.finalNode.messageId
+  const turnStartSeq = useChat(snapshot => snapshot.timeline.turns.get(data.turn)?.start?.seq)
   const assistantActions = messageId === undefined
     ? null
-    : renderSlot('conversation.chat.assistant-actions', { messageId })
+    : renderSlot('conversation.chat.assistant-actions', { messageId, turnStartSeq })
   return (
     <div
       className={css.root}
@@ -67,7 +66,9 @@ export const TurnTailNodeView = memo(function TurnTailNodeView({
         // The branch action owns boundary resolution: it sends the real
         // turn/end seq it already has, and the Host cuts exactly there.
         onBranch={() => { forkAt(data.seq) }}
-        branchUnavailable={data.branchUnavailable || hasLaterChatNode}
+        // Mid-transcript tails stay branchable: the fork boundary carries the
+        // real turn/end seq, and later nodes only mean "this session kept going".
+        branchUnavailable={data.branchUnavailable}
         className={css.actions}
         extraActions={assistantActions}
         usageAction={detailed && data.tokenUsage !== undefined

@@ -1,0 +1,8 @@
+{
+  "name": "名册外名字不触发台词：行首「路人：」按旁白处理",
+  "cast": ["阿七"],
+  "input": [{ "id": "12", "role": "assistant", "turnId": "5", "text": "路人：借过。" }],
+  "expected": [
+    { "id": "12#0", "messageId": "12", "segment": 0, "turnId": "5", "role": "assistant", "kind": "narration", "text": "路人：借过。", "html": "路人：借过。", "src": null, "streaming": false }
+  ]
+}

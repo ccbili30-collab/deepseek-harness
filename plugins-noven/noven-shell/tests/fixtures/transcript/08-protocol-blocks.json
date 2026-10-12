@@ -1,0 +1,38 @@
+{
+  "name": "协议块剥离：novex-use 围栏与 UpdateVariable 不进 transcript",
+  "cast": [],
+  "input": [
+    {
+      "id": "12",
+      "role": "assistant",
+      "turnId": "5",
+      "text": "前文。\n\n```novex-use\n{\"name\":\"册\",\"data\":{\"hp\":10}}\n```\n\n<UpdateVariable>{\"hp\":9}</UpdateVariable>\n\n后文。"
+    }
+  ],
+  "expected": [
+    {
+      "id": "12#0",
+      "messageId": "12",
+      "segment": 0,
+      "turnId": "5",
+      "role": "assistant",
+      "kind": "narration",
+      "text": "前文。",
+      "html": "前文。",
+      "src": null,
+      "streaming": false
+    },
+    {
+      "id": "12#1",
+      "messageId": "12",
+      "segment": 1,
+      "turnId": "5",
+      "role": "assistant",
+      "kind": "narration",
+      "text": "后文。",
+      "html": "后文。",
+      "src": null,
+      "streaming": false
+    }
+  ]
+}

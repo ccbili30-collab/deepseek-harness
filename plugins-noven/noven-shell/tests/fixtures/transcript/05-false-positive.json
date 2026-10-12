@@ -1,0 +1,8 @@
+{
+  "name": "误判在预期内：名册内有名为「注」的角色时行首「注：」判为台词",
+  "cast": ["注"],
+  "input": [{ "id": "12", "role": "assistant", "turnId": "5", "text": "注：此处存疑。" }],
+  "expected": [
+    { "id": "12#0", "messageId": "12", "segment": 0, "turnId": "5", "role": "assistant", "kind": "dialogue", "speaker": "注", "text": "此处存疑。", "html": "此处存疑。", "src": null, "streaming": false }
+  ]
+}

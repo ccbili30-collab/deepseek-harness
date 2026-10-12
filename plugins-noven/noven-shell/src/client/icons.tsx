@@ -9,7 +9,7 @@ import type { CSSProperties } from 'react'
 interface IconProps { size: number; active: boolean }
 
 const stroke = (active: boolean, accent = false): CSSProperties => ({
-  color: accent ? 'var(--nv-accent-deep)' : active ? 'var(--nv-primary-text)' : 'var(--nv-secondary-text)',
+  color: accent || active ? 'var(--nv-accent-deep)' : 'var(--nv-secondary-text)',
 })
 
 function base({ size, active }: IconProps, children: React.ReactNode, accent = false) {
@@ -79,4 +79,13 @@ export const glyph = {
   slash: (s = 16) => wrap(<g><path d="M14 4l-5 16"/><path d="M17 9l3 3-3 3"/></g>, s),
   more: (s = 16) => wrap(<g><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"/></g>, s),
   clip: (s = 16) => wrap(<path d="m20 11-8.5 8.5a4.95 4.95 0 0 1-7-7l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.4a1.65 1.65 0 0 1-2.35-2.33l7.8-7.8"/>, s),
+  copy: (s = 16) => wrap(<g><rect x="9" y="9" width="11" height="12" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></g>, s),
+  rewind: (s = 16) => wrap(<g><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-15-6.7L3 13"/></g>, s),
+  edit: (s = 16) => wrap(<g><path d="M17 3a2.8 2.8 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></g>, s),
+  retry: (s = 16) => wrap(<g><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></g>, s),
+  wrench: (s = 16) => wrap(<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/>, s),
+  phone: (s = 16) => wrap(<g><rect x="6" y="2" width="12" height="20" rx="2"/><path d="M11 18h2"/></g>, s),
+  eye: (s = 16) => wrap(<g><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.5"/></g>, s),
+  floatWin: (s = 16) => wrap(<g><rect x="4" y="5" width="16" height="13" rx="2"/><path d="M4 9h16"/></g>, s),
+  panelBottom: (s = 16) => wrap(<g><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15h18"/></g>, s),
 }

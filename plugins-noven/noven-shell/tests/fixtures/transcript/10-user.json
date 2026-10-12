@@ -1,0 +1,8 @@
+{
+  "name": "用户消息：整段一个 narration，不拆台词",
+  "cast": ["阿七"],
+  "input": [{ "id": "11", "role": "user", "text": "阿七：我学的像吗？\n\n冲进去！" }],
+  "expected": [
+    { "id": "11#0", "messageId": "11", "segment": 0, "role": "user", "kind": "narration", "text": "阿七：我学的像吗？\n\n冲进去！", "html": "阿七：我学的像吗？<br><br>冲进去！", "src": null, "streaming": false }
+  ]
+}

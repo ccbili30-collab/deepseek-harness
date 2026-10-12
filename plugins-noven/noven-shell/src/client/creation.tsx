@@ -12,8 +12,9 @@ import { glyph } from './icons.tsx'
 /** 起手方式：blank 建空壳，interview 让 AI 开口问，template 占位（后端 501）。 */
 export type Starter = 'blank' | 'interview' | `template:${string}`
 
-/** 面板要求的对象种类。group = 用户命名的顶层分组（树的「大项目」）。 */
-export type CreateKind = 'world' | 'character' | 'doc' | 'import' | 'group'
+/** 面板要求的对象种类。group = 用户命名的顶层分组（树的「大项目」）；
+    card = 对话框内再选世界/角色；comic = 漫画/ 下的 html 作品；studio 由宿主直接处理（不进面板）。 */
+export type CreateKind = 'world' | 'character' | 'doc' | 'import' | 'group' | 'card' | 'comic' | 'studio'
 
 export interface CreateRequest {
   readonly kind: CreateKind
@@ -72,6 +73,9 @@ export function CreateDialog({ kind, t, dir, worlds, onSubmit, onCancel }: Creat
   const [name, setName] = useState('')
   const [starter, setStarter] = useState<'blank' | 'interview'>('blank')
   const [worldCardId, setWorldCardId] = useState('')
+  // 「卡」面板内部再选种类——世界/角色本质都是卡（cardOp.create 的 kind）。
+  const [cardKind, setCardKind] = useState<'world' | 'character'>('world')
+  const resolved = kind === 'card' ? cardKind : kind
   const inputRef = useRef<HTMLInputElement | null>(null)
   useEffect(() => { inputRef.current?.focus() }, [])
   useEffect(() => {
@@ -79,16 +83,18 @@ export function CreateDialog({ kind, t, dir, worlds, onSubmit, onCancel }: Creat
     window.addEventListener('keydown', onKey)
     return () => { window.removeEventListener('keydown', onKey) }
   }, [onCancel])
-  const titleKey = kind === 'world' ? 'create.world.title' : kind === 'character' ? 'create.character.title' : kind === 'group' ? 'create.group.title' : 'create.doc.title'
+  const titleKey = kind === 'world' ? 'create.world.title' : kind === 'character' ? 'create.character.title'
+    : kind === 'group' ? 'create.group.title' : kind === 'card' ? 'create.card.title'
+    : kind === 'comic' ? 'create.comic.title' : 'create.doc.title'
   const submit = (): void => {
     const trimmed = name.trim()
     if (trimmed === '') return
     onSubmit({
-      kind,
+      kind: resolved,
       name: trimmed,
       starter,
-      worldCardId: kind === 'character' && worldCardId !== '' ? worldCardId : undefined,
-      dir: kind === 'doc' ? dir : undefined,
+      worldCardId: resolved === 'character' && worldCardId !== '' ? worldCardId : undefined,
+      dir: resolved === 'doc' ? dir : undefined,
     })
   }
   return (
@@ -96,10 +102,26 @@ export function CreateDialog({ kind, t, dir, worlds, onSubmit, onCancel }: Creat
       <div className="nv-create" role="dialog" aria-modal="true" onClick={e => e.stopPropagation()}
         onKeyDown={e => { if (e.key === 'Enter' && (e.target as HTMLElement).tagName === 'INPUT') submit() }}>
         <div className="nv-create-title">{t(titleKey)}</div>
+        {kind === 'card' && (
+          <>
+            <div className="nv-create-label">{t('create.card.kind')}</div>
+            <div className="nv-create-starters" role="radiogroup">
+              {(['world', 'character'] as const).map(k => (
+                <button key={k} type="button" role="radio" aria-checked={cardKind === k}
+                  className={`nv-create-starter${cardKind === k ? ' nv-create-starter-on' : ''}`}
+                  onClick={() => setCardKind(k)}>
+                  {cardKind === k && <span className="nv-create-check" aria-hidden="true">{glyph.check(11)}</span>}
+                  <span className="nv-create-starter-icon">{k === 'world' ? glyph.globe(20) : glyph.user(20)}</span>
+                  <span className="nv-create-starter-label">{t(k === 'world' ? 'create.card.kind.world' : 'create.card.kind.character')}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
         <div className="nv-create-label">{t('create.field.name')}</div>
         <input ref={inputRef} className="nv-create-name" value={name}
           placeholder={t('create.name.placeholder')} onChange={e => setName(e.target.value)} />
-        {kind === 'character' && (
+        {resolved === 'character' && (
           <select className="nv-create-world" value={worldCardId} onChange={e => setWorldCardId(e.target.value)}>
             <option value="">{t('create.character.noWorld')}</option>
             {worlds.map(world => <option key={world.cardId} value={world.cardId}>{world.name}</option>)}
@@ -112,7 +134,7 @@ export function CreateDialog({ kind, t, dir, worlds, onSubmit, onCancel }: Creat
             <button type="button" className="nv-create-eg" onClick={() => setName(t('create.group.eg.2'))}>{t('create.group.eg.2')}</button>
           </div>
         )}
-        {(kind === 'world' || kind === 'character') && (
+        {(resolved === 'world' || resolved === 'character') && (
           <>
             <div className="nv-create-label">{t('create.starter.label')}</div>
             <StarterPick t={t} value={starter} onChange={setStarter} />

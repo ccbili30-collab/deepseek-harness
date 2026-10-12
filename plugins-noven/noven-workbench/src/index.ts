@@ -93,9 +93,16 @@ function sessionCwd(exec: { agent?: { session: { header: { cwd?: string } } } })
   return exec.agent?.session.header.cwd ?? process.cwd()
 }
 
-/** Resolve a session's workspace root, or undefined for an unknown session. */
-function sessionRoot(ctx: Context, session: string | null): string | undefined {
-  return session === null ? undefined : ctx.sessions.get(session as SessionId)?.header?.cwd
+/** Resolve a session's workspace root — live headers first, persisted headers
+    for dormant sessions (重启后客户端仍持有旧 session id，noven-cards 的
+    cwdForSession 同款兜底）; undefined for an unknown session. */
+async function sessionRoot(ctx: Context, session: string | null): Promise<string | undefined> {
+  if (session === null) return undefined
+  const live = ctx.sessions.get(session as SessionId)?.header
+  const stored = live === undefined
+    ? await ctx.get('sessionPersistence')?.stat(session as SessionId)
+    : undefined
+  return (live ?? stored?.header)?.cwd
 }
 
 /**
@@ -159,6 +166,71 @@ function framePrelude(session: string, dir: string, src: string | null): string 
 }
 
 /**
+ * The stage prelude for `stage=1` (戏台壳): NOVEN_FRAME becomes the
+ * game-facing frame — `card`/`archive`/`state`/`assets`/`deltas`/`theme`
+ * seeded from the stage file — plus the island contract: `query`/`compose`
+ * postMessage to the host shell (browser fallback for the URL schemes the
+ * desktop package intercepts natively), `asset(id)` resolving through the
+ * `assets` map then sibling files, and a host→island `message` bridge that
+ * patches the frame and re-fires `noven:frame`.
+ */
+function stagePrelude(session: string, dir: string, src: string | null, stage: string): string {
+  return `<script>(()=>{const S=${JSON.stringify(session)},B=${JSON.stringify(dir)},SRC=${JSON.stringify(src)},F=${stage}`
+    + `,R='/api/noven-frame',e=encodeURIComponent`
+    + `,u=r=>R+'?session='+e(S)+'&path='+e(r)+(B?'&base='+e(B):'')`
+    + `,a=r=>R+'?session='+e(S)+'&path='+e(r)`
+    + `,f=window.fetch.bind(window);`
+    + `window.fetch=(p,o)=>f(typeof p==='string'&&!/^[a-z][a-z0-9+.-]*:|^\\//i.test(p)?u(p):p,o);`
+    + `const N=window.NOVEN_FRAME=Object.assign({session:S,card:{},archive:{},deltas:[],assets:{},state:{},theme:{}},F`
+    + `,{url:u,urlAbs:a,dir:B,src:SRC`
+    + `,loadSource:()=>SRC===null?Promise.reject(new Error('no source bound')):f(a(SRC)).then(r=>r.text())`
+    // 沙箱岛的子资源请求不带会话 Cookie，直连 /api 会 401——资产走
+    // postMessage 桥：壳代取字节，岛落成 blob: URL（img-src 已放行）。
+    + `,RA:{},asset:i=>N.RA[i]??u((N.assets||{})[i]??String(i))`
+    + `,query:(d,i)=>window.parent.postMessage({noven:'query',domain:String(d),id:String(i)},'*')`
+    + `,compose:t=>window.parent.postMessage({noven:'compose',text:String(t)},'*')});`
+    + `for(const k in (N.assets||{}))window.parent.postMessage({noven:'assetReq',id:k,path:N.assets[k],base:B},'*');`
+    // 选元素模式：壳发 {noven:'pick',on}，岛捕获一次点击——描边、回报
+    // 标签与选择器给壳，随后自关。Studio 的「已选中：X」就靠这条回包。
+    + `let pk=null,mk=null;`
+    + `window.addEventListener('message',ev=>{const d=ev.data`
+    + `;if(!d||typeof d!=='object')return`
+    + `;if(d.noven==='frame'){const p=d.patch`
+    + `;if(p&&typeof p==='object')Object.assign(N,p)`
+    + `;window.dispatchEvent(new Event('noven:frame'))}`
+    + `else if(d.noven==='asset'&&d.blob){try{N.RA[d.id]=URL.createObjectURL(d.blob)}catch(_){};`
+    + `window.dispatchEvent(new Event('noven:frame'))}`
+    + `else if(d.noven==='pick'){if(d.on&&!pk){pk=ev2=>{const el=ev2.target`
+    + `;if(!el||!el.tagName)return`
+    + `;ev2.preventDefault();ev2.stopPropagation()`
+    + `;if(mk)mk.style.outline='';mk=el;el.style.outline='2px solid #34D399'`
+    + `;const sel=el.tagName.toLowerCase()+(el.id?'#'+el.id`
+    + `:(typeof el.className==='string'&&el.className.trim()?'.'+el.className.trim().split(/\\s+/).join('.'):''))`
+    + `;const lb=(el.getAttribute('aria-label')||el.getAttribute('title')||(el.textContent||'').trim().slice(0,24))||sel`
+    + `;window.parent.postMessage({noven:'picked',label:String(lb),sel:sel},'*')`
+    + `;document.removeEventListener('click',pk,true);pk=null;document.documentElement.style.cursor=''}`
+    + `;document.addEventListener('click',pk,true);document.documentElement.style.cursor='crosshair'}`
+    + `else if(!d.on&&pk){document.removeEventListener('click',pk,true);pk=null`
+    + `;document.documentElement.style.cursor=''}}})`
+    + `})()</script>`
+}
+
+/**
+ * Read the stage file (`<page>.stage.json`): a fenced workspace JSON whose
+ * fields seed `NOVEN_FRAME`. Missing, escaped, or unparsable → empty object;
+ * the island is contractually required to degrade on absent fields.
+ */
+async function stageFile(root: string, rel: string | null): Promise<string> {
+  if (rel === null) return '{}'
+  const absolute = fenceRel(root, rel)
+  if (absolute === undefined) return '{}'
+  const raw = await readFile(absolute, 'utf8').catch(() => undefined)
+  if (raw === undefined) return '{}'
+  try { JSON.parse(raw) } catch { return '{}' }
+  return raw.replaceAll('</', '<\\/')
+}
+
+/**
  * The browser-visible origin of a frame request. The /api bridge rewrites
  * `request.url` onto `http://dsh.internal`, so `url.origin` is never the
  * origin the document runs as — the Host header is. CSP `'self'` is not a
@@ -180,6 +252,20 @@ function frameCsp(origin: string): string {
     + ` frame-ancestors ${origin}; object-src 'none'`
 }
 
+/**
+ * Stage CSP: the island contract — `connect-src 'none'` (no fetches at all;
+ * data arrives only via frame injection, matching the phone island) and the
+ * island asset schemes allowlisted for markup parity. Assets actually load
+ * through `NOVEN_FRAME.asset()` → same-origin frame URLs.
+ */
+function stageCsp(origin: string): string {
+  return `default-src 'none'; img-src ${origin} data: blob: novex-asset: minis: novex-res:;`
+    + ` media-src ${origin} data: blob: novex-asset: minis:; font-src ${origin} data: novex-asset:;`
+    + ` style-src 'unsafe-inline' ${origin}; script-src 'unsafe-inline' ${origin};`
+    + ` worker-src ${origin} blob:; connect-src 'none'; form-action 'none'; base-uri 'none';`
+    + ` frame-ancestors ${origin}; object-src 'none'`
+}
+
 const FRAME_HEADERS: Readonly<Record<string, string>> = {
   'Access-Control-Allow-Origin': '*',
   'Cache-Control': 'no-store',
@@ -197,7 +283,7 @@ async function serveFrame(request: Request, ctx: Context): Promise<Response> {
   const fail = (status: number, text: string): Response =>
     new Response(text, { status, headers: { ...FRAME_HEADERS, 'Content-Type': 'text/plain; charset=utf-8' } })
   const url = new URL(request.url)
-  const root = sessionRoot(ctx, url.searchParams.get('session'))
+  const root = await sessionRoot(ctx, url.searchParams.get('session'))
   if (root === undefined) return fail(404, 'unknown session')
   const path = url.searchParams.get('path') ?? ''
   const baseParam = url.searchParams.get('base') ?? undefined
@@ -212,13 +298,18 @@ async function serveFrame(request: Request, ctx: Context): Promise<Response> {
   if (type.startsWith('text/html')) {
     const html = await readFile(absolute, 'utf8')
     const dir = relative(root, dirname(absolute)).replaceAll(sep, '/')
-    const prelude = framePrelude(url.searchParams.get('session') ?? '', dir === '.' ? '' : dir, url.searchParams.get('src'))
+    const stageMode = url.searchParams.get('stage') === '1'
+    const prelude = stageMode
+      ? stagePrelude(url.searchParams.get('session') ?? '', dir === '.' ? '' : dir, url.searchParams.get('src'),
+        await stageFile(root, url.searchParams.get('archive')))
+      : framePrelude(url.searchParams.get('session') ?? '', dir === '.' ? '' : dir, url.searchParams.get('src'))
     // Inside <head> when there is one — a bare prepend would push the doctype
     // down and drop the frame page into quirks mode.
     const head = /<head[^>]*>/iu.exec(html)
     const body = head === null ? `${prelude}${html}` : `${html.slice(0, head.index + head[0].length)}${prelude}${html.slice(head.index + head[0].length)}`
     return new Response(body, {
-      headers: { ...FRAME_HEADERS, 'Content-Type': type, 'Content-Security-Policy': frameCsp(origin) },
+      headers: { ...FRAME_HEADERS, 'Content-Type': type,
+        'Content-Security-Policy': stageMode ? stageCsp(origin) : frameCsp(origin) },
     })
   }
   const bytes = await readFile(absolute)
@@ -260,7 +351,7 @@ async function serveDoc(request: Request, ctx: Context): Promise<Response> {
   } catch {
     return fail(400, { error: 'body is not valid JSON' })
   }
-  const root = sessionRoot(ctx, payload.session ?? null)
+  const root = await sessionRoot(ctx, payload.session ?? null)
   if (root === undefined) return fail(404, { error: 'unknown session' })
   const absolute = fenceRel(root, payload.path ?? '')
   if (absolute === undefined) return fail(403, { error: 'path escapes the workspace' })
@@ -274,6 +365,23 @@ async function serveDoc(request: Request, ctx: Context): Promise<Response> {
   await writeFile(temp, payload.content)
   await rename(temp, absolute)
   return fail(200, { ok: true, bytes: payload.content.length })
+}
+
+/** Wake a dormant session's Agent so features needing a live one
+    (better-sidebar 的 sidechat.start 只认 ctx.agents.get) can resolve it.
+    Resuming is side-effect-free: no events written, no turn started. */
+async function serveWake(request: Request, ctx: Context): Promise<Response> {
+  const session = new URL(request.url, 'http://dsh.internal').searchParams.get('sessionId')
+  if (session === null || session === '') return new Response('missing sessionId', { status: 400 })
+  const controller = ctx.get('sessionController') as {
+    resolveAgent(id: SessionId): Promise<{ agent?: unknown } | { error: { code: string; message: string } }>
+  } | undefined
+  if (controller === undefined) return new Response('session-controller unavailable', { status: 503 })
+  const result = await controller.resolveAgent(session as SessionId)
+  if ('error' in result) {
+    return new Response(result.error.message, { status: result.error.code === 'session/not-found' ? 404 : 409 })
+  }
+  return new Response('ok', { status: 200 })
 }
 
 const HAND_EDIT_WARNING
@@ -354,6 +462,13 @@ export function apply(ctx: Context): void {
     requestBody: 'buffered',
     fetch: request => serveDoc(request, ctx),
   }), 'noven-workbench: /api/noven-doc')
+
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/noven-wake',
+    methods: ['POST'],
+    requestBody: 'buffered',
+    fetch: request => serveWake(request, ctx),
+  }), 'noven-workbench: /api/noven-wake')
 
   ctx.tools.register(defineTool({
     name: 'register_workbench',

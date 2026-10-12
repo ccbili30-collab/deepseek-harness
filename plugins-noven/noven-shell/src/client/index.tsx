@@ -14,7 +14,7 @@
  * @module noven-shell/client
  */
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { IWorkspaces, WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { ModelCatalog, ModelSelection, PromptContentPart } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
@@ -31,11 +31,12 @@ import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
-import type { InjectFace, PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
+import type { InjectFace, PropsLocale, PropsRuntime, PropsStore, SlotHookFactory } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SidebarRightGuideBox } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { MenuItemButton } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { NovenShellLocaleKey } from './locales.ts'
 import { defineStore } from '@deepseek-ai/dsh-client-store'
-import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+import type { ObservableSnapshot, SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { Home } from './pages/Home.tsx'
 import { Create } from './pages/Create.tsx'
 import { Me } from './pages/Me.tsx'
@@ -61,12 +62,16 @@ import type { FootLauncherInjected, FootLauncherProps } from './sidebar.tsx'
 import { CardReceiptTail, CardToolView, CARD_READ_TOOLS, CARD_WRITE_TOOLS, type CardReceiptInjected } from './toolviews.tsx'
 import { cardSavedDefinition, savedMeta } from './card-receipt.ts'
 import { SlashChips } from './inputdock.tsx'
+import { applyQuote } from './quote.tsx'
+import { applyBranches } from './branches.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
 import { injectNovenStyles } from './style.ts'
-import { CanvasHost, createCanvasStore, fileTabKind, type CanvasInjected, type ProjectFocus } from './canvas.tsx'
+import { CanvasHost, createCanvasStore, activeKey, fileTabKind, docKey, dirKey, statusKey, type CanvasInjected, type CanvasState, type DocEntry, type DirEntry, type ImportPack, type ProjectFocus, type SimRow, type TabFlags } from './canvas.tsx'
 import { ContentTree, type TreeInjected } from './tree.tsx'
+import type { TranscriptMsg, TranscriptState } from './stage-phone.tsx'
+import { foldConvEntries, type ConvChannel, type ConvEntry, type ConvMsg, type ConvsMap } from './conv.tsx'
 import type { CreateRequest } from './creation.tsx'
-import { novenTreeSource, treeOp } from './tree-api.ts'
+import { novenTreeSource, treeOp, fileOp, presentNode, importAnalyze, importCommit } from './tree-api.ts'
 import { capturePanelGhost, installPanelGhost } from './panel-ghost.ts'
 import { en, zh } from './locales.ts'
 
@@ -250,6 +255,73 @@ function WorkspaceLibraryItem({ path, useMenuOpenState, useProjects, setMembersh
     >
       {t(registered ? 'lib.project.remove' : 'lib.project.add')}
     </MenuItemButton>
+  )
+}
+
+type SessionMenuItemProps = PropsRuntime<'sidebar.workspaces.session.menu.item'> & PropsLocale<'novenShell'>
+
+/** 会话行 ⋯ 菜单末行：复制内部会话 id，供调试与「贴给模型认领」用。 */
+function CopySessionIdItem({ sessionId, useMenuOpenState, t }: SessionMenuItemProps) {
+  const [, setMenuOpen] = useMenuOpenState()
+  return (
+    <MenuItemButton
+      icon={glyph.copy(16)}
+      onSelect={() => {
+        setMenuOpen(false)
+        void navigator.clipboard.writeText(sessionId)
+      }}
+    >
+      {t('session.copyId')}
+    </MenuItemButton>
+  )
+}
+
+/**
+ * 会话 ⋯ 菜单的追加行座——槽位由 session-log-export 的 ⋯ 条目声明；noven-shell
+ * 编译吃的是发布版 rc 类型（早于这个键），这里镜像一份同款合并。
+ */
+type HeaderMoreMenuOpenState = readonly [open: boolean, setOpen: (open: boolean) => void]
+type UseHeaderMoreMenuOpenState = () => HeaderMoreMenuOpenState
+
+declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface SlotMap {
+    'conversation.session.header.more.item': {
+      kind: 'list'
+      scope: 'session'
+      hookContext: HeaderMoreMenuOpenState
+      inject: { hooks: {
+        menuOpenState: SlotHookFactory<'conversation.session.header.more.item', UseHeaderMoreMenuOpenState>
+      } }
+    }
+  }
+}
+
+/** ⋯ 功能行的注入面：右栏 guide 清单 + 开页签动作。 */
+interface FeatureMenuInjected {
+  readonly hooks: { readonly guide: ObservableSnapshot<readonly SidebarRightGuideBox[]> }
+  readonly openTab: (kind: string) => void
+}
+
+type FeatureMenuProps =
+  PropsRuntime<'conversation.session.header.more.item'> & PropsLocale<'novenShell'> & InjectFace<FeatureMenuInjected>
+
+/** ⋯ 菜单尾段：右栏 guide 登记的全部功能入口（本会话/设定/文件/创作库…）。 */
+function FeatureMenuItems({ useGuide, useMenuOpenState, openTab }: FeatureMenuProps) {
+  const [, setMenuOpen] = useMenuOpenState()
+  const boxes = useGuide(s => s)
+  return (
+    <>
+      {boxes.map((box, index) => {
+        const Icon = box.icon
+        return (
+          <MenuItemButton key={`${box.providerId}:${box.id}`} separatorBefore={index === 0}
+            icon={Icon === undefined ? undefined : <Icon size={16} />}
+            onSelect={() => { setMenuOpen(false); openTab(box.kind) }}>
+            {box.title()}
+          </MenuItemButton>
+        )
+      })}
+    </>
   )
 }
 
@@ -471,6 +543,272 @@ function sessionOutputs(sessions: ClientContext['sessions'], sessionId: Paramete
         compute()
       }
       return () => { listeners.delete(listener); if (listeners.size === 0) { disposeFeed?.(); started = false } }
+    },
+  }
+}
+
+/** Fold the session's event window into the phone-replica transcript; only human user text and assistant text land. */
+function transcriptSource(sessions: ClientContext['sessions'], sessionId: SessionId): ObservableSnapshot<TranscriptState> {
+  let snapshot: TranscriptState = { messages: [], busy: false }
+  const listeners = new Set<() => void>()
+  let started = false
+  let disposeFeed: (() => void) | undefined
+  let disposeRetry: (() => void) | undefined
+  const textOf = (content: readonly { type: string; text?: string }[]): string =>
+    content.filter(b => b.type === 'text' && b.text !== undefined).map(b => b.text!).join('\n').trim()
+  const compute = () => {
+    const binding = sessions.binding(sessionId)
+    if (binding === undefined) return
+    const messages: TranscriptMsg[] = []
+    let busy = false
+    for (const entry of binding.eventSource.getSnapshot().entries) {
+      if (entry.type !== 'event') continue
+      const ev = entry.event
+      if (ev.type === 'user/message') {
+        const kind: string = ev.data.source.kind
+        if (kind !== 'user') continue
+        const text = textOf(ev.data.content)
+        if (text.length > 0) messages.push({ key: `u${ev.seq}`, role: 'user', text, seq: ev.seq })
+      } else if (ev.type === 'assistant/message') {
+        const text = textOf(ev.data.message.content)
+        if (text.length > 0) messages.push({ key: `a${ev.seq}`, role: 'assistant', text, seq: ev.seq, turnId: String(ev.data.turn) })
+      } else if (ev.type === 'turn/start') {
+        busy = true
+      } else if (ev.type === 'turn/end') {
+        busy = false
+      }
+    }
+    if (busy === snapshot.busy && messages.length === snapshot.messages.length
+      && messages.every((m, i) => m === snapshot.messages[i])) return
+    snapshot = { messages, busy }
+    for (const listener of listeners) listener()
+  }
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      if (!started) {
+        started = true
+        const tryBind = (): void => {
+          if (disposeFeed !== undefined) return
+          const feed = sessions.binding(sessionId)?.eventSource
+          if (feed === undefined) return
+          disposeFeed = feed.subscribe(compute)
+          compute()
+        }
+        tryBind()
+        // 绑定可能晚到（会话还在挂）——会话列表一动就重试一次。
+        disposeRetry = sessions.list.subscribe(tryBind)
+      }
+      return () => {
+        listeners.delete(listener)
+        if (listeners.size === 0) {
+          disposeFeed?.(); disposeFeed = undefined
+          disposeRetry?.(); disposeRetry = undefined
+          started = false
+        }
+      }
+    },
+  }
+}
+
+/**
+ * 按键温层：条目快照跨退订保留——页重挂先渲缓存、后台补齐，不闪空。
+ * 各源（doc/dir/转录）共用的最薄一层 Map 语义。
+ */
+function keyedCache<T>(): {
+  readonly snapshot: ObservableSnapshot<Readonly<Record<string, T>>>
+  readonly get: (key: string) => T | undefined
+  readonly put: (key: string, value: T) => void
+} {
+  let state: Readonly<Record<string, T>> = {}
+  const listeners = new Set<() => void>()
+  return {
+    snapshot: {
+      getSnapshot: () => state,
+      subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    },
+    get: key => state[key],
+    put: (key, value) => {
+      if (state[key] === value) return
+      state = { ...state, [key]: value }
+      for (const listener of listeners) listener()
+    },
+  }
+}
+
+const SIM_TITLE_PREFIX = '模-'
+
+/** 模拟器源只需读侧——画布 store 实例的 getSnapshot/subscribe 切片。 */
+type CanvasStoreView = Pick<SnapshotStore<CanvasState>, 'getSnapshot' | 'subscribe'>
+
+/**
+ * 项目根（owner 会话 cwd）下的会话清单：排除 subagent 派生行与工作区
+ * 归档集（与侧边会话列表同口径——归档的会话在模拟器里也不该出现）；
+ * sim 态 = 模- 前缀 ∪ 画布 store 的 pick 集——改名丢前缀不掉出模拟列，
+ * pick 是兜底。
+ */
+function simSessionsSource(sessions: ClientContext['sessions'], workspaces: IWorkspaces | undefined, canvas: CanvasStoreView, sessionId: SessionId): ObservableSnapshot<readonly SimRow[]> {
+  let snapshot: readonly SimRow[] = []
+  const listeners = new Set<() => void>()
+  const compute = (): void => {
+    const root = sessions.list.getSnapshot().byId[sessionId]?.cwd
+    if (root === undefined) { if (snapshot.length !== 0) { snapshot = []; for (const l of listeners) l() } return }
+    const archived = new Set<string>(workspaces?.list.getSnapshot().archivedSessionIds ?? [])
+    const picked = new Set<string>(canvas.getSnapshot().simPick[root] ?? [])
+    const rows: SimRow[] = []
+    for (const id of sessions.list.getSnapshot().ids) {
+      const row = sessions.list.getSnapshot().byId[id]
+      if (row === undefined || row.cwd !== root || row.origin === 'subagent' || archived.has(id)) continue
+      rows.push({ id, title: row.displayTitle, running: row.running, sim: picked.has(id) || (row.title ?? '').startsWith(SIM_TITLE_PREFIX) })
+    }
+    if (rows.length === snapshot.length && rows.every((r, i) => {
+      const prev = snapshot[i]
+      return prev !== undefined && r.id === prev.id && r.title === prev.title && r.running === prev.running && r.sim === prev.sim
+    })) return
+    snapshot = rows
+    for (const listener of listeners) listener()
+  }
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      if (listeners.size === 1) {
+        compute()
+        const offA = sessions.list.subscribe(compute)
+        const offB = canvas.subscribe(compute)
+        const offC = workspaces?.list.subscribe(compute)
+        return () => { listeners.delete(listener); if (listeners.size === 0) { offA(); offB(); offC?.() } }
+      }
+      return () => { listeners.delete(listener) }
+    },
+  }
+}
+
+/**
+ * 模拟器转录：跟随 simOpen[root] 切换目标会话——内层 transcriptSource 按
+ * 会话缓存，切走不断订、切回不重折；未选中或会话消失时回退空快照。
+ */
+/**
+ * conv 页温层：每条侧会话一份折叠态。ensure 绑定事件源（首绑才 retain +
+ * 订阅，重复调用只刷新 channel）；send 按通道路由——sidechat 侧线必须走
+ * 它自己的 prompt 路由（首条携带边界注入），其余 fork 会话走 session.prompt。
+ */
+function convsSource(sessions: ClientContext['sessions']) {
+  interface Bound {
+    channel: ConvChannel
+    readonly ref: ReturnType<ClientContext['sessions']['retain']>
+    seen: number
+    seeded: boolean
+    messages: ConvMsg[]
+    busy: boolean
+    error?: string
+    dispose?: () => void
+  }
+  let snapshot: ConvsMap = {}
+  const listeners = new Set<() => void>()
+  const bound = new Map<SessionId, Bound>()
+  const publish = (): void => {
+    const next: Record<string, ConvEntry> = {}
+    for (const [id, b] of bound) next[id] = { ready: true, busy: b.busy, error: b.error, messages: b.messages }
+    snapshot = next
+    for (const listener of listeners) listener()
+  }
+  const ensure = (id: SessionId, channel: ConvChannel): void => {
+    const existing = bound.get(id)
+    if (existing !== undefined) { existing.channel = channel; return }
+    // 侧线多为 fork 出的子会话——subagentAddress 才是历史路由认的地址（agent-busy 坑，挂窗同款）。
+    const ref = sessions.retain(sessions.subagentAddress(id) ?? id, { source: 'novenShell' })
+    const b: Bound = { channel, ref, seen: 0, seeded: false, messages: [], busy: false }
+    bound.set(id, b)
+    const feed = ref.binding.eventSource
+    const fold = (): void => {
+      const entries = feed.getSnapshot().entries
+      // 事件源重建投影换整根数组——游标越界就从头重放，不丢渲染。
+      if (entries.length < b.seen) { b.seen = 0; b.messages = []; b.seeded = false }
+      const result = foldConvEntries(entries.slice(b.seen), b)
+      b.messages = result.messages; b.busy = result.busy; b.seeded = result.seeded
+      b.seen = entries.length
+      publish()
+    }
+    fold()
+    b.dispose = feed.subscribe(fold)
+  }
+  const send = (id: SessionId, text: string): void => {
+    const b = bound.get(id)
+    const fail = (message: string): void => {
+      if (b !== undefined) { b.error = message; publish() }
+      else console.warn(`noven-shell: conv send failed: ${message}`)
+    }
+    if (b?.channel === 'sidechat') {
+      void fetch('/sidebar/api/sidechat.prompt', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ childId: id, text }),
+      })
+        .then(async res => {
+          const parsed = await res.json().catch(() => null) as { ok?: boolean } | null
+          if (!res.ok || parsed?.ok !== true) fail(`send failed (${res.status})`)
+        })
+        .catch((error: unknown) => fail(error instanceof Error ? error.message : 'send failed'))
+      return
+    }
+    void sessions.using(sessions.subagentAddress(id) ?? id, { source: 'novenShell' }, async reference => {
+      const result = await reference.binding.session.prompt([{ type: 'text', text }], 'queue')
+      if (!result.ok) fail(result.error.message)
+    }).catch((error: unknown) => fail(error instanceof Error ? error.message : 'send failed'))
+  }
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    ensure,
+    send,
+  }
+}
+
+function simTranscriptSource(sessions: ClientContext['sessions'], canvas: CanvasStoreView, sessionId: SessionId): ObservableSnapshot<TranscriptState> {
+  const EMPTY: TranscriptState = { messages: [], busy: false }
+  const cache = new Map<SessionId, ObservableSnapshot<TranscriptState>>()
+  let snapshot: TranscriptState = EMPTY
+  const listeners = new Set<() => void>()
+  let innerDispose: (() => void) | undefined
+  let innerId: SessionId | undefined
+  const target = (): SessionId | undefined => {
+    const root = sessions.list.getSnapshot().byId[sessionId]?.cwd
+    return root === undefined ? undefined : canvas.getSnapshot().simOpen[root]
+  }
+  const publish = (): void => {
+    const next = innerId === undefined ? EMPTY : cache.get(innerId)?.getSnapshot() ?? EMPTY
+    if (next === snapshot) return
+    snapshot = next
+    for (const listener of listeners) listener()
+  }
+  const rebind = (): void => {
+    const id = target()
+    if (id === innerId) return
+    innerId = id
+    innerDispose?.()
+    innerDispose = undefined
+    if (id !== undefined) {
+      let source = cache.get(id)
+      if (source === undefined) { source = transcriptSource(sessions, id); cache.set(id, source) }
+      innerDispose = source.subscribe(publish)
+    }
+    publish()
+  }
+  return {
+    getSnapshot: () => snapshot,
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      if (listeners.size === 1) {
+        rebind()
+        const offA = sessions.list.subscribe(rebind)
+        const offB = canvas.subscribe(rebind)
+        return () => {
+          listeners.delete(listener)
+          if (listeners.size === 0) { offA(); offB(); innerDispose?.(); innerDispose = undefined; innerId = undefined }
+        }
+      }
+      return () => { listeners.delete(listener) }
     },
   }
 }
@@ -860,18 +1198,69 @@ export function apply(ctx: ClientContext): void {
     })().catch((reason: unknown) => { console.warn('noven-shell: card create failed:', reason) })
   }
 
-  /** Import a card package (.novex.zip / PNG / text) into the chosen (or recent) workspace, then open the editor. */
+  /** 导入暂态：analyze 出的包等用户选落点（单卡直通道不经过这里）。 */
+  let importPackValue: ImportPack | undefined
+  let pendingImportFile: File | undefined
+  const importPackListeners = new Set<() => void>()
+  const importPackSnap: ObservableSnapshot<ImportPack | undefined> = {
+    getSnapshot: () => importPackValue,
+    subscribe: listener => { importPackListeners.add(listener); return () => { importPackListeners.delete(listener) } },
+  }
+  const setImportPack = (pack: ImportPack | undefined): void => {
+    if (pack === importPackValue) return
+    importPackValue = pack
+    for (const listener of importPackListeners) listener()
+  }
+
+  const fileBase64 = async (file: File): Promise<string> => {
+    const bytes = new Uint8Array(await file.arrayBuffer())
+    let binary = ''
+    for (const chunk of bytes) binary += String.fromCharCode(chunk)
+    return btoa(binary)
+  }
+
+  /** 导入（设计 §5）：先 analyze 只拆报不消化——单卡走活卡直通道；
+      包/散件进暂态，对话框选落点后 commit 如实落位。 */
   const importCard = (file: File, workspaceId?: WorkspaceId): void => {
     void (async () => {
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      let binary = ''
-      for (const chunk of bytes) binary += String.fromCharCode(chunk)
+      const encoded = await fileBase64(file)
       const target = await cardSessionFor(workspaceId)
-      const imported = await cardOp(target.sessionId !== undefined ? { sessionId: target.sessionId } : { root: target.root },
-        { op: 'import', file: btoa(binary), name: file.name })
-      cards.refresh()
-      if (imported.cardId !== undefined) face.openCard(imported.cardId, target)
+      const addr = target.sessionId !== undefined ? { sessionId: target.sessionId } : { root: target.root }
+      const report = await importAnalyze(addr, file.name, encoded)
+      if (report === undefined) { console.warn('noven-shell: import analyze failed:', file.name); return }
+      if (report.kind === 'single') {
+        const res = await importCommit(addr, file.name, encoded, '卡')
+        cards.refresh()
+        treeSource.refresh()
+        const cardId = res?.landed.find(l => l.type === 'card')?.cardId
+        if (cardId !== undefined) face.openCard(cardId, target)
+        return
+      }
+      pendingImportFile = file
+      pendingImportAddr = addr
+      setImportPack({ name: file.name, report })
     })().catch((reason: unknown) => { console.warn('noven-shell: card import failed:', reason) })
+  }
+
+  let pendingImportAddr: CardAddr = {}
+
+  /** 导入对话框提交：按落点落位，成功即清暂态并刷新树/卡库。 */
+  const commitImport = async (target: string): Promise<boolean> => {
+    const file = pendingImportFile
+    if (file === undefined || importPackValue === undefined) return false
+    const res = await importCommit(pendingImportAddr, file.name, await fileBase64(file), target)
+    if (res === undefined) return false
+    pendingImportFile = undefined
+    setImportPack(undefined)
+    cards.refresh()
+    treeSource.refresh()
+    return true
+  }
+
+  /** 导入对话框取消：丢掉暂态，文件不落位。 */
+  const cancelImport = (): void => {
+    pendingImportFile = undefined
+    setImportPack(undefined)
   }
 
   /** 图片附件走内联 image part；其余文件经 fileUpload 暂存拿 receipt（服务缺席时丢弃并告警）。 */
@@ -971,6 +1360,13 @@ export function apply(ctx: ClientContext): void {
       sessionId: key,
       title: project.title,
     }
+    // 滞回：绑定会话还在、只是 cwd/登记行瞬时空白时不清焦点——否则内容树被
+    // publish(undefined) 清成「新建」空态，下一拍又回来，肉眼就是导航抽搐。
+    // 会话行消失或 cwd 真换到别的根时照常落空（C6）。
+    if (next === undefined && focusSnapshot !== undefined && key !== undefined && key === focusSnapshot.sessionId) {
+      const row = ctx.sessions.list.getSnapshot().byId[key]
+      if (row !== undefined && (row.cwd === undefined || row.cwd === focusSnapshot.root)) return
+    }
     const same = next === undefined ? focusSnapshot === undefined
       : focusSnapshot !== undefined && next.root === focusSnapshot.root && next.sessionId === focusSnapshot.sessionId && next.title === focusSnapshot.title
     if (same) return
@@ -1035,11 +1431,13 @@ export function apply(ctx: ClientContext): void {
    * 归属：`owner` 是这条标签所在的会话现场；卡片地址只存项目根——会话会
    * 换绑、项目不会，打开时向当前会话解析访问路径（C9）。
    */
-  const openCanvasCard = (cardId: string, addr: CardAddr, moduleId: string | undefined, owner: SessionId | undefined, addModule = false): void => {
+  const openCanvasCard = (cardId: string, addr: CardAddr, moduleId: string | undefined, owner: SessionId | undefined, addModule = false, title = ''): void => {
     const session = owner ?? (ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined) ?? addr.sessionId ?? recentSession()?.id
     if (session === undefined) return
-    canvasInstance.actions.open({ key: `card:${cardId}`, kind: 'card', title: '', owner: session, cardId,
-      cardAddr: { root: rootOf(addr) }, ...(moduleId === undefined ? {} : { moduleId }), ...(addModule ? { addModule: true } : {}) })
+    canvasInstance.actions.open({
+      key: moduleId === undefined ? `card:${cardId}` : `mod:${cardId}:${moduleId}`,
+      kind: 'card', title, owner: session, cardId,
+      cardAddr: { root: rootOf(addr) }, moduleId, ...(addModule ? { addModule: true } : {}) })
     raiseCanvas()
   }
 
@@ -1094,9 +1492,71 @@ export function apply(ctx: ClientContext): void {
   }
 
   const listDir = async (sessionId: SessionId, path: string): Promise<readonly { name: string; type: string }[]> => {
-    const listing = await ctx.remote.workspaceFiles.list(sessionId, path, new AbortController().signal).catch(() => undefined)
+    // 服务端拒收空路径——根目录用 "." 表达。
+    const listing = await ctx.remote.workspaceFiles.list(sessionId, path === '' ? '.' : path, new AbortController().signal).catch(() => undefined)
     if (listing === undefined || !listing.ok) return []
     return listing.value.entries.map(entry => ({ name: entry.name, type: entry.type }))
+  }
+
+  // 温层：文档与目录清单按 `会话|路径` 键缓存，快照跨页签挂载保留。
+  // 写穿透在注入的 saveDoc 上；AI/外部工具直写盘的更新暂未失效（留待文件监听）。
+  const docCache = keyedCache<DocEntry>()
+  const dirCache = keyedCache<DirEntry>()
+  // 页签状态点表：页体上报的实体态镜像（瞬态，不随画布持久）。
+  const statusCache = keyedCache<TabFlags>()
+  // conv 页温层：侧会话折叠态按会话 id 索引，页签/浮窗渲染才 ensure。
+  const convs = convsSource(ctx.sessions)
+  const statusSet = (owner: SessionId, tabKey: string, flag: keyof TabFlags, on: boolean): void => {
+    const key = statusKey(owner, tabKey)
+    statusCache.put(key, { ...(statusCache.get(key) ?? {}), [flag]: on })
+  }
+
+  const ensureDoc = (sessionId: SessionId, path: string): void => {
+    const key = docKey(sessionId, path)
+    if (docCache.get(key) !== undefined) return
+    docCache.put(key, { state: 'loading' })
+    void readDoc(sessionId, path).then(content => {
+      docCache.put(key, content === undefined ? { state: 'missing' } : { state: 'ready', content })
+    })
+  }
+
+  /** 强制重拉：保留旧快照到响应到达——重挂中的岛/预览不闪空。 */
+  const refreshDoc = (sessionId: SessionId, path: string): void => {
+    const key = docKey(sessionId, path)
+    void readDoc(sessionId, path).then(content => {
+      docCache.put(key, content === undefined ? { state: 'missing' } : { state: 'ready', content })
+    })
+  }
+
+  const ensureDir = (sessionId: SessionId, path: string): void => {
+    const key = dirKey(sessionId, path)
+    if (dirCache.get(key) !== undefined) return
+    dirCache.put(key, { state: 'loading', entries: [] })
+    void listDir(sessionId, path).then(entries => {
+      dirCache.put(key, { state: 'ready', entries })
+    })
+  }
+
+  /** 目录版强制重拉：旧清单留到响应到达（文件列表挂回时用——目录成员可能已变）。 */
+  const refreshDir = (sessionId: SessionId, path: string): void => {
+    const key = dirKey(sessionId, path)
+    void listDir(sessionId, path).then(entries => {
+      dirCache.put(key, { state: 'ready', entries })
+    })
+  }
+
+  /** 建一条「模-」模拟会话：真实 session + rename + pick + open（树 Studio 组与模拟器列表共用）。 */
+  const createSimSession = async (root: string | undefined): Promise<SessionId | undefined> => {
+    const created = await createSessionIn(root)
+    const summary = ctx.sessions.list.getSnapshot().byId[created]
+    const base = summary?.displayTitle ?? `会话 ${Date.now() % 10000}`
+    const res = await ctx.remote.session.rename({ sessionId: created, title: `${SIM_TITLE_PREFIX}${base}` })
+    if (!res.ok) return created
+    if (root !== undefined) {
+      canvasInstance.actions.simOpenSet(root, created)
+      canvasInstance.actions.simPickToggle(root, created)
+    }
+    return created
   }
 
   /** interview 起手：建完卡把预设提示词排进对话，让 AI 开问。 */
@@ -1144,7 +1604,20 @@ export function apply(ctx: ClientContext): void {
         treeSource.refresh()
         return
       }
-      if (request.kind === 'import') return
+      if (request.kind === 'comic') {
+        const sessionId = ensured.sessionId ?? await ensureSession()
+        if (sessionId === undefined) return
+        const path = `漫画/${request.name}.html`
+        const scaffold = `<!doctype html>\n<html lang="zh">\n<head><meta charset="utf-8"><title>${request.name}</title></head>\n<body>\n</body>\n</html>\n`
+        if (await saveDoc(sessionId, path, scaffold, null) !== 'ok') return
+        docCache.put(docKey(sessionId, path), { state: 'ready', content: scaffold })
+        canvasInstance.actions.open({ key: `work:${path}`, kind: 'work', title: request.name, owner: sessionId, path })
+        raiseCanvas()
+        treeSource.refresh()
+        return
+      }
+      // card/studio 在对话框/入口侧已分流；import 走文件选择器——面板提交不该携带。
+      if (request.kind === 'import' || request.kind === 'card' || request.kind === 'studio') return
       const addr: CardAddr = { ...currentCardAddr(), ...ensured }
       if (request.kind === 'character' && request.worldCardId !== undefined) {
         await cardOp(addr, { op: 'apply', cardId: request.worldCardId, command: { kind: 'add_character', name: request.name } })
@@ -1168,13 +1641,150 @@ export function apply(ctx: ClientContext): void {
     { id: ME_ID, order: 40, label: () => t('nav.me'), Icon: MeIcon },
   ]
 
+  // 挂窗/底部面板的宿主服务都是可选的：插件缺席时工具菜单对应行不出。
+  // 挂窗服务只剩配对查询/开配对——窗本体是画布的 conv 浮窗（同一页实体）。
+  const dockApi = ctx.get('novenDock') as {
+    readonly ensureDock?: (main: SessionId) => Promise<SessionId | undefined>
+    readonly dockIdOf?: (main: SessionId) => Promise<SessionId | undefined>
+  } | undefined
+  const betterSidebar = ctx.get('betterSidebar') as {
+    openTab?: (seed: { type: string }) => void
+    getSnapshot?: () => { readonly state?: { readonly bottomOpen?: boolean } }
+    subscribeState?: (listener: () => void) => () => void
+  } | undefined
+  /** 缺席服务的常量 false 快照：工具菜单行读它的勾选态。 */
+  const offSnapshot: ObservableSnapshot<boolean> = { getSnapshot: () => false, subscribe: () => () => {} }
+  const bottomOpenSnap: ObservableSnapshot<boolean> =
+    betterSidebar?.getSnapshot === undefined || betterSidebar.subscribeState === undefined ? offSnapshot : {
+      getSnapshot: () => betterSidebar.getSnapshot?.().state?.bottomOpen === true,
+      subscribe: (listener: () => void) => betterSidebar.subscribeState?.(listener) ?? (() => {}),
+    }
+  /** Studio 组存续态：按项目根读画布 store（persist 整棵替换，老快照可能还没有 studioOn——`?.` 守卫）。 */
+  const studioOnSnap: ObservableSnapshot<boolean> = {
+    getSnapshot: () => focusSnapshot !== undefined && canvasInstance.getSnapshot().studioOn?.[focusSnapshot.root] === true,
+    subscribe: listener => {
+      const a = canvasInstance.subscribe(listener)
+      const b = projectFocus.subscribe(listener)
+      return () => { a(); b() }
+    },
+  }
+
   // 抽屉上区：内容树进 sidebar.right.pane.top（工作台导航的原座）。座是
   // single，原来被无头 PresentWatcher 占着——它挪去了 shell.overlay。
   ctx.slots.inject('sidebar.right.pane.top', () => ctx.slots.register({
     name: 'sidebar.right.pane.top', locale: NS,
-    inject: (sessionId): TreeInjected => ({
-      hooks: { tree: treeSource, project: projectFocus, projects },
-      openCard: (cardId, moduleId) => openCanvasCard(cardId, { sessionId, root: focusSnapshot?.root }, moduleId, sessionId),
+    inject: (sessionId): TreeInjected => {
+      /** Studio 新建入口：建一条 模- 会话并把本会话画布切到手机屏。 */
+      const createSim = (): void => {
+        const root = focusSnapshot?.root
+        void createSimSession(root)
+          .then(id => { if (id !== undefined) { canvasInstance.actions.select(sessionId, 'chat'); raiseCanvas() } })
+          .catch((reason: unknown) => { console.warn('noven-shell: sim create failed:', reason) })
+      }
+      /** 「新建 → Studio」：翻转 Studio 组存续态；开启时把画布切回会话页签（手机屏在其中）。 */
+      const toggleStudio = (): void => {
+        const root = focusSnapshot?.root
+        if (root === undefined) return
+        const on = canvasInstance.getSnapshot().studioOn?.[root] === true
+        canvasInstance.actions.studioSet(root, !on)
+        if (!on) { canvasInstance.actions.select(sessionId, 'chat'); raiseCanvas() }
+      }
+      /** 本会话画布焦点叶的当前页签 key——树行点亮"当前页"用。 */
+      const activeTabSnap: ObservableSnapshot<string | undefined> = {
+        getSnapshot: () => activeKey(canvasInstance.getSnapshot(), sessionId),
+        subscribe: listener => canvasInstance.subscribe(listener),
+      }
+      /** 工具菜单功能行 = 右栏 guide 清单——与 ⋯ 菜单同一枚举源。 */
+      const featureTabsSnap: ObservableSnapshot<readonly SidebarRightGuideBox[]> = {
+        getSnapshot: () => ctx.sidebarRightTabs.guide(),
+        subscribe: (listener: () => void) => ctx.sidebarRightTabs.subscribe(listener),
+      }
+      /** 挂窗勾选态：本会话有 conv 浮窗漂着即算挂着。 */
+      const dockFloatSnap: ObservableSnapshot<boolean> = {
+        getSnapshot: () => canvasInstance.getSnapshot().floats?.[sessionId]?.some(f => f.key.startsWith('conv:')) === true,
+        subscribe: listener => canvasInstance.subscribe(listener),
+      }
+      /** 侧边对话：fork 侧线开 conv 页签——侧会话是画布公民，不进抽屉页。 */
+      const openSideConv = (): void => {
+        void fetch('/sidebar/api/sidechat.start', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ sessionId, question: '' }),
+        })
+          .then(async res => {
+            const parsed = await res.json().catch(() => null) as { ok?: boolean; value?: { childId: string } } | null
+            const childId = parsed?.value?.childId
+            if (!res.ok || parsed?.ok !== true || childId === undefined) throw new Error(`sidechat.start failed (${res.status})`)
+            canvasInstance.actions.open({
+              key: `conv:${childId}`, kind: 'conv', title: t('conv.side'),
+              owner: sessionId, convId: SessionId(childId), convChannel: 'sidechat',
+            })
+            raiseCanvas()
+          })
+          .catch((reason: unknown) => { console.warn('noven-shell: sidechat start failed:', reason) })
+      }
+      const ensureDockFn = dockApi?.ensureDock
+      return {
+      hooks: {
+        tree: treeSource, project: projectFocus, projects,
+        sims: simSessionsSource(ctx.sessions, ctx.workspaces, canvasInstance, sessionId),
+        dock: dockFloatSnap, bottomPanel: bottomOpenSnap, studio: studioOnSnap, activeTab: activeTabSnap,
+        featureTabs: featureTabsSnap,
+      },
+      openSim: id => {
+        const root = focusSnapshot?.root
+        if (root === undefined) return
+        canvasInstance.actions.simOpenSet(root, id)
+        canvasInstance.actions.select(sessionId, 'chat')
+        raiseCanvas()
+      },
+      createSim,
+      toggleStudio,
+      deleteGroup: name => {
+        void treeOp({ sessionId, root: focusSnapshot?.root }, { op: 'rmdir', name })
+          .then(ok => { if (ok) treeSource.refresh() })
+          .catch((reason: unknown) => { console.warn('noven-shell: rmdir failed:', reason) })
+      },
+      /** 工具菜单功能行 → 右栏页签；侧边对话收编成画布 conv 页签（不进抽屉）。 */
+      openFeatureTab: kind => {
+        if (kind === 'sidechat') { openSideConv(); return }
+        ctx.sidebarRight.openTab(kind)
+      },
+      /** 挂窗 = conv 页的浮窗形态：开着（浮着或钉成页签）再点收起。 */
+      toggleDock: ensureDockFn === undefined ? undefined : () => {
+          void ensureDockFn(sessionId)
+          .then(dockId => {
+            if (dockId === undefined) return
+            const key = `conv:${dockId}`
+            if (canvasInstance.getSnapshot().tabs.some(row => row.owner === sessionId && row.key === key)) {
+              canvasInstance.actions.close(sessionId, key)
+              return
+            }
+            canvasInstance.actions.open({ key, kind: 'conv', title: t('tree.tool.dock'), owner: sessionId, convId: dockId, convChannel: 'direct' })
+            canvasInstance.actions.floatTab(sessionId, key, 96, 96)
+            raiseCanvas()
+          })
+          .catch((reason: unknown) => { console.warn('noven-shell: dock open failed:', reason) })
+      },
+      /** 底部面板：转发给页头那个真实控件——状态唯一归属它，天然同步。 */
+      toggleBottomPanel: betterSidebar === undefined ? undefined : () => {
+        document.querySelector<HTMLButtonElement>('button[data-dsh-bottom-toggle]')?.click()
+      },
+      renameFile: (path, name) => {
+        void fileOp({ sessionId, root: focusSnapshot?.root }, { op: 'rename', path, name })
+          .then(ok => { if (ok) treeSource.refresh() })
+          .catch((reason: unknown) => { console.warn('noven-shell: file rename failed:', reason) })
+      },
+      deleteFile: path => {
+        void fileOp({ sessionId, root: focusSnapshot?.root }, { op: 'rm', path })
+          .then(ok => { if (ok) treeSource.refresh() })
+          .catch((reason: unknown) => { console.warn('noven-shell: file rm failed:', reason) })
+      },
+      present: (path, view) => {
+        void presentNode({ sessionId, root: focusSnapshot?.root }, path, view)
+          .then(ok => { if (ok) treeSource.refresh() })
+          .catch((reason: unknown) => { console.warn('noven-shell: present failed:', reason) })
+      },
+      openCard: (cardId, moduleId, title) => openCanvasCard(cardId, { sessionId, root: focusSnapshot?.root }, moduleId, sessionId, false, title),
       addModule: cardId => openCanvasCard(cardId, { sessionId, root: focusSnapshot?.root }, undefined, sessionId, true),
       renameModule: (cardId, moduleId, name) => {
         void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'rename_module', moduleId, name }))
@@ -1184,6 +1794,24 @@ export function apply(ctx: ClientContext): void {
       },
       deleteModule: (cardId, moduleId) => {
         void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'remove_module', moduleId }))
+          .then(() => canvasInstance.actions.close(sessionId, `mod:${cardId}:${moduleId}`))
+      },
+      renameCard: (cardId, name) => {
+        void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'rename_card', name }))
+      },
+      deleteCard: cardId => {
+        void cardOp({ sessionId, root: focusSnapshot?.root }, { op: 'delete', cardId })
+          .then(() => {
+            for (const row of canvasInstance.getSnapshot().tabs) {
+              if (row.cardId === cardId && row.owner === sessionId) canvasInstance.actions.close(sessionId, row.key)
+            }
+            treeSource.refresh()
+          })
+          .catch((reason: unknown) => { console.warn('noven-shell: delete card failed:', reason) })
+      },
+      embedFile: (cardId, moduleId, path) => {
+        void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'embed_file', path, moduleId }))
+          .then(() => treeSource.refresh())
       },
       openDoc: (path, title) => {
         const kind = fileTabKind(path)
@@ -1199,12 +1827,15 @@ export function apply(ctx: ClientContext): void {
         raiseCanvas()
       },
       openCreate: (kind, dir) => {
+        // studio 不进面板：它是 Studio 组的开关；其余 kinds 走画布新建面板。
+        if (kind === 'studio') { toggleStudio(); return }
         canvasInstance.actions.openDialog(sessionId, kind, dir)
         raiseCanvas()
       },
       switchProject,
       expandDrawer: () => ctx.sidebarRight.toggleExpanded(),
-    }),
+      }
+    },
   }, ContentTree))
 
   // 画布：一个 selfChrome 页签类型，body 挂在 pane.tab 键控座下——openTab
@@ -1222,12 +1853,75 @@ export function apply(ctx: ClientContext): void {
     store: canvasStore,
     inject: (sessionId): CanvasInjected => ({
       session: sessionId,
-      hooks: { project: projectFocus, tree: treeSource },
+      hooks: {
+        project: projectFocus,
+        tree: treeSource,
+        transcript: transcriptSource(ctx.sessions, sessionId),
+        sims: simSessionsSource(ctx.sessions, ctx.workspaces, canvasInstance, sessionId),
+        simTranscript: simTranscriptSource(ctx.sessions, canvasInstance, sessionId),
+        docs: docCache.snapshot,
+        dirs: dirCache.snapshot,
+        status: statusCache.snapshot,
+        importPack: importPackSnap,
+        convs,
+      },
+      ensureConv: convs.ensure,
+      sendConv: convs.send,
+      ensureDoc,
+      refreshDoc,
+      ensureDir,
+      refreshDir,
+      setStatus: (tabKey, flag, on) => statusSet(sessionId, tabKey, flag, on),
+      // 散文件写面走 /api/noven-tree：改名等于换实体键——旧页签收掉、
+      // 新路径按扩展名重判 kind 重开；删除同时收掉 doc/work 两种页签。
+      renameFile: async (path, name) => {
+        if (!(await fileOp({ sessionId, root: focusSnapshot?.root }, { op: 'rename', path, name }))) return undefined
+        const dir = path.split('/').slice(0, -1).join('/')
+        const next = dir === '' ? name : `${dir}/${name}`
+        const kind = fileTabKind(next)
+        canvasInstance.actions.close(sessionId, `doc:${path}`)
+        canvasInstance.actions.close(sessionId, `work:${path}`)
+        canvasInstance.actions.open({ key: `${kind}:${next}`, kind, title: name, owner: sessionId, path: next })
+        treeSource.refresh()
+        return next
+      },
+      deleteFile: async path => {
+        if (!(await fileOp({ sessionId, root: focusSnapshot?.root }, { op: 'rm', path }))) return false
+        canvasInstance.actions.close(sessionId, `doc:${path}`)
+        canvasInstance.actions.close(sessionId, `work:${path}`)
+        treeSource.refresh()
+        return true
+      },
+      sim: {
+        create: async () => createSimSession(ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd),
+        rename: async (sid, title) => {
+          const kept = title.startsWith(SIM_TITLE_PREFIX) ? title : `${SIM_TITLE_PREFIX}${title}`
+          await ctx.remote.session.rename({ sessionId: sid, title: kept })
+        },
+        archive: async sid => { await ctx.uiWorkspace.archiveSession(sid) },
+        ask: async (sid, parts) => {
+          await ctx.sessions.using(sid, { source: 'novenShell' }, async reference => {
+            await reference.binding.session.prompt([...parts], 'queue')
+          })
+        },
+        models: async () => {
+          const res = await ctx.remote.session.modelCatalog()
+          return res.ok ? res.value : undefined
+        },
+        selectModel: async (sid, sel) => {
+          const res = await ctx.remote.session.selectModel({ sessionId: sid, ...sel })
+          return res.ok
+        },
+      },
       loadCard: fetchCard,
       cardOp,
       workspaceRoot: rootOf,
       readDoc,
-      saveDoc,
+      saveDoc: async (sid, path, content, base) => {
+        const res = await saveDoc(sid, path, content, base)
+        if (res === 'ok') docCache.put(docKey(sid, path), { state: 'ready', content })
+        return res
+      },
       listDir,
       ask: async (text) => {
         await ctx.sessions.using(sessionId, { source: 'novenShell' }, async reference => {
@@ -1236,6 +1930,12 @@ export function apply(ctx: ClientContext): void {
       },
       submitCreate,
       importCard,
+      commitImport,
+      cancelImport,
+      listCards: async sid => (await fetchCardList({ sessionId: sid })).map(row => ({ cardId: row.cardId, name: row.name })),
+      embedFile: (cardId, moduleId, path) => {
+        void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'embed_file', path, moduleId }))
+      },
     }),
   }, CanvasHost))
 
@@ -1475,6 +2175,12 @@ export function apply(ctx: ClientContext): void {
       },
     }),
   }, WorkspaceLibraryItem)), 'noven-shell: workspace 创作库 row')
+  // 会话行 ⋯ 菜单：把模型识别的内部会话 id 放进剪贴板（调试/贴给模型用）。
+  ctx.effect(() => ctx.slots.inject('sidebar.workspaces.session.menu.item', () => ctx.slots.register({
+    name: 'sidebar.workspaces.session.menu.item', id: 'copy-session-id', order: 500, locale: NS,
+  }, CopySessionIdItem)), 'noven-shell: 复制会话 ID row')
+  applyQuote(ctx)
+  applyBranches(ctx, (from, to) => canvasInstance.actions.inheritOwner(from, to))
   // The stage's card chip raises the card editor through the shell's face —
   // the workbench plugin dispatches, the shell owns navigation.
   ctx.effect(() => {
@@ -1490,20 +2196,22 @@ export function apply(ctx: ClientContext): void {
 
   // 侧栏 Workspace 改名 → 注册表 title（rename 顺带写纹身备份与 project.json）。
   // 只对已注册的创作库项目生效；创作库侧的 renameProject 自己写 Workspace 行，不经这条桥。
+  // 首见即纠偏：注册表滞留旧名（历史改名残留）时按工作区行修复一次；in-flight
+  // 或失败的 rename 期间 title 仍分歧时不重复发写，等下次变化或重载再纠。
   const workspacesSvc = ctx.get('workspaces') as IWorkspaces | undefined
   if (workspacesSvc !== undefined) ctx.effect(() => {
     const seen = new Map<string, string>()
     const sync = (): void => {
-      const registered = new Set(projects.getSnapshot().map(p => p.root))
+      const titleByRoot = new Map(projects.getSnapshot().map(p => [p.root, p.title] as const))
       for (const ws of workspacesSvc.list.getSnapshot().items) {
-        if (!registered.has(ws.path)) continue
+        const projectTitle = titleByRoot.get(ws.path)
+        if (projectTitle === undefined) continue
         const prev = seen.get(ws.path)
         seen.set(ws.path, ws.title)
-        if (prev !== undefined && prev !== ws.title) {
-          void projectOp({ op: 'rename', root: ws.path, title: ws.title })
-            .then(() => { projects.refresh() })
-            .catch((reason: unknown) => { console.warn('noven-shell: project title sync failed:', reason) })
-        }
+        if (ws.title === projectTitle || prev === ws.title) continue
+        void projectOp({ op: 'rename', root: ws.path, title: ws.title })
+          .then(() => { projects.refresh() })
+          .catch((reason: unknown) => { console.warn('noven-shell: project title sync failed:', reason) })
       }
     }
     const unsubscribe = workspacesSvc.list.subscribe(sync)
@@ -1520,6 +2228,12 @@ export function apply(ctx: ClientContext): void {
     inject: (): FootLauncherInjected => ({ openMy: () => { ctx.layout.selectPanel(ME_ID) } }),
   }, (p: FootLauncherProps) => <FootLauncher {...p} />))
 
+  // noven 页头不要「标准模式」preset 标签：同 id 注册一条更低 priority 的
+  // 空条目把它遮蔽（preset 功能本身照旧，只是标签不渲）。
+  ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
+    name: 'conversation.session.header.actions', id: 'agent-preset', priority: -1,
+  }, () => null))
+
   ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
     name: 'conversation.session.header.actions', id: 'noven-context-chips', order: -8, locale: NS,
     inject: (sessionId: Parameters<typeof ctx.remote.commands.list>[0]): HeaderChipsInjected => ({
@@ -1527,6 +2241,21 @@ export function apply(ctx: ClientContext): void {
       openContext: () => { ctx.sidebarRight.openTab(CONTEXT_TAB_ID) },
     }),
   }, (p: PropsRuntime<'conversation.session.header.actions'> & InjectFace<HeaderChipsInjected> & PropsLocale<'novenShell'>) => <HeaderChips {...p} />))
+
+  // 会话 ⋯ 菜单尾段：功能入口随右栏 guide 注册表走——哪个插件登记了功能页签，
+  // 这里就出对应行，藏掉的功能区从这里仍可达。
+  ctx.slots.inject('conversation.session.header.more.item', () => ctx.slots.register({
+    name: 'conversation.session.header.more.item', id: 'noven-features', order: 100, locale: NS,
+    inject: (): FeatureMenuInjected => ({
+      hooks: {
+        guide: {
+          getSnapshot: () => ctx.sidebarRightTabs.guide(),
+          subscribe: (listener: () => void) => ctx.sidebarRightTabs.subscribe(listener),
+        },
+      },
+      openTab: kind => { ctx.sidebarRight.openTab(kind) },
+    }),
+  }, (p: FeatureMenuProps) => <FeatureMenuItems {...p} />))
 
   // Card tools render compact labelled rows inside the folded process group;
   // the saved-card receipt is a Turn-level element on the turnTail list seat,

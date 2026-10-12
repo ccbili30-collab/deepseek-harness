@@ -34,6 +34,7 @@ function bench(feedbackAvailable = false) {
     openFeedback,
     request,
     dismiss,
+    renderSlot: () => null,
     t: (key: keyof typeof en): string => en[key],
   } as unknown as SessionLogDownloadHeaderProps
   const view = render(<SessionLogDownloadHeaderAction {...props} />)
@@ -90,6 +91,27 @@ describe('Session export Header action', () => {
     expect(await b.view.findByRole('dialog', { name: 'Session download started' })).toBeTruthy()
   })
 
+  it('renders contributed more-item rows that dismiss the menu on select', () => {
+    const b = bench()
+    b.view.unmount()
+    const props = {
+      sessionId: SID,
+      useSessionLogDownload: bindSnapshot(b.controller.store),
+      useFeedbackAvailable: bindSnapshot(b.feedback),
+      openFeedback: b.openFeedback,
+      request: b.request,
+      dismiss: (sessionId: SessionId) => { b.controller.dismiss(sessionId) },
+      renderSlot: (_key: string, _owner: unknown, opts?: { hookContext?: readonly [boolean, (open: boolean) => void] }) =>
+        <button type="button" role="menuitem" onClick={() => opts?.hookContext?.[1](false)}>Contributed row</button>,
+      t: (key: keyof typeof en): string => en[key],
+    } as unknown as SessionLogDownloadHeaderProps
+    const view = render(<SessionLogDownloadHeaderAction {...props} />)
+    fireEvent.click(view.getByRole('button', { name: 'More actions' }))
+    fireEvent.click(view.getByRole('menuitem', { name: 'Contributed row' }))
+    expect(view.queryByRole('menu')).toBeNull()
+    expect(b.request).not.toHaveBeenCalled()
+  })
+
   it('closes the menu on Escape without downloading', () => {
     const b = bench()
     fireEvent.click(b.view.getByRole('button', { name: 'More actions' }))
@@ -112,6 +134,7 @@ describe('Session export Header action', () => {
       openFeedback: b.openFeedback,
       request: (sessionId: SessionId) => controller.download(sessionId),
       dismiss: (sessionId: SessionId) => { controller.dismiss(sessionId) },
+      renderSlot: () => null,
       t: (key: keyof typeof en): string => en[key],
     } as unknown as SessionLogDownloadHeaderProps)} />)
 

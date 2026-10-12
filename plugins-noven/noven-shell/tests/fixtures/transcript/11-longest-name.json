@@ -1,0 +1,8 @@
+{
+  "name": "名册最长匹配：「阿七娘」先于「阿七」命中",
+  "cast": ["阿七", "阿七娘"],
+  "input": [{ "id": "12", "role": "assistant", "turnId": "5", "text": "阿七娘：先走。" }],
+  "expected": [
+    { "id": "12#0", "messageId": "12", "segment": 0, "turnId": "5", "role": "assistant", "kind": "dialogue", "speaker": "阿七娘", "text": "先走。", "html": "先走。", "src": null, "streaming": false }
+  ]
+}

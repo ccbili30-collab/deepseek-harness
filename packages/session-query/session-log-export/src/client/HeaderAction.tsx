@@ -27,7 +27,7 @@ export type SessionLogDownloadHeaderProps = SessionLogDownloadDialogProps & Inje
  * @returns the persistent Header action and Session-scoped dialog.
  */
 export function SessionLogDownloadHeaderAction(props: SessionLogDownloadHeaderProps): ReactNode {
-  const { sessionId, useSessionLogDownload, useFeedbackAvailable, request, openFeedback, t } = props
+  const { sessionId, useSessionLogDownload, useFeedbackAvailable, request, openFeedback, renderSlot, t } = props
   const feedbackAvailable = useFeedbackAvailable(value => value)
   const entry = useSessionLogDownload(state => state.bySession[String(sessionId)])
   const busy = entry?.status === 'downloading'
@@ -62,7 +62,9 @@ export function SessionLogDownloadHeaderAction(props: SessionLogDownloadHeaderPr
             <IconEllipsisOutlineRegular />
           </Button>
         )}
-      />
+      >
+        {renderSlot('conversation.session.header.more.item', {}, { hookContext: [open, setOpen] })}
+      </Menu>
       <SessionLogDownloadDialog {...props} />
     </>
   )

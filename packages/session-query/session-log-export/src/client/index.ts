@@ -9,6 +9,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-message-feedback/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
+import type { SlotHookFactory } from '@deepseek-ai/dsh-client-ui-slots'
 import { SessionLogDownloadController } from './controller.ts'
 import { SessionLogDownloadHeaderAction, type SessionLogDownloadHeaderInjected } from './HeaderAction.tsx'
 import { en, NS, zh, type SessionLogDownloadKey } from './locales.ts'
@@ -19,9 +20,40 @@ declare module '@deepseek-ai/cordis' {
   }
 }
 
+/** Open-state pair the header "more" menu hands each contributed row as hookContext. */
+export type HeaderMoreMenuOpenState = readonly [open: boolean, setOpen: (open: boolean) => void]
+
+/** Hook a contributed row calls to read and set that open state. */
+export type UseHeaderMoreMenuOpenState = () => HeaderMoreMenuOpenState
+
+/**
+ * Bind the render occurrence's open-state pair into the rows' `useMenuOpenState` hook.
+ * @param _standard - framework standard props (unused).
+ * @param state - the menu's open-state pair from the render occurrence.
+ * @returns the hook the entry calls.
+ */
+export const headerMoreMenuOpenStateFactory: SlotHookFactory<'conversation.session.header.more.item', UseHeaderMoreMenuOpenState> =
+  (_standard, state) => () => state
+
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
     'session-log-download': SessionLogDownloadKey
+  }
+  interface SlotMap {
+    /**
+     * Rows appended after the Session header "..." menu's shipped items, in
+     * ascending `order`. Each entry renders one `role="menuitem"` `<button>`
+     * (ui-primitives' `MenuItemButton` carries the host styling) and dismisses
+     * the menu through the injected `useMenuOpenState` hook after acting.
+     */
+    'conversation.session.header.more.item': {
+      kind: 'list'
+      scope: 'session'
+      hookContext: HeaderMoreMenuOpenState
+      inject: { hooks: {
+        menuOpenState: SlotHookFactory<'conversation.session.header.more.item', UseHeaderMoreMenuOpenState>
+      } }
+    }
   }
 }
 
@@ -52,6 +84,14 @@ export function apply(ctx: ClientContext): void {
     name: 'conversation.session.header.utilities',
     id: 'session-log-download',
     locale: NS,
+    // Contributed rows bind the menu's open state from the render occurrence
+    // (the header action passes the state pair as hookContext).
+    children: {
+      'conversation.session.header.more.item': {
+        kind: 'list', scope: 'session',
+        inject: { hooks: { menuOpenState: headerMoreMenuOpenStateFactory } },
+      },
+    },
     inject: (): SessionLogDownloadHeaderInjected => ({
       hooks: { sessionLogDownload: controller.store, feedbackAvailable },
       request: (sessionId: SessionId) => controller.download(sessionId),

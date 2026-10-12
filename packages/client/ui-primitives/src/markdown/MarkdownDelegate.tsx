@@ -24,6 +24,17 @@ export interface MarkdownDelegate {
    * @param options - First line to reveal when the destination specifies a line or range.
    */
   readonly openFile?: ((path: string, options?: { line?: number }) => void) | undefined
+  /**
+   * Non-HTTP(S) protocols this owner navigates itself (e.g. `['noven:']`).
+   * Settled anchors whose URL scheme matches call {@link MarkdownDelegate.openLink};
+   * undeclared schemes keep their documented fallback (plain text).
+   */
+  readonly linkProtocols?: readonly string[] | undefined
+  /**
+   * Open an anchor whose protocol is declared in {@link MarkdownDelegate.linkProtocols}.
+   * @param href - The authored absolute URL, URI-normalized.
+   */
+  readonly openLink?: ((href: string) => void) | undefined
 }
 
 const MarkdownDelegateContext = createContext<MarkdownDelegate>({})
@@ -44,8 +55,13 @@ export function MarkdownDelegateProvider({
   openExternalLink,
   openFile,
   fileImages,
+  linkProtocols,
+  openLink,
 }: MarkdownDelegateProviderProps): ReactNode {
-  const delegate = useMemo(() => ({ openExternalLink, openFile, fileImages }), [openExternalLink, openFile, fileImages])
+  const delegate = useMemo(
+    () => ({ openExternalLink, openFile, fileImages, linkProtocols, openLink }),
+    [openExternalLink, openFile, fileImages, linkProtocols, openLink],
+  )
   return (
     <MarkdownDelegateContext.Provider value={delegate}>
       {children}

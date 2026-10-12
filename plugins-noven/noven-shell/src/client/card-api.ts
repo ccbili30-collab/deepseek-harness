@@ -26,8 +26,9 @@ export interface CardModuleDoc {
   readonly characterIds: readonly string[]
   readonly layout: string
   /** Special-module renderer: 'html' renders block text inside a sandboxed iframe.
+      path 是项目内文件活引用（html 模块实时读这份文件渲染）；
       data 是首个文字块 JSON 按 type 解码后的结构（timeline/collection/map/relation）。 */
-  readonly widget?: { readonly type: string; readonly height?: number; readonly data?: unknown }
+  readonly widget?: { readonly type: string; readonly height?: number; readonly path?: string; readonly data?: unknown }
   /** `module_options` 的回填字段：命令整体覆盖，改一项要带齐现状。 */
   readonly tags: readonly string[]
   readonly use?: { readonly kind: string; readonly words?: readonly string[]; readonly caseSensitive?: boolean; readonly requireAll?: boolean }

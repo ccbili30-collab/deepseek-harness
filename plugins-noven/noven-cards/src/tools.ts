@@ -16,7 +16,7 @@ import { defineTool, type ParameterSchemaSpec } from '@deepseek-ai/dsh-tools'
 
 /** 任何可落 JSON 的值（工具返回值契约）。 */
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue }
-import { flattenModules, organizeFolders, assertValid, findTarget, emptyCardDocument, type ContentDocument, type ContentModule, type ModuleUse } from './model.ts'
+import { flattenModules, organizeFolders, assertValid, findTarget, emptyCardDocument, IMAGE_MEDIA, type ContentDocument, type ContentModule, type ModuleUse } from './model.ts'
 import { BindingStore } from './bindings.ts'
 import { CardStore, cardsRoot, type SavedCard } from './store.ts'
 import { applyAndCommit, type EditorCommand } from './editor.ts'
@@ -33,10 +33,7 @@ const NEW_BLOCK_HINTS = new Set(['new', 'create', 'new_block', 'newblock', 'new 
 /** 正文分页大小（码点）。 */
 const PAGE_LIMIT = 4000
 
-/** 图片扩展名 → mediaType。 */
-const IMAGE_MEDIA: Record<string, string> = {
-  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp', gif: 'image/gif', bmp: 'image/bmp', avif: 'image/avif',
-}
+
 
 const RESULT_SCHEMA = { type: 'object' as const, additionalProperties: true as const }
 
@@ -839,6 +836,14 @@ export function registerCardTools(ctx: Context): void {
   registerEditTool(tools, 'remove_card_resource', '移除当前卡的素材归属。remove_uses 为 true 时同时移除该图片所有展示和头像封面用途；false 遇仍在使用时拒绝。保留历史版本的原始文件。',
     { resource_id: { type: 'string', required: true, description: '资源编号' }, remove_uses: { type: 'boolean', description: '是否连同用途一并移除' } },
     args => ({ kind: 'remove_resource', resourceId: String(args.resource_id), removeUses: args.remove_uses === true }))
+
+  registerEditTool(tools, 'module_embed_file',
+    '把项目内文件嵌进模块展示：图片收进卡资源生成图片块；.html/.htm 成为活引用（模块按文件实时渲染，文件更新模块跟着变）；.md/.txt 把全文快照成文字块。module_id 省略时以文件名在卡根新建一个模块。',
+    {
+      module_id: { type: 'string', description: '目标模块编号；省略=以文件名新建模块' },
+      path: { type: 'string', required: true, description: '项目内文件相对路径（如 视觉/盐场.png、研究素材/舆图.html）' },
+    },
+    args => ({ kind: 'embed_file', path: String(args.path), moduleId: optionalId(args.module_id) }))
 
   tools.register(defineTool({
     name: 'save_conversation_image',

@@ -1,0 +1,14 @@
+{
+  "name": "出图：整行 ![alt](id) 成 image 段，src 为 asset id，alt 进 text",
+  "cast": [],
+  "input": [
+    { "id": "12", "role": "assistant", "turnId": "5", "text": "看这个\n\n![](map-q1)\n\n如何？" },
+    { "id": "13", "role": "assistant", "turnId": "6", "text": "![城楼图](wall-02)" }
+  ],
+  "expected": [
+    { "id": "12#0", "messageId": "12", "segment": 0, "turnId": "5", "role": "assistant", "kind": "narration", "text": "看这个", "html": "看这个", "src": null, "streaming": false },
+    { "id": "12#1", "messageId": "12", "segment": 1, "turnId": "5", "role": "assistant", "kind": "image", "text": "", "html": "", "src": "map-q1", "streaming": false },
+    { "id": "12#2", "messageId": "12", "segment": 2, "turnId": "5", "role": "assistant", "kind": "narration", "text": "如何？", "html": "如何？", "src": null, "streaming": false },
+    { "id": "13#0", "messageId": "13", "segment": 0, "turnId": "6", "role": "assistant", "kind": "image", "text": "城楼图", "html": "", "src": "wall-02", "streaming": false }
+  ]
+}

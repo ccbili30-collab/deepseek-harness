@@ -1,0 +1,10 @@
+{
+  "name": "多人台词：同段连续几行不同说话人各自成段",
+  "cast": ["阿七", "李清照"],
+  "input": [{ "id": "12", "role": "assistant", "turnId": "5", "text": "阿七：你也看见了？\n李清照：嗯，在井里。\n阿七：别出声。" }],
+  "expected": [
+    { "id": "12#0", "messageId": "12", "segment": 0, "turnId": "5", "role": "assistant", "kind": "dialogue", "speaker": "阿七", "text": "你也看见了？", "html": "你也看见了？", "src": null, "streaming": false },
+    { "id": "12#1", "messageId": "12", "segment": 1, "turnId": "5", "role": "assistant", "kind": "dialogue", "speaker": "李清照", "text": "嗯，在井里。", "html": "嗯，在井里。", "src": null, "streaming": false },
+    { "id": "12#2", "messageId": "12", "segment": 2, "turnId": "5", "role": "assistant", "kind": "dialogue", "speaker": "阿七", "text": "别出声。", "html": "别出声。", "src": null, "streaming": false }
+  ]
+}

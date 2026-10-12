@@ -6,6 +6,7 @@
  * @module noven-shell/client/card-page
  */
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { MarkdownDelegateProvider, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardAddr, CardBlockView, CardDocView, CardModuleDoc, CardOpResult, CardState } from './card-api.ts'
 import { CardConflict, cardContentUrl, fetchCard } from './card-api.ts'
 import { findModule } from './pages/CardEditor.tsx'
@@ -15,6 +16,10 @@ import { MapEditor } from './map-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
 import { MODLIB_ART } from './modlib-art.ts'
+import { islandDoc } from './stage-island.tsx'
+
+/** 卡页认领的深链协议：noven://card/<id>[/module/<id>] 与 noven://file/<路径>。 */
+const NOVEN_LINK_PROTOCOLS = ['noven:']
 
 /** 模块类型名 → 视图字典键（与内容树同一套语义图标无关，名字走 locale）。 */
 const WIDGET_LABEL: Record<string, string> = {
@@ -123,10 +128,12 @@ function moduleGlyph(module: CardModuleDoc, size: number): ReturnType<typeof gly
 
 /** 一个模块盒：标题（点击即改名）+ 正文（块级点编 / 预制模块渲染器）。
     子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
-function ModuleBox({ module, t, mdLabels, imageUrl, imageResources, saveBlock, addBlock, renameModule, send, openPage, ask }: {
+function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBlock, addBlock, renameModule, send, onOpenModule, ask, readFile, onOpenFile }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   readonly mdLabels: MdLabels
+  /** 宿主卡身份——html 模块的 NOVEN_FRAME.card 拿它。 */
+  readonly card: { readonly name: string; readonly kind: string | undefined }
   readonly imageUrl: (resourceId: string) => string
   /** 本卡可用的图片资源（地图选底图用）。 */
   readonly imageResources: readonly { readonly id: string }[]
@@ -135,13 +142,18 @@ function ModuleBox({ module, t, mdLabels, imageUrl, imageResources, saveBlock, a
   readonly renameModule: (module: CardModuleDoc, name: string) => void
   /** 预制模块的编辑命令直发（apply + 刷新由宿主负责）。 */
   readonly send: WidgetSend
-  /** 翻到另一个模块页。 */
-  readonly openPage: (moduleId: string) => void
+  /** 打开另一个模块的页签。 */
+  readonly onOpenModule: (moduleId: string) => void
   /** 模块向本会话排一句话（AI 任务入口）。 */
   readonly ask: (text: string) => Promise<void>
+  /** 读项目内文件文本（html 模块的活引用渲染）。 */
+  readonly readFile?: (path: string) => Promise<string | undefined>
+  /** 打开项目文件到画布页签。 */
+  readonly onOpenFile?: (path: string) => void
 }) {
   const [renaming, setRenaming] = useState(false)
   const [nameDraft, setNameDraft] = useState(module.name)
+  const [modMenu, setModMenu] = useState(false)
   const widget = module.widget?.type
   const blocks: EditableBlock[] = module.blocks.map(b => b.kind === 'text'
     ? { id: b.id, kind: 'text' as const, text: b.text ?? '', ref: b.ref }
@@ -153,13 +165,32 @@ function ModuleBox({ module, t, mdLabels, imageUrl, imageResources, saveBlock, a
   }
   return (
     <section className="nv-modbox">
-      {renaming ? (
-        <input className="nv-modbox-rename" value={nameDraft} autoFocus
-          onChange={e => setNameDraft(e.target.value)} onBlur={commitName}
-          onKeyDown={e => { if (e.key === 'Enter') commitName(); if (e.key === 'Escape') setRenaming(false) }} />
-      ) : (
-        <h2 className="nv-modbox-title" onClick={() => { setNameDraft(module.name); setRenaming(true) }}>{module.name}</h2>
-      )}
+      <div className="nv-modbox-head">
+        {renaming ? (
+          <input className="nv-modbox-rename" value={nameDraft} autoFocus
+            onChange={e => setNameDraft(e.target.value)} onBlur={commitName}
+            onKeyDown={e => { if (e.key === 'Enter') commitName(); if (e.key === 'Escape') setRenaming(false) }} />
+        ) : (
+          <h2 className="nv-modbox-title" onClick={() => { setNameDraft(module.name); setRenaming(true) }}>{module.name}</h2>
+        )}
+        <Menu open={modMenu} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
+          onClose={() => setModMenu(false)}
+          onSelect={id => {
+            setModMenu(false)
+            if (id === 'copy') void send({ kind: 'copy_module', moduleId: module.id })
+            if (id === 'delete' && window.confirm(fmt(t, 'editor.module.removeConfirm', { name: module.name }))) {
+              void send({ kind: 'remove_module', moduleId: module.id })
+            }
+          }}
+          items={[
+            { id: 'copy', label: t('editor.module.copy') },
+            { id: 'delete', label: t('editor.module.remove') },
+          ]}
+          anchor={(
+            <button type="button" className="nv-modbox-more" aria-label={t('tree.mod.more')}
+              onClick={() => setModMenu(v => !v)}>⋯</button>
+          )} />
+      </div>
       {widget === 'timeline' && <TimelineWidget module={module} t={t} send={send} />}
       {widget === 'relation' && <RelationWidget module={module} t={t} send={send} />}
       {widget === 'map' && <MapEditor module={module} t={t} send={send} ask={ask} imageUrl={imageUrl} imageResources={imageResources} />}
@@ -171,7 +202,8 @@ function ModuleBox({ module, t, mdLabels, imageUrl, imageResources, saveBlock, a
         </div>
       )}
       {widget === 'html' && (
-        <HtmlModule module={module} t={t} saveBlock={saveBlock} />
+        <HtmlModule module={module} t={t} saveBlock={saveBlock} readFile={readFile} onOpenFile={onOpenFile}
+          card={card} />
       )}
       {(widget === undefined || widget === 'document') && (
         <BlockEditor blocks={blocks} labels={mdLabels} t={t}
@@ -181,7 +213,7 @@ function ModuleBox({ module, t, mdLabels, imageUrl, imageResources, saveBlock, a
       {module.children.length > 0 && (
         <div className="nv-page-children">
           {module.children.map(child => (
-            <button key={child.id} type="button" className="nv-page-childlink" onClick={() => openPage(child.id)}>
+            <button key={child.id} type="button" className="nv-page-childlink" onClick={() => onOpenModule(child.id)}>
               <span className="nv-tree-glyph">{moduleGlyph(child, 13)}</span>
               <span>{child.name}</span>
             </button>
@@ -192,12 +224,61 @@ function ModuleBox({ module, t, mdLabels, imageUrl, imageResources, saveBlock, a
   )
 }
 
-/** HTML 小组件模块：源码一块，始终可编（write_text 整块覆盖）。 */
-function HtmlModule({ module, t, saveBlock }: {
+/** HTML 小组件模块：widget.path 是项目文件活引用（实时读 + 沙箱 iframe + 打开源文件）；否则源码一块，始终可编（write_text 整块覆盖）。 */
+function HtmlModule({ module, t, saveBlock, readFile, onOpenFile, card }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   readonly saveBlock: (module: CardModuleDoc, blockId: string, text: string, expected: string) => Promise<EditorSaveResult>
+  readonly readFile?: (path: string) => Promise<string | undefined>
+  readonly onOpenFile?: (path: string) => void
+  /** 宿主卡身份——经 islandDoc 注入为 NOVEN_FRAME.card。 */
+  readonly card: { readonly name: string; readonly kind: string | undefined }
 }) {
+  const path = module.widget?.path
+  const [fileText, setFileText] = useState<string | null | undefined>(undefined)
+  useEffect(() => {
+    if (path === undefined || readFile === undefined) { setFileText(undefined); return }
+    let live = true
+    setFileText(undefined)
+    void readFile(path).then(text => { if (live) setFileText(text ?? null) })
+    return () => { live = false }
+  }, [path, readFile])
+  // 卡内 html 模块也走岛契约：NOVEN_FRAME.card=宿主卡、base=文件目录、
+  // theme=产品色。asset/query/compose 出站暂时没有卡内接收方——挂着不拦。
+  const srcDoc = useMemo(() => {
+    if (typeof fileText !== 'string') return undefined
+    const cs = getComputedStyle(document.documentElement)
+    const dir = path !== undefined && path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : ''
+    return islandDoc(fileText, {
+      card,
+      base: dir,
+      theme: {
+        dark: false,
+        accent: cs.getPropertyValue('--nv-accent').trim(),
+        text: cs.getPropertyValue('--nv-primary-text').trim(),
+        surface: cs.getPropertyValue('--nv-surface').trim(),
+      },
+    })
+  }, [fileText, path, card])
+  if (path !== undefined) {
+    const name = path.split('/').pop() ?? path
+    return (
+      <div className="nv-htmlfile">
+        <div className="nv-htmlfile-bar">
+          <span className="nv-tree-glyph">{glyph.code(13)}</span>
+          <span className="nv-htmlfile-name">{name}</span>
+          {onOpenFile !== undefined && (
+            <button type="button" className="nv-htmlfile-open" onClick={() => onOpenFile(path)}>{t('editor.file.open')}</button>
+          )}
+        </div>
+        {fileText === undefined && <div className="nv-htmlfile-empty">{t('canvas.files.loading')}</div>}
+        {fileText === null && <div className="nv-htmlfile-empty">{t('editor.file.missing')}</div>}
+        {srcDoc !== undefined && (
+          <iframe className="nv-ed-iframe" title={module.name} sandbox="allow-scripts" srcDoc={srcDoc} style={{ height: module.widget?.height ?? 320 }} />
+        )}
+      </div>
+    )
+  }
   const first = module.blocks.find((b): b is CardBlockView & { kind: 'text' } => b.kind === 'text')
   const [text, setText] = useState(first?.text ?? '')
   useEffect(() => { setText(first?.text ?? '') }, [first?.id, first?.text])
@@ -320,14 +401,14 @@ function OverviewPage({ target, overviewModule, isCharacter, t, mdLabels, imageU
 }
 
 /**
- * 卡页。`focusModuleId` 是树行深链：到达时翻到该模块页（总览模块翻到总览）。
- * @param props - 卡地址、读写注入、切回卡级管理的回调。
- * @returns 头栏 + 当前页（总览或某个模块页）+ 模块库。
+ * 卡页。`pageModuleId` 是本页签的模块实体：undefined = 卡总览页，否则整页只渲那个模块。
+ * @param props - 卡地址、读写注入、开其它页签的回调。
+ * @returns 头栏 + 总览或单个模块页 + 模块库。
  */
-export function CardPage({ addr, cardId, focusModuleId, autoLibrary, t, loadCard, op, ask }: {
+export function CardPage({ addr, cardId, pageModuleId, autoLibrary, t, loadCard, op, ask, readFile, onOpenFile, onOpenCard }: {
   readonly addr: CardAddr
   readonly cardId: string
-  readonly focusModuleId?: string
+  readonly pageModuleId?: string
   /** 树里卡行尾「＋」直达：就绪即弹模块库（一次性信号，标签上已清）。 */
   readonly autoLibrary?: boolean
   readonly t: ShellT
@@ -335,14 +416,22 @@ export function CardPage({ addr, cardId, focusModuleId, autoLibrary, t, loadCard
   readonly op: (addr: CardAddr, op: import('./card-api.ts').CardOp) => Promise<CardOpResult>
   /** 模块向本会话排一句话（地图「直接生成底图」这类 AI 任务入口）。 */
   readonly ask: (text: string) => Promise<void>
+  /** 读项目内文件文本（html 模块活引用 / markdown 本地文件链接）。 */
+  readonly readFile?: (path: string) => Promise<string | undefined>
+  /** 打开项目文件到画布页签（markdown 文件链接、嵌入文件条的「打开文件」）。 */
+  readonly onOpenFile?: (path: string) => void
+  /** noven://card/<id>[/module/<id>] 深链：开卡总览页签或模块页签。 */
+  readonly onOpenCard?: (cardId: string, moduleId?: string) => void
 }) {
   const [state, setState] = useState<CardState | 'loading' | undefined>('loading')
-  const [targetId, setTargetId] = useState<string | undefined>(undefined)
-  /** 当前页：undefined = 总览页；否则是模块 id。 */
-  const [pageId, setPageId] = useState<string | undefined>(undefined)
+  /** 总览页内钻角色：undefined = 卡根。 */
+  const [roleId, setRoleId] = useState<string | undefined>(undefined)
   const [version, setVersion] = useState('')
   const [notice, setNotice] = useState<string | undefined>(undefined)
   const [library, setLibrary] = useState(false)
+  const [cardMenu, setCardMenu] = useState(false)
+  const [cardRenaming, setCardRenaming] = useState(false)
+  const [cardNameDraft, setCardNameDraft] = useState('')
   const [rolesOpen, setRolesOpen] = useState(false)
   /** 预览态：展示的是提案合并后的文档，编辑通道锁死（先接受或拒绝）。 */
   const [preview, setPreview] = useState<CardState | undefined>(undefined)
@@ -359,9 +448,16 @@ export function CardPage({ addr, cardId, focusModuleId, autoLibrary, t, loadCard
   const doc: CardDocView | undefined = preview !== undefined ? preview.document
     : typeof state === 'object' && state !== null ? state.document : undefined
   const proposal = typeof state === 'object' && state !== null ? state.proposal : undefined
-  const target = doc === undefined ? undefined
-    : targetId === undefined || targetId === doc.id ? doc
-    : doc.characters.find(c => c.id === targetId)
+  /** 模块页签：模块挂在哪个 target（卡根或某个角色）写操作就打到哪个 target。 */
+  const pageOwner = doc === undefined || pageModuleId === undefined ? undefined
+    : findModule(doc.modules, pageModuleId) !== undefined ? doc
+    : doc.characters.find(c => findModule(c.modules, pageModuleId) !== undefined)
+  const roleTarget = doc === undefined ? undefined
+    : roleId === undefined || roleId === doc.id ? doc
+    : doc.characters.find(c => c.id === roleId)
+  const target = pageModuleId === undefined ? roleTarget : pageOwner
+  const targetId = pageModuleId === undefined ? roleId
+    : pageOwner !== undefined && pageOwner.id !== doc?.id ? pageOwner.id : undefined
 
   const refresh = useCallback(async () => {
     const next = await loadCard(addr, cardId)
@@ -383,32 +479,18 @@ export function CardPage({ addr, cardId, focusModuleId, autoLibrary, t, loadCard
   // 树里卡行尾「＋」：卡页进来直接弹模块库。
   useEffect(() => { if (autoLibrary === true) setLibrary(true) }, [autoLibrary])
 
-  // 树深链：模块落在哪个 target 就切过去，并翻到那一页（总览模块翻回总览）。
-  useEffect(() => {
-    if (focusModuleId === undefined || doc === undefined) return
-    const found = findModule(doc.modules, focusModuleId)
-    if (found === undefined) {
-      const owner = doc.characters.find(c => findModule(c.modules, focusModuleId) !== undefined)
-      if (owner === undefined) return
-      setTargetId(owner.id)
-      const inOwner = findModule(owner.modules, focusModuleId)
-      setPageId(inOwner !== undefined && isOverviewModule(inOwner) ? undefined : focusModuleId)
+  /** noven:// 深链：card/<id>[/module/<id>] 开对应页签，file/<路径> 开文件页签。 */
+  const openLink = useCallback((href: string) => {
+    const url = new URL(href)
+    const parts = url.pathname.split('/').filter(part => part !== '').map(part => decodeURIComponent(part))
+    if (url.hostname === 'card') {
+      const [linkedCard, segment, linkedModule] = parts
+      if (linkedCard === undefined) return
+      onOpenCard?.(linkedCard, segment === 'module' ? linkedModule : undefined)
       return
     }
-    setTargetId(undefined)
-    setPageId(isOverviewModule(found) ? undefined : focusModuleId)
-  }, [focusModuleId, doc])
-
-  // 页失效兜底：当前页模块被删（或目标切换）时退回总览。
-  useEffect(() => {
-    if (pageId === undefined || target === undefined) return
-    if (findModule(target.modules, pageId) === undefined) setPageId(undefined)
-  }, [pageId, target])
-
-  const openPage = useCallback((moduleId: string) => {
-    setPageId(moduleId)
-    document.querySelector('.nv-cardpage-scroll')?.scrollTo({ top: 0 })
-  }, [])
+    if (url.hostname === 'file' && parts.length > 0) onOpenFile?.(parts.join('/'))
+  }, [onOpenCard, onOpenFile])
 
   /** 预览态下一切写都挡在门前——版本对应的是头稿，不是提案预览。 */
   const locked = preview !== undefined
@@ -501,23 +583,87 @@ export function CardPage({ addr, cardId, focusModuleId, autoLibrary, t, loadCard
   }, [addr.root, state])
 
   if (state === 'loading') return <div className="nv-canvas-missing">{t('canvas.files.loading')}</div>
-  if (state === undefined || doc === undefined || target === undefined) {
+  if (state === undefined || doc === undefined) {
+    return <div className="nv-canvas-missing">{t('cardpage.missing')}</div>
+  }
+  if (pageModuleId !== undefined && pageOwner === undefined) {
+    return (
+      <div className="nv-cardpage">
+        <div className="nv-canvas-missing">
+          <span>{t('cardpage.module.missing')}</span>
+          <button type="button" className="nv-page-back" onClick={() => onOpenCard?.(cardId)}>‹ {doc.name}</button>
+        </div>
+      </div>
+    )
+  }
+  if (target === undefined) {
     return <div className="nv-canvas-missing">{t('cardpage.missing')}</div>
   }
   const kindLabel = t(doc.kind === 'WORLD' ? 'card.kind.world' : 'card.kind.character')
   const overviewModule = target.modules.find(isOverviewModule)
-  const foundPage = pageId === undefined ? undefined : findModule(target.modules, pageId)
-  const pageModule = foundPage !== undefined && !isOverviewModule(foundPage) ? foundPage : undefined
+  const foundPage = pageModuleId === undefined ? undefined : findModule(target.modules, pageModuleId)
+  const pageModule = foundPage === undefined || isOverviewModule(foundPage) ? undefined : foundPage
   const imageResources = state.resources.filter(r => r.mediaType.startsWith('image/')).map(r => ({ id: r.id }))
+  /** 合并请求只挂它碰过的页：模块页按 moduleId，概览页挂卡层/角色/无头稿页可去的兜底变更。 */
+  const pageHasProposal = proposal !== undefined && proposal !== null && (() => {
+    if (pageModuleId !== undefined) {
+      return pageOwner !== undefined && proposal.changes.some(c => c.targetId === pageOwner.id && c.moduleId === pageModuleId)
+    }
+    return proposal.changes.some(c => {
+      if (c.moduleId === target.id) return true
+      if (c.targetId !== target.id) return false
+      return findModule(target.modules, c.moduleId) === undefined
+        && !doc.characters.some(ch => ch.id === c.moduleId)
+    })
+  })()
   return (
+    <MarkdownDelegateProvider linkProtocols={NOVEN_LINK_PROTOCOLS} openLink={openLink} openFile={onOpenFile}>
     <div className="nv-cardpage">
       <header className="nv-cardpage-head">
         <span className="nv-cardpage-kind">{kindLabel}</span>
-        <span className="nv-cardpage-name">{doc.name}</span>
+        {cardRenaming ? (
+          <input className="nv-modbox-rename" value={cardNameDraft} autoFocus
+            onChange={e => setCardNameDraft(e.target.value)}
+            onBlur={() => setCardRenaming(false)}
+            onKeyDown={e => {
+              if (e.key === 'Escape') setCardRenaming(false)
+              if (e.key === 'Enter') {
+                const next = cardNameDraft.trim()
+                setCardRenaming(false)
+                if (next !== '' && next !== doc.name) {
+                  void op(addr, { op: 'apply', cardId, targetId, version, command: { kind: 'rename_card', name: next } })
+                    .then(result => { if (result.version !== undefined) setVersion(result.version); void refresh() })
+                    .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
+                }
+              }
+            }} />
+        ) : (
+          <span className="nv-cardpage-name">{doc.name}</span>
+        )}
         {state.hasDraft && <span className="nv-cardpage-draft">{t('me.draft')}</span>}
+        <Menu open={cardMenu} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
+          onClose={() => setCardMenu(false)}
+          onSelect={id => {
+            setCardMenu(false)
+            if (id === 'rename') { setCardNameDraft(doc.name); setCardRenaming(true) }
+            if (id === 'source' && state.dir !== undefined) onOpenFile?.(`卡/${state.dir}/card.json`)
+            if (id === 'delete' && window.confirm(fmt(t, 'tree.card.deleteConfirm', { name: doc.name }))) {
+              void op(addr, { op: 'delete', cardId }).then(() => setState(undefined))
+                .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
+            }
+          }}
+          items={[
+            { id: 'rename', label: t('tree.card.rename') },
+            ...(onOpenFile !== undefined ? [{ id: 'source', label: t('tree.card.showSource') }] : []),
+            { id: 'delete', label: t('tree.card.delete') },
+          ]}
+          anchor={(
+            <button type="button" className="nv-cardpage-more" aria-label={t('tree.card.more')}
+              onClick={() => setCardMenu(v => !v)}>⋯</button>
+          )} />
       </header>
       {notice !== undefined && <div className="nv-canvas-conflict">{notice}</div>}
-      {proposal !== undefined && proposal !== null && (
+      {pageHasProposal && (
         <div className="nv-prop">
           <span className="nv-prop-badge">{fmt(t, 'prop.count', { count: proposal.changes.length })}</span>
           <span className="nv-prop-list">
@@ -538,28 +684,40 @@ export function CardPage({ addr, cardId, focusModuleId, autoLibrary, t, loadCard
         </div>
       )}
       <div className="nv-cardpage-scroll">
-        {targetId !== undefined && (
-          <button type="button" className="nv-cardpage-back" onClick={() => setTargetId(undefined)}>
-            ‹ {doc.name}
-          </button>
-        )}
-        {pageModule !== undefined ? (
-          <div className="nv-page">
-            <button type="button" className="nv-page-back" onClick={() => setPageId(undefined)}>
-              ‹ {overviewModule?.name ?? t('ov.title')}
+        {pageModuleId !== undefined ? (
+          <div className="nv-cardpage-module">
+            <button type="button" className="nv-page-back" onClick={() => onOpenCard?.(cardId)}>
+              ‹ {target.id === doc.id ? doc.name : `${doc.name} · ${target.name}`}
             </button>
-            <ModuleBox module={pageModule} t={t} mdLabels={mdLabels}
-              imageUrl={imageUrl} imageResources={imageResources}
-              saveBlock={saveBlock} addBlock={addBlock} renameModule={renameModule} send={send}
-              openPage={openPage} ask={ask} />
+            {pageModule !== undefined ? (
+              <ModuleBox module={pageModule} t={t} mdLabels={mdLabels}
+                card={{ name: doc.name, kind: doc.kind }}
+                imageUrl={imageUrl} imageResources={imageResources}
+                saveBlock={saveBlock} addBlock={addBlock} renameModule={renameModule} send={send}
+                onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} readFile={readFile} onOpenFile={onOpenFile} />
+            ) : (
+              <OverviewPage target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id}
+                t={t} mdLabels={mdLabels} imageUrl={imageUrl} imageResources={imageResources}
+                saveBlock={saveBlock} addBlock={addBlock}
+                roles={doc.characters} rolesOpen={rolesOpen}
+                onToggleRoles={() => setRolesOpen(v => !v)} onOpenRole={setRoleId}
+                onOpenModule={id => onOpenCard?.(cardId, id)} onAdd={() => setLibrary(true)} />
+            )}
           </div>
         ) : (
-          <OverviewPage target={target} overviewModule={overviewModule} isCharacter={targetId !== undefined}
-            t={t} mdLabels={mdLabels} imageUrl={imageUrl} imageResources={imageResources}
-            saveBlock={saveBlock} addBlock={addBlock}
-            roles={doc.characters} rolesOpen={rolesOpen}
-            onToggleRoles={() => setRolesOpen(v => !v)} onOpenRole={setTargetId}
-            onOpenModule={openPage} onAdd={() => setLibrary(true)} />
+          <>
+            {roleId !== undefined && (
+              <button type="button" className="nv-cardpage-back" onClick={() => setRoleId(undefined)}>
+                ‹ {doc.name}
+              </button>
+            )}
+            <OverviewPage target={target} overviewModule={overviewModule} isCharacter={roleId !== undefined}
+              t={t} mdLabels={mdLabels} imageUrl={imageUrl} imageResources={imageResources}
+              saveBlock={saveBlock} addBlock={addBlock}
+              roles={doc.characters} rolesOpen={rolesOpen}
+              onToggleRoles={() => setRolesOpen(v => !v)} onOpenRole={setRoleId}
+              onOpenModule={id => onOpenCard?.(cardId, id)} onAdd={() => setLibrary(true)} />
+          </>
         )}
       </div>
       {library && (
@@ -567,5 +725,6 @@ export function CardPage({ addr, cardId, focusModuleId, autoLibrary, t, loadCard
           onPick={(widget, label) => addModule(widget, widget === undefined ? undefined : label)} />
       )}
     </div>
+    </MarkdownDelegateProvider>
   )
 }
