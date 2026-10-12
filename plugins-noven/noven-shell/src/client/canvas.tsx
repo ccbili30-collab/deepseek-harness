@@ -25,7 +25,7 @@ import { PhoneStage, type TranscriptState } from './stage-phone.tsx'
 import { ConvView, type ConvChannel, type ConvsMap } from './conv.tsx'
 import type { ModelCatalog, ModelSelection } from '@deepseek-ai/dsh-api-session-controller/types'
 import type { IslandCall, IslandFrame } from './stage-island.tsx'
-import { buildEnv, realWebview, SIM_IME, WEBVIEW_BASELINE } from './stage-frame.ts'
+import { buildEnv, realWebview, SIM_IME, WEBVIEW_BASELINE, type FrameSendResult } from './stage-frame.ts'
 import { collectDeltas, foldArchive, DELTA_WINDOW } from './stage-archive.ts'
 
 /** 文件行的标签种类：可编辑文本走文稿编辑器，其余（HTML/图片/二进制）走画框预览。 */
@@ -897,7 +897,7 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
     setRoute('chat')
   }, [root, actions])
 
-  const sendTo = useCallback(async (text: string) => {
+  const sendTo = useCallback(async (text: string): Promise<FrameSendResult | undefined> => {
     if (openId === undefined) return
     const parts: { type: 'text'; text: string }[] = [{ type: 'text', text }]
     if (settings.perTurn.trim() !== '') parts.push({ type: 'text', text: `[每轮注入]\n${settings.perTurn}` })
@@ -1100,16 +1100,18 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
   )
 }
 
-function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useTranscript, ask, useStore, actions, useDocs, ensureDoc, refreshDoc, useDirs, ensureDir, refreshDir, setStatus }: {
+function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTranscript, sim, simSession, useStore, actions, useDocs, ensureDoc, refreshDoc, useDirs, ensureDir, refreshDir, setStatus }: {
   readonly tab: CanvasTab
   readonly t: ShellT
   readonly sessionId: SessionId
   readonly openDoc: (path: string, title: string) => void
   readonly embedFile: CanvasInjected['embedFile']
   readonly listCards: CanvasInjected['listCards']
-  /** 会话可见消息流订阅（手机档的转录）——在本页签内取用。 */
-  readonly useTranscript: CanvasProps['useTranscript']
-  readonly ask: CanvasInjected['ask']
+  /** 戏台转录订阅（手机档）——绑 simOpen 的模拟器会话，普通会话不进帧。 */
+  readonly useSimTranscript: CanvasProps['useSimTranscript']
+  readonly sim: CanvasInjected['sim']
+  /** simOpen[root] 选中的模拟器会话；undefined = 本项目没开模拟器。 */
+  readonly simSession: SessionId | undefined
   readonly useStore: CanvasProps['useStore']
   readonly actions: CanvasProps['actions']
   readonly useDocs: CanvasProps['useDocs']
@@ -1120,11 +1122,20 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useTranscri
   readonly refreshDir: CanvasInjected['refreshDir']
   readonly setStatus: CanvasInjected['setStatus']
 }) {
-  const transcript = useTranscript(v => v)
+  const transcript = useSimTranscript(v => v)
+  /** 戏台会话 = simOpen 选中的模拟器会话；没开模拟器时回退画布会话（与 chat 页签同语义）。 */
+  const stageSession = simSession ?? sessionId
+  /** 岛/输入栏发送进模拟器会话；未开模拟器时丢回收据，不往普通会话塞消息。 */
+  const simAsk = useCallback(async (text: string): Promise<FrameSendResult | undefined> => {
+    if (simSession === undefined) return { result: 'dropped', why: null }
+    await sim.ask(simSession, [{ type: 'text', text }])
+    return undefined
+  }, [simSession, sim])
   // 整棵替换式持久化不补新字段——老快照没有 simIme/simWebview，读时兜底。
   const imeOn = useStore(s => s.simIme === true)
   const wvMode = useStore(s => s.simWebview ?? 'baseline')
   const sizeKey = useStore(s => s.simSize)
+  const size = SIM_SIZES.find(s => s.key === sizeKey) ?? SIM_SIZES[1]
   const [device, setDevice] = useState<'desktop' | 'phone'>('desktop')
   const [pane, setPane] = useState<WorkPane>('stage')
   const [calls, setCalls] = useState<readonly StageCall[]>([])
@@ -1174,17 +1185,17 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useTranscri
 
   /** 沙箱岛没有会话 Cookie——资产字节由壳代取并以 blob 回投。 */
   const resolveAsset = useCallback((relPath: string, base?: string): Promise<Blob | null> => {
-    const ap = new URLSearchParams({ session: sessionId, path: relPath })
+    const ap = new URLSearchParams({ session: stageSession, path: relPath })
     const b = base ?? dir
     if (b !== undefined && b !== '') ap.set('base', b)
     return fetch(new URL(`api/noven-frame?${ap.toString()}`, document.baseURI).href)
       .then(r => (r.ok ? r.blob() : null))
       .catch(() => null)
-  }, [sessionId, dir])
+  }, [stageSession, dir])
 
-  // B6：档案真相源 = 本会话日志里的 novex-use 增量，.stage.json 只当种子。
-  // transcript.messages 带原始 assistant 文本（围栏未剥）；fork 分支隔离由
-  // 事件流天然提供——兄弟分支的增量根本不进本会话绑定。
+  // B6：档案真相源 = 模拟器会话日志里的 novex-use 增量，.stage.json 只当种子；
+  // 普通会话消息不进帧。transcript.messages 带原始 assistant 文本（围栏未剥）；
+  // fork 分支隔离由事件流天然提供——兄弟分支的增量根本不进模拟器会话绑定。
   const deltas = useMemo(() => collectDeltas(transcript.messages), [transcript.messages])
   const folded = useMemo(() => foldArchive(stageData, deltas), [stageData, deltas])
 
@@ -1197,7 +1208,7 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useTranscri
       : { name: stem, kind: 'stage' }
     return {
       card,
-      session: sessionId,
+      session: stageSession,
       base: dir,
       env: buildEnv({ sizeKey, imeOn, webview: wvMode }),
       state: folded.state,
@@ -1212,7 +1223,7 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useTranscri
         surface: cs.getPropertyValue('--nv-surface').trim(),
       },
     }
-  }, [stageData, folded, deltas, stem, sessionId, dir, sizeKey, imeOn, wvMode])
+  }, [stageData, folded, deltas, stem, stageSession, dir, sizeKey, imeOn, wvMode])
 
   /** 岛→壳出站：query 落调试盘、picked 落到选中 chip；compose 已被 PhoneStage 消化。 */
   const handleCall = useCallback((call: IslandCall): void => {
@@ -1343,9 +1354,9 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useTranscri
       {device === 'desktop' ? frame : (
         <div className="nv-stage-wrap">
           <div className="nv-stage-scroll">
-            <div className="nv-stage-device">
+            <div className="nv-stage-device" style={{ width: `min(${size.w}px, 100%)`, height: `min(${size.h}px, 100%)` }}>
               <PhoneStage t={t} title={stem} islandHtml={islandHtml} frameBase={frameBase}
-                transcript={transcript.messages} busy={transcript.busy} ask={ask}
+                transcript={transcript.messages} busy={transcript.busy} ask={simAsk}
                 resolveAsset={resolveAsset} onCall={handleCall} picking={picking} />
               {imeOn && (
                 <div className="nv-simime" style={{ height: SIM_IME[sizeKey] ?? SIM_IME.p390 }}>
@@ -1467,6 +1478,8 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
   const closeTab = useCallback(() => actions.close(session, tab.key), [actions, session, tab.key])
   // 树「＋」开的卡带 addModule 信号——卡页消费一次即清，不留在持久态。
   const consumeAddModule = useCallback(() => actions.open({ ...tab, addModule: undefined }), [actions, tab])
+  /** 本项目 simOpen 绑定的模拟器会话——作品页签的戏台数据源。 */
+  const simOpenId = useStore(s => project === undefined ? undefined : s.simOpen[project.root])
   return (
     <>
       {tab.kind === 'chat' && (
@@ -1503,7 +1516,7 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
       {tab.kind === 'work' && (
         <WorkTab tab={tab} t={t} sessionId={session}
           openDoc={openDoc} embedFile={props.embedFile} listCards={props.listCards}
-          useTranscript={props.useTranscript} ask={props.ask}
+          useSimTranscript={props.useSimTranscript} sim={props.sim} simSession={simOpenId}
           useStore={useStore} actions={actions}
           useDocs={props.useDocs} ensureDoc={props.ensureDoc} refreshDoc={props.refreshDoc}
           useDirs={props.useDirs} ensureDir={props.ensureDir} refreshDir={props.refreshDir}

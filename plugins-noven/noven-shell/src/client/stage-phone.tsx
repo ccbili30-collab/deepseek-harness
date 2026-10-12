@@ -56,8 +56,8 @@ export function PhoneStage({ t, title, islandHtml, frameBase, transcript, busy, 
   readonly frameBase: IslandFrame
   readonly transcript: readonly TranscriptMsg[]
   readonly busy: boolean
-  /** 输入栏发送：排进本会话 prompt 队列。 */
-  readonly ask: (text: string) => Promise<void>
+  /** 发送进戏台会话 prompt 队列。返回回执 = 权威结果（覆盖乐观记账）；undefined = 按排队/已受理记。 */
+  readonly ask: (text: string) => Promise<FrameSendResult | undefined>
   readonly resolveAsset: (path: string, base?: string) => Promise<Blob | null>
   /** query/picked/err 上抛——compose 由本屏消化（回填输入框）。 */
   readonly onCall?: (call: IslandCall) => void
@@ -118,8 +118,9 @@ export function PhoneStage({ t, title, islandHtml, frameBase, transcript, busy, 
       else {
         lastSendAt.current = now
         setPending(p => p + 1)
-        void ask(text)
         res = { result: busy ? 'queued' : 'accepted', why: null }
+        // ask 回执是权威结果（如未开模拟器 → dropped）——先乐观记账，到达后覆盖。
+        void ask(text).then(final => { if (final !== undefined) setSendResult(final) })
       }
       // 每次回执是新对象——壳侧帧差推导会把它认成 reason:'send' 推下去。
       setSendResult(res)

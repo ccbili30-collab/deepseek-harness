@@ -54,7 +54,7 @@ import { ContextTab } from './tabs/Context.tsx'
 import { LibraryTab } from './tabs/Library.tsx'
 import { SidecarTab, type SidecarMessage, type SidecarState } from './tabs/Sidecar.tsx'
 import { fetchSidecar, sidecarOp, type SidecarOp } from './sidecar-api.ts'
-import type { SessionEventLikeEntry } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionEventLikeEntry, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import { HeaderChips } from './tabs/HeaderChips.tsx'
 import type { HeaderChipsInjected } from './tabs/HeaderChips.tsx'
 import { FootLauncher } from './sidebar.tsx'
@@ -552,6 +552,7 @@ function transcriptSource(sessions: ClientContext['sessions'], sessionId: Sessio
   let snapshot: TranscriptState = { messages: [], busy: false }
   const listeners = new Set<() => void>()
   let started = false
+  let ref: SessionReference | undefined
   let disposeFeed: (() => void) | undefined
   let disposeRetry: (() => void) | undefined
   const textOf = (content: readonly { type: string; text?: string }[]): string =>
@@ -591,9 +592,11 @@ function transcriptSource(sessions: ClientContext['sessions'], sessionId: Sessio
         started = true
         const tryBind = (): void => {
           if (disposeFeed !== undefined) return
-          const feed = sessions.binding(sessionId)?.eventSource
-          if (feed === undefined) return
-          disposeFeed = feed.subscribe(compute)
+          // 订阅方自己持引用——binding() 只借不续命；没人 retain 的会话（如
+          // 模拟器会话）绑定会被回收，事件流冻结在上次快照。
+          try { ref = sessions.retain(sessionId, { source: 'novenShell' }) }
+          catch (retainErr) { void retainErr; return }
+          disposeFeed = ref.binding.eventSource.subscribe(compute)
           compute()
         }
         tryBind()
@@ -605,6 +608,7 @@ function transcriptSource(sessions: ClientContext['sessions'], sessionId: Sessio
         if (listeners.size === 0) {
           disposeFeed?.(); disposeFeed = undefined
           disposeRetry?.(); disposeRetry = undefined
+          ref?.release(); ref = undefined
           started = false
         }
       }
