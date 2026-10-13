@@ -28,8 +28,10 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@types/pngjs": "^6.0.5",
     "noven-fmg": "workspace:*",
     "noven-ledger": "workspace:*",
+    "pngjs": "7.0.0",
     "zod": "^4.4.3"
   },
   "peerDependencies": {

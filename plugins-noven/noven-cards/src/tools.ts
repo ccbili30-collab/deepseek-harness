@@ -838,7 +838,12 @@ export function registerCardTools(ctx: Context): void {
     '① world 生成源——{"seed":"任意串","config":{"points":10000,"width":1280,"height":800},' +
     '"heightmap":{"kind":"template","template":"continents"},"postSteps":["Smooth 2 0 0 0"]}。' +
     'heightmap.kind 支持 template（程序模板 continents/archipelago/peninsula/atoll…）、heights（逐格 0-100 高度数组）、' +
-    'gray（逐格 0-255 灰度，可喂 DEM）、draft（把本模块 draft 栅格化成高度图再跑管线）。' +
+    'gray（逐格 0-255 灰度，可喂 DEM）、draft（把本模块 draft 栅格化成高度图再跑管线）、' +
+    'png（真实世界高程图，内置库直接写名字：{"kind":"png","path":"east-asia"} 生成真实东亚/中国地形；' +
+    '还有 world、world-from-pacific、eurasia、europe、africa-centric、north-america、us-mainland、' +
+    'mediterranean-sea、arabia、middle-east、indian-ocean、atlantics、caribbean、britain、greenland、' +
+    'iceland、hellenica、europe-north、europe-central、europe-accented、europe-and-central-asia；' +
+    '也可给 PNG 绝对路径；png 会拉伸到 config.width×height，保比例就自己配宽高，如 east-asia 配 1000×640）。' +
     '种子决定一切：同 seed+同输入=同世界；只换 seed 就是换一张图。' +
     '实体默认无名（config.names:false）——生成的城邦/国家/河流不带占位名，' +
     '由你按语义起名：world.edits 写 [{"kind":"burg","id":5,"at":[0.4,0.3],"name":"临安","lock":true}]，' +
