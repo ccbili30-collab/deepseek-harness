@@ -1,7 +1,7 @@
 ---
 description: "诺文客户端 UI 工作纪律：先规格、按模式收控件、复用产品组件、亲眼验收后才能说完成"
 trigger: glob
-globs: "plugins-noven/**/src/client/**,plugins-noven/noven-draw-map/prototype/**"
+globs: "plugins-noven/**/src/client/**,plugins-noven/noven-fmg/prototype/**"
 ---
 
 # 诺文 UI 纪律（地图编辑器返工后立的规矩）

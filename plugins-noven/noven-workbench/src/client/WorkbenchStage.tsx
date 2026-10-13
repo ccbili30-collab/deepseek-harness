@@ -19,7 +19,6 @@ import type { ExhibitionEntry } from './exhibition.ts'
 import { HtmlStage } from './HtmlStage.tsx'
 import { ImageStage } from './ImageStage.tsx'
 import type { ImageStageTranslate } from './ImageStage.tsx'
-import { MapStage } from './MapStage.tsx'
 import type { NovenWorkbenchKey } from './locales.ts'
 import { folderIcon, stageNodes, StageTreeRows, stem, useBoundCard, useWorkbenchEntries, useWorkbenchRegistry } from './nav-tree.tsx'
 import { workbenchSelection } from './selection.ts'
@@ -376,8 +375,7 @@ function StageBody(props: {
       )
     }
     if (isHtmlEntry(stagedRel)) {
-      const dir = stagedRel.slice(0, Math.max(0, stagedRel.lastIndexOf('/')))
-      return <HtmlOrMap t={t} api={api} sessionId={sessionId} rel={stagedRel} dir={dir} mediaUrl={mediaUrl} />
+      return <HtmlStage t={t} sessionId={sessionId} rel={stagedRel} />
     }
     if (isTextCandidate(stagedRel)) {
       return <DocStage t={t} sessionId={sessionId} cwd={cwd} rel={stagedRel} api={api} mediaUrl={mediaUrl}
@@ -405,35 +403,6 @@ function StageBody(props: {
   }
 
   return <StageExhibition {...props} />
-}
-
-/**
- * One HTML file's renderer pick: a map-manifest sibling means the draw-map
- * stage, anything else stages the page itself in the sandboxed frame.
- */
-function HtmlOrMap(props: {
-  readonly t: (key: NovenWorkbenchKey) => string
-  readonly api: WorkbenchApi
-  readonly sessionId: SessionId
-  readonly rel: string
-  readonly dir: string
-  readonly mediaUrl: (rel: string) => string
-}) {
-  const { t, api, sessionId, dir, rel, mediaUrl } = props
-  const [isMap, setIsMap] = useState<boolean | undefined>(undefined)
-  useEffect(() => {
-    const controller = new AbortController()
-    void api.readText(sessionId, joinRel(dir, 'map-manifest.json'), controller.signal).then(result => {
-      if (controller.signal.aborted) return
-      setIsMap(result.ok && result.value !== undefined)
-    }, () => {
-      if (!controller.signal.aborted) setIsMap(false)
-    })
-    return () => { controller.abort() }
-  }, [api, sessionId, dir])
-  if (isMap === undefined) return <div className="noven-wb-stage-empty"><h1>…</h1></div>
-  if (isMap) return <MapStage t={t} sessionId={sessionId} dir={dir} mediaUrl={mediaUrl} api={api} />
-  return <HtmlStage t={t} sessionId={sessionId} rel={rel} />
 }
 
 /** The 展览 segment: the ported exhibition grid, cards staging inline. */

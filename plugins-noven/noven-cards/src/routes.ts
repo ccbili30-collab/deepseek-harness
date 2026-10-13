@@ -315,7 +315,7 @@ const APPLY_COMMANDS = new Set([
   'move_module', 'place_module', 'copy_module', 'merge_child', 'set_module_layout', 'set_reading_layout', 'move_block',
   'remove_module', 'remove_block', 'module_options', 'appearance', 'insert_owned_image',
   'replace_block_image', 'remove_resource', 'place_character', 'add_character', 'remove_character',
-  'set_widget_data', 'map_spawn_view',
+  'set_widget_data',
   'timeline_set_calendar', 'timeline_switch_view', 'timeline_add_event', 'timeline_update_event', 'timeline_move_event', 'timeline_remove_event',
   'timeline_add_era', 'timeline_update_era', 'timeline_remove_era',
   'timeline_add_mark', 'timeline_update_mark', 'timeline_remove_mark',
@@ -324,6 +324,7 @@ const APPLY_COMMANDS = new Set([
   'collection_set_style',
   'embed_file',
   'set_layout',
+  'map_spawn_view',
 ])
 
 /** Reject malformed commands before applyEdit interprets them. */

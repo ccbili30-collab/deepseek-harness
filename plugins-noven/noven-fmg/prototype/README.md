@@ -7,9 +7,9 @@ Single-file, zero-dependency prototype of the layered map editor. Open
 
 This is the **authoring/editing** counterpart of the existing pipeline:
 
-- `noven-draw-map` (read path): model generates base PNG → region plan →
+- `noven-fmg` (read path): model generates base PNG → region plan →
   `derive-region-mask.mjs` → `build-interactive-map.mjs` → `index.html` atlas.
-- `noven-workbench/MapStage.tsx`: renders that read-only atlas in place.
+- `noven-workbench` map stage: renders that read-only atlas in place.
 - **This prototype**: replaces one-shot watershed masks with human/AI
   co-editable vector objects. Same delivery shape as the atlas (`index.html`).
 

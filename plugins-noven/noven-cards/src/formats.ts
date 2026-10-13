@@ -439,6 +439,11 @@ export interface MapData {
   readonly objects: readonly MapObject[]
   readonly draft: readonly MapDraftEntry[]
   readonly palette: readonly MapPaletteEntry[]
+  /**
+   * 世界生成源：种子 + 配置覆盖 + 高度图输入。grid/pack 几何是它的确定性
+   * 派生物——只存意图，读入时由 noven-fmg/world 重算，不会有"几何过期"。
+   */
+  readonly world?: MapWorldSource
   /** 草稿底层：铺满整张图的语义色（默认海洋）；空 = 无底层，露出羊皮纸。 */
   readonly base?: MapBase
   /** 子视图来源：由 map_spawn_view 记入，父模块 + 取景框（父图归一化坐标）。 */
@@ -519,7 +524,7 @@ export interface MapDraftStroke {
 }
 
 /**
- * 草稿面：粗控制点 ctrl + roughness/seed，渲染方用 noven-draw-map/mapgeom
+ * 草稿面：粗控制点 ctrl + roughness/seed，渲染方用 noven-fmg/mapgeom
  * 的 expandShape 展开成包边闭合多边形——AI 写少量点即可得到自然海岸线。
  * op='subtract' 表示挖洞：把这块面从下方草稿里减掉，露出底层。
  */
@@ -542,11 +547,32 @@ export interface MapDraftPoly {
 
 export type MapDraftEntry = MapDraftStroke | MapDraftShape | MapDraftPoly
 
-/** 语义色：草稿图生图时把 desc 拼进提示词；没有 desc 的自定义色不建。 */
+/** 语义色：草稿图生图时把 desc 拼进提示词；没有 desc 的自定义色不建。
+ * `level` 是世界生成时该色对应的高度（0-100，20 是海平线）；缺省按名称猜。 */
 export interface MapPaletteEntry {
   readonly name: string
   readonly desc: string
   readonly color: string
+  readonly level?: number
+}
+
+/** 世界生成输入的高度图源：模板名、内联脚本、逐格高度（0-100）、灰度（0-255），
+ * 或 draft——读入时把本模块的 draft/base/palette 栅格化成高度，草稿即意图层。 */
+export type MapWorldHeightmap =
+  | { readonly kind: 'template'; readonly template: string }
+  | { readonly kind: 'script'; readonly script: string }
+  | { readonly kind: 'heights'; readonly heights: readonly number[] }
+  | { readonly kind: 'gray'; readonly gray: readonly number[] }
+  | { readonly kind: 'draft' }
+
+/** 世界生成源：确定性管线的全部输入；派生几何（grid/pack/河网）不落盘。 */
+export interface MapWorldSource {
+  readonly seed: string
+  /** WorldConfig 覆盖项：宽高/格数/气候等，缺省用引擎默认。 */
+  readonly config?: Record<string, unknown>
+  readonly heightmap: MapWorldHeightmap
+  /** 输入后追加的高度图步骤（如 Smooth）。 */
+  readonly postSteps?: readonly string[]
 }
 
 const HEX6 = /^#[0-9a-fA-F]{6}$/
@@ -650,7 +676,11 @@ function paletteOf(raw: unknown): MapPaletteEntry | null {
   const source = record(raw)
   const name = str(source.name), desc = str(source.desc)
   if (name === '' || desc === '') return null
-  return { name, desc, color: colorOf(source.color, '#8A8F94') }
+  const level = numOrNull(source.level)
+  return {
+    name, desc, color: colorOf(source.color, '#8A8F94'),
+    ...(level !== null ? { level: Math.min(100, Math.max(0, Math.round(level))) } : {}),
+  }
 }
 
 function bboxOf(raw: unknown): readonly [number, number, number, number] | undefined {
@@ -658,6 +688,57 @@ function bboxOf(raw: unknown): readonly [number, number, number, number] | undef
   if (b.length < 4) return undefined
   const box: [number, number, number, number] = [num(b[0], 0), num(b[1], 0), num(b[2], 0), num(b[3], 0)]
   return box[2] - box[0] > 0 && box[3] - box[1] > 0 ? box : undefined
+}
+
+function numList(raw: unknown, limit: number): number[] | null {
+  if (!Array.isArray(raw) || raw.length === 0 || raw.length > limit) return null
+  const out: number[] = []
+  for (const v of raw) {
+    const n = Number(v)
+    if (!Number.isFinite(n)) return null
+    out.push(n)
+  }
+  return out
+}
+
+function worldHeightmapOf(raw: unknown): MapWorldHeightmap | null {
+  const source = record(raw)
+  switch (source.kind) {
+    case 'template': {
+      const template = str(source.template)
+      return template === '' ? null : { kind: 'template', template }
+    }
+    case 'script': {
+      const script = str(source.script)
+      return script === '' ? null : { kind: 'script', script }
+    }
+    case 'heights': {
+      const heights = numList(source.heights, 200_000)
+      return heights === null ? null : { kind: 'heights', heights }
+    }
+    case 'gray': {
+      const gray = numList(source.gray, 200_000)
+      return gray === null ? null : { kind: 'gray', gray }
+    }
+    case 'draft': return { kind: 'draft' }
+    default: return null
+  }
+}
+
+/** 解码世界生成源：缺 heightmap 或字段非法时整段丢弃（退回旧行为）。 */
+function worldSourceOf(raw: unknown): MapWorldSource | undefined {
+  const source = record(raw)
+  const seed = str(source.seed)
+  const heightmap = worldHeightmapOf(source.heightmap)
+  if (seed === '' || heightmap === null) return undefined
+  const config = record(source.config)
+  const steps = Array.isArray(source.postSteps) ? source.postSteps.filter((s): s is string => typeof s === 'string') : undefined
+  return {
+    seed,
+    ...(Object.keys(config).length > 0 ? { config } : {}),
+    heightmap,
+    ...(steps !== undefined && steps.length > 0 ? { postSteps: steps } : {}),
+  }
 }
 
 function baseOf(raw: unknown): MapBase | undefined {
@@ -711,6 +792,7 @@ export function decodeMap(raw: string | undefined): MapData {
   const noven = record(payload.noven)
   const source = Array.isArray(noven.markers) ? noven.markers : (Array.isArray(payload.markers) ? payload.markers : [])
   const objects = objectsOf(noven, payload, source.map(markerOf))
+  const world = worldSourceOf(noven.world ?? payload.world)
   return {
     version: 1,
     description: str(noven.description, str(payload.description)),
@@ -724,6 +806,7 @@ export function decodeMap(raw: string | undefined): MapData {
     ...(parentOf(noven.parent ?? payload.parent) !== undefined ? { parent: parentOf(noven.parent ?? payload.parent) } : {}),
     ...(bboxOf(noven.window ?? payload.window) !== undefined ? { window: bboxOf(noven.window ?? payload.window) } : {}),
     ...(num(noven.aspect ?? payload.aspect, NaN) > 0 ? { aspect: num(noven.aspect ?? payload.aspect, 1.6) } : {}),
+    ...(world !== undefined ? { world } : {}),
   }
 }
 
@@ -754,11 +837,12 @@ export function encodeMap(data: MapData): string {
         : s.kind === 'poly'
           ? { kind: 'poly', color: s.color, pts: s.pts, ...(s.op !== undefined ? { op: s.op } : {}) }
           : { kind: 'stroke', color: s.color, r: s.r, pts: s.pts, ...(s.erase === true ? { erase: true } : {}) }),
-      palette: data.palette.map(p => ({ name: p.name, desc: p.desc, color: p.color })),
+      palette: data.palette.map(p => ({ name: p.name, desc: p.desc, color: p.color, ...(p.level !== undefined ? { level: p.level } : {}) })),
       ...(data.base !== undefined ? { base: { name: data.base.name, desc: data.base.desc, color: data.base.color } } : {}),
       ...(data.parent !== undefined ? { parent: data.parent } : {}),
       ...(data.window !== undefined ? { window: data.window } : {}),
       ...(data.aspect !== undefined ? { aspect: data.aspect } : {}),
+      ...(data.world !== undefined ? { world: data.world } : {}),
     },
   }, null, 2)}\n`
 }

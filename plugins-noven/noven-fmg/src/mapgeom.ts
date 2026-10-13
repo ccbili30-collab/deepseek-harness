@@ -3,7 +3,7 @@
  * noven-cards（裁剪/生成子视图）、noven-shell 客户端（渲染草稿面）与离线
  * 控制图脚本三方共用同一份实现，保证同一个 `seed`/`roughness` 在任何一侧
  * 展开出的轮廓逐点一致。
- * @module noven-draw-map/mapgeom
+ * @module noven-fmg/mapgeom
  */
 
 /** 平面点；草稿面在「图高单位」空间展开（x∈[0,aspect]，y∈[0,1]）。 */

@@ -50,7 +50,6 @@ const fmt = (t: ShellT, key: NovenShellLocaleKey, vars: Record<string, string | 
 export const TOOL_COMMANDS = {
   organize: 'card-organizer',
   study: 'noven-study',
-  map: 'noven-draw-map',
   comic: 'noven-draw-comic',
   world: 'wenyou-maker',
   writing: 'human-writing',
@@ -61,7 +60,6 @@ export type ToolId = keyof typeof TOOL_COMMANDS
 export const TOOLS: readonly { id: ToolId; label: NovenShellLocaleKey; icon: (s: number) => ReactNode }[] = [
   { id: 'organize', label: 'create.tool.organize', icon: glyph.sparkle },
   { id: 'study', label: 'create.tool.study', icon: glyph.book },
-  { id: 'map', label: 'create.tool.map', icon: glyph.map },
   { id: 'comic', label: 'create.tool.comic', icon: glyph.image },
   { id: 'world', label: 'create.tool.world', icon: glyph.planet },
   { id: 'writing', label: 'create.tool.writing', icon: glyph.chat },
@@ -70,7 +68,6 @@ export const TOOLS: readonly { id: ToolId; label: NovenShellLocaleKey; icon: (s:
 /** Composer chip shortcuts: the three showcase skills. */
 const CHIPS: readonly { label: NovenShellLocaleKey; command: string }[] = [
   { label: 'create.tool.study', command: TOOL_COMMANDS.study },
-  { label: 'create.tool.map', command: TOOL_COMMANDS.map },
   { label: 'create.tool.comic', command: TOOL_COMMANDS.comic },
 ]
 

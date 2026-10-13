@@ -88,7 +88,48 @@ try {
   check(childData.draft.some(e => e.op === 'subtract'), 'subtract 语义带到子图')
   check(childData.base?.color === '#6D9DC5', 'base 继承')
 
-  // 3. 显式 bbox 取景 + 无对象报错
+  // 3. world 生成源编解码：种子/配置/高度图往返不丢，非法整段丢、旧卡无 world 不炸
+  {
+    const withWorld = decodeMap(encodeMap({
+      version: 1, description: '', markers: [], objects: [], draft: [],
+      palette: [{ name: '海', desc: 'ocean', color: '#6D9DC5', level: 5 }],
+      world: {
+        seed: 'abc123', config: { points: 4000 },
+        heightmap: { kind: 'heights', heights: [5, 40, 80] },
+        postSteps: ['Smooth 2 0 0 0'],
+      },
+    }))
+    check(withWorld.world?.seed === 'abc123' && withWorld.world.config?.points === 4000, 'world 源往返：seed/config 保留')
+    check(withWorld.world?.heightmap.kind === 'heights' && withWorld.world.heightmap.heights[2] === 80, 'world 源往返：heights 保留')
+    check(withWorld.world?.postSteps?.[0] === 'Smooth 2 0 0 0', 'world 源往返：postSteps 保留')
+    check(withWorld.palette[0]?.level === 5, 'palette.level 往返')
+    const draftWorld = decodeMap(encodeMap({ ...withWorld, world: { seed: 's', heightmap: { kind: 'draft' } } }))
+    check(draftWorld.world?.heightmap.kind === 'draft', 'world 源往返：draft 输入保留')
+    const legacy = decodeMap(JSON.stringify({ noven: { description: 'x', objects: [], draft: [], palette: [] } }))
+    check(legacy.world === undefined, '旧卡无 world 段不炸')
+    const bad = decodeMap(JSON.stringify({ noven: { world: { seed: '', heightmap: { kind: 'nope' } } } }))
+    check(bad.world === undefined, '非法 world 整段丢弃')
+  }
+
+  // 3b. world 模块的 spawn：不是裁几何，是裁区域重采样——子模块存新的 world 源
+  {
+    const withWorld = { ...flat, world: { seed: 'resample-parent', config: { points: 3000 }, heightmap: { kind: 'template', template: 'continents' } } }
+    await applyAndCommit(store, 'card-m', 'card-m', { kind: 'set_widget_data', moduleId: mapMod.id, widget: 'map', data: withWorld }, 'AI')
+    const spawnW = await applyAndCommit(store, 'card-m', 'card-m', { kind: 'map_spawn_view', moduleId: mapMod.id, bbox: [.2, .2, .6, .6], aspect: 1.6 }, 'AI')
+    const wChildId = spawnW.outcome.createdModuleIds[0]
+    const docW = await store.open('card-m')
+    const wChild = docW.document.modules.find(m => m.id === wChildId)
+    const wBlock = wChild.blocks.find(b => b.kind === 'text')
+    const wData = decodeMap(new TextDecoder().decode(await store.readPayload('card-m', wBlock.content)))
+    check(wData.world !== undefined && wData.world.seed !== 'resample-parent', `world 子视图：子种子派生（${String(wData.world?.seed)}）`)
+    check(wData.world?.heightmap.kind === 'heights' && wData.world.heightmap.heights.length > 300, `world 子视图：重采样高度图 ${String(wData.world?.heightmap.kind === 'heights' ? wData.world.heightmap.heights.length : 0)} 格`)
+    check(wData.parent?.bbox?.[0] === .2 && wData.window !== undefined, 'world 子视图：parent+window 溯源')
+    check(wData.world?.config?.states !== undefined, 'world 子视图：实体上限按区域缩放')
+    // 复原：不留 world 给后续 bbox 用例
+    await applyAndCommit(store, 'card-m', 'card-m', { kind: 'set_widget_data', moduleId: mapMod.id, widget: 'map', data: flat }, 'AI')
+  }
+
+  // 4. 显式 bbox 取景 + 无对象报错
   const spawn2 = await applyAndCommit(store, 'card-m', 'card-m', { kind: 'map_spawn_view', moduleId: mapMod.id, bbox: [0, 0, .5, .5], aspect: 1.6 }, 'AI')
   check(spawn2.outcome.createdModuleIds.length === 1, '显式 bbox 取景')
   let rejected = false

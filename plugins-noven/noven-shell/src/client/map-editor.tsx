@@ -9,9 +9,15 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getStroke } from 'perfect-freehand'
-import { expandShape } from 'noven-draw-map/mapgeom'
+import { expandShape } from 'noven-fmg/mapgeom'
+import {
+  createPackQuadtree, findPackCell, generateSeed, generateWorld, getGridDims, getPolygon,
+  getRiverPath, guessDraftLevel, rasterizeDraft, regionOfPoints,
+} from 'noven-fmg/world'
+import type { HeightmapInput, PackGraph, World } from 'noven-fmg/world'
 import type { CardCommand, CardModuleDoc } from './card-api.ts'
 import type { ShellT } from './pages/Home.tsx'
+import { fmt } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
 
 /* ---------- 数据形状（与 noven-cards/formats.ts decodeMap 一致） ---------- */
@@ -31,15 +37,28 @@ interface DraftShape { readonly kind: 'shape', readonly color: string, readonly 
 /** 草稿静多边形：展开后/裁剪后的成品轮廓。 */
 interface DraftPoly { readonly kind: 'poly', readonly color: string, readonly pts: XY[], readonly op?: 'add' | 'subtract' }
 type DraftEntry = DraftStroke | DraftShape | DraftPoly
-interface PaletteEntry { readonly name: string, readonly desc: string, readonly color: string }
+interface PaletteEntry { readonly name: string, readonly desc: string, readonly color: string, readonly level?: number }
 /** 草稿底层：铺满整张图的语义色；undefined = 无底层。 */
 interface MapBase { readonly name: string, readonly desc: string, readonly color: string }
+/** 世界生成源：与 formats.ts MapWorldSource 同构；几何是它的派生物，不落盘。 */
+interface WorldSource {
+  readonly seed: string
+  readonly config?: Record<string, unknown>
+  readonly heightmap:
+    | { readonly kind: 'template', readonly template: string }
+    | { readonly kind: 'script', readonly script: string }
+    | { readonly kind: 'heights', readonly heights: readonly number[] }
+    | { readonly kind: 'gray', readonly gray: readonly number[] }
+    | { readonly kind: 'draft' }
+  readonly postSteps?: readonly string[]
+}
 interface EditorDoc {
   readonly description: string
   readonly objects: MapObject[]
   readonly draft: DraftEntry[]
   readonly palette: PaletteEntry[]
   readonly base?: MapBase
+  readonly world?: WorldSource
   readonly parent?: { readonly moduleId: string, readonly objectId?: string, readonly bbox: readonly [number, number, number, number] }
   /** 底图归一化取景框：子视图裁画面用。 */
   readonly window?: readonly [number, number, number, number]
@@ -71,6 +90,17 @@ const BASE_PRESETS: MapBase[] = [
 
 const ACCENT = '#0E9F6E'
 const INK = '#16181A'
+
+/* ---------- 生成世界渲染：noven 浅色调（羊皮纸陆 / 淡青水 / 灰绿生物带） ---------- */
+const WATER = '#C3DCEC'
+const LAKE = '#B2D0E8'
+const RIVER = '#5E8FB8'
+const COAST = '#A5906E'
+/** FMG 生物带 id → noven 浅色；0 是 marine（陆地上不会出现）。 */
+const BIOME_LIGHT = [
+  '#C3DCEC', '#E9DFB6', '#DAD7C2', '#DCDAA4', '#CFDCAF', '#BEDAA0', '#ADD39E',
+  '#9FD092', '#96C794', '#A6BB96', '#CFC8B0', '#EAF1F2', '#A9D0B5',
+] as const
 /** 草稿离屏层的像素高度（画布宽度 = DRAFT_RES × aspect）；笔迹轮廓在这个分辨率上生成。 */
 const DRAFT_RES = 1024
 const clamp01 = (v: number): number => Math.min(1, Math.max(0, v))
@@ -83,6 +113,7 @@ function editorData(raw: unknown): EditorDoc {
     description?: string
     objects?: unknown[]; draft?: unknown[]; palette?: unknown[]; markers?: unknown[]
     base?: MapBase; parent?: EditorDoc['parent']; window?: readonly [number, number, number, number]; aspect?: number
+    world?: WorldSource
   }
   const objects = Array.isArray(d.objects) ? (d.objects as MapObject[]).filter(o => o !== null && typeof o === 'object') : []
   return {
@@ -94,6 +125,7 @@ function editorData(raw: unknown): EditorDoc {
     ...(d.parent !== null && typeof d.parent === 'object' ? { parent: d.parent } : {}),
     ...(Array.isArray(d.window) ? { window: d.window } : {}),
     ...(typeof d.aspect === 'number' && d.aspect > 0 ? { aspect: d.aspect } : {}),
+    ...(d.world !== null && typeof d.world === 'object' ? { world: d.world } : {}),
   }
 }
 
@@ -355,9 +387,221 @@ function facePaintEdit(pts: readonly XY[], path: readonly XY[], r: number, sign:
   return loop === null ? null : smoothClosed(simplify(loop.map(p => [p[0] / H, p[1] / H] as XY), 2.2 / H))
 }
 
+/* ---------- 生成世界：源 → World → 一次性离屏位图 ---------- */
+
+interface BuiltWorld {
+  readonly world: World
+  readonly tree: ReturnType<typeof createPackQuadtree>
+  readonly layers: ReadonlySet<WorldLayer>
+  readonly canvas: HTMLCanvasElement
+}
+
+/** 语义色解析成高度：palette 显式 level 优先，否则按名字猜，最后兜底陆地。 */
+const levelOfPalette = (doc: EditorDoc, color: string): number | undefined => {
+  const p = doc.palette.find(e => e.color === color)
+  if (p !== undefined) return p.level ?? guessDraftLevel(p.name, p.desc) ?? 40
+  return guessDraftLevel(color, '')
+}
+
+/** world.heightmap 解析成管线输入；kind:'draft' 时把当前草稿栅格化（意图层直通）。 */
+const worldHeightmap = (doc: EditorDoc, src: WorldSource): HeightmapInput => {
+  const hm = src.heightmap
+  if (hm.kind !== 'draft') return hm
+  const cfg = { width: 1280, height: 800, points: 10000, ...(src.config ?? {}) }
+  const dims = getGridDims(Number(cfg.width), Number(cfg.height), Number(cfg.points))
+  const baseLevel = doc.base !== undefined ? (levelOfPalette(doc, doc.base.color) ?? 5) : 5
+  const heights = rasterizeDraft(doc.draft, {
+    cellsX: dims.cellsX, cellsY: dims.cellsY,
+    aspect: doc.aspect ?? Number(cfg.width) / Number(cfg.height),
+    baseLevel,
+    levelOf: color => levelOfPalette(doc, color),
+  })
+  return { kind: 'heights', heights }
+}
+
+/** feature.vertices 顶点链 → 闭合 Path2D（世界像素坐标）。 */
+const featurePath = (pack: PackGraph, featureId: number): Path2D | null => {
+  const chain = pack.features[featureId]?.vertices
+  if (chain === undefined || chain.length < 3) return null
+  const p = new Path2D()
+  let started = false
+  for (const vi of chain) {
+    const v = pack.vertices.p[vi]
+    if (v === undefined) continue
+    started ? p.lineTo(v[0], v[1]) : p.moveTo(v[0], v[1])
+    started = true
+  }
+  if (!started) return null
+  p.closePath()
+  return p
+}
+
+/** 世界图层开关：国界/城镇/标签可单独显隐。 */
+export type WorldLayer = 'states' | 'burgs' | 'names'
+
+/** 世界 → 位图：水体垫底，陆地格按生物带填色，国家色罩+边界，岸线描边，湖泊补水色，河网，城邦点+标签。 */
+const paintWorld = (world: World, layers: ReadonlySet<WorldLayer>): HTMLCanvasElement => {
+  const { config, pack } = world
+  const cv = document.createElement('canvas')
+  cv.width = config.width; cv.height = config.height
+  const c = cv.getContext('2d')
+  if (c === null) return cv
+  const cells = pack.cells
+  const n = cells.i.length
+  c.fillStyle = WATER; c.fillRect(0, 0, cv.width, cv.height)
+  // 陆地：逐格填生物带色
+  for (let i = 0; i < n; i++) {
+    if (!pack.features[cells.f[i]]?.land) continue
+    const poly = getPolygon(i, pack)
+    if (poly.length < 3) continue
+    c.fillStyle = BIOME_LIGHT[cells.biome[i] ?? 4] ?? '#CFDCAF'
+    c.beginPath()
+    poly.forEach((p, j) => { j === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
+    c.closePath(); c.fill()
+  }
+  // 国家色罩：每格叠一层国色，国界=相邻格国不同时的公共边
+  const showStates = layers.has('states') && pack.states.length > 1
+  if (showStates) {
+    for (let i = 0; i < n; i++) {
+      const s = cells.state[i]
+      if (s === 0 || !pack.features[cells.f[i]]?.land) continue
+      const color = pack.states[s]?.color
+      if (color === undefined) continue
+      const poly = getPolygon(i, pack)
+      if (poly.length < 3) continue
+      c.globalAlpha = .16
+      c.fillStyle = color
+      c.beginPath()
+      poly.forEach((p, j) => { j === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
+      c.closePath(); c.fill()
+    }
+    c.globalAlpha = 1
+    // 国界：相邻格分属不同国时描公共边
+    c.strokeStyle = 'rgba(70,80,90,.45)'; c.lineWidth = 1.1
+    for (let i = 0; i < n; i++) {
+      const si = cells.state[i]
+      if (si === 0 || cells.h[i] < 20) continue
+      for (const j of cells.c[i]) {
+        if (j <= i || cells.h[j] < 20 || cells.state[j] === si || cells.state[j] === 0) continue
+        // 两格的公共顶点即公共边端点
+        const shared = cells.v[i].filter(v => cells.v[j].includes(v))
+        if (shared.length < 2) continue
+        const a = pack.vertices.p[shared[0]], b = pack.vertices.p[shared[1]]
+        c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke()
+      }
+    }
+  }
+  // 湖泊补回水色 + 陆地/岛屿描岸线
+  for (const f of pack.features) {
+    if (f.i === 0) continue
+    const path = featurePath(pack, f.i)
+    if (path === null) continue
+    if (f.type === 'lake') { c.fillStyle = LAKE; c.fill(path) }
+    if (f.land) { c.strokeStyle = COAST; c.lineWidth = 1.2; c.stroke(path) }
+  }
+  // 河网
+  c.fillStyle = RIVER
+  for (const r of pack.rivers) {
+    if (r.points === undefined || r.points.length < 2) continue
+    c.fill(new Path2D(getRiverPath(r.points, r.widthFactor, r.sourceWidth)))
+  }
+  // 城邦：都邑=双环，城镇=小点；港口描蓝
+  if (layers.has('burgs')) {
+    for (const b of pack.burgs) {
+      if (!b?.i || b.removed) continue
+      c.beginPath()
+      c.arc(b.x, b.y, b.capital ? 2.4 : 1.6, 0, Math.PI * 2)
+      c.fillStyle = '#FFFFFF'
+      c.fill()
+      c.strokeStyle = b.port ? '#3E7CAB' : '#4A4A55'
+      c.lineWidth = b.capital ? 1.4 : 0.9
+      c.stroke()
+      if (b.capital) {
+        c.beginPath()
+        c.arc(b.x, b.y, 0.9, 0, Math.PI * 2)
+        c.fillStyle = '#4A4A55'
+        c.fill()
+      }
+    }
+  }
+  // 标签：城名 + 国名（pole 位）
+  if (layers.has('names')) {
+    c.textAlign = 'center'
+    c.textBaseline = 'bottom'
+    if (layers.has('burgs')) {
+      c.font = '600 7px "LXGW WenKai", "Kaiti SC", serif'
+      c.fillStyle = 'rgba(50,54,60,.85)'
+      for (const b of pack.burgs) {
+        if (!b?.i || b.removed || !b.name) continue
+        if (!b.capital && !b.port && (b.population ?? 0) < 4) continue // 小镇不标名，防止密不透风
+        c.fillText(b.name, b.x, b.y - (b.capital ? 3.4 : 2.6))
+      }
+    }
+    if (showStates) {
+      for (const s of pack.states) {
+        if (!s.i || s.removed || !s.pole) continue
+        const cellsN = cells.i.reduce((acc, i) => acc + (cells.state[i] === s.i ? 1 : 0), 0)
+        const size = Math.min(8 + Math.sqrt(cellsN) * 1.6, 22)
+        c.font = `700 ${size.toFixed(1)}px "LXGW WenKai", "Kaiti SC", serif`
+        c.fillStyle = 'rgba(60,66,74,.28)'
+        c.fillText(s.name, s.pole[0], s.pole[1] + size * .3)
+      }
+    }
+  }
+  return cv
+}
+
+/** 世界命中：城邦 > 河 > 特征；state/culture/biome 取自被点格。 */
+type WorldHit = {
+  readonly kind: 'burg' | 'river' | 'feature'
+  readonly id: number
+  readonly biome: number
+  readonly state: number
+  readonly culture: number
+}
+const hitWorld = (world: World, tree: BuiltWorld['tree'], wx: number, wy: number): WorldHit | null => {
+  const cell = findPackCell(wx, wy, Infinity, tree)
+  if (cell === undefined || cell >= world.pack.cells.i.length) return null
+  const cells = world.pack.cells
+  const biome = cells.biome[cell] ?? 0
+  const state = cells.state[cell] ?? 0
+  const culture = cells.culture[cell] ?? 0
+  const b = cells.burg?.[cell] ?? 0
+  if (b > 0) return { kind: 'burg', id: b, biome, state, culture }
+  const r = cells.r[cell] ?? 0
+  if (r > 0) return { kind: 'river', id: r, biome, state, culture }
+  const f = cells.f[cell] ?? 0
+  return f > 0 ? { kind: 'feature', id: f, biome, state, culture } : null
+}
+
+/** 选中对象 → 局部视图取景框（归一化父图坐标，喂 map_spawn_view 的 bbox）。 */
+const worldRegion = (built: BuiltWorld, hit: WorldHit): readonly [number, number, number, number] | null => {
+  const pack = built.world.pack
+  const ph = built.world.config.height
+  const xMax = built.world.config.width / ph
+  if (hit.kind === 'feature') {
+    const chain = pack.features[hit.id]?.vertices
+    if (chain === undefined || chain.length < 3) return null
+    const pts = chain.map(vi => pack.vertices.p[vi]).filter((p): p is [number, number] => p !== undefined)
+    return regionOfPoints(pts, ph, .06, xMax)
+  }
+  if (hit.kind === 'river') {
+    const r = pack.rivers.find(rv => rv.i === hit.id)
+    if (r?.points === undefined || r.points.length < 2) return null
+    return regionOfPoints(r.points.map(([x, y]) => [x, y] as [number, number]), ph, .08, xMax)
+  }
+  const b = pack.burgs.find(bg => bg?.i === hit.id)
+  return b !== undefined ? regionOfPoints([[b.x, b.y]], ph, .12, xMax) : null
+}
+
 /* ---------- 组件 ---------- */
 
 type Mode = 'draft' | 'annotate' | 'edit'
+
+// noven-fmg 接管期间暂时下线编辑交互：模块只读展示（平移/缩放/图层显隐保留）。
+const MAP_EDITING = false
+// noven-fmg 世界视图：生成/换种子/草稿重算与点选世界对象。
+const MAP_WORLD = true
 /** 标注的「画什么」就是图层本身——面的图层选择即图层 id，不再有"当前面图层"这层状态。 */
 type DrawLayer = LayerId
 
@@ -423,6 +667,10 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const draftLayerRef = useRef<HTMLCanvasElement | null>(null)
   const draftSrcRef = useRef<readonly DraftEntry[] | null>(null)
   const scratchRef = useRef<HTMLCanvasElement | null>(null)
+  /** 世界缓存：源（draft 输入时含草稿内容）变了才重算；生成 ~0.5s 只付一次。 */
+  const builtRef = useRef<{ key: string, built: BuiltWorld } | null>(null)
+  const [selWorld, setSelWorld] = useState<WorldHit | null>(null)
+  const [worldLayers, setWorldLayers] = useState<ReadonlySet<WorldLayer>>(() => new Set<WorldLayer>(['states', 'burgs', 'names']))
   const toWork = useCallback((p: XY): XY => [p[0] * aspectRef.current, p[1]], [])
   const toStore = useCallback((p: XY): XY => [clamp01(p[0] / aspectRef.current), clamp01(p[1])], [])
   const objWorkPts = useCallback((o: FaceObj | LineObj): XY[] => o.pts.map(toWork), [toWork])
@@ -437,7 +685,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
 
   const sel = docRef.current.objects.find(o => o.id === selId) ?? null
   /** 笔刷态：草稿笔、标注涂抹、编辑抹面，都隐藏原生光标改画笔刷圈。 */
-  const brushCursor = mode === 'draft' || mode === 'annotate' || (mode === 'edit' && editPaint)
+  const brushCursor = MAP_EDITING && (mode === 'draft' || mode === 'annotate' || (mode === 'edit' && editPaint))
 
   // 草稿默认取第一个语义色。
   useEffect(() => {
@@ -459,6 +707,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           }),
       draft: doc.draft,
       palette: doc.palette,
+      ...(doc.world !== undefined ? { world: doc.world } : {}),
       ...(doc.base !== undefined ? { base: doc.base } : {}),
       ...(doc.parent !== undefined ? { parent: doc.parent } : {}),
       ...(doc.window !== undefined ? { window: doc.window } : {}),
@@ -466,6 +715,56 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     }
     void send({ kind: 'set_widget_data', moduleId: module.id, widget: 'map', data: payload })
   }, [module.id, send])
+
+  /* ---------- 世界 ---------- */
+
+  /** 世界解析：源（draft 输入含草稿/底层/调色板）或图层开关不变则直接用缓存。 */
+  const resolveBuilt = useCallback((): BuiltWorld | null => {
+    const doc = docRef.current
+    const src = doc.world
+    if (src === undefined || !MAP_WORLD) return null
+    const layersKey = [...worldLayers].sort().join(',')
+    const key = src.heightmap.kind === 'draft'
+      ? `${JSON.stringify(src)}|${JSON.stringify(doc.draft)}|${doc.base?.color ?? ''}|${JSON.stringify(doc.palette)}|${layersKey}`
+      : `${JSON.stringify(src)}|${layersKey}`
+    if (builtRef.current?.key === key) return builtRef.current.built
+    try {
+      const world = generateWorld({ seed: src.seed, config: src.config, heightmap: worldHeightmap(doc, src), postSteps: [...(src.postSteps ?? [])] })
+      const built: BuiltWorld = { world, tree: createPackQuadtree(world.pack), layers: worldLayers, canvas: paintWorld(world, worldLayers) }
+      builtRef.current = { key, built }
+      return built
+    } catch {
+      return null // 坏源不炸画布
+    }
+  }, [worldLayers])
+
+  // 世界出现/换源时：宽高比跟世界尺寸，重新取景。
+  useEffect(() => {
+    if (!MAP_WORLD) return
+    const src = data.world
+    if (src === undefined) { builtRef.current = null; setSelWorld(null); return }
+    const cfg = src.config ?? {}
+    const w = Number(cfg.width), h = Number(cfg.height)
+    aspectRef.current = Number.isFinite(w) && Number.isFinite(h) && h > 0 ? w / h : aspectRef.current
+    fitRef.current = null
+    fitIfNeeded()
+    setSelWorld(null)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data.world])
+
+  /** 写一份新的世界源（换种子 / 切输入源共用）。 */
+  const setWorld = useCallback((src: WorldSource): void => {
+    docRef.current = { ...docRef.current, world: src, aspect: Number(src.config?.width ?? 1280) / Number(src.config?.height ?? 800) }
+    commit()
+  }, [commit])
+
+  /** 点选世界对象：点击未拖动时命中河 > 特征。 */
+  const selectWorldAt = useCallback((p: XY): void => {
+    const built = resolveBuilt()
+    if (built === null) { setSelWorld(null); return }
+    const h = built.world.config.height
+    setSelWorld(hitWorld(built.world, built.tree, p[0] * h, p[1] * h))
+  }, [resolveBuilt])
 
   /* ---------- 视图与命中 ---------- */
 
@@ -607,8 +906,40 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     c.fillStyle = g0; c.fillRect(0, 0, W, H)
     const img = imgRef.current
     const win = docRef.current.window
+    const built = resolveBuilt()
     c.setTransform(dpr * v.s, 0, 0, dpr * v.s, dpr * v.x, dpr * v.y)
-    if (img !== null && img.complete && img.naturalWidth > 0) {
+    if (built !== null) {
+      c.drawImage(built.canvas, 0, 0, built.canvas.width, built.canvas.height, 0, 0, aspect, 1)
+      // 选中高亮：特征描绿边，河网描绿芯，城邦画绿圈
+      if (selWorld !== null) {
+        const u = 1 / built.world.config.height
+        if (selWorld.kind === 'feature') {
+          const path = featurePath(built.world.pack, selWorld.id)
+          if (path !== null) {
+            c.save(); c.scale(u, u)
+            c.fillStyle = 'rgba(14,159,110,.18)'; c.fill(path)
+            c.strokeStyle = ACCENT; c.lineWidth = 2.5 / v.s * built.world.config.height; c.stroke(path)
+            c.restore()
+          }
+        } else if (selWorld.kind === 'burg') {
+          const b = built.world.pack.burgs.find(bg => bg?.i === selWorld.id)
+          if (b !== undefined) {
+            c.save(); c.scale(u, u)
+            c.strokeStyle = ACCENT; c.lineWidth = 2 / v.s * built.world.config.height
+            c.beginPath(); c.arc(b.x, b.y, 4.5, 0, Math.PI * 2); c.stroke()
+            c.restore()
+          }
+        } else {
+          const r = built.world.pack.rivers.find(rv => rv.i === selWorld.id)
+          if (r?.points !== undefined && r.points.length > 1) {
+            c.save(); c.scale(u, u)
+            c.strokeStyle = ACCENT; c.lineWidth = 3 / v.s * built.world.config.height; c.lineJoin = 'round'
+            c.stroke(new Path2D(getRiverPath(r.points, r.widthFactor, r.sourceWidth)))
+            c.restore()
+          }
+        }
+      }
+    } else if (img !== null && img.complete && img.naturalWidth > 0) {
       if (win !== undefined) c.drawImage(img, win[0] * img.naturalWidth, win[1] * img.naturalHeight, (win[2] - win[0]) * img.naturalWidth, (win[3] - win[1]) * img.naturalHeight, 0, 0, aspect, 1)
       else c.drawImage(img, 0, 0, aspect, 1)
     } else {
@@ -779,7 +1110,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       c.beginPath(); c.arc(cp[0], cp[1], 1.5 / v.s, 0, 7)
       c.fillStyle = col; c.fill()
     }
-  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, markWork, mode, objWorkPts, pal?.color, resolvedPts, selId, toWork])
+  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, markWork, mode, objWorkPts, pal?.color, resolveBuilt, resolvedPts, selId, selWorld, toWork])
 
   useEffect(() => { draw() })
 
@@ -836,7 +1167,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     cvRef.current?.setPointerCapture(e.pointerId)
     const p = workOfEvent(e)
-    if (e.button === 2) { gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY] }; return }
+    if (!MAP_EDITING || e.button === 2) { gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }; return }
     if (mode === 'draft') {
       busyRef.current = true
       gestureRef.current = { kind: draftHow === 'lasso' ? 'shape' : 'paint', path: [p], moved: false }
@@ -921,6 +1252,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     const g = gestureRef.current
     if (g.kind === 'pan') {
       const last = g.last ?? [e.clientX, e.clientY]
+      if (Math.abs(e.clientX - last[0]) + Math.abs(e.clientY - last[1]) > 2) g.moved = true
       viewRef.current.x += e.clientX - last[0]
       viewRef.current.y += e.clientY - last[1]
       g.last = [e.clientX, e.clientY]
@@ -975,7 +1307,10 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     const g = gestureRef.current
     gestureRef.current = { kind: 'none' }
     const releaseBusy = (): void => { busyRef.current = false }
-    if (g.kind === 'pan') { draw(); return }
+    if (g.kind === 'pan') {
+      if (g.moved !== true && g.path?.[0] !== undefined) { setSelId(null); selectWorldAt(g.path[0]) }
+      draw(); return
+    }
     if (g.kind === 'paint' && g.path !== undefined && g.path.length > 1) {
       // 橡皮也是一笔：渲染时 destination-out 擦掉下方草稿，撤销粒度仍是一笔。
       const stroke: DraftStroke = {
@@ -1059,7 +1394,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     }
     releaseBusy()
     draw()
-  }, [brushPx, commit, drawLayer, erasing, how, markWork, objWorkPts, pal?.color, snapTarget, toStore, workOfEvent])
+  }, [brushPx, commit, drawLayer, erasing, how, markWork, objWorkPts, pal?.color, selectWorldAt, snapTarget, toStore, workOfEvent])
 
   const onWheel = useCallback((e: React.WheelEvent) => {
     if (!e.ctrlKey && !e.metaKey) return
@@ -1093,15 +1428,37 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     commit(); bump()
   }, [commit, sel])
 
+  /* ---------- 世界选中卡 ---------- */
+
+  const builtNow = MAP_WORLD ? resolveBuilt() : null
+  const selRiver = selWorld?.kind === 'river' ? builtNow?.world.pack.rivers.find(r => r.i === selWorld.id) : undefined
+  const selFeature = selWorld?.kind === 'feature' ? builtNow?.world.pack.features[selWorld.id] : undefined
+  const selBurg = selWorld?.kind === 'burg' ? builtNow?.world.pack.burgs.find(b => b?.i === selWorld.id) : undefined
+  const selState = selWorld !== null && selWorld !== undefined ? builtNow?.world.pack.states[selWorld.state] : undefined
+  const selCulture = selWorld !== null && selWorld !== undefined ? builtNow?.world.pack.cultures[selWorld.culture] : undefined
+  const selName = (selBurg?.name ?? selRiver?.name ?? selFeature?.name) ?? ''
+  const selKindKey = selBurg !== undefined ? 'burg' : selRiver !== undefined ? 'river' : selFeature?.type
+
   /* ---------- 无底图：两个入口——手绘草稿 / 直接生成（也可挑一张已有图） ---------- */
 
   const bare = image === undefined || image.resourceId === undefined
-  if (bare && !started && data.objects.length === 0 && data.draft.length === 0 && data.base === undefined) {
+  if (bare && !started && data.objects.length === 0 && data.draft.length === 0 && data.base === undefined && data.world === undefined) {
     return (
       <div className="nv-wg nv-map">
         <div className="nv-map-empty">
           <span className="nv-map-emptyicon">{glyph.map(26)}</span>
           <span>{t('wg.map.noImage')}</span>
+          {MAP_WORLD && (
+          <div className="nv-map-entries">
+            <button type="button" className="nv-map-entry"
+              onClick={() => setWorld({ seed: generateSeed(), heightmap: { kind: 'template', template: 'continents' } })}>
+              <span className="nv-map-entryicon">{glyph.globe(20)}</span>
+              <span className="nv-map-entryname">{t('wg.map.world.new')}</span>
+              <span className="nv-map-entrydesc">{t('wg.map.world.newDesc')}</span>
+            </button>
+          </div>
+          )}
+          {MAP_EDITING && (
           <div className="nv-map-entries">
             <button type="button" className="nv-map-entry"
               onClick={() => {
@@ -1123,6 +1480,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
               <span className="nv-map-entrydesc">{t('wg.map.entry.genDesc')}</span>
             </button>
           </div>
+          )}
           {genAsked && <span className="nv-maped-mini">{t('wg.map.genSent')}</span>}
           {imageResources.length > 0 && (
             <button type="button" className="nv-wg-add" onClick={() => setPicking(v => !v)}>{t('wg.map.pick')}</button>
@@ -1148,12 +1506,14 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   return (
     <div className="nv-maped">
       <div className="nv-maped-bar">
+        {MAP_EDITING && (
         <div className="nv-maped-seg">
           {(['draft', 'annotate', 'edit'] as const).map(m => (
             <button key={m} type="button" className={mode === m ? 'on' : ''}
               onClick={() => setMode(m)}>{t(`wg.map.tool.${m}` as Parameters<ShellT>[0])}</button>
           ))}
         </div>
+        )}
         <div className="nv-maped-layers">
           {mode !== 'draft' && LAYERS.map(l => (
             <button key={l.id} type="button"
@@ -1169,6 +1529,42 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           ))}
           <button type="button" className={`nv-maped-chip${grid ? ' cur' : ''}`} onClick={() => setGrid(v => !v)}>{t('wg.map.grid')}</button>
         </div>
+        {MAP_WORLD && (
+        <div className="nv-maped-world">
+          {data.world === undefined ? (
+            data.draft.length > 0 && (
+              <button type="button" className="nv-maped-chip"
+                onClick={() => setWorld({ seed: generateSeed(), heightmap: { kind: 'draft' }, postSteps: ['Smooth 2 0 0 0'] })}>
+                {t('wg.map.world.draftBtn')}
+              </button>
+            )
+          ) : (
+            <>
+              {(['states', 'burgs', 'names'] as const).map(l => (
+                <button key={l} type="button"
+                  className={`nv-maped-chip${worldLayers.has(l) ? '' : ' off'}`}
+                  onClick={() => setWorldLayers(prev => {
+                    const next = new Set(prev)
+                    next.has(l) ? next.delete(l) : next.add(l)
+                    return next
+                  })}>
+                  {t(`wg.map.world.layer.${l}` as Parameters<ShellT>[0])}
+                </button>
+              ))}
+              <button type="button" className="nv-maped-chip"
+                onClick={() => data.world !== undefined && setWorld({ ...data.world, seed: generateSeed() })}>
+                {t('wg.map.world.reseed')}
+              </button>
+              {data.draft.length > 0 && data.world.heightmap.kind !== 'draft' && (
+                <button type="button" className="nv-maped-chip"
+                  onClick={() => data.world !== undefined && setWorld({ ...data.world, heightmap: { kind: 'draft' } })}>
+                  {t('wg.map.world.regen')}
+                </button>
+              )}
+            </>
+          )}
+        </div>
+        )}
       </div>
       <div className="nv-maped-stage" ref={stageRef}>
         <canvas ref={cvRef} className="nv-maped-canvas"
@@ -1203,6 +1599,41 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
             <button type="button" className="nv-maped-del" onClick={deleteSel}>{t('wg.del')}</button>
           </div>
         )}
+        {selWorld !== null && selName !== '' && (() => {
+          const kindText = selKindKey !== undefined ? t(`wg.map.world.kind.${selKindKey}` as Parameters<ShellT>[0]) : ''
+          const parts = [kindText]
+          if (selBurg !== undefined) {
+            if (selBurg.capital) parts.push(t('wg.map.world.burg.capital'))
+            if (selBurg.port) parts.push(t('wg.map.world.burg.port'))
+          }
+          if (selRiver !== undefined && selRiver.type !== '') parts.push(t(`wg.map.world.riv.${selRiver.type}` as Parameters<ShellT>[0]))
+          if (selFeature !== undefined && selFeature.subtype !== '') parts.push(t(`wg.map.world.sub.${selFeature.subtype}` as Parameters<ShellT>[0]))
+          if (selFeature?.land === true) parts.push(t(`wg.map.world.biome.${selWorld.biome}` as Parameters<ShellT>[0]))
+          if (selState?.name !== undefined) parts.push(selState.name)
+          if (selCulture?.name !== undefined) parts.push(selCulture.name)
+          return (
+          <div className="nv-maped-wcard">
+            <span className="nv-maped-wname">{selName}</span>
+            <span className="nv-maped-mini">{parts.filter((p, i) => p !== '' && parts.indexOf(p) === i).join(' · ')}</span>
+            <button type="button" className="nv-maped-ok"
+              onClick={() => { void ask(fmt(t, 'wg.map.world.askText', { name: selName })) }}>
+              {t('wg.map.world.ask')}
+            </button>
+            <button type="button" className="nv-maped-ok" title={t('wg.map.world.spawnDesc')}
+              onClick={() => {
+                const bbox = builtNow !== null && selWorld !== null ? worldRegion(builtNow, selWorld) : null
+                if (bbox !== null) void send({ kind: 'map_spawn_view', moduleId: module.id, bbox, aspect: aspectRef.current })
+              }}>
+              {t('wg.map.world.spawn')}
+            </button>
+            <button type="button" className="nv-maped-del" onClick={() => setSelWorld(null)}>×</button>
+          </div>
+          )
+        })()}
+        {MAP_WORLD && (
+        <div className="nv-maped-note">{t('wg.map.world.note')}</div>
+        )}
+        {MAP_EDITING && (
         <div className="nv-maped-panel">
           {mode === 'annotate' && (
             <>
@@ -1323,7 +1754,10 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
             </div>
           )}
         </div>
+        )}
+        {MAP_EDITING && (
         <div className="nv-maped-hint">{t((mode === 'edit' && editPaint ? 'wg.map.hint.editPaint' : `wg.map.hint.${mode}`) as Parameters<ShellT>[0])}</div>
+        )}
       </div>
     </div>
   )

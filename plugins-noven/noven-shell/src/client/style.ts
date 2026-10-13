@@ -1457,7 +1457,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 
 /* 手机会话页复刻（作品页「手机」档）：顶栏/消息流/舞台/输入栏。 */
 .nv-phone { display: flex; flex-direction: column; width: 100%; height: 100%;
-  position: relative; background: var(--nv-canvas); color: var(--nv-primary-text);
+  position: relative; background: var(--nv-surface); color: var(--nv-primary-text);
   font-size: 13px; overflow: hidden; }
 .nv-ptop { display: flex; align-items: center; gap: 8px; padding: 10px 12px;
   border-bottom: 0.5px solid var(--nv-divider); background: var(--nv-surface); flex-shrink: 0; }
@@ -1891,6 +1891,16 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-maped-objcard button { border: none; font-size: 12px; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 .nv-maped-ok { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 .nv-maped-del { background: none; color: #D64541; }
+.nv-maped-world { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+.nv-maped-wcard { position: absolute; top: 10px; left: 10px; display: flex; align-items: center; gap: 8px;
+  background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 10px;
+  padding: 6px 10px; box-shadow: 0 4px 16px rgba(22,24,26,.10); }
+.nv-maped-wname { font-size: 13px; font-weight: 600; color: var(--nv-primary-text); }
+.nv-maped-wcard button { border: none; font-size: 12px; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+.nv-maped-note { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
+  font-size: 10px; color: var(--nv-secondary-text); background: rgba(255,255,255,.78);
+  border-radius: 6px 6px 0 0; padding: 3px 10px; pointer-events: none; max-width: calc(100% - 24px);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* 集合渲染器（设计稿 06 + collection-v2 B/C）：视图切换 + 图鉴卡 + 表格 + 编年长卷。 */
 .nv-coll { margin-top: 10px; }
 .nv-coll-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }

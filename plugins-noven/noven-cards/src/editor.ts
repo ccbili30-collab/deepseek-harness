@@ -12,7 +12,8 @@ import { mintId, flattenModules, editBlocks, findTarget, replaceTarget, insertMo
 import { CardStore, EditConflict, type CardDraft, type ChangeSource, type SavedCard } from './store.ts'
 import { parseModuleMarkdown } from './markdown.ts'
 import { readProjectFile } from './exchange.ts'
-import { expandShape, bboxOf as geomBBox, padBBox, clipPolygonRect, clipPolylineRect, toChild, type GBBox } from 'noven-draw-map/mapgeom'
+import { expandShape, bboxOf as geomBBox, padBBox, clipPolygonRect, clipPolylineRect, toChild, type GBBox } from 'noven-fmg/mapgeom'
+import { generateWorld, resampleWorld, rasterizeDraft, guessDraftLevel, getGridDims, type HeightmapInput } from 'noven-fmg/world'
 import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type MapData, type TimelineCalendar } from './formats.ts'
 
 /** 编辑命令全集（工具与未来的人工界面共用）。 */
@@ -76,6 +77,30 @@ export type EditorCommand =
 /** embed_file 认的文本类后缀 → mediaType：html 记 widget.path 活引用，md/txt 快照成文字块。 */
 const EMBED_FILE_MEDIA: Record<string, string> = {
   html: 'text/html', htm: 'text/html', md: 'text/markdown', markdown: 'text/markdown', txt: 'text/plain',
+}
+
+/** 语义色解析成高度：palette 显式 level 优先，否则按名字猜，最后兜底陆地。 */
+const levelOfPalette = (data: MapData, color: string): number | undefined => {
+  const p = data.palette.find(e => e.color === color)
+  if (p !== undefined) return p.level ?? guessDraftLevel(p.name, p.desc) ?? 40
+  return guessDraftLevel(color, '')
+}
+
+/** world.heightmap 解析成管线输入；kind:'draft' 时把当前草稿栅格化（意图层直通）。 */
+const resolveWorldHeightmap = (data: MapData): HeightmapInput | undefined => {
+  const src = data.world
+  if (src === undefined) return undefined
+  if (src.heightmap.kind !== 'draft') return src.heightmap
+  const cfg = { width: 1280, height: 800, points: 10000, ...(src.config ?? {}) } as { width: number, height: number, points: number }
+  const dims = getGridDims(cfg.width, cfg.height, cfg.points)
+  const baseLevel = data.base !== undefined ? (levelOfPalette(data, data.base.color) ?? 5) : 5
+  const heights = rasterizeDraft(data.draft, {
+    cellsX: dims.cellsX, cellsY: dims.cellsY,
+    aspect: data.aspect ?? cfg.width / cfg.height,
+    baseLevel,
+    levelOf: color => levelOfPalette(data, color),
+  })
+  return { kind: 'heights', heights }
 }
 
 /** 一次编辑产生的新块/新模块（saved-with-ids 直链用）。 */
@@ -584,9 +609,26 @@ async function transformDocument(
           }
         }
       }
+      // 世界子视图（Resample）：不是裁几何，而是把取景框区域重采样成更密的高度图，
+      // 子模块读入时由管线重算——更密的格子上会重新长出河网/城邦，细节真的变多。
+      let childWorld: MapData['world'] = undefined
+      if (data.world !== undefined) {
+        const heightmap = resolveWorldHeightmap(data)
+        if (heightmap !== undefined) {
+          const parentWorld = generateWorld({ seed: data.world.seed, config: data.world.config, heightmap, postSteps: [...(data.world.postSteps ?? [])] })
+          const res = resampleWorld(parentWorld, bbox, 2)
+          childWorld = {
+            seed: res.seed,
+            config: { ...(data.world.config ?? {}), ...res.config },
+            heightmap: { kind: 'heights', heights: res.heights },
+            ...(data.world.postSteps !== undefined ? { postSteps: data.world.postSteps } : {}),
+          }
+        }
+      }
       const objectName = data.objects.find(o => o.id === command.objectId)?.name
       const childData: MapData = {
         ...data, markers: [], objects, draft,
+        ...(childWorld !== undefined ? { world: childWorld } : {}),
         parent: { moduleId: source.id, ...(command.objectId !== undefined ? { objectId: command.objectId } : {}), bbox },
         window: bbox, aspect: childAspect,
       }

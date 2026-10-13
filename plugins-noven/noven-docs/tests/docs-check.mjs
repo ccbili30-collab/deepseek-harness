@@ -48,8 +48,8 @@ for (const rel of TOOL_SOURCES) {
   for (const m of text.matchAll(/registerEditTool\(tools, '([a-z_]+)'/g)) tools.add(m[1])
 }
 // 命令与技能（name 是常量引用，源码里刮不到字面量）
-const COMMANDS = new Set(['/draw-map', '/draw-comic', '/study'])
-const SKILLS = new Set(['noven-draw-map', 'noven-draw-comic', 'noven-study'])
+const COMMANDS = new Set(['/draw-comic', '/study'])
+const SKILLS = new Set(['noven-draw-comic', 'noven-study'])
 // 文档里会出现的合法 snake_case 非工具标识符（参数名/字段名/概念名）
 const PARAMS = new Set([
   'root_id', 'target_id', 'draft_version', 'next_draft_version', 'modules_json',

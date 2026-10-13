@@ -415,10 +415,6 @@ export function registerCardTools(ctx: Context): void {
         description: '特殊模块渲染器，缺省为普通文档模块。内置类型：' +
           'timeline=时间线、collection=合集条目（语义名 region/faction/race/quotes 等同用此 kind）——' +
           '这两类建好后**必须**用 timeline_*/collection_* 专用工具填数据，不要手写 JSON；' +
-          'map=地图（先 adopt_image 给模块加一张图片块当底图，再用 widget_set_data 写 description/base/objects/draft；objects 是矢量标注：face=闭合轮廓 pts、line=骨架 pts+逐点 widths、mark=pos 地标，坐标均 0..1 归一化，旧 markers 字段兼容；' +
-          'base 是铺满整张图的底层语义色 {name,desc,color}，先写它再往上叠——没涂到的地方渲染成 base，不留空白；' +
-          'draft 是三种语义色图元的有序列表：{kind:"shape",color,ctrl,roughness,seed} 大面积区域（大陆/海/森林/沙漠/湖）——只写 6~20 个粗控制点，roughness 0.2~0.6 管边缘粗糙度，同参同果，op:"subtract" 挖洞露底；' +
-          '{kind:"stroke",color,r,pts} 线状笔触（山脊/河流/小斑），erase:true 按序擦掉下方草稿；{kind:"poly",color,pts} 精确轮廓。画面积大的地方一律用 shape，不要用笔触来回涂）；' +
           'relation=人物关系图（用 widget_set_data 写 nodes/edges，节点带 x/y 摆位 0..1）；' +
           'html=自定义小组件（正文块直接写 HTML 源码，沙箱渲染，适合 vibecode 的交互组件）',
       },
@@ -786,28 +782,6 @@ export function registerCardTools(ctx: Context): void {
         throw new Error('widget 必须是 map 或 relation（timeline/collection 用各自的专用工具）')
       }
       return { kind: 'set_widget_data', moduleId, widget, data: raw }
-    })
-
-  registerEditTool(tools, 'map_spawn_view',
-    '从 map 模块生成一个局部视图子模块：框内的矢量对象与草稿被裁剪、重归一化进新模块，底图复用原资源并按取景框裁画面，' +
-    '新模块数据里记 parent（父模块+取景框）便于回溯。object_id 与 bbox 二选一：给对象编号则按它的外接框外扩留白取景。生成后可再对新模块 refine 底图或继续划分。',
-    {
-      module_id: { type: 'string', required: true, description: '源地图模块编号' },
-      object_id: { type: 'string', description: '取景对象的编号（面/线/地标均可）；与 bbox 二选一' },
-      bbox: { type: 'json', description: '显式取景框 [x0,y0,x1,y1]（父图归一化坐标）；与 object_id 二选一' },
-      name: { type: 'string', description: '子模块名称；缺省自动命名' },
-      aspect: { type: 'number', description: '父图宽高比；缺省 1.6' },
-    },
-    args => {
-      const bbox = Array.isArray(args.bbox) ? args.bbox.map(Number) : undefined
-      if (bbox !== undefined && (bbox.length !== 4 || bbox.some(v => !Number.isFinite(v)))) throw new Error('bbox 必须是 4 个数字的数组')
-      if (bbox === undefined && optionalId(args.object_id) === null) throw new Error('object_id 与 bbox 必须提供一个')
-      return {
-        kind: 'map_spawn_view' as const, moduleId: String(args.module_id), name: args.name === undefined ? undefined : String(args.name),
-        objectId: optionalId(args.object_id) ?? undefined,
-        ...(bbox !== undefined ? { bbox: bbox as [number, number, number, number] } : {}),
-        ...(typeof args.aspect === 'number' && args.aspect > 0 ? { aspect: args.aspect } : {}),
-      }
     })
 
   // ---------- 图片 ----------
