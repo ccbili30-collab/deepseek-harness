@@ -14,7 +14,7 @@ export interface CultureNamer {
 const nameBases: NameBase[] = getDefaultNameBases();
 const chains: (MarkovChain | null)[] = [];
 
-const calculateChain = (namesList: string): MarkovChain => {
+export const calculateChain = (namesList: string): MarkovChain => {
   const chain: MarkovChain = [] as unknown as MarkovChain;
   const availableNames = namesList.split(",");
 

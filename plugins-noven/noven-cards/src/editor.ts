@@ -14,6 +14,7 @@ import { parseModuleMarkdown } from './markdown.ts'
 import { readProjectFile } from './exchange.ts'
 import { expandShape, bboxOf as geomBBox, padBBox, clipPolygonRect, clipPolylineRect, toChild, type GBBox } from 'noven-fmg/mapgeom'
 import { resolvePngHeightmap } from './heightmap-png.ts'
+import { resolveNamebase } from './namebase.ts'
 import { generateWorld, resampleWorld, rasterizeDraft, guessDraftLevel, getGridDims, type HeightmapInput } from 'noven-fmg/world'
 import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type MapData, type TimelineCalendar } from './formats.ts'
 
@@ -548,7 +549,7 @@ async function transformDocument(
     // ---------- 时间线 v2 ----------
     case 'set_widget_data': {
       const raw = typeof command.data === 'string' ? command.data : JSON.stringify(command.data)
-      const prepared = command.widget === 'map' ? await resolvePngHeightmap(raw) : raw
+      const prepared = command.widget === 'map' ? await resolveNamebase(await resolvePngHeightmap(raw)) : raw
       const modules = command.widget === 'collection'
         ? await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, () => decodeCollection(prepared))
         : command.widget === 'map'

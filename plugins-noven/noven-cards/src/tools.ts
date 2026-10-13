@@ -839,18 +839,21 @@ export function registerCardTools(ctx: Context): void {
     '"heightmap":{"kind":"template","template":"continents"},"postSteps":["Smooth 2 0 0 0"]}。' +
     'heightmap.kind 支持 template（程序模板 continents/archipelago/peninsula/atoll…）、heights（逐格 0-100 高度数组）、' +
     'gray（逐格 0-255 灰度，可喂 DEM）、draft（把本模块 draft 栅格化成高度图再跑管线）、' +
-    'png（真实世界高程图，内置库直接写名字：{"kind":"png","path":"east-asia"} 生成真实东亚/中国地形；' +
+    'png（借真实地形骨架的架空图，内置库直接写名字：{"kind":"png","path":"east-asia"} 得东亚轮廓；' +
     '还有 world、world-from-pacific、eurasia、europe、africa-centric、north-america、us-mainland、' +
     'mediterranean-sea、arabia、middle-east、indian-ocean、atlantics、caribbean、britain、greenland、' +
     'iceland、hellenica、europe-north、europe-central、europe-accented、europe-and-central-asia；' +
     '也可给 PNG 绝对路径；png 会拉伸到 config.width×height，保比例就自己配宽高，如 east-asia 配 1000×640）。' +
     '种子决定一切：同 seed+同输入=同世界；只换 seed 就是换一张图。' +
-    '关键分流：请求涉及真实地理（中国/世界/某地历史地图）时必须用 png 高程图，禁止用 draft 手绘轮廓；' +
-    '且必须带 config.cultures.limit=0 关掉程序化政体层（不然真实地形上会铺几百个虚构国家/城邦灰点），' +
-    '河湖地形照常生成，政区/城市/战线由你写在 objects（mark/line/face，layer 自定）和 world.edits 里。' +
-    'draft 只用于架空地形或战区/势力范围这类意图标注（op:subtract 挖海、stroke 描走廊）。' +
-    '实体默认无名（config.names:false）——生成的城邦/国家/河流不带占位名，' +
-    '由你按语义起名：world.edits 写 [{"kind":"burg","id":5,"at":[0.4,0.3],"name":"临安","lock":true}]，' +
+    '定位声明：一切生成皆为架空——png 只是借真实地形的轮廓做架空世界，' +
+    '不要声称是某朝代疆域或真实地图；历史政权/战线等语义用 objects 标注层表达。' +
+    'draft 用于架空地形或战区/势力范围这类意图标注（op:subtract 挖海、stroke 描走廊）。' +
+    '命名：默认 config.namebase=\'zh\' 出中文构词名（临安城/沧江/赤岭），' +
+    '预设还有 zh-chunqiu（春秋）、zh-modern（现代）、west（西幻中译）；' +
+    '数字 = 统一用该序号 Markov 语种库；内联 {mode:"compose"|"markov",names:["专名",…],suffix:{burg:[…],river:[…],state:[…]}} = 自建风格语料，' +
+    '或写 .json 路径（如 local/namebases/xx.json）读入存成内联——风格要独特就自建语料。' +
+    'config.names=false 可全无名。想精修/语义化起名：world.edits 写 ' +
+    '[{"kind":"burg","id":5,"at":[0.4,0.3],"name":"临安","lock":true}]，' +
     'id 是实体编号（同生成内精确），at 是归一化位置兜底（重算后按最近实体回贴），' +
     'key 是原始名（有名实体跨重算匹配）；edits 改名后重算不丢。' +
     '② draft 语义草稿——人与 AI 共用的意图层：[{"kind":"stroke","color":"#B8A888","r":0.05,"pts":[[x,y],…]},' +

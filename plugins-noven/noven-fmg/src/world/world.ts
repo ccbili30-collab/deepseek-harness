@@ -3,6 +3,7 @@
 // explicit `world` object — no globals.
 import type { World, WorldConfig } from "./types.ts";
 import { DEFAULT_WORLD_CONFIG } from "./types.ts";
+import { buildWorldNamer } from "./namer.ts";
 import { createRng, generateSeed, type Rng } from "./rng.ts";
 import { generateGrid } from "./grid.ts";
 import { applyHeightmapSteps, heightsFromGray, heightsFromTemplate, getTemplateScript } from "./heightmap.ts";
@@ -70,6 +71,8 @@ export const generateWorld = (input: GenerateWorldInput = {}): World => {
     grid: generateGrid(rng, config.width, config.height, config.points),
     pack: {} as World["pack"]
   } as World;
+  // 函数不可枚举：structuredClone/序列化时跳过
+  Object.defineProperty(world, "namer", { value: buildWorldNamer(world), writable: true, enumerable: false });
 
   world.grid.cells.h = resolveHeights(rng, world, input.heightmap, input.postSteps);
 

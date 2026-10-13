@@ -112,6 +112,7 @@ export function resampleWorld(
     height: childH,
     points: childPoints,
     names: world.config.names,
+    namebase: world.config.namebase,
     cultures: { ...world.config.cultures, limit: Math.max(3, Math.round(world.config.cultures.limit * frac)) },
     states: { ...world.config.states, limit: Math.max(3, Math.round(world.config.states.limit * frac)) },
   };

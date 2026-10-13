@@ -2,6 +2,8 @@
 // Adapted from Azgaar's Fantasy-Map-Generator (MIT): the global `grid`, `pack` and
 // `options` objects are replaced by explicit fields of `World`.
 
+import type { Rng } from "./rng.ts";
+
 export type Point = [number, number];
 export type TypedArray =
   | Uint8Array
@@ -232,10 +234,32 @@ export interface WorldConfig {
   cultures: { limit: number; sizeVariety: number; growthRate: number };
   states: { limit: number; sizeVariety: number; growthRate: number };
   burgs: { limit: number }; // AUTO_BURG_LIMIT = as many as the land supports
-  /** generate entity names via Markov namebases; off leaves entities unnamed so
-   *  the AI/user names them semantically (world.edits) instead of inheriting
-   *  arbitrary Latin placeholder names */
+  /** generate entity names; off leaves entities unnamed so the AI/user names
+   *  them semantically (world.edits) instead */
   names: boolean;
+  /** 命名参考层（语料即风格）。预设 id（'zh' 等）、Markov 库序号，或内联
+   *  {mode,names,suffix}；JSON 路径由上层在写入前解析成内联。未设置时按
+   *  文化各自的 FMG 语种库命名。 */
+  namebase?: string | number | NamebaseDef;
+}
+
+/** 语料驱动的命名参考：mode 'compose' = 专名+通名构词，'markov' = 音节链。
+ *  suffix 按实体 kind 给通名表，feature 用 'feature:ocean|lake|island|default'。 */
+export interface NamebaseDef {
+  mode?: "compose" | "markov";
+  names: readonly string[];
+  suffix?: Record<string, readonly string[]>;
+  min?: number;
+  max?: number;
+}
+
+/** 世界级命名器：有 namebase 时替代逐文化 Markov 路径；返回 undefined = 走默认 */
+export interface WorldNamer {
+  culture(rng: Rng): string | undefined;
+  burg(rng: Rng, culture: number, short?: boolean): string | undefined;
+  state(rng: Rng, basename: string, culture: number): string | undefined;
+  river(rng: Rng): string | undefined;
+  feature(rng: Rng, feature: Feature): string | undefined;
 }
 
 export interface World {
@@ -243,6 +267,8 @@ export interface World {
   coordinates: LatLonBox; // derived from mapSize/latitude/longitude
   grid: GridGraph;
   pack: PackGraph;
+  /** 有 namebase 配置时由 namer.ts 构建；null 走逐文化默认命名 */
+  namer: WorldNamer | null;
 }
 
 export const DEFAULT_WORLD_CONFIG: Omit<WorldConfig, "seed"> = {
@@ -261,5 +287,6 @@ export const DEFAULT_WORLD_CONFIG: Omit<WorldConfig, "seed"> = {
   cultures: { limit: 12, sizeVariety: 4, growthRate: 1 },
   states: { limit: 18, sizeVariety: 4, growthRate: 1 },
   burgs: { limit: 1000 }, // 1000 = auto, capped by land
-  names: false
+  names: true,
+  namebase: "zh"
 };

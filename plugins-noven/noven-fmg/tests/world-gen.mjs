@@ -54,14 +54,24 @@ check(rivers.every(r => r.cells.length >= 3), '每条河至少 3 格')
 check(rivers.some(r => r.parent !== r.i), '存在支流汇入干流')
 check(rivers.some(r => features[cells.f[r.cells[r.cells.length - 1]]]?.type === 'ocean'), '存在入海的河')
 
-// 2a. names flag: default off leaves entities unnamed; on restores Markov names
+// 2a. naming: default zh namebase gives Chinese names; names:false leaves unnamed
 {
-  const unnamed = generateWorld({ seed, heightmap: { kind: 'template', template: 'continents' } })
-  check(unnamed.pack.burgs.filter(b => b?.i).every(b => b.name === undefined || b.name === ''), '默认无名：城邦无占位名')
-  check(unnamed.pack.states.filter(s => s.i).every(s => s.name === ''), '默认无名：国家无占位名')
-  check(unnamed.pack.features.filter(f => f?.i).every(f => f.name === ''), '默认无名：地貌无占位名')
-  check(unnamed.pack.rivers.filter(r => r.i).every(r => r.name === ''), '默认无名：河流无占位名')
+  const named = generateWorld({ seed, heightmap: { kind: 'template', template: 'continents' } })
+  const han = /[一-鿿]/
+  check(named.pack.burgs.filter(b => b?.i && b.name).every(b => han.test(b.name)), '默认 zh 语料：城邦名是中文')
+  check(named.pack.states.filter(s => s.i).every(s => han.test(s.name)), '默认 zh 语料：国家名是中文')
+  check(named.pack.rivers.filter(r => r.i).every(r => han.test(r.name)), '默认 zh 语料：河流名是中文')
+  check(new Set(named.pack.burgs.filter(b => b?.i).map(b => b.name)).size === named.pack.burgs.filter(b => b?.i).length, '城邦名不重复')
+
+  const unnamed = generateWorld({ seed, config: { names: false }, heightmap: { kind: 'template', template: 'continents' } })
+  check(unnamed.pack.burgs.filter(b => b?.i).every(b => b.name === undefined || b.name === ''), 'names:false 城邦无占位名')
   check(unnamed.pack.rivers.every(r => r.type !== ''), '无名模式仍算河型（分类≠命名）')
+
+  const west = generateWorld({ seed, config: { namebase: 'west' }, heightmap: { kind: 'template', template: 'continents' } })
+  check(west.pack.states.filter(s => s.i).some(s => /国$/.test(s.name)), 'west 语料：国名带王国/公国式通名')
+  const custom = generateWorld({ seed, config: { namebase: { mode: 'compose', names: ['测试', '样例', '专名'], suffix: { burg: ['坞'] } } }, heightmap: { kind: 'template', template: 'continents' } })
+  // 都城用纯专名、镇加通名，字符全部来自语料
+  check(custom.pack.burgs.filter(b => b?.i).every(b => /^[测试样例专名]{1,3}坞?$/.test(b.name ?? '')), '内联语料：城邦名按自建通名构词')
 }
 
 // 2b. entities: cultures → burgs → states

@@ -295,18 +295,18 @@ export const defineFeatureNames = (world: World, rng: Rng): void => {
     if (!feature || feature.name) continue;
 
     if (feature.type === "ocean") {
-      if (P(rng, 0.8)) {
-        feature.name = ra(rng, ADJECTIVES);
-      } else {
-        const [x, y] = world.pack.cells.p[feature.firstCell];
-        const dx = x / world.config.width - 0.5;
-        const dy = y / world.config.height - 0.5;
-        feature.name = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "Western" : "Eastern") : dy < 0 ? "Northern" : "Southern";
-      }
+      feature.name = world.namer?.feature(rng, feature) ?? (P(rng, 0.8)
+        ? ra(rng, ADJECTIVES)
+        : (() => {
+            const [x, y] = world.pack.cells.p[feature.firstCell];
+            const dx = x / world.config.width - 0.5;
+            const dy = y / world.config.height - 0.5;
+            return Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? "Western" : "Eastern") : dy < 0 ? "Northern" : "Southern";
+          })());
       continue;
     }
 
-    feature.name = ra(rng, ADJECTIVES);
+    feature.name = world.namer?.feature(rng, feature) ?? ra(rng, ADJECTIVES);
   }
 };
 

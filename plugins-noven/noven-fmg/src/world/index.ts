@@ -47,6 +47,8 @@ export { generateRoutes } from "./routes.ts";
 export { isNavigable, resolveDrainFeature, resolveLakeDrainFeature } from "./rivers.ts";
 export { getIsolines, getPolesOfInaccessibility, FlatQueue } from "./utils.ts";
 export { getBase, getBaseShort, getCulture, getCultureShort, getState, getMapName } from "./names.ts";
+export { buildWorldNamer } from "./namer.ts";
+export { BUILTIN_NAMEBASES } from "./namebase-presets.ts";
 export { getDefaultNameBases } from "./namebases.ts";
 export type { NameBase } from "./namebases.ts";
 export { generateWorld, worldStats } from "./world.ts";

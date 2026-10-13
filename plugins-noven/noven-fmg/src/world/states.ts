@@ -22,8 +22,8 @@ const createStates = (world: World, rng: Rng): State[] => {
     const basename =
       (burg.name?.length ?? 99) < 9 && each5th(burg.cell)
         ? burg.name!
-        : getCultureShort(rng, cultures, burg.culture!);
-    const name = world.config.names ? getState(rng, cultures, basename, burg.culture!) : "";
+        : world.namer?.burg(rng, burg.culture!, true) ?? getCultureShort(rng, cultures, burg.culture!);
+    const name = world.config.names ? world.namer?.state(rng, basename, burg.culture!) ?? getState(rng, cultures, basename, burg.culture!) : "";
     const type = cultures[burg.culture!].type;
     states.push({
       i: burg.i,
