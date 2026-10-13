@@ -16,6 +16,7 @@ import { rankCells } from "./population.ts";
 import { expandCultures, generateCultures } from "./cultures.ts";
 import { generateBurgs } from "./burgs.ts";
 import { generateStates } from "./states.ts";
+import { generateRoutes } from "./routes.ts";
 
 /** how the heightmap (the pipeline's only creative input) is supplied */
 export type HeightmapInput =
@@ -90,6 +91,7 @@ export const generateWorld = (input: GenerateWorldInput = {}): World => {
   expandCultures(world);
   generateBurgs(world, rng);
   generateStates(world, rng);
+  generateRoutes(world, rng);
 
   defineFeatureNames(world, rng);
   specifyRivers(world, rng);
@@ -107,5 +109,6 @@ export const worldStats = (world: World) => ({
   islands: world.pack.features.filter(f => f?.type === "island").length,
   cultures: world.pack.cultures?.filter(c => c?.i).length ?? 0,
   states: world.pack.states?.filter(s => s?.i).length ?? 0,
-  burgs: world.pack.burgs?.filter(b => b?.i).length ?? 0
+  burgs: world.pack.burgs?.filter(b => b?.i).length ?? 0,
+  routes: world.pack.routes?.filter(r => r?.i).length ?? 0
 });

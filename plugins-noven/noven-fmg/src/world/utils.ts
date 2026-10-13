@@ -237,6 +237,10 @@ export class FlatQueue<T> {
     }
     return top;
   }
+
+  peekValue(): number {
+    return this.values[0];
+  }
 }
 
 type IsolineGraph = Pick<PackGraph, "cells" | "vertices" | "features">;

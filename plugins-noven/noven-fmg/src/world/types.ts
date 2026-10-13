@@ -80,6 +80,8 @@ export interface Feature {
   enteringFlux?: number;
   closed?: boolean;
   outCell?: number;
+  lock?: boolean;
+  removed?: boolean;
 }
 
 export interface PackCells extends VoronoiCells {
@@ -102,6 +104,19 @@ export interface PackCells extends VoronoiCells {
   state: Uint16Array; // state id (0 = neutrals)
 }
 
+/** a generated connection between burgs: roads link capitals, trails link towns,
+ *  searoutes link ports; points are [x, y, cellId] anchors in world pixels */
+export interface Route {
+  i: number;
+  name?: string;
+  group: "roads" | "trails" | "searoutes";
+  feature: number;
+  cells: number[];
+  points: [number, number, number][];
+  lock?: boolean;
+  removed?: boolean;
+}
+
 /** the repacked graph: Voronoi rebuilt from the points that matter, denser along coasts */
 export interface PackGraph {
   cells: PackCells;
@@ -112,6 +127,7 @@ export interface PackGraph {
   cultures: Culture[]; // index 0 is the Wildlands placeholder
   burgs: Burg[]; // index 0 is a placeholder
   states: State[]; // index 0 is Neutrals
+  routes: Route[];
 }
 
 export type CultureType = "Generic" | "Hunting" | "Highland" | "River" | "Lake" | "Naval" | "Nomadic";
@@ -125,6 +141,8 @@ export interface Culture {
   color?: string;
   expansionism?: number;
   shield?: string;
+  lock?: boolean;
+  removed?: boolean;
 }
 
 export interface Burg {
@@ -175,6 +193,8 @@ export interface River {
   type: string;
   cells: number[]; // -1 marks a border exit
   points?: [number, number, number][]; // meandered [x, y, flux]
+  lock?: boolean;
+  removed?: boolean;
 }
 
 export interface Biome {

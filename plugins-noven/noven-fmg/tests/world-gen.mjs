@@ -8,7 +8,7 @@
  * Run: node tests/world-gen.mjs
  * @module noven-fmg/tests/world-gen
  */
-import { generateWorld, getGridDims, guessDraftLevel, rasterizeDraft, resampleWorld, worldStats } from '../lib/world/index.js'
+import { generateWorld, getGridDims, guessDraftLevel, rasterizeDraft, resampleWorld, worldStats, applyWorldEdits } from '../lib/world/index.js'
 
 let failures = 0
 const check = (ok, what) => {
@@ -74,6 +74,35 @@ check(rivers.some(r => features[cells.f[r.cells[r.cells.length - 1]]]?.type === 
   check(
     pack.burgs.filter(b => b?.i).every(b => b.state !== undefined),
     '所有城邦归属已分配'
+  )
+}
+
+// 2c. routes: roads between capitals, trails between burgs, searoutes between ports
+{
+  const { routes } = w1.pack
+  check(routes.length > 0, `路线数量 ${routes.length} > 0`)
+  const groups = new Set(routes.map(r => r.group))
+  check(groups.has('roads'), '存在主干道')
+  check(groups.has('trails'), '存在小径')
+  check(groups.has('searoutes'), '存在航线')
+  check(
+    routes.every(r => r.cells.length >= 2 && r.points.length === r.cells.length),
+    '每条路线至少两点且 cells/points 对齐'
+  )
+  check(
+    routes.every(r => r.cells.every((c, i) => c === r.points[i][2])),
+    '路线锚点与格 id 一致'
+  )
+  const sea = routes.filter(r => r.group === 'searoutes')
+  const isPortCell = c => w1.pack.cells.burg[c] && w1.pack.burgs[w1.pack.cells.burg[c]]?.port
+  check(
+    sea.every(r => r.cells.every(c => w1.pack.cells.h[c] < 20 || w1.pack.cells.r[c] > 0 || isPortCell(c))),
+    '航线不跨陆地（仅可走可航河段和港口陆格）'
+  )
+  const land = routes.filter(r => r.group !== 'searoutes')
+  check(
+    land.every(r => r.cells.every(c => w1.pack.cells.h[c] >= 20)),
+    '陆路不入海'
   )
 }
 
@@ -155,6 +184,43 @@ check(
   console.log('  resampled child stats:', JSON.stringify(stats))
   check(child.pack.cells.h.some(h => h >= 20) || child.pack.cells.h.every(h => h < 20), '重采样子世界可生成')
   check(stats.rivers >= 0 && stats.burgs >= 0, '重采样子世界：实体管线可跑')
+}
+
+// 8. 实体覆写：改名/移除/lock 在重算后回贴
+{
+  const mk = () => generateWorld({ seed: seed + '-edits', config: { points: 5000 }, heightmap: { kind: 'template', template: 'continents' } })
+  const a = mk()
+  const burg = a.pack.burgs.find(b => b?.i && b.name)
+  const state = a.pack.states.find(s => s.i && s.name)
+  check(burg !== undefined && state !== undefined, '覆写测试有实体可用')
+
+  // 同种子重算：名字匹配回贴
+  const edits = [
+    { kind: 'burg', key: burg.name, name: 'Renamed Town', lock: true },
+    { kind: 'state', key: state.name, remove: true }
+  ]
+  const b = mk()
+  const applied = applyWorldEdits(b, edits)
+  check(applied === 2, `覆写同种子回贴 ${applied}/2`)
+  const renamed = b.pack.burgs.find(x => x?.name === 'Renamed Town')
+  check(renamed !== undefined && renamed.lock === true, '改名城邦在同种子重算后存活且锁定')
+  check(b.pack.states.find(s => s.name === state.name)?.removed === true, '移除国家在同种子重算后仍被移除')
+
+  // 换高度图重算：按 at 位置就近回贴
+  const c = generateWorld({ seed: seed + '-edits-2', config: { points: 5000 }, heightmap: { kind: 'template', template: 'atoll' } })
+  const at = [burg.x / a.config.height, burg.y / a.config.height]
+  const appliedC = applyWorldEdits(c, [{ kind: 'burg', at, name: 'Anchored Town', lock: true }])
+  const anchored = c.pack.burgs.find(x => x?.name === 'Anchored Town')
+  check(appliedC <= 1 && (appliedC === 0 || anchored?.lock === true), `换地形后按位置回贴（${appliedC === 1 ? '命中' : '无城邦可贴，合法'}）`)
+
+  // 无名路线按位置回贴移除
+  const route = a.pack.routes.find(r => r.i)
+  if (route !== undefined) {
+    const mid = route.points[Math.floor(route.points.length / 2)]
+    const d = mk()
+    applyWorldEdits(d, [{ kind: 'route', at: [mid[0] / a.config.height, mid[1] / a.config.height], remove: true }])
+    check(d.pack.routes.some(r => r.removed === true), '路线按位置回贴移除')
+  }
 }
 
 console.log(failures ? `\n${failures} FAIL` : '\nALL PASS')

@@ -43,6 +43,7 @@ export { rankCells } from "./population.ts";
 export { generateCultures, expandCultures, DEFAULT_CULTURE_TYPE } from "./cultures.ts";
 export { generateBurgs, getBurgType } from "./burgs.ts";
 export { generateStates, expandStates } from "./states.ts";
+export { generateRoutes } from "./routes.ts";
 export { isNavigable, resolveDrainFeature, resolveLakeDrainFeature } from "./rivers.ts";
 export { getIsolines, getPolesOfInaccessibility, FlatQueue } from "./utils.ts";
 export { getBase, getBaseShort, getCulture, getCultureShort, getState, getMapName } from "./names.ts";
@@ -53,6 +54,8 @@ export type { GenerateWorldInput, HeightmapInput } from "./world.ts";
 export { guessDraftLevel, rasterizeDraft } from "./draft.ts";
 export { resampleWorld, regionOfPoints } from "./resample.ts";
 export type { ResampleRegion, ResampledWorld } from "./resample.ts";
+export { applyWorldEdits } from "./edits.ts";
+export type { WorldEntityEdit } from "./edits.ts";
 export type {
   DraftEntryInput,
   DraftPolyInput,

@@ -12,9 +12,9 @@ import { getStroke } from 'perfect-freehand'
 import { expandShape } from 'noven-fmg/mapgeom'
 import {
   createPackQuadtree, findPackCell, generateSeed, generateWorld, getGridDims, getPolygon,
-  getRiverPath, guessDraftLevel, rasterizeDraft, regionOfPoints,
+  getRiverPath, guessDraftLevel, rasterizeDraft, regionOfPoints, applyWorldEdits,
 } from 'noven-fmg/world'
-import type { HeightmapInput, PackGraph, World } from 'noven-fmg/world'
+import type { HeightmapInput, PackGraph, World, WorldEntityEdit } from 'noven-fmg/world'
 import type { CardCommand, CardModuleDoc } from './card-api.ts'
 import type { ShellT } from './pages/Home.tsx'
 import { fmt } from './pages/Home.tsx'
@@ -51,6 +51,8 @@ interface WorldSource {
     | { readonly kind: 'gray', readonly gray: readonly number[] }
     | { readonly kind: 'draft' }
   readonly postSteps?: readonly string[]
+  /** 实体覆写：改名/删除在重算后按名或就近位置回贴。 */
+  readonly edits?: readonly WorldEntityEdit[]
 }
 interface EditorDoc {
   readonly description: string
@@ -436,8 +438,8 @@ const featurePath = (pack: PackGraph, featureId: number): Path2D | null => {
   return p
 }
 
-/** 世界图层开关：国界/城镇/标签可单独显隐。 */
-export type WorldLayer = 'states' | 'burgs' | 'names'
+/** 世界图层开关：国界/路线/城镇/标签可单独显隐。 */
+export type WorldLayer = 'states' | 'routes' | 'burgs' | 'names'
 
 /** 世界 → 位图：水体垫底，陆地格按生物带填色，国家色罩+边界，岸线描边，湖泊补水色，河网，城邦点+标签。 */
 const paintWorld = (world: World, layers: ReadonlySet<WorldLayer>): HTMLCanvasElement => {
@@ -493,7 +495,7 @@ const paintWorld = (world: World, layers: ReadonlySet<WorldLayer>): HTMLCanvasEl
   }
   // 湖泊补回水色 + 陆地/岛屿描岸线
   for (const f of pack.features) {
-    if (f.i === 0) continue
+    if (f.i === 0 || f.removed) continue
     const path = featurePath(pack, f.i)
     if (path === null) continue
     if (f.type === 'lake') { c.fillStyle = LAKE; c.fill(path) }
@@ -502,8 +504,21 @@ const paintWorld = (world: World, layers: ReadonlySet<WorldLayer>): HTMLCanvasEl
   // 河网
   c.fillStyle = RIVER
   for (const r of pack.rivers) {
-    if (r.points === undefined || r.points.length < 2) continue
+    if (r.removed || r.points === undefined || r.points.length < 2) continue
     c.fill(new Path2D(getRiverPath(r.points, r.widthFactor, r.sourceWidth)))
+  }
+  // 路网：航线=蓝虚线，小径=细虚线，主干道=实线；压在城邦点之下
+  if (layers.has('routes')) {
+    for (const r of pack.routes) {
+      if (r.removed || r.points.length < 2) continue
+      c.beginPath()
+      r.points.forEach((p, i) => { i === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
+      if (r.group === 'searoutes') { c.strokeStyle = 'rgba(62,124,171,.45)'; c.lineWidth = 0.8; c.setLineDash([3, 2.4]) }
+      else if (r.group === 'roads') { c.strokeStyle = 'rgba(112,86,56,.55)'; c.lineWidth = 0.9; c.setLineDash([]) }
+      else { c.strokeStyle = 'rgba(112,86,56,.3)'; c.lineWidth = 0.55; c.setLineDash([1.6, 1.8]) }
+      c.stroke()
+    }
+    c.setLineDash([])
   }
   // 城邦：都邑=双环，城镇=小点；港口描蓝
   if (layers.has('burgs')) {
@@ -524,40 +539,27 @@ const paintWorld = (world: World, layers: ReadonlySet<WorldLayer>): HTMLCanvasEl
       }
     }
   }
-  // 标签：城名 + 国名（pole 位）
-  if (layers.has('names')) {
-    c.textAlign = 'center'
-    c.textBaseline = 'bottom'
-    if (layers.has('burgs')) {
-      c.font = '600 7px "LXGW WenKai", "Kaiti SC", serif'
-      c.fillStyle = 'rgba(50,54,60,.85)'
-      for (const b of pack.burgs) {
-        if (!b?.i || b.removed || !b.name) continue
-        if (!b.capital && !b.port && (b.population ?? 0) < 4) continue // 小镇不标名，防止密不透风
-        c.fillText(b.name, b.x, b.y - (b.capital ? 3.4 : 2.6))
-      }
-    }
-    if (showStates) {
-      for (const s of pack.states) {
-        if (!s.i || s.removed || !s.pole) continue
-        const cellsN = cells.i.reduce((acc, i) => acc + (cells.state[i] === s.i ? 1 : 0), 0)
-        const size = Math.min(8 + Math.sqrt(cellsN) * 1.6, 22)
-        c.font = `700 ${size.toFixed(1)}px "LXGW WenKai", "Kaiti SC", serif`
-        c.fillStyle = 'rgba(60,66,74,.28)'
-        c.fillText(s.name, s.pole[0], s.pole[1] + size * .3)
-      }
-    }
-  }
+  // 标签不在此烘焙——draw() 里按当前缩放做屏幕空间动态标名
   return cv
 }
 
-/** 世界命中：城邦 > 河 > 特征；state/culture/biome 取自被点格。 */
+/** 点到折线段的最小距离²。 */
+const distToSeg2 = (px: number, py: number, ax: number, ay: number, bx: number, by: number): number => {
+  const dx = bx - ax, dy = by - ay
+  const len = dx * dx + dy * dy
+  const t = len === 0 ? 0 : Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / len))
+  return (px - ax - t * dx) ** 2 + (py - ay - t * dy) ** 2
+}
+
+/** 世界命中：城邦 > 路线 > 河 > 特征；state/culture/biome 取自被点格。 */
 type WorldHit = {
-  readonly kind: 'burg' | 'river' | 'feature'
+  readonly kind: 'burg' | 'route' | 'river' | 'feature'
   readonly id: number
   readonly biome: number
   readonly state: number
   readonly culture: number
+  /** 点击位置（归一化）：实体覆写 `at` 兜底匹配用。 */
+  readonly pos?: XY
 }
 const hitWorld = (world: World, tree: BuiltWorld['tree'], wx: number, wy: number): WorldHit | null => {
   const cell = findPackCell(wx, wy, Infinity, tree)
@@ -567,11 +569,22 @@ const hitWorld = (world: World, tree: BuiltWorld['tree'], wx: number, wy: number
   const state = cells.state[cell] ?? 0
   const culture = cells.culture[cell] ?? 0
   const b = cells.burg?.[cell] ?? 0
-  if (b > 0) return { kind: 'burg', id: b, biome, state, culture }
+  if (b > 0 && world.pack.burgs[b]?.removed !== true) return { kind: 'burg', id: b, biome, state, culture }
+  // 路线：距任一路线折线足够近即命中
+  const threshold = (world.config.height / 80) ** 2
+  let bestRoute = 0, bestDist = Infinity
+  for (const r of world.pack.routes) {
+    if (r.removed || r.points.length < 2) continue
+    for (let i = 0; i + 1 < r.points.length; i++) {
+      const d = distToSeg2(wx, wy, r.points[i][0], r.points[i][1], r.points[i + 1][0], r.points[i + 1][1])
+      if (d < bestDist) { bestDist = d; bestRoute = r.i }
+    }
+  }
+  if (bestRoute > 0 && bestDist <= threshold) return { kind: 'route', id: bestRoute, biome, state, culture }
   const r = cells.r[cell] ?? 0
-  if (r > 0) return { kind: 'river', id: r, biome, state, culture }
+  if (r > 0 && world.pack.rivers[r - 1]?.removed !== true) return { kind: 'river', id: r, biome, state, culture }
   const f = cells.f[cell] ?? 0
-  return f > 0 ? { kind: 'feature', id: f, biome, state, culture } : null
+  return f > 0 && world.pack.features[f]?.removed !== true ? { kind: 'feature', id: f, biome, state, culture } : null
 }
 
 /** 选中对象 → 局部视图取景框（归一化父图坐标，喂 map_spawn_view 的 bbox）。 */
@@ -670,7 +683,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   /** 世界缓存：源（draft 输入时含草稿内容）变了才重算；生成 ~0.5s 只付一次。 */
   const builtRef = useRef<{ key: string, built: BuiltWorld } | null>(null)
   const [selWorld, setSelWorld] = useState<WorldHit | null>(null)
-  const [worldLayers, setWorldLayers] = useState<ReadonlySet<WorldLayer>>(() => new Set<WorldLayer>(['states', 'burgs', 'names']))
+  const [worldLayers, setWorldLayers] = useState<ReadonlySet<WorldLayer>>(() => new Set<WorldLayer>(['states', 'routes', 'burgs', 'names']))
   const toWork = useCallback((p: XY): XY => [p[0] * aspectRef.current, p[1]], [])
   const toStore = useCallback((p: XY): XY => [clamp01(p[0] / aspectRef.current), clamp01(p[1])], [])
   const objWorkPts = useCallback((o: FaceObj | LineObj): XY[] => o.pts.map(toWork), [toWork])
@@ -730,6 +743,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     if (builtRef.current?.key === key) return builtRef.current.built
     try {
       const world = generateWorld({ seed: src.seed, config: src.config, heightmap: worldHeightmap(doc, src), postSteps: [...(src.postSteps ?? [])] })
+      if (src.edits !== undefined && src.edits.length > 0) applyWorldEdits(world, src.edits)
       const built: BuiltWorld = { world, tree: createPackQuadtree(world.pack), layers: worldLayers, canvas: paintWorld(world, worldLayers) }
       builtRef.current = { key, built }
       return built
@@ -737,6 +751,12 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       return null // 坏源不炸画布
     }
   }, [worldLayers])
+
+  // localhost 调试钩子：浏览器自动化拿当前世界几何做确定性命中（不随包发到远端）。
+  useEffect(() => {
+    if (location.hostname !== '127.0.0.1' && location.hostname !== 'localhost') return
+    ;(window as { __nvMap?: unknown }).__nvMap = { resolveBuilt, view: viewRef, aspect: aspectRef }
+  }, [resolveBuilt])
 
   // 世界出现/换源时：宽高比跟世界尺寸，重新取景。
   useEffect(() => {
@@ -758,12 +778,22 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     commit()
   }, [commit])
 
+  /** 实体覆写：改名/删除记进 world.edits，重算后回贴、不被刷掉。 */
+  const pushWorldEdit = useCallback((edit: WorldEntityEdit): void => {
+    const src = docRef.current.world
+    if (src === undefined) return
+    docRef.current = { ...docRef.current, world: { ...src, edits: [...(src.edits ?? []), edit] } }
+    builtRef.current = null
+    commit(); bump()
+  }, [commit, bump])
+
   /** 点选世界对象：点击未拖动时命中河 > 特征。 */
   const selectWorldAt = useCallback((p: XY): void => {
     const built = resolveBuilt()
     if (built === null) { setSelWorld(null); return }
     const h = built.world.config.height
-    setSelWorld(hitWorld(built.world, built.tree, p[0] * h, p[1] * h))
+    const hit = hitWorld(built.world, built.tree, p[0] * h, p[1] * h)
+    setSelWorld(hit === null ? null : { ...hit, pos: p })
   }, [resolveBuilt])
 
   /* ---------- 视图与命中 ---------- */
@@ -929,6 +959,16 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
             c.beginPath(); c.arc(b.x, b.y, 4.5, 0, Math.PI * 2); c.stroke()
             c.restore()
           }
+        } else if (selWorld.kind === 'route') {
+          const r = built.world.pack.routes.find(rt => rt.i === selWorld.id)
+          if (r !== undefined && r.points.length > 1) {
+            c.save(); c.scale(u, u)
+            c.strokeStyle = ACCENT; c.lineWidth = 2.5 / v.s * built.world.config.height; c.lineJoin = 'round'
+            c.beginPath()
+            r.points.forEach((p, i) => { i === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
+            c.stroke()
+            c.restore()
+          }
         } else {
           const r = built.world.pack.rivers.find(rv => rv.i === selWorld.id)
           if (r?.points !== undefined && r.points.length > 1) {
@@ -938,6 +978,48 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
             c.restore()
           }
         }
+      }
+      // 地名：屏幕空间动态标——字号恒定可读，按缩放决定密度，贪心避让防重叠
+      if (built.layers.has('names')) {
+        const pack = built.world.pack
+        const k = v.s / built.world.config.height // 屏幕 px / 世界 px
+        const placed: { x: number; y: number; w: number; h: number }[] = []
+        c.save()
+        c.setTransform(dpr, 0, 0, dpr, 0, 0)
+        c.textAlign = 'center'; c.textBaseline = 'alphabetic'
+        const place = (wx: number, wy: number, text: string, size: number, color: string, weight: string, force = false): void => {
+          const x = wx * k + v.x, y = wy * k + v.y
+          const w = text.length * size * .58, h = size
+          const bx = x - w / 2, by = y - h
+          if (bx < 0 || by < 0 || bx + w > W || by + h > H) return
+          if (!force && placed.some(r => bx < r.x + r.w && bx + w > r.x && by < r.y + r.h && by + h > r.y)) return
+          c.font = `${weight} ${size.toFixed(1)}px "LXGW WenKai", "Kaiti SC", serif`
+          c.fillStyle = color
+          c.fillText(text, x, y)
+          placed.push({ x: bx, y: by, w, h })
+        }
+        // 国名：任何缩放都画，按国土面积放大
+        if (built.layers.has('states')) {
+          for (const s of pack.states) {
+            if (!s.i || s.removed || s.pole === undefined || !s.name) continue
+            const cellsN = pack.cells.i.reduce((acc, i) => acc + (pack.cells.state[i] === s.i ? 1 : 0), 0)
+            const size = Math.min(10 + Math.sqrt(cellsN) * 1.1, 26)
+            place(s.pole[0], s.pole[1], s.name, size, 'rgba(60,66,74,.3)', '700')
+          }
+        }
+        // 城名分级：都城→港口/大镇→小镇，缩放越大可标越多
+        if (built.layers.has('burgs')) {
+          for (const b of pack.burgs) {
+            if (!b?.i || b.removed || !b.name) continue
+            const major = Boolean(b.capital) || Boolean(b.port) || (b.population ?? 0) >= 4
+            const tier = b.capital ? 0.15 : major ? 0.5 : 1.2
+            if (k < tier) continue
+            const size = b.capital ? 8.5 : major ? 7.5 : 7
+            const force = selWorld?.kind === 'burg' && selWorld.id === b.i
+            place(b.x, b.y - (b.capital ? 3.4 : 2.6), b.name, size, force ? ACCENT : 'rgba(50,54,60,.85)', '600', force)
+          }
+        }
+        c.restore()
       }
     } else if (img !== null && img.complete && img.naturalWidth > 0) {
       if (win !== undefined) c.drawImage(img, win[0] * img.naturalWidth, win[1] * img.naturalHeight, (win[2] - win[0]) * img.naturalWidth, (win[3] - win[1]) * img.naturalHeight, 0, 0, aspect, 1)
@@ -1432,12 +1514,13 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
 
   const builtNow = MAP_WORLD ? resolveBuilt() : null
   const selRiver = selWorld?.kind === 'river' ? builtNow?.world.pack.rivers.find(r => r.i === selWorld.id) : undefined
+  const selRoute = selWorld?.kind === 'route' ? builtNow?.world.pack.routes.find(r => r.i === selWorld.id) : undefined
   const selFeature = selWorld?.kind === 'feature' ? builtNow?.world.pack.features[selWorld.id] : undefined
   const selBurg = selWorld?.kind === 'burg' ? builtNow?.world.pack.burgs.find(b => b?.i === selWorld.id) : undefined
   const selState = selWorld !== null && selWorld !== undefined ? builtNow?.world.pack.states[selWorld.state] : undefined
   const selCulture = selWorld !== null && selWorld !== undefined ? builtNow?.world.pack.cultures[selWorld.culture] : undefined
-  const selName = (selBurg?.name ?? selRiver?.name ?? selFeature?.name) ?? ''
-  const selKindKey = selBurg !== undefined ? 'burg' : selRiver !== undefined ? 'river' : selFeature?.type
+  const selName = (selBurg?.name ?? selRiver?.name ?? selRoute?.name ?? selFeature?.name) ?? ''
+  const selKindKey = selBurg !== undefined ? 'burg' : selRiver !== undefined ? 'river' : selRoute !== undefined ? `route.${selRoute.group}` : selFeature?.type
 
   /* ---------- 无底图：两个入口——手绘草稿 / 直接生成（也可挑一张已有图） ---------- */
 
@@ -1540,7 +1623,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
             )
           ) : (
             <>
-              {(['states', 'burgs', 'names'] as const).map(l => (
+              {(['states', 'routes', 'burgs', 'names'] as const).map(l => (
                 <button key={l} type="button"
                   className={`nv-maped-chip${worldLayers.has(l) ? '' : ' off'}`}
                   onClick={() => setWorldLayers(prev => {
@@ -1599,8 +1682,9 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
             <button type="button" className="nv-maped-del" onClick={deleteSel}>{t('wg.del')}</button>
           </div>
         )}
-        {selWorld !== null && selName !== '' && (() => {
+        {selWorld !== null && (selName !== '' || selRoute !== undefined) && (() => {
           const kindText = selKindKey !== undefined ? t(`wg.map.world.kind.${selKindKey}` as Parameters<ShellT>[0]) : ''
+          const displayName = selName !== '' ? selName : kindText
           const parts = [kindText]
           if (selBurg !== undefined) {
             if (selBurg.capital) parts.push(t('wg.map.world.burg.capital'))
@@ -1613,11 +1697,29 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           if (selCulture?.name !== undefined) parts.push(selCulture.name)
           return (
           <div className="nv-maped-wcard">
-            <span className="nv-maped-wname">{selName}</span>
+            <span className="nv-maped-wname">{displayName}</span>
             <span className="nv-maped-mini">{parts.filter((p, i) => p !== '' && parts.indexOf(p) === i).join(' · ')}</span>
             <button type="button" className="nv-maped-ok"
-              onClick={() => { void ask(fmt(t, 'wg.map.world.askText', { name: selName })) }}>
+              onClick={() => { void ask(fmt(t, 'wg.map.world.askText', { name: displayName })) }}>
               {t('wg.map.world.ask')}
+            </button>
+            <button type="button" className="nv-maped-ok" title={t('wg.map.world.renameDesc')}
+              onClick={() => {
+                const next = window.prompt(t('wg.map.world.renamePrompt'), selName)?.trim()
+                if (next !== undefined && next !== '' && next !== selName && selWorld !== null) {
+                  pushWorldEdit({ kind: selWorld.kind, ...(selName !== '' ? { key: selName } : {}), ...(selWorld.pos !== undefined ? { at: selWorld.pos } : {}), name: next, lock: true })
+                }
+              }}>
+              {t('wg.map.world.rename')}
+            </button>
+            <button type="button" className="nv-maped-del" title={t('wg.map.world.removeDesc')}
+              onClick={() => {
+                if (selWorld !== null && window.confirm(fmt(t, 'wg.map.world.removeConfirm', { name: displayName }))) {
+                  pushWorldEdit({ kind: selWorld.kind, ...(selName !== '' ? { key: selName } : {}), ...(selWorld.pos !== undefined ? { at: selWorld.pos } : {}), remove: true })
+                  setSelWorld(null)
+                }
+              }}>
+              {t('wg.map.world.remove')}
             </button>
             <button type="button" className="nv-maped-ok" title={t('wg.map.world.spawnDesc')}
               onClick={() => {

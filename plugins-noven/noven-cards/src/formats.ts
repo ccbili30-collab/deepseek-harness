@@ -565,6 +565,17 @@ export type MapWorldHeightmap =
   | { readonly kind: 'gray'; readonly gray: readonly number[] }
   | { readonly kind: 'draft' }
 
+/** 世界实体覆写：生成后的改名/删除/锁定。`key` 是实体原始名（重算后按名找回）；
+ *  `at` 是归一化位置的兜底匹配（子图/换名重算时用）；两个都没有的条目丢弃。 */
+export interface MapWorldEdit {
+  readonly kind: 'burg' | 'state' | 'culture' | 'river' | 'feature' | 'route'
+  readonly key?: string
+  readonly at?: readonly [number, number]
+  readonly name?: string
+  readonly remove?: boolean
+  readonly lock?: boolean
+}
+
 /** 世界生成源：确定性管线的全部输入；派生几何（grid/pack/河网）不落盘。 */
 export interface MapWorldSource {
   readonly seed: string
@@ -573,6 +584,8 @@ export interface MapWorldSource {
   readonly heightmap: MapWorldHeightmap
   /** 输入后追加的高度图步骤（如 Smooth）。 */
   readonly postSteps?: readonly string[]
+  /** 实体覆写：改名/删除在每次重算后回贴，生成的东西不因重算丢名。 */
+  readonly edits?: readonly MapWorldEdit[]
 }
 
 const HEX6 = /^#[0-9a-fA-F]{6}$/
@@ -725,6 +738,25 @@ function worldHeightmapOf(raw: unknown): MapWorldHeightmap | null {
   }
 }
 
+function worldEditOf(raw: unknown): MapWorldEdit | null {
+  const source = record(raw)
+  const kind = str(source.kind)
+  if (kind !== 'burg' && kind !== 'state' && kind !== 'culture' && kind !== 'river' && kind !== 'feature') return null
+  const key = str(source.key)
+  const at = Array.isArray(source.at) && source.at.length >= 2 ? [num(source.at[0], -1), num(source.at[1], -1)] as const : undefined
+  const name = str(source.name)
+  const edit: MapWorldEdit = {
+    kind,
+    ...(key !== '' ? { key } : {}),
+    ...(at !== undefined && at[0] >= 0 ? { at } : {}),
+    ...(name !== '' ? { name } : {}),
+    ...(source.remove === true ? { remove: true } : {}),
+    ...(source.lock === true ? { lock: true } : {}),
+  }
+  // 无定位手段的条目没有意义
+  return edit.key !== undefined || edit.at !== undefined ? edit : null
+}
+
 /** 解码世界生成源：缺 heightmap 或字段非法时整段丢弃（退回旧行为）。 */
 function worldSourceOf(raw: unknown): MapWorldSource | undefined {
   const source = record(raw)
@@ -733,11 +765,13 @@ function worldSourceOf(raw: unknown): MapWorldSource | undefined {
   if (seed === '' || heightmap === null) return undefined
   const config = record(source.config)
   const steps = Array.isArray(source.postSteps) ? source.postSteps.filter((s): s is string => typeof s === 'string') : undefined
+  const edits = Array.isArray(source.edits) ? source.edits.map(worldEditOf).filter((e): e is MapWorldEdit => e !== null) : []
   return {
     seed,
     ...(Object.keys(config).length > 0 ? { config } : {}),
     heightmap,
     ...(steps !== undefined && steps.length > 0 ? { postSteps: steps } : {}),
+    ...(edits.length > 0 ? { edits } : {}),
   }
 }
 

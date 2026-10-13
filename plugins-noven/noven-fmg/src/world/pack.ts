@@ -49,7 +49,7 @@ export const repackGraph = (world: World): PackGraph => {
 
   const pack: PackGraph = {
     cells: cells as PackCells, vertices, rivers: [], features: [], biomes: [],
-    cultures: [], burgs: [], states: []
+    cultures: [], burgs: [], states: [], routes: []
   };
   pack.cells.p = newCells.p;
   pack.cells.g = Uint32Array.from(newCells.g); // parent grid cell of every packed cell

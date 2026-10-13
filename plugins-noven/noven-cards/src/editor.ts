@@ -560,7 +560,7 @@ async function transformDocument(
     case 'map_spawn_view': {
       const source = widgetModule(command.moduleId, 'map')
       const data = decodeMap(await widgetJson(source))
-      const parentAspect = command.aspect !== undefined && command.aspect > 0 ? command.aspect : 1.6
+      const parentAspect = command.aspect !== undefined && command.aspect > 0 ? command.aspect : (data.aspect ?? 1.6)
       // 取景框：显式 bbox 优先，否则由 objectId 对象的归一化外接框外扩留白推出。
       let bbox: GBBox
       if (command.bbox !== undefined) {
@@ -617,11 +617,16 @@ async function transformDocument(
         if (heightmap !== undefined) {
           const parentWorld = generateWorld({ seed: data.world.seed, config: data.world.config, heightmap, postSteps: [...(data.world.postSteps ?? [])] })
           const res = resampleWorld(parentWorld, bbox, 2)
+          // 框内的实体覆写重映射进子图：改过的城名/国名在子世界里继续生效
+          const childEdits = (data.world.edits ?? [])
+            .filter(e => e.key !== undefined || (e.at !== undefined && e.at[0] >= bbox[0] && e.at[0] <= bbox[2] && e.at[1] >= bbox[1] && e.at[1] <= bbox[3]))
+            .map(e => e.at === undefined ? e : { ...e, at: toChild(e.at, bbox) })
           childWorld = {
             seed: res.seed,
             config: { ...(data.world.config ?? {}), ...res.config },
             heightmap: { kind: 'heights', heights: res.heights },
             ...(data.world.postSteps !== undefined ? { postSteps: data.world.postSteps } : {}),
+            ...(childEdits.length > 0 ? { edits: childEdits } : {}),
           }
         }
       }

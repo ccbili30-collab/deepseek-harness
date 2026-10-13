@@ -416,6 +416,7 @@ export function registerCardTools(ctx: Context): void {
           'timeline=时间线、collection=合集条目（语义名 region/faction/race/quotes 等同用此 kind）——' +
           '这两类建好后**必须**用 timeline_*/collection_* 专用工具填数据，不要手写 JSON；' +
           'relation=人物关系图（用 widget_set_data 写 nodes/edges，节点带 x/y 摆位 0..1）；' +
+          'map=地图模块（世界生成：widget_set_data 写 world 源；语义草稿：写 draft+palette 后把 heightmap 置 draft 重算）；' +
           'html=自定义小组件（正文块直接写 HTML 源码，沙箱渲染，适合 vibecode 的交互组件）',
       },
     },
@@ -767,7 +768,21 @@ export function registerCardTools(ctx: Context): void {
 
   registerEditTool(tools, 'widget_set_data',
     '整体改写 map / relation 模块的结构化数据（timeline/collection 请用各自的专用工具）。' +
-    'map: {"description":"…","markers":[{"x":0.5,"y":0.4,"label":"王都","description":"…"}]}——markers 的 x/y 是底图归一化坐标 0..1，id 留空自动生成，传回读到的 id 即更新原位。' +
+    'map 有三层，全部可选：' +
+    '① world 生成源——{"seed":"任意串","config":{"points":10000,"width":1280,"height":800},' +
+    '"heightmap":{"kind":"template","template":"continents"},"postSteps":["Smooth 2 0 0 0"]}。' +
+    'heightmap.kind 支持 template（程序模板 continents/archipelago/peninsula/atoll…）、heights（逐格 0-100 高度数组）、' +
+    'gray（逐格 0-255 灰度，可喂 DEM）、draft（把本模块 draft 栅格化成高度图再跑管线）。' +
+    '种子决定一切：同 seed+同输入=同世界；只换 seed 就是换一张图。' +
+    '② draft 语义草稿——人与 AI 共用的意图层：[{"kind":"stroke","color":"#B8A888","r":0.05,"pts":[[x,y],…]},' +
+    '{"kind":"shape","color":"…","ctrl":[[x,y]×4],"roughness":0.35,"seed":7,"op":"add|subtract"},' +
+    '{"kind":"poly","color":"…","pts":[[x,y]…],"op":"add|subtract"},{"kind":"stroke","erase":true,…}]。' +
+    '颜色经 palette 解释成高度：palette:[{"name":"海","desc":"ocean","color":"#6D9DC5","level":5}]，' +
+    'level 0-100，20 是海平线（海≈5、湖≈16、陆≈40、山≈75、峰≈88）；不写 level 按 name/desc 里的' +
+    '海/陆/山/湖/ocean/mountain 等词猜。base 是底层语义色（一般是海，没涂到的地方都是它）。' +
+    '③ objects 覆盖标注层——{"id","type":"mark|line|face","layer","name","color","pos"/"pts"}' +
+    '（markers 是 mark 的兼容投影）。坐标一律底图归一化 0..1，x 是宽比。' +
+    '写完 draft 意图后把 heightmap 置 {"kind":"draft"} 再保存，管线会按草稿重算世界。' +
     'relation: {"nodes":[{"name":"艾莉娅","note":"…","x":0.3,"y":0.5}],"edges":[{"from":"节点id","to":"节点id","label":"师徒"}]}。',
     {
       module_id: { type: 'string', required: true, description: 'map / relation 模块编号' },
@@ -782,6 +797,31 @@ export function registerCardTools(ctx: Context): void {
         throw new Error('widget 必须是 map 或 relation（timeline/collection 用各自的专用工具）')
       }
       return { kind: 'set_widget_data', moduleId, widget, data: raw }
+    })
+
+  registerEditTool(tools, 'map_spawn_view',
+    '从 map 模块生成局部视图子模块：取景框内的对象与草稿裁剪重归一化；' +
+    '父模块带 world 生成源时不是裁剪，而是把该区域重采样成更密的格网、由管线重新长出河网/城邦/国界——细节随放大变多。' +
+    '子模块自动记入 parent 溯源并紧跟源模块。',
+    {
+      module_id: { type: 'string', required: true, description: 'map 模块编号' },
+      bbox: { type: 'string', description: '取景框 "[x0,y0,x1,y1]"（归一化坐标，0..1 左上原点）；与 object_id 二选一' },
+      object_id: { type: 'string', description: '围绕某个 objects 对象的外接框取景；与 bbox 二选一' },
+      name: { type: 'string', description: '子模块名，缺省自动命名' },
+    },
+    args => {
+      const moduleId = String(args.module_id)
+      const objectId = optionalId(args.object_id) ?? undefined
+      let bbox: readonly [number, number, number, number] | undefined
+      if (typeof args.bbox === 'string' && args.bbox.trim() !== '') {
+        const parsed: unknown = JSON.parse(args.bbox)
+        if (!Array.isArray(parsed) || parsed.length !== 4 || parsed.some(v => typeof v !== 'number')) {
+          throw new Error('bbox 必须是四个数的 JSON 数组 [x0,y0,x1,y1]')
+        }
+        bbox = parsed as [number, number, number, number]
+      }
+      if (bbox === undefined && objectId === undefined) throw new Error('bbox 或 object_id 至少给一个')
+      return { kind: 'map_spawn_view', moduleId, ...(objectId !== undefined ? { objectId } : {}), ...(bbox !== undefined ? { bbox } : {}), ...(args.name !== undefined ? { name: String(args.name) } : {}) }
     })
 
   // ---------- 图片 ----------
