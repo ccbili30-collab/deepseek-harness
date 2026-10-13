@@ -845,6 +845,10 @@ export function registerCardTools(ctx: Context): void {
     'iceland、hellenica、europe-north、europe-central、europe-accented、europe-and-central-asia；' +
     '也可给 PNG 绝对路径；png 会拉伸到 config.width×height，保比例就自己配宽高，如 east-asia 配 1000×640）。' +
     '种子决定一切：同 seed+同输入=同世界；只换 seed 就是换一张图。' +
+    '关键分流：请求涉及真实地理（中国/世界/某地历史地图）时必须用 png 高程图，禁止用 draft 手绘轮廓；' +
+    '且必须带 config.cultures.limit=0 关掉程序化政体层（不然真实地形上会铺几百个虚构国家/城邦灰点），' +
+    '河湖地形照常生成，政区/城市/战线由你写在 objects（mark/line/face，layer 自定）和 world.edits 里。' +
+    'draft 只用于架空地形或战区/势力范围这类意图标注（op:subtract 挖海、stroke 描走廊）。' +
     '实体默认无名（config.names:false）——生成的城邦/国家/河流不带占位名，' +
     '由你按语义起名：world.edits 写 [{"kind":"burg","id":5,"at":[0.4,0.3],"name":"临安","lock":true}]，' +
     'id 是实体编号（同生成内精确），at 是归一化位置兜底（重算后按最近实体回贴），' +
