@@ -19,8 +19,8 @@ const check = (ok, what) => {
 const seed = 'noven-fmg-smoke'
 
 // 1. determinism: same seed → identical flux/river/feature layout
-const w1 = generateWorld({ seed, heightmap: { kind: 'template', template: 'continents' } })
-const w2 = generateWorld({ seed, heightmap: { kind: 'template', template: 'continents' } })
+const w1 = generateWorld({ seed, config: { names: true }, heightmap: { kind: 'template', template: 'continents' } })
+const w2 = generateWorld({ seed, config: { names: true }, heightmap: { kind: 'template', template: 'continents' } })
 check(
   Buffer.from(w1.pack.cells.h).equals(Buffer.from(w2.pack.cells.h)) &&
     Buffer.from(w1.pack.cells.r).equals(Buffer.from(w2.pack.cells.r)) &&
@@ -53,6 +53,16 @@ check(undrained === 0, `所有河流入海/入湖/出图/汇流（异常 ${undra
 check(rivers.every(r => r.cells.length >= 3), '每条河至少 3 格')
 check(rivers.some(r => r.parent !== r.i), '存在支流汇入干流')
 check(rivers.some(r => features[cells.f[r.cells[r.cells.length - 1]]]?.type === 'ocean'), '存在入海的河')
+
+// 2a. names flag: default off leaves entities unnamed; on restores Markov names
+{
+  const unnamed = generateWorld({ seed, heightmap: { kind: 'template', template: 'continents' } })
+  check(unnamed.pack.burgs.filter(b => b?.i).every(b => b.name === undefined || b.name === ''), '默认无名：城邦无占位名')
+  check(unnamed.pack.states.filter(s => s.i).every(s => s.name === ''), '默认无名：国家无占位名')
+  check(unnamed.pack.features.filter(f => f?.i).every(f => f.name === ''), '默认无名：地貌无占位名')
+  check(unnamed.pack.rivers.filter(r => r.i).every(r => r.name === ''), '默认无名：河流无占位名')
+  check(unnamed.pack.rivers.every(r => r.type !== ''), '无名模式仍算河型（分类≠命名）')
+}
 
 // 2b. entities: cultures → burgs → states
 {
@@ -188,7 +198,7 @@ check(
 
 // 8. 实体覆写：改名/移除/lock 在重算后回贴
 {
-  const mk = () => generateWorld({ seed: seed + '-edits', config: { points: 5000 }, heightmap: { kind: 'template', template: 'continents' } })
+  const mk = () => generateWorld({ seed: seed + '-edits', config: { points: 5000, names: true }, heightmap: { kind: 'template', template: 'continents' } })
   const a = mk()
   const burg = a.pack.burgs.find(b => b?.i && b.name)
   const state = a.pack.states.find(s => s.i && s.name)
@@ -208,7 +218,7 @@ check(
 
   // 换高度图重算：按 at 位置就近回贴
   const c = generateWorld({ seed: seed + '-edits-2', config: { points: 5000 }, heightmap: { kind: 'template', template: 'atoll' } })
-  const at = [burg.x / a.config.height, burg.y / a.config.height]
+  const at = [burg.x / a.config.width, burg.y / a.config.height]
   const appliedC = applyWorldEdits(c, [{ kind: 'burg', at, name: 'Anchored Town', lock: true }])
   const anchored = c.pack.burgs.find(x => x?.name === 'Anchored Town')
   check(appliedC <= 1 && (appliedC === 0 || anchored?.lock === true), `换地形后按位置回贴（${appliedC === 1 ? '命中' : '无城邦可贴，合法'}）`)
@@ -218,9 +228,15 @@ check(
   if (route !== undefined) {
     const mid = route.points[Math.floor(route.points.length / 2)]
     const d = mk()
-    applyWorldEdits(d, [{ kind: 'route', at: [mid[0] / a.config.height, mid[1] / a.config.height], remove: true }])
+    applyWorldEdits(d, [{ kind: 'route', at: [mid[0] / a.config.width, mid[1] / a.config.height], remove: true }])
     check(d.pack.routes.some(r => r.removed === true), '路线按位置回贴移除')
   }
+
+  // id 锚点：无名实体也能精确回贴（AI 命名通道）
+  const e = mk()
+  const target = e.pack.burgs.find(b => b?.i)
+  const appliedId = applyWorldEdits(e, [{ kind: 'burg', id: target.i, name: 'Id Named', lock: true }])
+  check(appliedId === 1 && e.pack.burgs.find(b => b?.i === target.i)?.name === 'Id Named', '无名城邦按 id 回贴改名')
 }
 
 console.log(failures ? `\n${failures} FAIL` : '\nALL PASS')

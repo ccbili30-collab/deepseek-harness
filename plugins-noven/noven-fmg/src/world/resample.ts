@@ -9,7 +9,7 @@ import { createRng } from "./rng.ts";
 import { getGridDims, findCell } from "./grid.ts";
 import { rn } from "./utils.ts";
 
-/** normalized parent map rect [x0,y0,x1,y1] in the editor's aspect×1 space */
+/** normalized parent map rect [x0,y0,x1,y1]: fractions of parent width/height, [0,1]×[0,1] */
 export type ResampleRegion = readonly [number, number, number, number];
 
 /** resampled child source material: dense height grid + the config it was built for */
@@ -39,7 +39,8 @@ const deriveSeed = (parentSeed: string, region: ResampleRegion): string => {
  * Sampling is done on the child grid's lattice centers so the stored heights stay
  * aligned no matter how the child grid jitter lands on the same seed.
  * @param world generated parent world (its grid supplies the source heights)
- * @param region normalized [x0,y0,x1,y1] in the parent's aspect×1 map space
+ * @param region normalized [x0,y0,x1,y1] as fractions of parent width/height — the
+ * same [0,1] space as editor objects, draft geometry and `window` rects
  * @param density cell-count multiplier relative to parent density (>=1)
  * @returns heights + config for a child `generateWorld({heightmap:{kind:'heights'}})` call
  */
@@ -51,8 +52,8 @@ export function resampleWorld(
   const [x0, y0, x1, y1] = region;
   const ph = world.config.height;
   const pw = world.config.width;
-  // region size in parent pixels: normalized space maps px = n * parent height
-  const rw = Math.max(1, (x1 - x0) * ph);
+  // region size in parent pixels: normalized x/y are fractions of width/height
+  const rw = Math.max(1, (x1 - x0) * pw);
   const rh = Math.max(1, (y1 - y0) * ph);
 
   // child canvas: region scaled so the long edge is ~800px; density multiplies cell count
@@ -75,8 +76,8 @@ export function resampleWorld(
   const heights = new Float64Array(cellsX * cellsY);
   for (let cy = 0; cy < cellsY; cy++) {
     for (let cx = 0; cx < cellsX; cx++) {
-      const px = ((cx + 0.5) * spacing / childW) * rw + x0 * ph;
-      const py = ((cy + 0.5) * spacing / childH) * rh + y0 * ph;
+      const px = (x0 + ((cx + 0.5) * spacing / childW) * (x1 - x0)) * pw;
+      const py = (y0 + ((cy + 0.5) * spacing / childH) * (y1 - y0)) * ph;
       const h = grid.cells.h[findCell(px, py, grid)] ?? 0;
       heights[cy * cellsX + cx] = h;
     }
@@ -110,14 +111,15 @@ export function resampleWorld(
     width: childW,
     height: childH,
     points: childPoints,
+    names: world.config.names,
     cultures: { ...world.config.cultures, limit: Math.max(3, Math.round(world.config.cultures.limit * frac)) },
     states: { ...world.config.states, limit: Math.max(3, Math.round(world.config.states.limit * frac)) },
   };
   return { heights: [...blurred].map(v => Math.round(v)), config, seed };
 }
 
-/** normalized bbox of a set of world-pixel points; normalized space is aspect×1 (px / parent height) */
-export function regionOfPoints(points: readonly Point[], parentHeight: number, pad = 0.04, xMax = 1): ResampleRegion {
+/** normalized bbox of world-pixel points in [0,1] space (x / parent width, y / parent height) */
+export function regionOfPoints(points: readonly Point[], parentWidth: number, parentHeight: number, pad = 0.04, xMax = 1): ResampleRegion {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const [x, y] of points) {
     if (x < x0) x0 = x;
@@ -125,11 +127,10 @@ export function regionOfPoints(points: readonly Point[], parentHeight: number, p
     if (x > x1) x1 = x;
     if (y > y1) y1 = y;
   }
-  const padPx = pad * parentHeight;
   return [
-    clamp((x0 - padPx) / parentHeight, 0, xMax),
-    clamp((y0 - padPx) / parentHeight, 0, 1),
-    clamp((x1 + padPx) / parentHeight, 0, xMax),
-    clamp((y1 + padPx) / parentHeight, 0, 1),
+    clamp((x0 - pad * parentWidth) / parentWidth, 0, xMax),
+    clamp((y0 - pad * parentHeight) / parentHeight, 0, 1),
+    clamp((x1 + pad * parentWidth) / parentWidth, 0, xMax),
+    clamp((y1 + pad * parentHeight) / parentHeight, 0, 1),
   ];
 }

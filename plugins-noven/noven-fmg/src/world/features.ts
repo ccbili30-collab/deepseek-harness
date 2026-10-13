@@ -290,6 +290,7 @@ export const defineFeatureGroups = (world: World): void => {
 
 /** name the features that have none; existing names are the user's and stay */
 export const defineFeatureNames = (world: World, rng: Rng): void => {
+  if (!world.config.names) return;
   for (const feature of world.pack.features) {
     if (!feature || feature.name) continue;
 

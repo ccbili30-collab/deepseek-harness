@@ -9,14 +9,18 @@ export interface WorldEntityEdit {
   readonly kind: "burg" | "state" | "culture" | "river" | "feature" | "route";
   /** original generated name — primary match key across regenerations */
   readonly key?: string;
-  /** normalized fallback position (editor aspect×1 space; px = n * config.height) */
+  /** normalized fallback position: [0,1] fractions of map width/height */
   readonly at?: readonly [number, number];
+  /** entity id within the same generation — last-resort matcher for unnamed
+   *  entities whose `at` is unknown; meaningless after a seed change */
+  readonly id?: number;
   readonly name?: string;
   readonly remove?: boolean;
   readonly lock?: boolean;
 }
 
 interface Named {
+  i: number;
   name?: string;
   removed?: boolean;
   lock?: boolean;
@@ -83,7 +87,7 @@ export function applyWorldEdits(world: World, edits: readonly WorldEntityEdit[])
       target = list.find(e => e.removed !== true && e.name === edit.key);
     }
     if (target === undefined && edit.at !== undefined) {
-      const px = edit.at[0] * world.config.height;
+      const px = edit.at[0] * world.config.width;
       const py = edit.at[1] * world.config.height;
       let best = Infinity;
       for (const e of list) {
@@ -94,6 +98,9 @@ export function applyWorldEdits(world: World, edits: readonly WorldEntityEdit[])
         if (d < best) { best = d; target = e; }
       }
       if (best > radius * radius) target = undefined;
+    }
+    if (target === undefined && edit.id !== undefined) {
+      target = list.find(e => e.removed !== true && e.i === edit.id);
     }
     if (target === undefined) continue;
     if (edit.remove === true) target.removed = true;

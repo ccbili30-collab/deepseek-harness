@@ -176,7 +176,7 @@ export const generateCultures = (world: World, rng: Rng): void => {
     const type = defineCultureType(world, rng, center);
     cultures.push({
       i: i + 1,
-      name: c.name,
+      name: world.config.names ? c.name : "",
       base: c.base,
       type,
       center,

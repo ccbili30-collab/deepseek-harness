@@ -19,8 +19,9 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 import { flattenModules, organizeFolders, assertValid, findTarget, emptyCardDocument, IMAGE_MEDIA, type ContentDocument, type ContentModule, type ModuleUse } from './model.ts'
 import { BindingStore } from './bindings.ts'
 import { CardStore, cardsRoot, type SavedCard } from './store.ts'
-import { applyAndCommit, type EditorCommand } from './editor.ts'
-import { calendarOf } from './formats.ts'
+import { applyAndCommit, resolveWorldHeightmap, type EditorCommand } from './editor.ts'
+import { calendarOf, decodeMap } from './formats.ts'
+import { generateWorld, applyWorldEdits } from 'noven-fmg/world'
 import { proposeEdit, proposeTransform, proposalChanges, proposalPreview } from './proposals.ts'
 import { aiTrustOf } from './trust.ts'
 import { buildBulkModules, parseBulkTree } from './bulk.ts'
@@ -238,6 +239,71 @@ export function registerCardTools(ctx: Context): void {
       const resource = target.resources.find(candidate => candidate.id === args.resource_id)
       if (resource === undefined) throw new Error('资源不属于目标卡')
       return { status: 'read', image_path: await resolved.store.payloadPath(String(args.root_id), resource.content), media_type: resource.mediaType, next: '用 read_image 读取 image_path' }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'map_describe',
+    description: '读取 map 模块解析后的世界实体表：国家/城邦/河流/地貌/文化的编号 id、归一化位置 at、人口/都城/港口/类型等属性；已套用现存 edits 覆写（改名/移除后的现状）。' +
+      '实体默认无名——配合 widget_set_data 的 world.edits 按 id 或 at 起名/删除。' +
+      'burgs 参数：capitals 只列都城与港口（默认，省 token）；all 列全部城邦。',
+    parameters: {
+      root_id: TARGET_PARAMS.root_id,
+      target_id: TARGET_PARAMS.target_id,
+      module_id: { type: 'string', required: true, description: 'map 模块编号' },
+      project: TARGET_PARAMS.project,
+      burgs: { type: 'string', description: 'capitals（默认）/ all' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec): Promise<Record<string, JsonValue>> {
+      const resolved = await resolveCard(sessionCwd(exec), exec.agent?.session?.id as SessionId | undefined, String(args.root_id), optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, String(args.root_id))
+      const target = locate(card, String(args.target_id))
+      const module = flattenModules(target.modules).find(candidate => candidate.id === args.module_id)
+      if (module === undefined) throw new Error('模块不在目标卡中')
+      if (module.widget?.type !== 'map') throw new Error('目标模块不是 map 类型')
+      const block = module.blocks.find(candidate => candidate.kind === 'text')
+      const raw = block === undefined ? undefined : new TextDecoder().decode(await resolved.store.readPayload(String(args.root_id), block.content))
+      const data = decodeMap(raw)
+      const heightmap = resolveWorldHeightmap(data)
+      if (data.world === undefined || heightmap === undefined) {
+        return { status: 'read', world: null, objects: data.objects.length, draft: data.draft.length,
+          hint: '该模块还没有 world 生成源——用 widget_set_data 写 world（seed+heightmap）后重查' }
+      }
+      const world = generateWorld({ seed: data.world.seed, config: data.world.config, heightmap, postSteps: [...(data.world.postSteps ?? [])] })
+      if (data.world.edits !== undefined && data.world.edits.length > 0) applyWorldEdits(world, data.world.edits)
+      const { width: w, height: h } = world.config
+      const at = (x: number, y: number) => [Math.round(x / w * 1000) / 1000, Math.round(y / h * 1000) / 1000]
+      const majorOnly = args.burgs !== 'all'
+      return {
+        status: 'read',
+        world: {
+          seed: world.config.seed, named: world.config.names,
+          states: world.pack.states.filter(s => s.i && !s.removed).map(s => ({
+            i: s.i, name: s.name, ...(s.pole !== undefined ? { at: at(s.pole[0], s.pole[1]) } : {}),
+            capital: s.capital, culture: s.culture,
+          })),
+          cultures: world.pack.cultures.filter(c => c.i && !c.removed).map(c => ({
+            i: c.i, name: c.name, type: c.type, ...(c.center !== undefined ? { at: at(...world.pack.cells.p[c.center]) } : {}),
+          })),
+          features: world.pack.features.filter(f => f?.i && !f.removed).map(f => ({
+            i: f.i, name: f.name, type: f.type, subtype: f.subtype,
+            at: at(...world.pack.cells.p[f.firstCell]),
+          })),
+          rivers: world.pack.rivers.filter(r => r.i && !r.removed).map(r => ({
+            i: r.i, name: r.name, type: r.type, length: r.length,
+            ...(r.points !== undefined && r.points.length > 0 ? { at: at(...r.points[Math.floor(r.points.length / 2)].slice(0, 2) as [number, number]) } : {}),
+          })),
+          burgs: world.pack.burgs.filter(b => b?.i && !b.removed && (!majorOnly || b.capital || b.port)).map(b => ({
+            i: b.i, name: b.name ?? '', at: at(b.x, b.y),
+            ...(b.capital ? { capital: 1 } : {}), ...(b.port ? { port: b.port } : {}),
+            ...(b.population !== undefined ? { pop: b.population } : {}),
+            ...(b.state !== undefined ? { state: b.state } : {}),
+            ...(b.culture !== undefined ? { culture: b.culture } : {}),
+          })),
+          total_burgs: world.pack.burgs.filter(b => b?.i && !b.removed).length,
+        },
+      }
     },
   }))
 
@@ -774,6 +840,10 @@ export function registerCardTools(ctx: Context): void {
     'heightmap.kind 支持 template（程序模板 continents/archipelago/peninsula/atoll…）、heights（逐格 0-100 高度数组）、' +
     'gray（逐格 0-255 灰度，可喂 DEM）、draft（把本模块 draft 栅格化成高度图再跑管线）。' +
     '种子决定一切：同 seed+同输入=同世界；只换 seed 就是换一张图。' +
+    '实体默认无名（config.names:false）——生成的城邦/国家/河流不带占位名，' +
+    '由你按语义起名：world.edits 写 [{"kind":"burg","id":5,"at":[0.4,0.3],"name":"临安","lock":true}]，' +
+    'id 是实体编号（同生成内精确），at 是归一化位置兜底（重算后按最近实体回贴），' +
+    'key 是原始名（有名实体跨重算匹配）；edits 改名后重算不丢。' +
     '② draft 语义草稿——人与 AI 共用的意图层：[{"kind":"stroke","color":"#B8A888","r":0.05,"pts":[[x,y],…]},' +
     '{"kind":"shape","color":"…","ctrl":[[x,y]×4],"roughness":0.35,"seed":7,"op":"add|subtract"},' +
     '{"kind":"poly","color":"…","pts":[[x,y]…],"op":"add|subtract"},{"kind":"stroke","erase":true,…}]。' +

@@ -591,20 +591,25 @@ const hitWorld = (world: World, tree: BuiltWorld['tree'], wx: number, wy: number
 const worldRegion = (built: BuiltWorld, hit: WorldHit): readonly [number, number, number, number] | null => {
   const pack = built.world.pack
   const ph = built.world.config.height
-  const xMax = built.world.config.width / ph
+  const pw = built.world.config.width
   if (hit.kind === 'feature') {
     const chain = pack.features[hit.id]?.vertices
     if (chain === undefined || chain.length < 3) return null
     const pts = chain.map(vi => pack.vertices.p[vi]).filter((p): p is [number, number] => p !== undefined)
-    return regionOfPoints(pts, ph, .06, xMax)
+    return regionOfPoints(pts, pw, ph, .06)
   }
   if (hit.kind === 'river') {
     const r = pack.rivers.find(rv => rv.i === hit.id)
     if (r?.points === undefined || r.points.length < 2) return null
-    return regionOfPoints(r.points.map(([x, y]) => [x, y] as [number, number]), ph, .08, xMax)
+    return regionOfPoints(r.points.map(([x, y]) => [x, y] as [number, number]), pw, ph, .08)
+  }
+  if (hit.kind === 'route') {
+    const r = pack.routes.find(rt => rt.i === hit.id)
+    if (r === undefined || r.points.length < 2) return null
+    return regionOfPoints(r.points.map(([x, y]) => [x, y] as [number, number]), pw, ph, .1)
   }
   const b = pack.burgs.find(bg => bg?.i === hit.id)
-  return b !== undefined ? regionOfPoints([[b.x, b.y]], ph, .12, xMax) : null
+  return b !== undefined ? regionOfPoints([[b.x, b.y]], pw, ph, .12) : null
 }
 
 /* ---------- 组件 ---------- */
@@ -793,7 +798,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     if (built === null) { setSelWorld(null); return }
     const h = built.world.config.height
     const hit = hitWorld(built.world, built.tree, p[0] * h, p[1] * h)
-    setSelWorld(hit === null ? null : { ...hit, pos: p })
+    // pos 存 [0,1] 空间（x/宽度、y/高度），与 objects/draft/edits.at/bbox 同一约定
+    setSelWorld(hit === null ? null : { ...hit, pos: [p[0] / aspectRef.current, p[1]] })
   }, [resolveBuilt])
 
   /* ---------- 视图与命中 ---------- */
@@ -1682,7 +1688,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
             <button type="button" className="nv-maped-del" onClick={deleteSel}>{t('wg.del')}</button>
           </div>
         )}
-        {selWorld !== null && (selName !== '' || selRoute !== undefined) && (() => {
+        {selWorld !== null && selKindKey !== undefined && (() => {
           const kindText = selKindKey !== undefined ? t(`wg.map.world.kind.${selKindKey}` as Parameters<ShellT>[0]) : ''
           const displayName = selName !== '' ? selName : kindText
           const parts = [kindText]
@@ -1707,7 +1713,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
               onClick={() => {
                 const next = window.prompt(t('wg.map.world.renamePrompt'), selName)?.trim()
                 if (next !== undefined && next !== '' && next !== selName && selWorld !== null) {
-                  pushWorldEdit({ kind: selWorld.kind, ...(selName !== '' ? { key: selName } : {}), ...(selWorld.pos !== undefined ? { at: selWorld.pos } : {}), name: next, lock: true })
+                  pushWorldEdit({ kind: selWorld.kind, id: selWorld.id, ...(selName !== '' ? { key: selName } : {}), ...(selWorld.pos !== undefined ? { at: selWorld.pos } : {}), name: next, lock: true })
                 }
               }}>
               {t('wg.map.world.rename')}
@@ -1715,7 +1721,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
             <button type="button" className="nv-maped-del" title={t('wg.map.world.removeDesc')}
               onClick={() => {
                 if (selWorld !== null && window.confirm(fmt(t, 'wg.map.world.removeConfirm', { name: displayName }))) {
-                  pushWorldEdit({ kind: selWorld.kind, ...(selName !== '' ? { key: selName } : {}), ...(selWorld.pos !== undefined ? { at: selWorld.pos } : {}), remove: true })
+                  pushWorldEdit({ kind: selWorld.kind, id: selWorld.id, ...(selName !== '' ? { key: selName } : {}), ...(selWorld.pos !== undefined ? { at: selWorld.pos } : {}), remove: true })
                   setSelWorld(null)
                 }
               }}>

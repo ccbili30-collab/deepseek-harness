@@ -566,11 +566,14 @@ export type MapWorldHeightmap =
   | { readonly kind: 'draft' }
 
 /** 世界实体覆写：生成后的改名/删除/锁定。`key` 是实体原始名（重算后按名找回）；
- *  `at` 是归一化位置的兜底匹配（子图/换名重算时用）；两个都没有的条目丢弃。 */
+ *  `at` 是 [0,1] 归一化位置（x/宽、y/高）的兜底匹配（子图/换名重算时用）；
+ *  `id` 是本次生成内的实体编号（无名实体的锚点，换种子后无意义）。
+ *  三者都没有的条目丢弃。 */
 export interface MapWorldEdit {
   readonly kind: 'burg' | 'state' | 'culture' | 'river' | 'feature' | 'route'
   readonly key?: string
   readonly at?: readonly [number, number]
+  readonly id?: number
   readonly name?: string
   readonly remove?: boolean
   readonly lock?: boolean
@@ -741,20 +744,22 @@ function worldHeightmapOf(raw: unknown): MapWorldHeightmap | null {
 function worldEditOf(raw: unknown): MapWorldEdit | null {
   const source = record(raw)
   const kind = str(source.kind)
-  if (kind !== 'burg' && kind !== 'state' && kind !== 'culture' && kind !== 'river' && kind !== 'feature') return null
+  if (kind !== 'burg' && kind !== 'state' && kind !== 'culture' && kind !== 'river' && kind !== 'feature' && kind !== 'route') return null
   const key = str(source.key)
   const at = Array.isArray(source.at) && source.at.length >= 2 ? [num(source.at[0], -1), num(source.at[1], -1)] as const : undefined
+  const id = typeof source.id === 'number' && Number.isInteger(source.id) && source.id > 0 ? source.id : undefined
   const name = str(source.name)
   const edit: MapWorldEdit = {
     kind,
     ...(key !== '' ? { key } : {}),
     ...(at !== undefined && at[0] >= 0 ? { at } : {}),
+    ...(id !== undefined ? { id } : {}),
     ...(name !== '' ? { name } : {}),
     ...(source.remove === true ? { remove: true } : {}),
     ...(source.lock === true ? { lock: true } : {}),
   }
   // 无定位手段的条目没有意义
-  return edit.key !== undefined || edit.at !== undefined ? edit : null
+  return edit.key !== undefined || edit.at !== undefined || edit.id !== undefined ? edit : null
 }
 
 /** 解码世界生成源：缺 heightmap 或字段非法时整段丢弃（退回旧行为）。 */

@@ -232,6 +232,10 @@ export interface WorldConfig {
   cultures: { limit: number; sizeVariety: number; growthRate: number };
   states: { limit: number; sizeVariety: number; growthRate: number };
   burgs: { limit: number }; // AUTO_BURG_LIMIT = as many as the land supports
+  /** generate entity names via Markov namebases; off leaves entities unnamed so
+   *  the AI/user names them semantically (world.edits) instead of inheriting
+   *  arbitrary Latin placeholder names */
+  names: boolean;
 }
 
 export interface World {
@@ -256,5 +260,6 @@ export const DEFAULT_WORLD_CONFIG: Omit<WorldConfig, "seed"> = {
   resolveDepressionsSteps: 250,
   cultures: { limit: 12, sizeVariety: 4, growthRate: 1 },
   states: { limit: 18, sizeVariety: 4, growthRate: 1 },
-  burgs: { limit: 1000 } // 1000 = auto, capped by land
+  burgs: { limit: 1000 }, // 1000 = auto, capped by land
+  names: false
 };

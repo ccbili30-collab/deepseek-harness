@@ -87,7 +87,7 @@ const levelOfPalette = (data: MapData, color: string): number | undefined => {
 }
 
 /** world.heightmap 解析成管线输入；kind:'draft' 时把当前草稿栅格化（意图层直通）。 */
-const resolveWorldHeightmap = (data: MapData): HeightmapInput | undefined => {
+export const resolveWorldHeightmap = (data: MapData): HeightmapInput | undefined => {
   const src = data.world
   if (src === undefined) return undefined
   if (src.heightmap.kind !== 'draft') return src.heightmap
@@ -617,10 +617,14 @@ async function transformDocument(
         if (heightmap !== undefined) {
           const parentWorld = generateWorld({ seed: data.world.seed, config: data.world.config, heightmap, postSteps: [...(data.world.postSteps ?? [])] })
           const res = resampleWorld(parentWorld, bbox, 2)
-          // 框内的实体覆写重映射进子图：改过的城名/国名在子世界里继续生效
+          // 框内的实体覆写重映射进子图：改过的城名/国名在子世界里继续生效。
+          // id 锚点按生成序号分配、父子不同，重映射时剥掉只留 key/at。
           const childEdits = (data.world.edits ?? [])
             .filter(e => e.key !== undefined || (e.at !== undefined && e.at[0] >= bbox[0] && e.at[0] <= bbox[2] && e.at[1] >= bbox[1] && e.at[1] <= bbox[3]))
-            .map(e => e.at === undefined ? e : { ...e, at: toChild(e.at, bbox) })
+            .map(e => {
+              const { id: _drop, ...rest } = e
+              return rest.at === undefined ? rest : { ...rest, at: toChild(rest.at, bbox) }
+            })
           childWorld = {
             seed: res.seed,
             config: { ...(data.world.config ?? {}), ...res.config },

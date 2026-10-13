@@ -439,7 +439,7 @@ export const specifyRivers = (world: World, rng: Rng): void => {
     const isFork = each(3)(river.i) && river.parent && river.parent !== river.i;
     river.type = rw(rng, riverTypes[isFork ? "fork" : "main"][isSmall ? "small" : "big"]);
 
-    if (!river.name) river.name = `${river.type} ${ra(rng, RIVER_NAME_BITS)}`;
+    if (!river.name && world.config.names) river.name = `${river.type} ${ra(rng, RIVER_NAME_BITS)}`;
   }
 };
 

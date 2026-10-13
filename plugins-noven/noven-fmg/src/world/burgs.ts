@@ -247,7 +247,7 @@ export const generateBurgs = (world: World, rng: Rng): void => {
       burg.i = burgId;
       burg.state = burgId;
       burg.culture = cells.culture[burg.cell];
-      burg.name = getCultureShort(rng, world.pack.cultures, burg.culture);
+      if (world.config.names) burg.name = getCultureShort(rng, world.pack.cultures, burg.culture);
       burg.feature = cells.f[burg.cell];
       burg.capital = 1;
       cells.burg[burg.cell] = burgId;
@@ -280,7 +280,7 @@ export const generateBurgs = (world: World, rng: Rng): void => {
           i: burgId,
           state: 0,
           culture,
-          name: getCulture(rng, world.pack.cultures, culture),
+          ...(world.config.names ? { name: getCulture(rng, world.pack.cultures, culture) } : {}),
           feature: cells.f[cell],
           capital: 0
         });
