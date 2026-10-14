@@ -132,6 +132,12 @@ function editorData(raw: unknown): EditorDoc {
   }
 }
 
+/** 世界源的固有宽高比（config.width/height）；AI 写的 world 不带 doc.aspect，兜底拉伸会撕裂几何对齐。 */
+const worldAspectOf = (src: WorldSource | undefined): number | undefined => {
+  const w = Number(src?.config?.width), h = Number(src?.config?.height)
+  return Number.isFinite(w) && Number.isFinite(h) && w > 0 && h > 0 ? w / h : undefined
+}
+
 /* ---------- 几何：全部在图高单位空间（x∈[0,aspect]，y∈[0,1]） ---------- */
 
 const d2 = (a: XY, b: XY): number => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2
@@ -773,9 +779,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     if (!MAP_WORLD) return
     const src = data.world
     if (src === undefined) { builtRef.current = null; setSelWorld(null); return }
-    const cfg = src.config ?? {}
-    const w = Number(cfg.width), h = Number(cfg.height)
-    aspectRef.current = Number.isFinite(w) && Number.isFinite(h) && h > 0 ? w / h : aspectRef.current
+    aspectRef.current = worldAspectOf(src) ?? aspectRef.current
     fitRef.current = null
     fitIfNeeded()
     setSelWorld(null)
@@ -784,7 +788,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
 
   /** 写一份新的世界源（换种子 / 切输入源共用）。 */
   const setWorld = useCallback((src: WorldSource): void => {
-    docRef.current = { ...docRef.current, world: src, aspect: Number(src.config?.width ?? 1280) / Number(src.config?.height ?? 800) }
+    docRef.current = { ...docRef.current, world: src, aspect: worldAspectOf(src) ?? 1.6 }
     commit()
   }, [commit])
 
@@ -1222,6 +1226,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   // 子视图（带 window/固定 aspect）的宽高比不从底图实测——几何是按取景框归一化的。
   const aspectOf = useCallback((imgW: number, imgH: number): number => {
     const doc = docRef.current
+    const wa = worldAspectOf(doc.world)
+    if (wa !== undefined) return wa
     if (doc.aspect !== undefined) return doc.aspect
     const win = doc.window
     if (win !== undefined) return (win[2] - win[0]) * (imgW / imgH) / (win[3] - win[1])
@@ -1230,7 +1236,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const fitIfNeeded = useCallback((): void => {
     const key = image?.resourceId ?? 'blank'
     if (fitRef.current === key) return
-    if (image?.resourceId === undefined) { imgRef.current = null; aspectRef.current = docRef.current.aspect ?? 1.6 }
+    if (image?.resourceId === undefined) { imgRef.current = null; aspectRef.current = worldAspectOf(docRef.current.world) ?? docRef.current.aspect ?? 1.6 }
     if (fitView()) fitRef.current = key
   }, [image?.resourceId, fitView])
   useEffect(() => {
