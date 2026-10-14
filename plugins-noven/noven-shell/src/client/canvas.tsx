@@ -21,6 +21,7 @@ import { fmt, type ShellT } from './pages/Home.tsx'
 import { pagePending, type NovenTree, type TreeModuleRow } from './tree-api.ts'
 import { CreateDialog, type CreateKind, type CreateRequest } from './creation.tsx'
 import { glyph } from './icons.tsx'
+import { InlineRename, notifyUndo, useArmedMenu } from './ui/interact.tsx'
 import { PhoneStage, type TranscriptState } from './stage-phone.tsx'
 import { ConvView, type ConvChannel, type ConvsMap } from './conv.tsx'
 import type { ModelCatalog, ModelSelection } from '@deepseek-ai/dsh-api-session-controller/types'
@@ -659,6 +660,8 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
 }) {
   const path = tab.path ?? ''
   const [menuOpen, setMenuOpen] = useState(false)
+  const [renaming, setRenaming] = useState(false)
+  const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const entry = useDocs(s => s[docKey(sessionId, path)])
   useEffect(() => { ensureDoc(sessionId, path) }, [sessionId, path, ensureDoc])
   // 挂载即清上一任留下的旗标——本页自己产的状态点由本页续写。
@@ -696,22 +699,27 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   return (
     <div className="nv-ed">
       <header className="nv-ed-head">
-        <h1 className="nv-ed-title">{name}</h1>
+        {renaming ? (
+          <InlineRename className="nv-ed-title nv-ed-titlein" value={name}
+            onDone={next => { setRenaming(false); if (next !== undefined) void renameFile(path, next) }} />
+        ) : (
+          <h1 className="nv-ed-title">{name}</h1>
+        )}
         <div className="nv-ed-meta">{metaOf([t('tree.docs'), fmt(t, 'editor.wordcount', { count: wordCount(base) })])}</div>
         <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
-          onClose={() => setMenuOpen(false)}
+          onClose={() => { arm.reset(); setMenuOpen(false) }}
           onSelect={id => {
+            if (arm.select(id) === 'armed') return
             setMenuOpen(false)
-            if (id === 'rename') {
-              const next = window.prompt(t('canvas.doc.renamePrompt'), name)?.trim()
-              if (next !== undefined && next !== '' && next !== name) void renameFile(path, next)
+            if (id === 'rename') setRenaming(true)
+            if (id === 'delete') {
+              void deleteFile(path).then(ok => { notifyUndo({ text: fmt(t, ok ? 'ui.receipt.fileDeleted' : 'ui.receipt.failed', { name }) }) })
             }
-            if (id === 'delete' && window.confirm(t('canvas.doc.deleteConfirm').replace('{name}', name))) void deleteFile(path)
           }}
-          items={[
+          items={arm.decorate([
             { id: 'rename', label: t('canvas.doc.rename') },
             { id: 'delete', label: t('canvas.doc.delete'), danger: true },
-          ]}
+          ])}
           anchor={(
             <button type="button" className="nv-ed-more" aria-label={t('canvas.doc.more')}
               onClick={() => setMenuOpen(v => !v)}>⋯</button>
@@ -821,6 +829,7 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [draftTitle, setDraftTitle] = useState('')
+  const simArm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const [models, setModels] = useState<ModelCatalog | undefined>(undefined)
   const [modelsOpen, setModelsOpen] = useState(false)
 
@@ -957,29 +966,31 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
                       else setModelsOpen(v => !v)
                     }}>⌁</button>
                 )} />
-              <Menu open={menuOpen} side="bottom" align="end" selection="fill"
-                onClose={() => setMenuOpen(false)}
+              <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-menu-pop"
+                onClose={() => { simArm.reset(); setMenuOpen(false) }}
                 onSelect={id => {
+                  if (simArm.select(id) === 'armed') return
                   setMenuOpen(false)
                   if (id === 'history') setRoute('list')
                   if (id === 'settings') setRoute('settings')
                   if (id === 'records') setRoute('records')
                   if (id === 'export') exportPack()
                   if (id === 'rename' && openRow !== undefined) { setDraftTitle(openRow.title); setRenaming(true) }
-                  if (id === 'delete' && openRow !== undefined && window.confirm(t('sim.deleteConfirm').replace('{name}', openRow.title))) {
-                    void sim.archive(openRow.id)
+                  if (id === 'delete' && openRow !== undefined) {
+                    const title = openRow.title
+                    void sim.archive(openRow.id).then(() => { notifyUndo({ text: fmt(t, 'ui.receipt.simDeleted', { name: title }) }) })
                     if (root !== undefined) actions.simOpenSet(root, undefined)
                     setRoute('list')
                   }
                 }}
-                items={[
+                items={simArm.decorate([
                   { id: 'history', label: t('sim.menu.history') },
                   { id: 'settings', label: t('sim.menu.settings') },
                   { id: 'records', label: t('sim.menu.records') },
                   { id: 'export', label: t('sim.menu.export') },
                   { id: 'rename', label: t('sim.menu.rename') },
-                  { id: 'delete', label: t('sim.menu.delete') },
-                ]}
+                  { id: 'delete', label: t('sim.menu.delete'), danger: true },
+                ])}
                 anchor={(
                   <button type="button" className="nv-ptop-btn" aria-label={t('sim.menu.more')}
                     onClick={() => setMenuOpen(v => !v)}>⋯</button>

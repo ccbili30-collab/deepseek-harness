@@ -105,6 +105,14 @@ try {
   check(tree2.revision !== tree1.revision && tree2.cards.find(c => c.cardId === 'card-r').pending === true, '提案挂起 → token 变 + pending 标记')
   check(!tree2.cards.find(c => c.cardId === 'card-r').modules.some(m => m.name === '幽灵模块'), '幽灵模块不进树（仍是 head）')
 
+  // 6. delete → restore：软删除可撤销（客户端「删除 + Toast 撤销」依赖它）
+  check((await post({ op: 'restore', cardId: 'card-r' })).status === 404, 'restore 未删除的卡 → 404')
+  await post({ op: 'delete', cardId: 'card-r' })
+  check(!(await store.list()).includes('card-r'), 'delete 后卡离开列表')
+  const restored = await (await post({ op: 'restore', cardId: 'card-r' })).json()
+  check(restored.ok === true && (await store.list()).includes('card-r') && (await store.open('card-r')).document.name === '路由世界', 'restore 后卡与历史原样回来')
+  check((await post({ op: 'restore' })).status === 400, 'restore 缺 cardId → 400')
+
   console.log(failures === 0 ? '\nALL PASS' : `\n${String(failures)} FAILURES`)
   process.exitCode = failures === 0 ? 0 : 1
 } finally {

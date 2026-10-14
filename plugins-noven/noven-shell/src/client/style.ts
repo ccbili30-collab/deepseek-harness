@@ -22,6 +22,23 @@ const CSS = `
   --nv-radius: 12px;
   --nv-badge-dark: rgba(20, 24, 22, 0.72);
 
+  /* 语义色：危险（删除/出错）与提醒（草稿/冲突/待复核）各一族，不再散写色值。 */
+  --nv-danger: #D64545;
+  --nv-danger-soft: rgba(214, 69, 69, 0.10);
+  --nv-danger-line: rgba(214, 69, 69, 0.40);
+  --nv-warn: #B45309;
+  --nv-warn-soft: #FEF3C7;
+
+  /* 动效词表（设计理念 §四）：新样式只从这四档 + 三条曲线里挑。
+     micro=悬停/按下 · ui=菜单/抽屉/遮罩/行内态 · scene=页面/ghost · ceremony=仪式（CardPick/开场）。 */
+  --nv-dur-micro: 120ms;
+  --nv-dur-ui: 200ms;
+  --nv-dur-scene: 320ms;
+  --nv-dur-ceremony: 520ms;
+  --nv-ease-out: cubic-bezier(0.2, 0.9, 0.25, 1);
+  --nv-ease-in: cubic-bezier(0.5, 0, 0.75, 0.4);
+  --nv-ease-spring: cubic-bezier(0.18, 0.85, 0.3, 1.1);
+
 }
 
 /* 品牌重映射：上游 DSH 蓝的 alias 层 → 诺文薄荷绿。上游组件（工作区
@@ -51,8 +68,58 @@ body[data-ds-dark-theme] {
 /* 处理态行（正在分析请求 等）的活动图标用主题色，不再是上游灰。 */
 [data-step-process-icon] { color: var(--nv-accent-deep) !important; }
 body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !important; }
+
+/* ── 交互原语（ui/interact.tsx）：二次确认 / 弹层 / 回执 ── */
+/* 诺文菜单统一弹出：锚点下方轻放大淡入，不动上游 Menu 包。 */
+.nv-tree-newmenu, .nv-menu-pop { transform-origin: top right; animation: nv-menu-in var(--nv-dur-ui) var(--nv-ease-out); }
+@keyframes nv-menu-in { from { opacity: 0; transform: scale(0.97) translateY(-2px); } to { opacity: 1; transform: none; } }
+/* 菜单内二次确认：武装后的行转红，文字轻推入。 */
+.nv-armed { color: var(--nv-danger); font-weight: 500; display: inline-block; animation: nv-armed-in var(--nv-dur-micro) var(--nv-ease-out); }
+@keyframes nv-armed-in { from { opacity: 0.4; transform: translateX(-3px); } to { opacity: 1; transform: none; } }
+.nv-armbtn[data-armed] { color: var(--nv-danger) !important; background: var(--nv-danger-soft) !important; border-color: var(--nv-danger-line) !important; }
+/* 统一弹层（askConfirm / askText） */
+.nv-veil { position: fixed; inset: 0; z-index: 1000; display: grid; place-items: center; }
+.nv-veil-mask { position: absolute; inset: 0; background: rgba(16, 20, 18, 0.18); backdrop-filter: blur(2px);
+  animation: nv-veil-fade var(--nv-dur-ui) var(--nv-ease-out); }
+.nv-veil-card { position: relative; width: min(360px, calc(100vw - 48px)); padding: 18px 18px 14px; border-radius: 14px;
+  background: var(--nv-surface); color: var(--nv-primary-text); box-shadow: 0 18px 48px rgba(16, 20, 18, 0.18), 0 0 0 0.5px var(--nv-divider);
+  animation: nv-veil-in var(--nv-dur-ui) var(--nv-ease-out); }
+.nv-veil[data-leaving] .nv-veil-mask { animation: nv-veil-out 160ms var(--nv-ease-in) forwards; }
+.nv-veil[data-leaving] .nv-veil-card { animation: nv-veil-card-out 160ms var(--nv-ease-in) forwards; }
+@keyframes nv-veil-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes nv-veil-out { to { opacity: 0; } }
+@keyframes nv-veil-in { from { opacity: 0; transform: translateY(6px) scale(0.98); } to { opacity: 1; transform: none; } }
+@keyframes nv-veil-card-out { to { opacity: 0; transform: translateY(4px) scale(0.98); } }
+.nv-veil-title { font-size: 14px; font-weight: 600; line-height: 1.45; }
+.nv-veil-body { margin-top: 6px; font-size: 12.5px; line-height: 1.6; color: var(--nv-secondary-text); }
+.nv-veil-input { margin-top: 12px; width: 100%; box-sizing: border-box; height: 34px; padding: 0 10px; border-radius: 8px;
+  border: 0.5px solid var(--nv-divider); background: var(--nv-pane); font: inherit; font-size: 13px; color: inherit; outline: none;
+  transition: border-color var(--nv-dur-micro) ease, background var(--nv-dur-micro) ease; }
+.nv-veil-input:focus { border-color: var(--nv-accent-deep); background: var(--nv-surface); }
+.nv-veil-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+.nv-veil-btn { height: 30px; padding: 0 14px; border-radius: 8px; border: 0.5px solid var(--nv-divider); background: var(--nv-surface);
+  font: inherit; font-size: 12.5px; color: var(--nv-primary-text); cursor: pointer; transition: background var(--nv-dur-micro) ease; }
+.nv-veil-btn:hover { background: var(--nv-hover); }
+.nv-veil-ok { border-color: transparent; background: var(--nv-accent-deep); color: #fff; }
+.nv-veil-ok:hover { background: var(--nv-accent-deep); filter: brightness(1.06); }
+.nv-veil-ok[data-danger] { background: var(--nv-danger); }
+.nv-veil-ok:disabled { opacity: 0.45; cursor: default; filter: none; }
+/* 删除回执（notifyUndo）：底部居中，撤销是唯一可点处。 */
+.nv-undo { position: fixed; left: 50%; bottom: 28px; z-index: 1001; display: flex; align-items: center; gap: 14px;
+  padding: 9px 10px 9px 16px; border-radius: 999px; background: rgba(22, 24, 26, 0.92); color: #fff; font-size: 12.5px;
+  box-shadow: 0 10px 30px rgba(16, 20, 18, 0.22); transform: translateX(-50%);
+  animation: nv-undo-in var(--nv-dur-ui) var(--nv-ease-out); }
+.nv-undo[data-leaving] { animation: nv-undo-out 160ms var(--nv-ease-in) forwards; }
+@keyframes nv-undo-in { from { opacity: 0; transform: translate(-50%, 8px); } to { opacity: 1; transform: translate(-50%, 0); } }
+@keyframes nv-undo-out { to { opacity: 0; transform: translate(-50%, 6px); } }
+.nv-undo-undo { border: 0; background: rgba(255, 255, 255, 0.12); color: var(--nv-accent); font: inherit; font-weight: 600;
+  padding: 3px 10px; border-radius: 999px; cursor: pointer; transition: background var(--nv-dur-micro) ease; }
+.nv-undo-undo:hover { background: rgba(255, 255, 255, 0.2); }
+@media (prefers-reduced-motion: reduce) {
+  .nv-tree-newmenu, .nv-menu-pop, .nv-armed, .nv-veil-mask, .nv-veil-card, .nv-undo { animation: none !important; }
+}
 .nv-page { height: 100%; min-height: 0; overflow-y: auto; background: var(--nv-surface); color: var(--nv-primary-text); font-size: 13px;
-  animation: nv-page-in 340ms cubic-bezier(0.25, 0.6, 0.3, 1); }
+  animation: nv-page-in var(--nv-dur-scene) var(--nv-ease-out); }
 /* Focus-in, not slide-in: the page resolves from a soft blur rather than
    flashing in from nothing. */
 @keyframes nv-page-in {
@@ -64,7 +131,7 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
    doesn't replay the entrance it already played. */
 .nv-ghost { z-index: 60; }
 .nv-ghost * { animation: none !important; }
-.nv-ghost-out { opacity: 0; transform: translateY(-6px); transition: opacity 300ms ease-out, transform 300ms ease-out; }
+.nv-ghost-out { opacity: 0; transform: translateY(-6px); transition: opacity var(--nv-dur-scene) var(--nv-ease-out), transform var(--nv-dur-scene) var(--nv-ease-out); }
 .nv-inner { max-width: 1080px; margin: 0 auto; padding: 26px 32px 56px; display: flex; flex-direction: column; gap: 18px; }
 .nv-inner--narrow { max-width: 760px; }
 .nv-h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.01em; }
@@ -100,7 +167,7 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
 .nv-masonry { columns: 2; column-gap: 18px; }
 /* Feed cards are objects: pure tiles with captions floating in the page air. */
 .nv-tcard { break-inside: avoid; margin-bottom: 22px; display: flex; flex-direction: column; gap: 9px; width: 100%; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
-.nv-tcard-tile { position: relative; display: block; border-radius: 14px; overflow: hidden; transition: transform .18s ease, box-shadow .18s ease; }
+.nv-tcard-tile { position: relative; display: block; border-radius: 14px; overflow: hidden; transition: transform var(--nv-dur-ui) var(--nv-ease-out), box-shadow var(--nv-dur-ui) var(--nv-ease-out); }
 .nv-tcard-tile img { width: 100%; display: block; }
 .nv-tcard:hover .nv-tcard-tile { transform: translateY(-2px); box-shadow: 0 10px 24px rgba(0,0,0,.10); }
 .nv-tcard-text { display: flex; flex-direction: column; gap: 8px; padding: 18px 18px 30px; background: var(--nv-accent-soft); }
@@ -118,7 +185,7 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
 .nv-bookmark { border: 0; background: none; color: var(--nv-secondary-text); cursor: pointer; display: inline-flex; }
 
 /* 落地页侧栏 */
-.nv-landing { position: absolute; top: 0; right: 0; bottom: 0; width: 400px; background: var(--nv-surface); border-left: 0.5px solid var(--nv-divider); display: flex; flex-direction: column; animation: nv-slide-in .18s ease; z-index: 5; }
+.nv-landing { position: absolute; top: 0; right: 0; bottom: 0; width: 400px; background: var(--nv-surface); border-left: 0.5px solid var(--nv-divider); display: flex; flex-direction: column; animation: nv-slide-in var(--nv-dur-ui) var(--nv-ease-out); z-index: 5; }
 @keyframes nv-slide-in { from { transform: translateX(40px); opacity: 0; } to { transform: none; opacity: 1; } }
 .nv-landing-close { position: absolute; top: 14px; right: 14px; width: 30px; height: 30px; border-radius: 50%; border: 0; background: rgba(128,128,128,.12); cursor: pointer; font-size: 16px; color: var(--nv-primary-text); z-index: 2; }
 .nv-landing-scroll { flex: 1; overflow-y: auto; padding: 30px 26px; display: flex; flex-direction: column; gap: 16px; }
@@ -142,13 +209,13 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
 /* Creation slot shelf: pure artwork tiles, captions live in the page air below. */
 .nv-slots { display: flex; gap: 18px; }
 .nv-slot { display: flex; flex-direction: column; gap: 10px; width: 170px; padding: 0; border: 0; background: none; text-align: left; cursor: pointer;
-  transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1), opacity 240ms ease, transform 240ms ease, margin-right 300ms cubic-bezier(0.4, 0, 0.2, 1); }
+  transition: width var(--nv-dur-scene) var(--nv-ease-out), opacity var(--nv-dur-ui) ease, transform var(--nv-dur-ui) ease, margin-right var(--nv-dur-scene) var(--nv-ease-out); }
 /* Delete: dissolve.ts erodes the face pixel by pixel; the column collapses
    underneath the last sparks so neighbours drift into the gap. */
 .nv-slot[data-leaving] { animation: none; pointer-events: none; }
 .nv-slot[data-leaving] .nv-slot-tile { box-shadow: none; }
 .nv-slot[data-leaving][data-collapse] { width: 0; margin-right: -18px; }
-.nv-slot-tile { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 3/4; border-radius: 14px; overflow: hidden; background: var(--nv-surface); transition: transform .18s ease, box-shadow .18s ease; border: 0; padding: 0; cursor: pointer; width: 100%; appearance: none; -webkit-appearance: none; font: inherit; color: inherit; }
+.nv-slot-tile { position: relative; display: flex; align-items: center; justify-content: center; aspect-ratio: 3/4; border-radius: 14px; overflow: hidden; background: var(--nv-surface); transition: transform var(--nv-dur-ui) var(--nv-ease-out), box-shadow var(--nv-dur-ui) var(--nv-ease-out); border: 0; padding: 0; cursor: pointer; width: 100%; appearance: none; -webkit-appearance: none; font: inherit; color: inherit; }
 .nv-slot-tile img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .nv-slot:hover:not(:disabled) .nv-slot-tile { transform: translateY(-3px); box-shadow: 0 10px 24px rgba(0,0,0,.10); }
 .nv-slot:disabled { cursor: default; }
@@ -164,7 +231,7 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
 .nv-cardmenu-dot {
   border: 0; background: none; padding: 0 4px; cursor: pointer;
   color: var(--nv-secondary-text); font-size: 15px; line-height: 1.2;
-  border-radius: 5px; opacity: 0; transition: opacity 150ms ease;
+  border-radius: 5px; opacity: 0; transition: opacity var(--nv-dur-micro) ease;
 }
 .nv-slot:hover .nv-cardmenu-dot, .nv-cardmenu:has(.nv-cardmenu-pop) .nv-cardmenu-dot { opacity: 1; }
 .nv-cardmenu-dot:hover { background: rgba(128,128,128,.14); color: var(--nv-primary-text); }
@@ -209,20 +276,20 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
 .nv-composer-files { display: flex; flex-wrap: wrap; gap: 6px; }
 .nv-composer-file { display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; padding: 3px 6px 3px 9px; font-size: 11.5px; background: var(--nv-canvas); color: var(--nv-primary-text); }
 .nv-composer-filex { border: 0; background: none; color: var(--nv-secondary-text); font-size: 13px; cursor: pointer; padding: 0 2px; line-height: 1; }
-.nv-composer-filex:hover { color: var(--nv-danger, #c0392b); }
-.nv-composer-error { font-size: 11.5px; color: var(--nv-danger, #c0392b); padding: 0 2px; }
+.nv-composer-filex:hover { color: var(--nv-danger); }
+.nv-composer-error { font-size: 11.5px; color: var(--nv-danger); padding: 0 2px; }
 .nv-composer-nowork { align-items: center; padding: 18px 14px; }
 .nv-composer-wsbtn { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 10px; padding: 9px 16px; font-size: 13px; background: var(--nv-accent-soft); color: var(--nv-accent-deep); cursor: pointer; }
 .nv-modelrow { display: inline-flex; align-items: center; gap: 8px; width: 100%; justify-content: space-between; }
-.nv-page.nv-leaving .nv-slots, .nv-page.nv-leaving .nv-create-bottom, .nv-page.nv-leaving .nv-h1, .nv-page.nv-leaving .nv-sub { opacity: 0; transform: translateY(6px); transition: opacity .28s ease, transform .28s ease; }
-.nv-page.nv-leaving .nv-composer { opacity: 0; transition: opacity .28s ease .1s; }
+.nv-page.nv-leaving .nv-slots, .nv-page.nv-leaving .nv-create-bottom, .nv-page.nv-leaving .nv-h1, .nv-page.nv-leaving .nv-sub { opacity: 0; transform: translateY(6px); transition: opacity var(--nv-dur-scene) var(--nv-ease-out), transform var(--nv-dur-scene) var(--nv-ease-out); }
+.nv-page.nv-leaving .nv-composer { opacity: 0; transition: opacity var(--nv-dur-scene) var(--nv-ease-out) .1s; }
 
 /* Bottom pair: quiet section labels over template tiles and the tools list. */
 .nv-create-bottom { display: grid; grid-template-columns: 1.35fr 1fr; gap: 48px; margin-top: 6px; }
 .nv-sec-label { font-size: 12px; font-weight: 600; color: var(--nv-secondary-text); margin-bottom: 10px; }
 .nv-tpls { display: flex; gap: 14px; }
 .nv-tpl { display: flex; flex-direction: column; gap: 7px; width: 132px; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
-.nv-tpl-cover { width: 100%; aspect-ratio: 16/10; border-radius: 10px; object-fit: cover; display: block; transition: transform .18s ease, box-shadow .18s ease; }
+.nv-tpl-cover { width: 100%; aspect-ratio: 16/10; border-radius: 10px; object-fit: cover; display: block; transition: transform var(--nv-dur-ui) var(--nv-ease-out), box-shadow var(--nv-dur-ui) var(--nv-ease-out); }
 .nv-tpl:hover .nv-tpl-cover { transform: translateY(-2px); box-shadow: 0 8px 18px rgba(0,0,0,.10); }
 .nv-tpl-body { display: flex; flex-direction: column; gap: 1px; }
 .nv-tpl-body strong { font-size: 12.5px; font-weight: 600; }
@@ -315,7 +382,7 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
   width: 26px; height: 26px;
   border: 0; background: none; padding: 0;
   font-size: 20px; line-height: 1; color: var(--nv-secondary-text); cursor: pointer;
-  border-radius: 6px; transition: color 150ms ease, background 150ms ease;
+  border-radius: 6px; transition: color var(--nv-dur-micro) ease, background var(--nv-dur-micro) ease;
 }
 .nv-editor-top .nv-back:hover { color: var(--nv-primary-text); background: rgba(128,128,128,.1); }
 .nv-editor-top .right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
@@ -328,7 +395,7 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
 .nv-tree-row:hover { background: rgba(128,128,128,.08); }
 .nv-tree-row[data-active='true'] { background: rgba(128,128,128,.13); border-radius: 8px; }
 .nv-tree-row small { margin-left: auto; color: var(--nv-secondary-text); font-size: 11px; }
-.nv-tree-chev { width: 16px; flex: none; border: 0; background: none; padding: 0; font-size: 11px; color: var(--nv-secondary-text); cursor: pointer; transition: transform .12s ease; }
+.nv-tree-chev { width: 16px; flex: none; border: 0; background: none; padding: 0; font-size: 11px; color: var(--nv-secondary-text); cursor: pointer; transition: transform var(--nv-dur-micro) ease; }
 .nv-tree-chev:not(:disabled):hover { color: var(--nv-primary-text); }
 .nv-tree-chev:disabled { cursor: default; }
 .nv-tree-name { flex: 1; border: 0; background: none; padding: 0; font-size: 13px; color: inherit; text-align: left; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -395,7 +462,7 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
 .nv-ed-menu { position: fixed; z-index: 61; min-width: 150px; background: var(--nv-surface); border: 0.5px solid var(--nv-divider); border-radius: 10px; box-shadow: 0 10px 30px rgba(30,40,35,.14); padding: 4px; display: flex; flex-direction: column; overflow-y: auto; }
 .nv-ed-menuitem { border: 0; background: none; text-align: left; padding: 7px 10px; font-size: 12.5px; border-radius: 6px; color: var(--nv-primary-text); cursor: pointer; white-space: nowrap; }
 .nv-ed-menuitem:hover { background: rgba(128,128,128,.09); }
-.nv-ed-menuitem[data-danger='true'] { color: #B3402E; }
+.nv-ed-menuitem[data-danger='true'] { color: var(--nv-danger); }
 .nv-ed-menusep { height: 1px; background: var(--nv-divider); margin: 4px 6px; }
 .nv-ed-pick { position: fixed; z-index: 61; width: 264px; background: var(--nv-surface); border: 0.5px solid var(--nv-divider); border-radius: 12px; box-shadow: 0 10px 30px rgba(30,40,35,.14); padding: 10px; }
 .nv-ed-pickgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; max-height: 220px; overflow-y: auto; }
@@ -404,7 +471,7 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
 .nv-ed-pickitem:hover { border-color: var(--nv-accent); }
 .nv-ed-pickitem[data-active='true'] { border-color: var(--nv-accent); }
 .nv-ed-pickempty { grid-column: 1 / -1; padding: 14px 8px; font-size: 12px; color: var(--nv-secondary-text); text-align: center; }
-.nv-ed-pickclear { margin-top: 8px; width: 100%; border: 0.5px solid var(--nv-divider); border-radius: 8px; background: none; padding: 6px; font-size: 12.5px; color: #B3402E; cursor: pointer; }
+.nv-ed-pickclear { margin-top: 8px; width: 100%; border: 0.5px solid var(--nv-divider); border-radius: 8px; background: none; padding: 6px; font-size: 12.5px; color: var(--nv-danger); cursor: pointer; }
 .nv-ed-facebtn { position: absolute; right: 12px; bottom: 12px; width: 30px; height: 30px; border: 0; border-radius: 8px; background: rgba(255,255,255,.92); color: var(--nv-primary-text); font-size: 13px; cursor: pointer; box-shadow: 0 2px 8px rgba(30,40,35,.18); }
 .nv-ed-facebtn:hover { background: #fff; }
 
@@ -444,7 +511,7 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
 .nv-ed-fig { margin: 12px 0; }
 .nv-ed-fig img { width: 100%; border-radius: 10px; display: block; }
 .nv-ed-fig figcaption { font-size: 12px; color: var(--nv-secondary-text); margin-top: 4px; }
-.nv-ed-addpara { display: block; border: 0; background: none; padding: 2px 8px; margin: 0 -8px; border-radius: 6px; color: var(--nv-secondary-text); opacity: 0; cursor: pointer; font-size: 12px; transition: opacity .12s; }
+.nv-ed-addpara { display: block; border: 0; background: none; padding: 2px 8px; margin: 0 -8px; border-radius: 6px; color: var(--nv-secondary-text); opacity: 0; cursor: pointer; font-size: 12px; transition: opacity var(--nv-dur-micro); }
 .nv-ed-secbody:hover .nv-ed-addpara, .nv-ed-addpara:focus-visible { opacity: .8; }
 .nv-ed-addpara:hover { color: var(--nv-primary-text); background: rgba(128,128,128,.06); }
 .nv-ed-read figure { margin: 12px 0; }
@@ -495,8 +562,8 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
 .nv-ed-dropline { height: 2px; border-radius: 1px; background: var(--nv-accent); margin: 2px 10px; }
 .nv-ed-lift { position: fixed; left: 0; top: 0; z-index: 120; pointer-events: none; background: var(--nv-surface); border-radius: 10px; box-shadow: 0 14px 30px rgba(30,40,35,.22), 0 0 0 0.5px var(--nv-divider); opacity: .95; overflow: hidden; will-change: transform; }
 .nv-ed-lift .nv-ed-sec { padding-left: 14px; padding-right: 14px; margin-top: 0; border-top: 0; }
-.nv-ed-gap { flex: none; margin: 3px 12px; border-radius: 8px; background: var(--nv-accent-soft); animation: nv-ed-gapin .16s ease-out; }
-.nv-ed-hgap { flex: none; align-self: stretch; margin: 4px 0; border-radius: 8px; background: var(--nv-accent-soft); animation: nv-ed-hgapin .16s ease-out; }
+.nv-ed-gap { flex: none; margin: 3px 12px; border-radius: 8px; background: var(--nv-accent-soft); animation: nv-ed-gapin var(--nv-dur-ui) var(--nv-ease-out); }
+.nv-ed-hgap { flex: none; align-self: stretch; margin: 4px 0; border-radius: 8px; background: var(--nv-accent-soft); animation: nv-ed-hgapin var(--nv-dur-ui) var(--nv-ease-out); }
 @keyframes nv-ed-gapin { from { height: 0; opacity: 0; } }
 @keyframes nv-ed-hgapin { from { width: 0; opacity: 0; } }
 .nv-ed-sec[data-inside='true'] { box-shadow: 0 0 0 1.5px var(--nv-accent); border-radius: 10px; }
@@ -509,7 +576,7 @@ body[data-ds-dark-theme] [data-step-process-icon] { color: var(--nv-accent) !imp
 .nv-ed-widget { position: relative; }
 .nv-ed-iframe { display: block; width: 100%; border: 0; border-radius: 10px; background: var(--nv-surface); box-shadow: inset 0 0 0 0.5px var(--nv-divider); }
 .nv-ed-wph { padding: 20px; font-size: 12.5px; color: var(--nv-secondary-text); border: 0.5px dashed var(--nv-divider); border-radius: 10px; }
-.nv-ed-wedit { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border: 0.5px solid var(--nv-divider); border-radius: 7px; background: var(--nv-surface); color: var(--nv-secondary-text); cursor: pointer; opacity: 0; transition: opacity .12s; }
+.nv-ed-wedit { position: absolute; top: 8px; right: 8px; width: 26px; height: 26px; border: 0.5px solid var(--nv-divider); border-radius: 7px; background: var(--nv-surface); color: var(--nv-secondary-text); cursor: pointer; opacity: 0; transition: opacity var(--nv-dur-micro); }
 .nv-ed-widget:hover .nv-ed-wedit, .nv-ed-wedit:focus-visible { opacity: 1; }
 .nv-ed-wedit:hover { color: var(--nv-primary-text); }
 /* 内置小组件：时间线 = 顶部节点条 + 下方详情卡 */
@@ -701,7 +768,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-sidecar-msg[data-role="user"] .nv-sidecar-msgtext { color: var(--nv-secondary-text); font-size: 12px; }
 .nv-sidecar-task { justify-content: flex-start; }
 .nv-sidecar-task .nv-sidecar-msgtext { color: var(--nv-secondary-text); font-size: 11.5px; letter-spacing: .02em; }
-.nv-sidecar-error { padding: 4px 14px 0; font-size: 11.5px; color: var(--nv-danger, #c0392b); }
+.nv-sidecar-error { padding: 4px 14px 0; font-size: 11.5px; color: var(--nv-danger); }
 .nv-sidecar-composer { display: flex; align-items: flex-end; gap: 6px; padding: 4px 14px 12px; }
 .nv-sidecar-input { flex: 1; resize: none; border: 0; outline: none; background: #fff; border-radius: 10px; padding: 8px 11px; font-size: 12.5px; line-height: 1.5; font-family: inherit; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
 .nv-sidecar-input:focus { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--nv-accent) 45%, transparent); }
@@ -724,8 +791,8 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-toolrow-icon { display: inline-flex; color: var(--nv-secondary-text); }
 .nv-toolrow[data-tone="run"] .nv-toolrow-icon { color: var(--nv-accent-deep); animation: nv-spin 1s linear infinite; }
 .nv-toolrow[data-tone="done"] .nv-toolrow-icon { color: var(--nv-accent-deep); }
-.nv-toolrow[data-tone="error"] { border-color: #E8A0A0; color: #C0504D; }
-.nv-toolrow[data-tone="error"] .nv-toolrow-icon { color: #C0504D; }
+.nv-toolrow[data-tone="error"] { border-color: var(--nv-danger-line); color: var(--nv-danger); }
+.nv-toolrow[data-tone="error"] .nv-toolrow-icon { color: var(--nv-danger); }
 .nv-toolrow-label { color: var(--nv-primary-text); font-weight: 500; }
 .nv-toolrow-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @keyframes nv-spin { to { transform: rotate(360deg); } }
@@ -747,7 +814,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 
 .nv-slash-chips { display: flex; flex: none; gap: 8px; padding: 0 4px; }
 @keyframes nv-chip-in { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
-.nv-slash-chip { display: inline-flex; align-items: center; flex: none; height: 26px; padding: 0 12px; border-radius: 999px; border: 0.5px solid var(--nv-divider); background: var(--nv-surface); font-size: 12.5px; white-space: nowrap; color: var(--nv-primary-text); cursor: pointer; animation: nv-chip-in .24s ease both; }
+.nv-slash-chip { display: inline-flex; align-items: center; flex: none; height: 26px; padding: 0 12px; border-radius: 999px; border: 0.5px solid var(--nv-divider); background: var(--nv-surface); font-size: 12.5px; white-space: nowrap; color: var(--nv-primary-text); cursor: pointer; animation: nv-chip-in var(--nv-dur-ui) var(--nv-ease-out) both; }
 .nv-slash-chip:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
 
 /* 会话顶栏绑定 chips（01b：项目 / 背景 / 管理） */
@@ -813,7 +880,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-stage[data-stage='final'] { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 .nv-stage[data-stage='published'] { background: #16181A; color: #fff; }
 
-.nv-wdrawer { position: fixed; top: 0; right: 0; bottom: 0; width: 460px; max-width: 72%; background: var(--nv-surface); border-left: 0.5px solid var(--nv-divider); display: flex; flex-direction: column; animation: nv-slide-in .18s ease; z-index: 6; }
+.nv-wdrawer { position: fixed; top: 0; right: 0; bottom: 0; width: 460px; max-width: 72%; background: var(--nv-surface); border-left: 0.5px solid var(--nv-divider); display: flex; flex-direction: column; animation: nv-slide-in var(--nv-dur-ui) var(--nv-ease-out); z-index: 6; }
 .nv-wdrawer-head { position: relative; display: flex; align-items: center; gap: 8px; padding: 16px 46px 12px 20px; border-bottom: 0.5px solid var(--nv-divider); }
 .nv-wdrawer-head strong { font-size: 15px; }
 .nv-wdrawer-scroll { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 150px; }
@@ -832,7 +899,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-rev-src { font-size: 12px; color: var(--nv-secondary-text); line-height: 1.6; }
 .nv-wdrawer-foot { display: flex; gap: 10px; padding: 12px 20px; border-top: 0.5px solid var(--nv-divider); }
 .nv-wdrawer-foot .nv-btn-ghost { flex: 1; padding: 8px 10px; font-size: 12.5px; }
-.nv-btn-ghost.nv-danger { color: #C0504D; }
+.nv-btn-ghost.nv-danger { color: var(--nv-danger); }
 
 /* Card pick — two trading cards levitating tilted over the dimmed page. A
    hover straightens and lights one; a click holds it upright while the
@@ -875,7 +942,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   animation: nv-pick-title-in 480ms cubic-bezier(0.2, 0.9, 0.25, 1) backwards;
 }
 .nv-pick-title-star { display: flex; color: var(--nv-accent); }
-.nv-pick-title, .nv-pick-namer { transition: opacity 220ms ease; }
+.nv-pick-title, .nv-pick-namer { transition: opacity var(--nv-dur-ui) ease; }
 @keyframes nv-pick-title-in {
   from { opacity: 0; transform: translateY(28px); }
   to { opacity: 1; transform: translateY(0); }
@@ -972,7 +1039,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 }
 .nv-pick-namer-input::placeholder {
   color: rgba(255, 255, 255, 0.38); font-weight: 400;
-  transition: opacity 200ms ease;
+  transition: opacity var(--nv-dur-ui) ease;
 }
 /* Resting state shows the gray default name; hovering or having clicked in
    clears it, and it returns when the pointer leaves an untouched field. */
@@ -988,7 +1055,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   border: 0; border-radius: 0; padding: 4px 2px; cursor: pointer;
   background: none; color: rgba(255, 255, 255, 0.62);
   font-size: 13px; font-weight: 500; letter-spacing: 0.14em;
-  transition: color 180ms ease;
+  transition: color var(--nv-dur-micro) ease;
 }
 .nv-pick-namer-go:hover { color: #A7F3D0; }
 .nv-pick-namer-cancel {
@@ -998,7 +1065,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   background: none; color: rgba(255, 255, 255, 0.4);
   font-size: 12px; font-weight: 400; letter-spacing: 0.18em;
   text-shadow: 0 0 10px rgba(255, 255, 255, 0.25);
-  transition: color 180ms ease;
+  transition: color var(--nv-dur-micro) ease;
 }
 .nv-pick-namer-cancel:hover { color: rgba(255, 255, 255, 0.8); }
 
@@ -1068,7 +1135,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   width: 92px; height: 92px; border: 1px solid var(--nv-divider); border-radius: 50%; padding: 0;
   background: var(--nv-surface); color: var(--nv-primary-text); font-size: 13px; cursor: pointer;
   box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-  transition: transform 160ms ease, box-shadow 160ms ease, border-color 160ms ease; }
+  transition: transform var(--nv-dur-micro) ease, box-shadow var(--nv-dur-micro) ease, border-color var(--nv-dur-micro) ease; }
 .nv-tree-orb:hover { transform: translateY(-2px); border-color: var(--nv-accent); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.09); }
 .nv-tree-orbplus { font-size: 24px; font-weight: 300; line-height: 1; color: var(--nv-accent-deep); }
 /* 分组头 = 纯灰小标签（设计稿 02/03），不折叠；行尾「＋」悬停才显。 */
@@ -1089,7 +1156,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 /* 折叠箭头移到行最右端（设计稿 02 卡行）；展开时旋 90°。 */
 .nv-tree-fold { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
   border: 0; background: none; padding: 0; font-size: 13px; line-height: 1; color: var(--nv-secondary-text);
-  cursor: pointer; transition: transform 120ms; }
+  cursor: pointer; transition: transform var(--nv-dur-micro); }
 .nv-tree-fold-on { transform: rotate(90deg); }
 /* 行尾「＋」常态隐身，悬停行才显（设计稿 J05）。 */
 .nv-tree-add { flex: none; width: 18px; height: 18px; border: 0; background: none; padding: 0;
@@ -1132,7 +1199,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-tree-new:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); }
 .nv-tree-toolicon { display: inline-flex; color: var(--nv-secondary-text); }
 /* 分组头的删除钮：与「＋」同族悬停显隐，悬停转危险色。 */
-.nv-tree-del:hover { color: var(--nv-danger, #c94f4f); }
+.nv-tree-del:hover { color: var(--nv-danger); }
 /* 卡尾的「＋ 新建模块」条：和「＋ 新建」同族，缩进对齐模块行。 */
 .nv-tree-newmodule { margin: 5px 8px 8px 28px; width: calc(100% - 36px); padding: 7px 0; font-size: 12.5px; }
 /* 呈现轴：隐藏行在「显示隐藏」掀开时画灰占位（可读可恢复，不是删除态）。 */
@@ -1154,7 +1221,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-tree-selbtn:hover { background: var(--nv-hover); }
 .nv-tree-selbtn:disabled { color: var(--nv-secondary-text); cursor: default; }
 .nv-tree-selbtn:disabled:hover { background: none; }
-.nv-tree-selbtn-danger { color: #E25252; }
+.nv-tree-selbtn-danger { color: var(--nv-danger); }
 
 /* 导入对话框：analyze 报告区——卡行（图标+名+类）+ 文件数行。 */
 .nv-import-summary { max-height: 180px; overflow-y: auto; margin: 8px 0 4px;
@@ -1165,7 +1232,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-import-kind { flex: none; font-size: 11px; color: var(--nv-secondary-text); }
 .nv-import-files { color: var(--nv-secondary-text); }
 .nv-import-hint { font-size: 11.5px; color: var(--nv-secondary-text); margin-top: 4px; }
-.nv-import-error { font-size: 12px; color: var(--nv-danger, #c94f4f); margin-top: 6px; }
+.nv-import-error { font-size: 12px; color: var(--nv-danger); margin-top: 6px; }
 
 /* 中列画布：标签条 + 体 */
 .nv-canvas { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--nv-surface); }
@@ -1186,7 +1253,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-canvas-dot { width: 6px; height: 6px; border-radius: 50%; }
 .nv-dot-working { background: var(--nv-accent); animation: nv-dot-breathe 1.6s ease-in-out infinite; }
 .nv-dot-pending { background: #2EA85C; }
-.nv-dot-error { background: #D64545; }
+.nv-dot-error { background: var(--nv-danger); }
 .nv-dot-unsaved { background: var(--nv-secondary-text); }
 @keyframes nv-dot-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 .nv-canvas-plus { border: 0; background: none; padding: 4px 8px; font-size: 15px; color: var(--nv-secondary-text); cursor: pointer; }
@@ -1198,7 +1265,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-split-x { flex-direction: row; }
 .nv-split-y { flex-direction: column; }
 .nv-split-cell { min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.nv-split-bar { flex: none; background: var(--nv-divider); transition: background .12s; }
+.nv-split-bar { flex: none; background: var(--nv-divider); transition: background var(--nv-dur-micro); }
 .nv-split-x > .nv-split-bar { width: 3px; cursor: col-resize; }
 .nv-split-y > .nv-split-bar { height: 3px; cursor: row-resize; }
 .nv-split-bar:hover { background: var(--nv-accent); }
@@ -1234,7 +1301,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-canvas-docedit { flex: 1; min-height: 0; border: 0; resize: none; padding: 24px 28px; font-size: 14px; line-height: 1.8;
   font-family: inherit; background: var(--nv-surface); color: var(--nv-primary-text); outline: none; }
 .nv-canvas-docstatus { padding: 6px 14px; font-size: 11px; color: var(--nv-secondary-text); border-top: 1px solid var(--nv-divider); }
-.nv-canvas-conflict { padding: 8px 14px; font-size: 12px; color: #B45309; background: #FEF3C7; }
+.nv-canvas-conflict { padding: 8px 14px; font-size: 12px; color: var(--nv-warn); background: var(--nv-warn-soft); }
 
 /* 通用编辑器：标题 + meta + 正文 + 底状态条（文稿与卡模块共用） */
 .nv-ed { flex: 1; min-height: 0; display: flex; flex-direction: column; }
@@ -1243,6 +1310,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   font-size: 15px; color: var(--nv-secondary-text); cursor: pointer; border-radius: 6px; }
 .nv-ed-more:hover { color: var(--nv-primary-text); background: var(--nv-accent-soft); }
 .nv-ed-title { margin: 0; font-size: 22px; font-weight: 700; color: var(--nv-primary-text); }
+.nv-ed-titlein { display: block; width: 100%; box-sizing: border-box; border: 0; border-bottom: 1px solid var(--nv-accent-deep); background: transparent; padding: 0 0 2px; font-family: inherit; outline: none; }
 .nv-ed-meta { margin-top: 5px; font-size: 12px; color: var(--nv-secondary-text); }
 
 /* 卡页：头栏 + 模块竖排堆叠（设计稿 J02），模块导航归抽屉树 */
@@ -1253,7 +1321,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-cardpage-more { margin-left: auto; width: 26px; height: 24px; border: 0; border-radius: 6px;
   background: none; color: var(--nv-secondary-text); font-size: 14px; cursor: pointer; }
 .nv-cardpage-more:hover { background: var(--nv-hover); }
-.nv-cardpage-draft { font-size: 11px; color: #B45309; background: #FEF3C7; padding: 2px 8px; border-radius: 999px; }
+.nv-cardpage-draft { font-size: 11px; color: var(--nv-warn); background: var(--nv-warn-soft); padding: 2px 8px; border-radius: 999px; }
 .nv-cardpage-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 22px 40px; }
 /* 模块页容器是普通块——滚动全交给 .nv-cardpage-scroll，不能再套自带 overflow 的页类。 */
 .nv-cardpage-module { display: block; }
@@ -1268,16 +1336,16 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-prop-list { flex: 1; min-width: 0; display: flex; gap: 6px; overflow: hidden; }
 .nv-prop-item { font-size: 11px; color: var(--nv-secondary-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nv-prop-item i { font-style: normal; color: var(--nv-accent-deep); margin-right: 3px; }
-.nv-prop-stale { color: #B45309; }
-.nv-prop-stale i { color: #B45309; }
+.nv-prop-stale { color: var(--nv-warn); }
+.nv-prop-stale i { color: var(--nv-warn); }
 .nv-prop-actions { display: flex; gap: 6px; flex: none; }
 .nv-prop-btn { border: 1px solid var(--nv-divider); background: var(--nv-surface); color: var(--nv-primary-text);
   font-size: 11px; padding: 3px 10px; border-radius: 7px; cursor: pointer; }
 .nv-prop-btn:hover { border-color: var(--nv-accent); }
 .nv-prop-accept { background: var(--nv-accent); border-color: var(--nv-accent); color: #fff; }
 .nv-prop-accept:hover { background: var(--nv-accent-deep); }
-.nv-prop-reject { color: #B45309; }
-.nv-prop-reject:hover { border-color: #B45309; }
+.nv-prop-reject { color: var(--nv-warn); }
+.nv-prop-reject:hover { border-color: var(--nv-warn); }
 
 /* 模块盒：标题 + 正文（块级点编） */
 .nv-modbox { position: relative; border: 1px solid var(--nv-divider); border-radius: 12px; background: var(--nv-surface);
@@ -1287,7 +1355,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 /* ⋯ 走正常流：Menu 的 anchor 包装层自身带定位，absolute 会被吸进包装层而非 modbox。 */
 .nv-modbox-more { flex: none; width: 24px; height: 24px; border: 0;
   border-radius: 6px; background: none; color: var(--nv-secondary-text); font-size: 14px; cursor: pointer;
-  opacity: 0; transition: opacity .12s; }
+  opacity: 0; transition: opacity var(--nv-dur-micro); }
 .nv-modbox:hover .nv-modbox-more, .nv-modbox-more[data-open='true'] { opacity: 1; }
 .nv-modbox-more:hover { background: var(--nv-hover); }
 .nv-modbox[data-depth='1'], .nv-modbox[data-depth='2'], .nv-modbox[data-depth='3'], .nv-modbox[data-depth='4'] { border-radius: 8px; background: transparent; }
@@ -1337,7 +1405,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-cardpage-rolesbox { padding-bottom: 6px; }
 .nv-cardpage-roleshead { display: flex; align-items: center; gap: 4px; width: 100%; border: 0; background: none;
   font-size: 13px; font-weight: 600; color: var(--nv-primary-text); padding: 2px 0 6px; cursor: pointer; text-align: left; }
-.nv-cardpage-roleshead .nv-tree-fold { border: 0; background: none; font-size: 11px; transition: transform .15s; color: var(--nv-secondary-text); }
+.nv-cardpage-roleshead .nv-tree-fold { border: 0; background: none; font-size: 11px; transition: transform var(--nv-dur-micro); color: var(--nv-secondary-text); }
 .nv-cardpage-roleshead .nv-tree-fold-on { transform: rotate(90deg); }
 
 /* 模块库对话框（设计稿 11）：标题「新建」+ 预制模块/Studio 双 tab + 三列缩略图格。 */
@@ -1455,7 +1523,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   background: transparent; cursor: pointer; font-size: 11px; padding: 2px 9px; margin-right: 8px;
   color: var(--nv-accent-deep); }
 .nv-simrow:hover .nv-simrow-act { display: inline; }
-.nv-simrow-cancel { color: var(--nv-danger, #c0392b); border-color: color-mix(in srgb, var(--nv-danger, #c0392b) 40%, transparent); }
+.nv-simrow-cancel { color: var(--nv-danger); border-color: var(--nv-danger-line); }
 .nv-simset-field { display: flex; flex-direction: column; gap: 4px; padding: 8px 4px; }
 .nv-simset-field > span { font-size: 11px; color: var(--nv-secondary-text); }
 .nv-simset-field textarea, .nv-simset-field input { resize: vertical; border: 0.5px solid var(--nv-divider);
@@ -1520,7 +1588,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   color: var(--nv-primary-text); padding: 0 2px; }
 .nv-pchip { align-self: flex-start; font-size: 11px; color: var(--nv-secondary-text);
   background: var(--nv-canvas); border-radius: 999px; padding: 3px 10px; }
-.nv-pchip-bad { color: #C2410C; }
+.nv-pchip-bad { color: var(--nv-danger); }
 .nv-pentry { align-self: stretch; border: 0.5px solid var(--nv-divider); border-radius: 12px;
   background: var(--nv-surface); color: var(--nv-primary-text); font-size: 12.5px;
   padding: 10px 12px; cursor: pointer; text-align: center; font-weight: 600; }
@@ -1553,13 +1621,13 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-isl-fill .nv-isl-frame { height: 100%; }
 .nv-isl-srcbtn { position: absolute; top: 6px; right: 6px; z-index: 3; border: 0;
   border-radius: 6px; padding: 2px 7px; font-size: 11px; font-family: ui-monospace, monospace;
-  background: rgba(0,0,0,.38); color: #fff; cursor: pointer; opacity: 0; transition: opacity .15s; }
+  background: rgba(0,0,0,.38); color: #fff; cursor: pointer; opacity: 0; transition: opacity var(--nv-dur-micro); }
 .nv-isl:hover .nv-isl-srcbtn { opacity: 1; }
 .nv-isl-src { margin: 0; padding: 10px; font-family: ui-monospace, monospace; font-size: 11px;
   line-height: 1.5; white-space: pre-wrap; word-break: break-all; color: var(--nv-primary-text);
   background: var(--nv-canvas); max-height: 520px; overflow-y: auto; }
 .nv-isl-fill .nv-isl-src { max-height: none; height: 100%; }
-.nv-isl-err { padding: 10px 12px; font-size: 12px; color: #C2410C;
+.nv-isl-err { padding: 10px 12px; font-size: 12px; color: var(--nv-danger);
   background: rgba(194,65,12,.08); border-radius: 0 0 12px 12px; }
 .nv-canvas-filerow { display: flex; align-items: center; gap: 8px; width: 100%; border: 0; background: none;
   padding: 7px 8px; font-size: 13px; color: var(--nv-primary-text); cursor: pointer; border-radius: 8px; text-align: left; }
@@ -1696,13 +1764,13 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-tlg-ev-on { outline: 2px solid var(--nv-accent-deep); outline-offset: 1px; }
 .nv-tlg-ev-near { box-shadow: inset 0 0 0 1.5px var(--nv-accent); }
 .nv-tlg-ph { position: absolute; top: 0; bottom: 0; left: 50%; width: 0; z-index: 4;
-  border-left: 1.5px solid #E5484D; pointer-events: none; }
+  border-left: 1.5px solid var(--nv-danger); pointer-events: none; }
 /* 红线值常显：平时淡灰悬停可读，交互中才变红 */
 .nv-tlg-phv { position: absolute; top: 1px; left: 3px; font-size: 10px; line-height: 1.4;
   color: var(--nv-secondary-text); background: var(--nv-surface);
   border: 0.5px solid var(--nv-divider); border-radius: 3px; padding: 1px 5px;
-  white-space: nowrap; opacity: .65; transition: opacity .25s, background .15s, color .15s; }
-.nv-tlg-phv-on { opacity: 1; color: #fff; background: #E5484D; border-color: #E5484D; }
+  white-space: nowrap; opacity: .65; transition: opacity var(--nv-dur-ui), background var(--nv-dur-micro), color var(--nv-dur-micro); }
+.nv-tlg-phv-on { opacity: 1; color: #fff; background: var(--nv-danger); border-color: var(--nv-danger); }
 /* 锚点标签：事件起点/纪元边界处直接印日期，密集时按像素去重 */
 .nv-tlg-anchorlab { position: absolute; top: 17px; transform: translateX(-50%);
   font-size: 9px; color: var(--nv-secondary-text); opacity: .75; white-space: nowrap; cursor: pointer; }
@@ -1723,7 +1791,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 /* 图内悬停 ×：事件药丸/纪元色带/刻度标记的快捷删除，平时隐身避免干扰视觉 */
 .nv-tlg-del { position: absolute; display: flex; align-items: center; justify-content: center;
   width: 14px; height: 14px; border-radius: 50%; background: rgba(20,25,22,.55); color: #fff;
-  font-size: 9px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity .12s; z-index: 3; }
+  font-size: 9px; line-height: 1; cursor: pointer; opacity: 0; transition: opacity var(--nv-dur-micro); z-index: 3; }
 .nv-tlg-ev:hover .nv-tlg-del, .nv-tlg-era:hover .nv-tlg-del, .nv-tlg-mark:hover .nv-tlg-del { opacity: 1; }
 .nv-tlg-ev .nv-tlg-del { top: 4px; right: 3px; }
 .nv-tlg-era .nv-tlg-del { top: 3px; right: 3px; }
@@ -1757,7 +1825,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-tld-unit { font-size: 12px; color: var(--nv-secondary-text); }
 .nv-tld-del { border: none; background: none; color: var(--nv-secondary-text); font-size: 12px;
   cursor: pointer; padding: 4px 6px; }
-.nv-tld-del:hover { color: #D64545; }
+.nv-tld-del:hover { color: var(--nv-danger); }
 .nv-tld-done { border: none; background: none; color: var(--nv-accent-deep); font-size: 12px;
   font-weight: 600; cursor: pointer; padding: 4px 6px; }
 .nv-tld-art { position: relative; padding: 8px 0 20px 16px; }
@@ -1927,12 +1995,13 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-maped-objcard input[type=color] { width: 26px; height: 22px; padding: 0; border: 1px solid var(--nv-divider); border-radius: 6px; }
 .nv-maped-objcard button { border: none; font-size: 12px; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 .nv-maped-ok { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-maped-del { background: none; color: #D64541; }
+.nv-maped-del { background: none; color: var(--nv-danger); }
 .nv-maped-world { display: flex; align-items: center; gap: 6px; margin-left: auto; }
 .nv-maped-wcard { position: absolute; top: 10px; left: 10px; display: flex; align-items: center; gap: 8px;
   background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 10px;
   padding: 6px 10px; box-shadow: 0 4px 16px rgba(22,24,26,.10); }
 .nv-maped-wname { font-size: 13px; font-weight: 600; color: var(--nv-primary-text); }
+.nv-maped-wnamein { min-width: 0; width: 9em; border: 0; border-bottom: 1px solid var(--nv-accent-deep); background: transparent; padding: 0; font-family: inherit; outline: none; }
 .nv-maped-wcard button { border: none; font-size: 12px; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 .nv-maped-note { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
   font-size: 10px; color: var(--nv-secondary-text); background: rgba(255,255,255,.78);

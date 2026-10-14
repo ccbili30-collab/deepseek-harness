@@ -15,6 +15,7 @@ import { CollectionWidget, MiniRelation, MiniTimeline, RelationWidget, TimelineW
 import { MapEditor } from './map-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
+import { InlineRename, notifyUndo, useArmedMenu } from './ui/interact.tsx'
 import { MODLIB_ART } from './modlib-art.ts'
 import { islandDoc } from './stage-island.tsx'
 
@@ -128,7 +129,7 @@ function moduleGlyph(module: CardModuleDoc, size: number): ReturnType<typeof gly
 
 /** 一个模块盒：标题（点击即改名）+ 正文（块级点编 / 预制模块渲染器）。
     子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
-function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBlock, addBlock, renameModule, send, onOpenModule, ask, readFile, onOpenFile }: {
+function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBlock, addBlock, renameModule, removeModule, send, onOpenModule, ask, readFile, onOpenFile }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   readonly mdLabels: MdLabels
@@ -140,6 +141,8 @@ function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBl
   readonly saveBlock: (module: CardModuleDoc, blockId: string, text: string, expected: string) => Promise<EditorSaveResult>
   readonly addBlock: (module: CardModuleDoc, text: string) => Promise<EditorSaveResult>
   readonly renameModule: (module: CardModuleDoc, name: string) => void
+  /** 删除模块（宿主负责回执与撤销）。 */
+  readonly removeModule: (module: CardModuleDoc) => void
   /** 预制模块的编辑命令直发（apply + 刷新由宿主负责）。 */
   readonly send: WidgetSend
   /** 打开另一个模块的页签。 */
@@ -152,40 +155,33 @@ function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBl
   readonly onOpenFile?: (path: string) => void
 }) {
   const [renaming, setRenaming] = useState(false)
-  const [nameDraft, setNameDraft] = useState(module.name)
   const [modMenu, setModMenu] = useState(false)
+  const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const widget = module.widget?.type
   const blocks: EditableBlock[] = module.blocks.map(b => b.kind === 'text'
     ? { id: b.id, kind: 'text' as const, text: b.text ?? '', ref: b.ref }
     : { id: b.id, kind: 'image' as const, imageUrl: b.resourceId === undefined ? undefined : imageUrl(b.resourceId), caption: b.caption })
-  const commitName = (): void => {
-    setRenaming(false)
-    const next = nameDraft.trim()
-    if (next !== '' && next !== module.name) renameModule(module, next)
-  }
   return (
     <section className="nv-modbox">
       <div className="nv-modbox-head">
         {renaming ? (
-          <input className="nv-modbox-rename" value={nameDraft} autoFocus
-            onChange={e => setNameDraft(e.target.value)} onBlur={commitName}
-            onKeyDown={e => { if (e.key === 'Enter') commitName(); if (e.key === 'Escape') setRenaming(false) }} />
+          <InlineRename className="nv-modbox-rename" value={module.name}
+            onDone={next => { setRenaming(false); if (next !== undefined) renameModule(module, next) }} />
         ) : (
-          <h2 className="nv-modbox-title" onClick={() => { setNameDraft(module.name); setRenaming(true) }}>{module.name}</h2>
+          <h2 className="nv-modbox-title" onClick={() => setRenaming(true)}>{module.name}</h2>
         )}
         <Menu open={modMenu} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
-          onClose={() => setModMenu(false)}
+          onClose={() => { arm.reset(); setModMenu(false) }}
           onSelect={id => {
+            if (arm.select(id) === 'armed') return
             setModMenu(false)
             if (id === 'copy') void send({ kind: 'copy_module', moduleId: module.id })
-            if (id === 'delete' && window.confirm(fmt(t, 'editor.module.removeConfirm', { name: module.name }))) {
-              void send({ kind: 'remove_module', moduleId: module.id })
-            }
+            if (id === 'delete') removeModule(module)
           }}
-          items={[
+          items={arm.decorate([
             { id: 'copy', label: t('editor.module.copy') },
-            { id: 'delete', label: t('editor.module.remove') },
-          ]}
+            { id: 'delete', label: t('editor.module.remove'), danger: true },
+          ])}
           anchor={(
             <button type="button" className="nv-modbox-more" aria-label={t('tree.mod.more')}
               onClick={() => setModMenu(v => !v)}>⋯</button>
@@ -431,7 +427,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, t, loadCard,
   const [library, setLibrary] = useState(false)
   const [cardMenu, setCardMenu] = useState(false)
   const [cardRenaming, setCardRenaming] = useState(false)
-  const [cardNameDraft, setCardNameDraft] = useState('')
+  const cardArm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const [rolesOpen, setRolesOpen] = useState(false)
   /** 预览态：展示的是提案合并后的文档，编辑通道锁死（先接受或拒绝）。 */
   const [preview, setPreview] = useState<CardState | undefined>(undefined)
@@ -548,6 +544,20 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, t, loadCard,
     }
   }, [addr, cardId, locked, op, refresh, t, targetId, version])
 
+  /** 删模块 + 撤销回执：撤销走卡的 undo op（删除是最近一笔修订）。 */
+  const removeModule = useCallback((module: CardModuleDoc) => {
+    void send({ kind: 'remove_module', moduleId: module.id }).then(() => {
+      notifyUndo({
+        text: fmt(t, 'ui.receipt.moduleDeleted', { name: module.name }),
+        undoLabel: t('ui.undo'),
+        undo: () => {
+          void op(addr, { op: 'undo', cardId }).then(result => { if (result.version !== undefined) setVersion(result.version); void refresh() })
+            .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
+        },
+      })
+    })
+  }, [addr, cardId, op, refresh, send, t])
+
   const addModule = useCallback((widget: string | undefined, name?: string) => {
     if (target === undefined || locked) return
     setLibrary(false)
@@ -622,41 +632,45 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, t, loadCard,
       <header className="nv-cardpage-head">
         <span className="nv-cardpage-kind">{kindLabel}</span>
         {cardRenaming ? (
-          <input className="nv-modbox-rename" value={cardNameDraft} autoFocus
-            onChange={e => setCardNameDraft(e.target.value)}
-            onBlur={() => setCardRenaming(false)}
-            onKeyDown={e => {
-              if (e.key === 'Escape') setCardRenaming(false)
-              if (e.key === 'Enter') {
-                const next = cardNameDraft.trim()
-                setCardRenaming(false)
-                if (next !== '' && next !== doc.name) {
-                  void op(addr, { op: 'apply', cardId, targetId, version, command: { kind: 'rename_card', name: next } })
-                    .then(result => { if (result.version !== undefined) setVersion(result.version); void refresh() })
-                    .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
-                }
-              }
+          <InlineRename className="nv-modbox-rename" value={doc.name}
+            onDone={next => {
+              setCardRenaming(false)
+              if (next === undefined) return
+              void op(addr, { op: 'apply', cardId, targetId, version, command: { kind: 'rename_card', name: next } })
+                .then(result => { if (result.version !== undefined) setVersion(result.version); void refresh() })
+                .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
             }} />
         ) : (
           <span className="nv-cardpage-name">{doc.name}</span>
         )}
         {state.hasDraft && <span className="nv-cardpage-draft">{t('me.draft')}</span>}
         <Menu open={cardMenu} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
-          onClose={() => setCardMenu(false)}
+          onClose={() => { cardArm.reset(); setCardMenu(false) }}
           onSelect={id => {
+            if (cardArm.select(id) === 'armed') return
             setCardMenu(false)
-            if (id === 'rename') { setCardNameDraft(doc.name); setCardRenaming(true) }
+            if (id === 'rename') setCardRenaming(true)
             if (id === 'source' && state.dir !== undefined) onOpenFile?.(`卡/${state.dir}/card.json`)
-            if (id === 'delete' && window.confirm(fmt(t, 'tree.card.deleteConfirm', { name: doc.name }))) {
-              void op(addr, { op: 'delete', cardId }).then(() => setState(undefined))
-                .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
+            if (id === 'delete') {
+              const name = doc.name
+              void op(addr, { op: 'delete', cardId }).then(() => {
+                setState(undefined)
+                notifyUndo({
+                  text: fmt(t, 'ui.receipt.cardDeleted', { name }),
+                  undoLabel: t('ui.undo'),
+                  undo: () => {
+                    void op(addr, { op: 'restore', cardId }).then(() => refresh())
+                      .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
+                  },
+                })
+              }).catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
             }
           }}
-          items={[
+          items={cardArm.decorate([
             { id: 'rename', label: t('tree.card.rename') },
             ...(onOpenFile !== undefined ? [{ id: 'source', label: t('tree.card.showSource') }] : []),
-            { id: 'delete', label: t('tree.card.delete') },
-          ]}
+            { id: 'delete', label: t('tree.card.delete'), danger: true },
+          ])}
           anchor={(
             <button type="button" className="nv-cardpage-more" aria-label={t('tree.card.more')}
               onClick={() => setCardMenu(v => !v)}>⋯</button>
@@ -693,7 +707,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, t, loadCard,
               <ModuleBox module={pageModule} t={t} mdLabels={mdLabels}
                 card={{ name: doc.name, kind: doc.kind }}
                 imageUrl={imageUrl} imageResources={imageResources}
-                saveBlock={saveBlock} addBlock={addBlock} renameModule={renameModule} send={send}
+                saveBlock={saveBlock} addBlock={addBlock} renameModule={renameModule} removeModule={removeModule} send={send}
                 onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} readFile={readFile} onOpenFile={onOpenFile} />
             ) : (
               <OverviewPage target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id}

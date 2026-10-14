@@ -527,6 +527,14 @@ export class CardStore {
     await writeFileAtomic(join(dir, 'deleted.json'), `${JSON.stringify({ revision, deletedAt: new Date().toISOString() }, null, 2)}\n`)
   }
 
+  /** 撤销软删除：移走墓碑，卡按原目录与历史回到列表。卡不存在或未删除时返回 false。 */
+  async restore(cardId: string): Promise<boolean> {
+    const dir = await this.dirFor(cardId)
+    if (dir === undefined || !await this.isDeleted(cardId)) return false
+    await rm(join(dir, 'deleted.json'), { force: true })
+    return true
+  }
+
   /** 新分配一个载荷文件名并写入字节（追加式，永不覆写）。 */
   async receivePayload(cardId: string, bytes: Uint8Array): Promise<string> {
     return withCard(cardId, async () => {

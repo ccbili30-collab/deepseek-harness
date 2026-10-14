@@ -508,6 +508,11 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
         await store.delete(cardId)
         return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS })
       }
+      case 'restore': {
+        if (cardId.length === 0) return bad('missing cardId')
+        if (!await store.restore(cardId)) return new Response(JSON.stringify({ error: 'not deleted' }), { status: 404, headers: JSON_HEADERS })
+        return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS })
+      }
       case 'export': {
         const built = await buildExportPackage(store, cardId)
         const filename = encodeURIComponent(`${built.name}.novex.zip`)

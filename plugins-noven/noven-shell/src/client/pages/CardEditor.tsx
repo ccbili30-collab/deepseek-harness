@@ -9,6 +9,8 @@
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ShellT } from './Home.tsx'
+import { fmt } from './Home.tsx'
+import { notifyUndo, useArmedPress } from '../ui/interact.tsx'
 import type { CardAddr, CardBlockView, CardDocView, CardModuleDoc, CardOp, CardOpResult, CardState } from '../card-api.ts'
 import { cardContentUrl } from '../card-api.ts'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
@@ -167,9 +169,22 @@ export function CardEditor({ t, useStore, loadCard, op, workspaceRoot, back }: C
     setPending(null)
   }
 
+  /** 行尾 ✕ 两段确认：第一下武装，第二下删除；删除后回执可撤销。 */
+  const removeArm = useArmedPress()
   const removeModule = (module: CardModuleDoc) => {
-    if (!window.confirm(t('editor.module.removeConfirm').replace('{name}', module.name))) return
-    void apply({ kind: 'remove_module', moduleId: module.id })
+    if (!removeArm.press(module.id)) return
+    let ok = false
+    void run(async () => {
+      await op((card as NonNullable<typeof card>), { op: 'apply', cardId: (card as NonNullable<typeof card>).cardId, targetId, version, command: { kind: 'remove_module', moduleId: module.id } })
+      ok = true
+    }).then(() => {
+      if (!ok) return
+      notifyUndo({
+        text: fmt(t, 'ui.receipt.moduleDeleted', { name: module.name }),
+        undoLabel: t('ui.undo'),
+        undo: () => { void run(async () => { await op((card as NonNullable<typeof card>), { op: 'undo', cardId: (card as NonNullable<typeof card>).cardId }) }) },
+      })
+    })
     if (selected === module.id) setSelected(undefined)
   }
 
@@ -265,7 +280,9 @@ export function CardEditor({ t, useStore, loadCard, op, workspaceRoot, back }: C
               <span className="nv-tree-acts">
                 <button className="nv-tree-act" title={t('editor.module.addChild')} onClick={() => addModule(row.id)}>+</button>
                 <button className="nv-tree-act" title={t('editor.module.rename')} onClick={() => renameModule(row)}>✎</button>
-                <button className="nv-tree-act" title={t('editor.module.remove')} onClick={() => removeModule(row)}>✕</button>
+                <button className="nv-tree-act nv-armbtn" data-armed={removeArm.armed === row.id || undefined}
+                  title={removeArm.armed === row.id ? t('ui.armed.delete') : t('editor.module.remove')}
+                  onClick={() => removeModule(row)}>{removeArm.armed === row.id ? t('ui.delete') : '✕'}</button>
               </span>
             </div>
           ))}

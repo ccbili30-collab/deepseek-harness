@@ -19,6 +19,7 @@ import type { CardCommand, CardModuleDoc } from './card-api.ts'
 import type { ShellT } from './pages/Home.tsx'
 import { fmt } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
+import { InlineRename, notifyUndo, useArmedPress } from './ui/interact.tsx'
 
 /* ---------- 数据形状（与 noven-cards/formats.ts decodeMap 一致） ---------- */
 
@@ -688,6 +689,10 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   /** 世界缓存：源（draft 输入时含草稿内容）变了才重算；生成 ~0.5s 只付一次。 */
   const builtRef = useRef<{ key: string, built: BuiltWorld } | null>(null)
   const [selWorld, setSelWorld] = useState<WorldHit | null>(null)
+  /** 世界实体卡：行内改名态 + 「移除」两段确认。换选中即复位。 */
+  const [worldRenaming, setWorldRenaming] = useState(false)
+  const worldArm = useArmedPress()
+  useEffect(() => { setWorldRenaming(false); worldArm.reset() }, [selWorld, worldArm.reset])
   const [worldLayers, setWorldLayers] = useState<ReadonlySet<WorldLayer>>(() => new Set<WorldLayer>(['states', 'routes', 'burgs', 'names']))
   const toWork = useCallback((p: XY): XY => [p[0] * aspectRef.current, p[1]], [])
   const toStore = useCallback((p: XY): XY => [clamp01(p[0] / aspectRef.current), clamp01(p[1])], [])
@@ -1703,29 +1708,35 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           if (selCulture?.name !== undefined) parts.push(selCulture.name)
           return (
           <div className="nv-maped-wcard">
-            <span className="nv-maped-wname">{displayName}</span>
+            {worldRenaming ? (
+              <InlineRename className="nv-maped-wname nv-maped-wnamein" value={selName}
+                onDone={next => {
+                  setWorldRenaming(false)
+                  if (next !== undefined && selWorld !== null) {
+                    pushWorldEdit({ kind: selWorld.kind, id: selWorld.id, ...(selName !== '' ? { key: selName } : {}), ...(selWorld.pos !== undefined ? { at: selWorld.pos } : {}), name: next, lock: true })
+                  }
+                }} />
+            ) : (
+              <span className="nv-maped-wname">{displayName}</span>
+            )}
             <span className="nv-maped-mini">{parts.filter((p, i) => p !== '' && parts.indexOf(p) === i).join(' · ')}</span>
             <button type="button" className="nv-maped-ok"
               onClick={() => { void ask(fmt(t, 'wg.map.world.askText', { name: displayName })) }}>
               {t('wg.map.world.ask')}
             </button>
             <button type="button" className="nv-maped-ok" title={t('wg.map.world.renameDesc')}
-              onClick={() => {
-                const next = window.prompt(t('wg.map.world.renamePrompt'), selName)?.trim()
-                if (next !== undefined && next !== '' && next !== selName && selWorld !== null) {
-                  pushWorldEdit({ kind: selWorld.kind, id: selWorld.id, ...(selName !== '' ? { key: selName } : {}), ...(selWorld.pos !== undefined ? { at: selWorld.pos } : {}), name: next, lock: true })
-                }
-              }}>
+              onClick={() => setWorldRenaming(true)}>
               {t('wg.map.world.rename')}
             </button>
-            <button type="button" className="nv-maped-del" title={t('wg.map.world.removeDesc')}
+            <button type="button" className="nv-maped-del nv-armbtn" title={t('wg.map.world.removeDesc')}
+              data-armed={worldArm.armed === 'remove' || undefined}
               onClick={() => {
-                if (selWorld !== null && window.confirm(fmt(t, 'wg.map.world.removeConfirm', { name: displayName }))) {
-                  pushWorldEdit({ kind: selWorld.kind, id: selWorld.id, ...(selName !== '' ? { key: selName } : {}), ...(selWorld.pos !== undefined ? { at: selWorld.pos } : {}), remove: true })
-                  setSelWorld(null)
-                }
+                if (selWorld === null || !worldArm.press('remove')) return
+                pushWorldEdit({ kind: selWorld.kind, id: selWorld.id, ...(selName !== '' ? { key: selName } : {}), ...(selWorld.pos !== undefined ? { at: selWorld.pos } : {}), remove: true })
+                setSelWorld(null)
+                notifyUndo({ text: fmt(t, 'ui.receipt.worldRemoved', { name: displayName }) })
               }}>
-              {t('wg.map.world.remove')}
+              {worldArm.armed === 'remove' ? t('ui.armed.remove') : t('wg.map.world.remove')}
             </button>
             <button type="button" className="nv-maped-ok" title={t('wg.map.world.spawnDesc')}
               onClick={() => {

@@ -37,7 +37,8 @@ import { MenuItemButton } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { NovenShellLocaleKey } from './locales.ts'
 import { defineStore } from '@deepseek-ai/dsh-client-store'
 import type { ObservableSnapshot, SnapshotStore } from '@deepseek-ai/dsh-client-store'
-import { Home } from './pages/Home.tsx'
+import { Home, fmt } from './pages/Home.tsx'
+import { notifyUndo } from './ui/interact.tsx'
 import { Create } from './pages/Create.tsx'
 import { Me } from './pages/Me.tsx'
 import { Messages } from './pages/Messages.tsx'
@@ -1475,6 +1476,42 @@ export function apply(ctx: ClientContext): void {
       .catch((reason: unknown) => { console.warn('noven-shell: module command failed:', reason) })
   }
 
+  /** 模块子树里按 id 找名字（删除回执文案用）。 */
+  const findTreeName = (modules: readonly { readonly id: string; readonly name: string; readonly children: readonly unknown[] }[], id: string): string | undefined => {
+    for (const module of modules) {
+      if (module.id === id) return module.name
+      const hit = findTreeName(module.children as typeof modules, id)
+      if (hit !== undefined) return hit
+    }
+    return undefined
+  }
+
+  /**
+   * 卡片软删除 + 撤销回执：删除后关掉本会话里该卡的全部页签、刷新树与卡目录；
+   * 回执的「撤销」走 restore op 把墓碑移走。
+   */
+  const deleteCardWithUndo = (addr: CardAddr, cardId: string, name: string, owner: SessionId): void => {
+    void cardOp(addr, { op: 'delete', cardId })
+      .then(() => {
+        for (const row of canvasInstance.getSnapshot().tabs) {
+          if (row.cardId === cardId && row.owner === owner) canvasInstance.actions.close(owner, row.key)
+        }
+        treeSource.refresh()
+        notifyUndo({
+          text: fmt(t, 'ui.receipt.cardDeleted', { name }),
+          undoLabel: t('ui.undo'),
+          undo: () => {
+            void cardOp(addr, { op: 'restore', cardId }).then(() => { treeSource.refresh() })
+              .catch((reason: unknown) => { console.warn('noven-shell: card restore failed:', reason) })
+          },
+        })
+      })
+      .catch((reason: unknown) => {
+        console.warn('noven-shell: delete card failed:', reason)
+        notifyUndo({ text: fmt(t, 'ui.receipt.failed', { name }) })
+      })
+  }
+
   /** 拿一个能读写文件的会话：绑定会话优先，其次最近工作区会话，最后按当前项目现建并绑定。 */
   const ensureSession = async (): Promise<SessionId | undefined> => {
     const bound = ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined
@@ -1755,8 +1792,11 @@ export function apply(ctx: ClientContext): void {
       toggleStudio,
       deleteGroup: name => {
         void treeOp({ sessionId, root: focusSnapshot?.root }, { op: 'rmdir', name })
-          .then(ok => { if (ok) treeSource.refresh() })
-          .catch((reason: unknown) => { console.warn('noven-shell: rmdir failed:', reason) })
+          .then(ok => {
+            if (ok) treeSource.refresh()
+            notifyUndo({ text: fmt(t, ok ? 'ui.receipt.groupDeleted' : 'ui.receipt.failed', { name }) })
+          })
+          .catch((reason: unknown) => { console.warn('noven-shell: rmdir failed:', reason); notifyUndo({ text: fmt(t, 'ui.receipt.failed', { name }) }) })
       },
       /** 工具菜单功能行 → 右栏页签；侧边对话收编成画布 conv 页签（不进抽屉）。 */
       openFeatureTab: kind => {
@@ -1789,9 +1829,13 @@ export function apply(ctx: ClientContext): void {
           .catch((reason: unknown) => { console.warn('noven-shell: file rename failed:', reason) })
       },
       deleteFile: path => {
+        const name = path.split('/').pop() ?? path
         void fileOp({ sessionId, root: focusSnapshot?.root }, { op: 'rm', path })
-          .then(ok => { if (ok) treeSource.refresh() })
-          .catch((reason: unknown) => { console.warn('noven-shell: file rm failed:', reason) })
+          .then(ok => {
+            if (ok) treeSource.refresh()
+            notifyUndo({ text: fmt(t, ok ? 'ui.receipt.fileDeleted' : 'ui.receipt.failed', { name }) })
+          })
+          .catch((reason: unknown) => { console.warn('noven-shell: file rm failed:', reason); notifyUndo({ text: fmt(t, 'ui.receipt.failed', { name }) }) })
       },
       present: (path, view) => {
         void presentNode({ sessionId, root: focusSnapshot?.root }, path, view)
@@ -1807,22 +1851,29 @@ export function apply(ctx: ClientContext): void {
         void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'copy_module', moduleId }))
       },
       deleteModule: (cardId, moduleId) => {
-        void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'remove_module', moduleId }))
-          .then(() => canvasInstance.actions.close(sessionId, `mod:${cardId}:${moduleId}`))
+        const addr = { sessionId, root: focusSnapshot?.root }
+        let name = ''
+        void moduleCommand(addr, cardId, state => {
+          name = findTreeName(state.document.modules, moduleId) ?? ''
+          return { kind: 'remove_module', moduleId }
+        })
+          .then(() => {
+            canvasInstance.actions.close(sessionId, `mod:${cardId}:${moduleId}`)
+            treeSource.refresh()
+            notifyUndo({
+              text: fmt(t, 'ui.receipt.moduleDeleted', { name }),
+              undoLabel: t('ui.undo'),
+              undo: () => {
+                void cardOp(addr, { op: 'undo', cardId }).then(() => { treeSource.refresh() })
+                  .catch((reason: unknown) => { console.warn('noven-shell: module undo failed:', reason) })
+              },
+            })
+          })
       },
       renameCard: (cardId, name) => {
         void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'rename_card', name }))
       },
-      deleteCard: cardId => {
-        void cardOp({ sessionId, root: focusSnapshot?.root }, { op: 'delete', cardId })
-          .then(() => {
-            for (const row of canvasInstance.getSnapshot().tabs) {
-              if (row.cardId === cardId && row.owner === sessionId) canvasInstance.actions.close(sessionId, row.key)
-            }
-            treeSource.refresh()
-          })
-          .catch((reason: unknown) => { console.warn('noven-shell: delete card failed:', reason) })
-      },
+      deleteCard: (cardId, name) => { deleteCardWithUndo({ sessionId, root: focusSnapshot?.root }, cardId, name, sessionId) },
       embedFile: (cardId, moduleId, path) => {
         void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'embed_file', path, moduleId }))
           .then(() => treeSource.refresh())
@@ -1856,10 +1907,10 @@ export function apply(ctx: ClientContext): void {
           .then(() => { treeSource.refresh(); library.refresh() })
           .catch((reason: unknown) => { console.warn('noven-shell: work rename failed:', reason) })
       },
-      dropWork: (workId) => {
+      dropWork: (workId, title) => {
         void libraryOp({ sessionId, root: focusSnapshot?.root }, { op: 'unregister', workId })
-          .then(() => { treeSource.refresh(); library.refresh() })
-          .catch((reason: unknown) => { console.warn('noven-shell: work unregister failed:', reason) })
+          .then(() => { treeSource.refresh(); library.refresh(); notifyUndo({ text: fmt(t, 'ui.receipt.workDropped', { name: title }) }) })
+          .catch((reason: unknown) => { console.warn('noven-shell: work unregister failed:', reason); notifyUndo({ text: fmt(t, 'ui.receipt.failed', { name: title }) }) })
       },
       /* 批量写必须串行：同父目录的 .noven.json 与 library.json 都是
          read-modify-write，并发写会互相覆盖丢条目。 */
@@ -1892,6 +1943,7 @@ export function apply(ctx: ClientContext): void {
           }
           treeSource.refresh()
           library.refresh()
+          notifyUndo({ text: fmt(t, 'ui.receipt.selDeleted', { n: items.length }) })
         })()
       },
       expandDrawer: () => ctx.sidebarRight.toggleExpanded(),

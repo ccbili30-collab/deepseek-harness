@@ -122,7 +122,7 @@ export async function fetchCardList(addr: CardAddr): Promise<readonly CardListRo
 export interface CardCommand { readonly kind: string; readonly [key: string]: unknown }
 
 export interface CardOp {
-  readonly op: 'create' | 'apply' | 'commit' | 'discard' | 'import' | 'delete' | 'undo' | 'redo' | 'move' | 'accept' | 'reject'
+  readonly op: 'create' | 'apply' | 'commit' | 'discard' | 'import' | 'delete' | 'restore' | 'undo' | 'redo' | 'move' | 'accept' | 'reject'
   readonly cardId?: string
   readonly targetId?: string
   readonly version?: string

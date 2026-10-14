@@ -13,6 +13,8 @@ import type { CardAddr, CardBlockView, CardDocView, CardModuleDoc, CardOp, CardO
 import { cardContentUrl } from '../card-api.ts'
 import type { CardEditorProps } from './CardEditor.tsx'
 import { findModule, flatten } from './CardEditor.tsx'
+import { fmt } from './Home.tsx'
+import { notifyUndo, useArmedPress } from '../ui/interact.tsx'
 
 /** localStorage key remembering which editor layout the user last used. */
 const VIEW_KEY = 'noven.editor.view'
@@ -142,6 +144,9 @@ export function CardStudio({ t, useStore, loadCard, op, workspaceRoot, back, foc
   const [sideOpen, setSideOpen] = useState(false)
   const [editing, setEditing] = useState<Editing | null>(null)
   const [openMenu, setOpenMenu] = useState<Anchor | null>(null)
+  /** 卡片菜单的危险行两段确认：第一下武装（变红「确认删除？」），第二下执行。 */
+  const menuArm = useArmedPress()
+  useEffect(() => { menuArm.reset() }, [openMenu?.key, menuArm.reset])
   const [faceAt, setFaceAt] = useState<Anchor | null>(null)
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | undefined>(undefined)
@@ -447,16 +452,28 @@ export function CardStudio({ t, useStore, loadCard, op, workspaceRoot, back, foc
     setCardRename(null)
   }
 
+  /** 删除后的回执：撤销走卡的 undo（删除是最近一笔修订）。 */
+  const receiptWithUndo = (text: string) => {
+    notifyUndo({ text, undoLabel: t('ui.undo'), undo: () => { void undoEdit() } })
+  }
+
+  /** apply 成功才出回执（run 吞掉错误转进 notice 条，所以用旗标判成败）。 */
+  const applyThenReceipt = (command: { readonly kind: string; readonly [key: string]: unknown }, text: string) => {
+    let ok = false
+    void run(async () => {
+      await op((card as NonNullable<typeof card>), { op: 'apply', cardId: (card as NonNullable<typeof card>).cardId, targetId, version: versionRef.current, command })
+      ok = true
+    }).then(() => { if (ok) receiptWithUndo(text) })
+  }
+
   const removeModule = (module: CardModuleDoc) => {
-    if (!window.confirm(t('editor.module.removeConfirm').replace('{name}', module.name))) return
-    void apply({ kind: 'remove_module', moduleId: module.id })
+    applyThenReceipt({ kind: 'remove_module', moduleId: module.id }, fmt(t, 'ui.receipt.moduleDeleted', { name: module.name }))
     if (selected === module.id) setSelected(undefined)
     if (editing?.moduleId === module.id) setEditing(null)
   }
 
   const removeCharacter = (c: Omit<CardDocView, 'characters'>) => {
-    if (!window.confirm(t('editor.role.removeConfirm').replace('{name}', c.name))) return
-    void apply({ kind: 'remove_character', characterId: c.id })
+    applyThenReceipt({ kind: 'remove_character', characterId: c.id }, fmt(t, 'ui.receipt.roleRemoved', { name: c.name }))
   }
 
   /** Move one module up/down within its own sibling list via move_module. */
@@ -1299,10 +1316,17 @@ export function CardStudio({ t, useStore, loadCard, op, workspaceRoot, back, foc
           <div className="nv-ed-scrim" onClick={() => setOpenMenu(null)} />
           <div className="nv-ed-menu" role="menu"
             style={{ left: Math.max(8, openMenu.x - 152), top: openMenu.y, maxHeight: Math.max(120, window.innerHeight - openMenu.y - 10) }}>
-            {openMenuItems(openMenu.key).map(item => (
-              <button key={item.label} className="nv-ed-menuitem" data-danger={item.danger === true || undefined} role="menuitem"
-                onClick={() => { item.run(); if (item.keep !== true) setOpenMenu(null) }}>{item.label}</button>
-            ))}
+            {openMenuItems(openMenu.key).map(item => {
+              const armed = item.danger === true && menuArm.armed === item.label
+              return (
+                <button key={item.label} className="nv-ed-menuitem" data-danger={item.danger === true || undefined} role="menuitem"
+                  onClick={() => {
+                    if (item.danger === true && !menuArm.press(item.label)) return
+                    item.run()
+                    if (item.keep !== true) setOpenMenu(null)
+                  }}>{armed ? <span className="nv-armed">{t('ui.armed.delete')}</span> : item.label}</button>
+              )
+            })}
           </div>
         </>
       )}

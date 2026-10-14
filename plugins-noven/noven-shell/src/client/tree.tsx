@@ -17,6 +17,7 @@ import type { CreateKind } from './creation.tsx'
 import type { SidebarRightGuideBox } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type { ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
+import { askConfirm, InlineRename, useArmedMenu } from './ui/interact.tsx'
 
 /** 内容树注入面：数据四源 + 打开/切换回调。 */
 export interface TreeInjected {
@@ -67,7 +68,7 @@ export interface TreeInjected {
   readonly embedFile: (cardId: string, moduleId: string | null, path: string) => void
   /** 卡行 ⋯ 菜单的两个动作；删除是软删（写 deleted.json，历史保留）。 */
   readonly renameCard: (cardId: string, name: string) => void
-  readonly deleteCard: (cardId: string) => void
+  readonly deleteCard: (cardId: string, name: string) => void
   readonly openDoc: (path: string, title: string) => void
   readonly openWork: (path: string, title: string) => void
   readonly openFiles: () => void
@@ -76,8 +77,8 @@ export interface TreeInjected {
   readonly openProject: () => void
   /** 改作品清单里的展示名（账本轴，与文件名无关）。 */
   readonly renameWork: (workId: string, title: string) => void
-  /** 把登记作品移出清单（文件留在盘上）。 */
-  readonly dropWork: (workId: string) => void
+  /** 把登记作品移出清单（文件留在盘上）；`title` 用于回执。 */
+  readonly dropWork: (workId: string, title: string) => void
   /** 批量呈现：同父目录的 .noven.json 是 read-modify-write，并发会互相
       覆盖——宿主侧串行写。 */
   readonly presentAll: (paths: readonly string[], view: 'hidden' | 'file') => void
@@ -166,13 +167,8 @@ function ModuleRow({ module, depth, cardId, current, pending, t, onOpen, ops }: 
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
-  const [draft, setDraft] = useState(module.name)
+  const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const archived = module.routing === 'STANDBY'
-  const commit = (): void => {
-    setRenaming(false)
-    const next = draft.trim()
-    if (next !== '' && next !== module.name) ops.rename(cardId, module.id, next)
-  }
   return (
     <div className="nv-tree-row nv-tree-module" data-archived={archived || undefined}
       data-current={current || undefined}
@@ -180,9 +176,8 @@ function ModuleRow({ module, depth, cardId, current, pending, t, onOpen, ops }: 
       onDragOver={e => { if (e.dataTransfer.types.includes(FILE_DROP_TYPE)) e.preventDefault() }}
       onDrop={e => { const path = fileDrop(e); if (path !== undefined) { e.preventDefault(); ops.embedFile(cardId, module.id, path) } }}>
       {renaming ? (
-        <input className="nv-tree-renamein" value={draft} autoFocus
-          onChange={e => setDraft(e.target.value)} onBlur={commit}
-          onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setRenaming(false) }} />
+        <InlineRename className="nv-tree-renamein" value={module.name}
+          onDone={next => { setRenaming(false); if (next !== undefined) ops.rename(cardId, module.id, next) }} />
       ) : (
         <button type="button" className="nv-tree-main" onClick={() => onOpen(module.id, module.name)}>
           <span className="nv-tree-glyph">{moduleIcon(module.type, module.name)}</span>
@@ -191,20 +186,21 @@ function ModuleRow({ module, depth, cardId, current, pending, t, onOpen, ops }: 
         </button>
       )}
       <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
-        onClose={() => setMenuOpen(false)}
+        onClose={() => { arm.reset(); setMenuOpen(false) }}
         onSelect={id => {
+          if (arm.select(id) === 'armed') return
           setMenuOpen(false)
-          if (id === 'rename') { setDraft(module.name); setRenaming(true) }
+          if (id === 'rename') setRenaming(true)
           if (id === 'copy') ops.copy(cardId, module.id)
           if (id === 'link') void writeClipboard(`[${module.name}](noven://card/${cardId}/module/${module.id})`)
-          if (id === 'delete' && window.confirm(t('tree.mod.deleteConfirm').replace('{name}', module.name))) ops.delete(cardId, module.id)
+          if (id === 'delete') ops.delete(cardId, module.id)
         }}
-        items={[
+        items={arm.decorate([
           { id: 'rename', label: t('tree.mod.rename') },
           { id: 'copy', label: t('tree.mod.copy') },
           { id: 'link', label: t('tree.mod.copyLink') },
-          { id: 'delete', label: t('tree.mod.delete') },
-        ]}
+          { id: 'delete', label: t('tree.mod.delete'), danger: true },
+        ])}
         anchor={(
           <button type="button" className="nv-tree-more" aria-label={t('tree.mod.more')}
             onClick={() => setMenuOpen(v => !v)}>⋯</button>
@@ -225,7 +221,8 @@ export interface ModuleOps {
 /** 卡行 ⋯ 菜单可用的注入操作。 */
 export interface CardOps {
   readonly rename: (cardId: string, name: string) => void
-  readonly delete: (cardId: string) => void
+  /** 软删除；`name` 用于回执文案（回执带撤销）。 */
+  readonly delete: (cardId: string, name: string) => void
   /** 「查看源文件」：把卡目录的 card.json 开成文稿页签。 */
   readonly showSource: (path: string) => void
   /** 呈现轴：'hidden' 隐藏卡目录 / 'file' 恢复。 */
@@ -318,42 +315,49 @@ function FileRow({ path, title, dir, hidden, indent = 0, current, fileView, sel,
   readonly present: (path: string, view: 'hidden' | 'file') => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  /** 行内改名：'file' 改磁盘文件名，'title' 改清单展示名。 */
+  const [renaming, setRenaming] = useState<'file' | 'title' | null>(null)
+  const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const fileName = path.split('/').pop() ?? path
   const isDir = dir === true
   return (
     <div className={`nv-tree-row nv-tree-module${hidden === true ? ' nv-tree-hidden' : ''}`} style={{ paddingLeft: 28 + indent * 14 }}
       data-current={current || undefined}
       data-sel={sel?.on === true || undefined}
-      draggable={!isDir}
+      draggable={!isDir && renaming === null}
       onDragStart={e => { e.dataTransfer.setData(FILE_DROP_TYPE, path); e.dataTransfer.effectAllowed = 'copy' }}>
-      <button type="button" className="nv-tree-main" onClick={e => {
-        if (sel !== undefined && (e.shiftKey || e.metaKey || e.ctrlKey)) { sel.pick(e); return }
-        sel?.clear()
-        if (!isDir) onOpen(path, title)
-      }}>
-        <span className="nv-tree-glyph">{isDir ? glyph.folder(13) : glyph.file(13)}</span>
-        <span className="nv-tree-name">{fileView === true ? fileName : title}</span>
-      </button>
+      {renaming !== null ? (
+        <InlineRename className="nv-tree-renamein" value={renaming === 'file' ? fileName : title}
+          onDone={next => {
+            const mode = renaming
+            setRenaming(null)
+            if (next === undefined) return
+            if (mode === 'file') fileOps.rename(path, next)
+            else renameTitle?.(next)
+          }} />
+      ) : (
+        <button type="button" className="nv-tree-main" onClick={e => {
+          if (sel !== undefined && (e.shiftKey || e.metaKey || e.ctrlKey)) { sel.pick(e); return }
+          sel?.clear()
+          if (!isDir) onOpen(path, title)
+        }}>
+          <span className="nv-tree-glyph">{isDir ? glyph.folder(13) : glyph.file(13)}</span>
+          <span className="nv-tree-name">{fileView === true ? fileName : title}</span>
+        </button>
+      )}
       <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
-        onClose={() => setMenuOpen(false)}
+        onClose={() => { arm.reset(); setMenuOpen(false) }}
         onSelect={id => {
+          if (arm.select(id) === 'armed') return
           setMenuOpen(false)
           if (id === 'link') { void writeClipboard(`[${title}](${encodeURI(path)})`); return }
-          if (id === 'rename') {
-            const next = window.prompt(t('canvas.doc.renamePrompt'), fileName)?.trim()
-            if (next !== undefined && next !== '' && next !== fileName) fileOps.rename(path, next)
-            return
-          }
-          if (id === 'rename-title' && renameTitle !== undefined) {
-            const next = window.prompt(t('tree.file.renameTitlePrompt'), title)?.trim()
-            if (next !== undefined && next !== '' && next !== title) renameTitle(next)
-            return
-          }
+          if (id === 'rename') { setRenaming('file'); return }
+          if (id === 'rename-title' && renameTitle !== undefined) { setRenaming('title'); return }
           if (id === 'hide' || id === 'unhide') { present(path, id === 'hide' ? 'hidden' : 'file'); return }
-          if (id === 'delete' && window.confirm(t('canvas.doc.deleteConfirm').replace('{name}', fileName))) { fileOps.delete(path); return }
+          if (id === 'delete') { fileOps.delete(path); return }
           if (id.startsWith('embed:')) onEmbed(id)
         }}
-        items={[
+        items={arm.decorate([
           ...(!isDir ? [
             { id: 'embed', label: t('tree.file.embed'), submenu: embedTargets },
             { id: 'link', label: t('tree.mod.copyLink') },
@@ -363,7 +367,7 @@ function FileRow({ path, title, dir, hidden, indent = 0, current, fileView, sel,
           ...(renameTitle !== undefined ? [{ id: 'rename-title', label: t('tree.file.renameTitle') }] : []),
           ...(!isDir ? [{ id: 'delete', label: t('canvas.doc.delete'), danger: true as const }] : []),
           { id: hidden === true ? 'unhide' : 'hide', label: t(hidden === true ? 'tree.unhide' : 'tree.hide') },
-        ]}
+        ])}
         anchor={(
           <button type="button" className="nv-tree-more" aria-label={t('tree.file.more')}
             onClick={() => setMenuOpen(v => !v)}>⋯</button>
@@ -386,48 +390,57 @@ function WorkRow({ work, current, fileView, sel, t, onOpen, fileOps, present, re
   /** 改清单里的展示名（账本轴，不动文件名）。 */
   readonly renameWork: (workId: string, title: string) => void
   /** 移出作品清单（文件留在盘上）。 */
-  readonly dropWork: (workId: string) => void
+  readonly dropWork: (workId: string, title: string) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
+  const [renaming, setRenaming] = useState<'file' | 'title' | null>(null)
+  const arm = useArmedMenu(useMemo(() => [
+    { id: 'drop', confirmLabel: t('ui.armed.drop') },
+    { id: 'delete', confirmLabel: t('ui.armed.delete') },
+  ], [t]))
   const fileName = work.path.split('/').pop() ?? work.path
   return (
     <div className={`nv-tree-row nv-tree-module${work.hidden === true ? ' nv-tree-hidden' : ''}`} style={{ paddingLeft: 28 }}
       data-current={current || undefined}
       data-sel={sel?.on === true || undefined}>
-      <button type="button" className="nv-tree-main" onClick={e => {
-        if (sel !== undefined && (e.shiftKey || e.metaKey || e.ctrlKey)) { sel.pick(e); return }
-        sel?.clear()
-        onOpen(work.path, work.title)
-      }}>
-        <span className="nv-tree-glyph">{glyph.grid(13)}</span>
-        <span className="nv-tree-name">{fileView === true ? fileName : work.title}</span>
-      </button>
+      {renaming !== null ? (
+        <InlineRename className="nv-tree-renamein" value={renaming === 'file' ? fileName : work.title}
+          onDone={next => {
+            const mode = renaming
+            setRenaming(null)
+            if (next === undefined) return
+            if (mode === 'file') fileOps.rename(work.path, next)
+            else renameWork(work.id, next)
+          }} />
+      ) : (
+        <button type="button" className="nv-tree-main" onClick={e => {
+          if (sel !== undefined && (e.shiftKey || e.metaKey || e.ctrlKey)) { sel.pick(e); return }
+          sel?.clear()
+          onOpen(work.path, work.title)
+        }}>
+          <span className="nv-tree-glyph">{glyph.grid(13)}</span>
+          <span className="nv-tree-name">{fileView === true ? fileName : work.title}</span>
+        </button>
+      )}
       <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
-        onClose={() => setMenuOpen(false)}
+        onClose={() => { arm.reset(); setMenuOpen(false) }}
         onSelect={id => {
+          if (arm.select(id) === 'armed') return
           setMenuOpen(false)
-          if (id === 'rename') {
-            const next = window.prompt(t('canvas.doc.renamePrompt'), fileName)?.trim()
-            if (next !== undefined && next !== '' && next !== fileName) fileOps.rename(work.path, next)
-            return
-          }
-          if (id === 'rename-title') {
-            const next = window.prompt(t('tree.file.renameTitlePrompt'), work.title)?.trim()
-            if (next !== undefined && next !== '' && next !== work.title) renameWork(work.id, next)
-            return
-          }
-          if (id === 'drop' && window.confirm(t('tree.work.dropConfirm').replace('{name}', work.title))) { dropWork(work.id); return }
+          if (id === 'rename') { setRenaming('file'); return }
+          if (id === 'rename-title') { setRenaming('title'); return }
+          if (id === 'drop') { dropWork(work.id, work.title); return }
           if (id === 'hide' || id === 'unhide') { present(work.path, id === 'hide' ? 'hidden' : 'file'); return }
-          if (id === 'delete' && window.confirm(t('canvas.doc.deleteConfirm').replace('{name}', fileName))) { fileOps.delete(work.path) }
+          if (id === 'delete') fileOps.delete(work.path)
         }}
-        items={[
+        items={arm.decorate([
           { id: 'rename-title', label: t('tree.file.renameTitle') },
           { id: 'rename', label: t('tree.file.renameFile') },
           { id: 'drop', label: t('tree.work.drop') },
           { type: 'separator' as const, id: 'work-sep' },
           { id: work.hidden === true ? 'unhide' : 'hide', label: t(work.hidden === true ? 'tree.unhide' : 'tree.hide') },
           { id: 'delete', label: t('canvas.doc.delete'), danger: true as const },
-        ]}
+        ])}
         anchor={(
           <button type="button" className="nv-tree-more" aria-label={t('tree.file.more')}
             onClick={() => setMenuOpen(v => !v)}>⋯</button>
@@ -463,12 +476,7 @@ function CardBranch({ card, depth, currentKey, fileView, sel, t, onOpen, onAdd, 
   const [open, setOpen] = useState(true)
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
-  const [draft, setDraft] = useState(card.name)
-  const commit = (): void => {
-    setRenaming(false)
-    const next = draft.trim()
-    if (next !== '' && next !== card.name) cardOps.rename(card.cardId, next)
-  }
+  const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const indent = 4 + depth * 14
   return (
     <div>
@@ -479,9 +487,8 @@ function CardBranch({ card, depth, currentKey, fileView, sel, t, onOpen, onAdd, 
         onDragOver={e => { if (e.dataTransfer.types.includes(FILE_DROP_TYPE)) e.preventDefault() }}
         onDrop={e => { const path = fileDrop(e); if (path !== undefined) { e.preventDefault(); ops.embedFile(card.cardId, null, path) } }}>
         {renaming ? (
-          <input className="nv-tree-renamein" value={draft} autoFocus
-            onChange={e => setDraft(e.target.value)} onBlur={commit}
-            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setRenaming(false) }} />
+          <InlineRename className="nv-tree-renamein" value={card.name}
+            onDone={next => { setRenaming(false); if (next !== undefined) cardOps.rename(card.cardId, next) }} />
         ) : (
           <button type="button" className="nv-tree-main" onClick={e => {
             if (sel !== undefined && (e.shiftKey || e.metaKey || e.ctrlKey)) { sel.pick(e); return }
@@ -494,22 +501,23 @@ function CardBranch({ card, depth, currentKey, fileView, sel, t, onOpen, onAdd, 
           </button>
         )}
         <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
-          onClose={() => setMenuOpen(false)}
+          onClose={() => { arm.reset(); setMenuOpen(false) }}
           onSelect={id => {
+            if (arm.select(id) === 'armed') return
             setMenuOpen(false)
-            if (id === 'rename') { setDraft(card.name); setRenaming(true) }
+            if (id === 'rename') setRenaming(true)
             if (id === 'link') void writeClipboard(`[${card.name}](noven://card/${card.cardId})`)
             if (id === 'source') cardOps.showSource(`卡/${card.dir}/card.json`)
             if (id === 'hide' || id === 'unhide') cardOps.present(`卡/${card.dir}`, id === 'hide' ? 'hidden' : 'file')
-            if (id === 'delete' && window.confirm(t('tree.card.deleteConfirm').replace('{name}', card.name))) cardOps.delete(card.cardId)
+            if (id === 'delete') cardOps.delete(card.cardId, card.name)
           }}
-          items={[
+          items={arm.decorate([
             { id: 'rename', label: t('tree.card.rename') },
             { id: 'source', label: t('tree.card.showSource') },
             { id: 'link', label: t('tree.card.copyLink') },
             { id: card.hidden === true ? 'unhide' : 'hide', label: t(card.hidden === true ? 'tree.unhide' : 'tree.hide') },
             { id: 'delete', label: t('tree.card.delete'), danger: true },
-          ]}
+          ])}
           anchor={(
             <button type="button" className="nv-tree-more" aria-label={t('tree.card.more')}
               onClick={() => setMenuOpen(v => !v)}>⋯</button>
@@ -1023,11 +1031,14 @@ export function ContentTree(props: TreeProps) {
           <button type="button" className="nv-tree-selbtn" onClick={() => { props.presentAll([...sel.items.values()].map(i => i.path), 'file'); setSel(null) }}>{t('tree.unhide')}</button>
           <button type="button" className="nv-tree-selbtn nv-tree-selbtn-danger" disabled={deletable === 0}
             onClick={() => {
-              if (!window.confirm(t('tree.sel.deleteConfirm').replace('{n}', String(deletable)))) return
-              props.deleteSel([...sel.items.values()]
+              const items = [...sel.items.values()]
                 .filter(i => i.kind !== 'dir')
-                .map(i => ({ path: i.path, cardId: i.cardId, workId: i.workId })))
-              setSel(null)
+                .map(i => ({ path: i.path, cardId: i.cardId, workId: i.workId }))
+              void askConfirm({
+                title: t('ui.confirm.selTitle').replace('{n}', String(deletable)),
+                body: t('ui.confirm.selBody'),
+                confirm: t('ui.delete'), cancel: t('ui.cancel'), danger: true,
+              }).then(ok => { if (!ok) return; props.deleteSel(items); setSel(null) })
             }}>{t('canvas.doc.delete')}</button>
           <button type="button" className="nv-tree-selbtn" title={t('tree.sel.clear')} onClick={() => setSel(null)}>✕</button>
         </div>
@@ -1134,8 +1145,11 @@ export function ContentTree(props: TreeProps) {
             <Group title={section.name} count={section.rows.length} always
               onAdd={() => props.openCreate('doc', section.name)} addTitle={t('create.doc.title')}
               onDelete={() => {
-                if (window.confirm(t('tree.group.deleteConfirm').replace('{name}', section.name).replace('{count}', String(section.rows.length))))
-                  props.deleteGroup(section.name)
+                void askConfirm({
+                  title: t('ui.confirm.groupTitle').replace('{name}', section.name),
+                  body: section.rows.length === 0 ? t('ui.confirm.groupEmpty') : t('ui.confirm.groupBody').replace('{count}', String(section.rows.length)),
+                  confirm: t('ui.delete'), cancel: t('ui.cancel'), danger: true,
+                }).then(ok => { if (ok) props.deleteGroup(section.name) })
               }}
               deleteTitle={t('tree.group.delete')} {...shared}>
               {section.rows.map(row => (
