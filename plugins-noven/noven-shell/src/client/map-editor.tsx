@@ -685,6 +685,10 @@ const MAP_WORLD = true
 /** 标注的「画什么」就是图层本身——面的图层选择即图层 id，不再有"当前面图层"这层状态。 */
 type DrawLayer = LayerId
 
+/** 地图工具：一次只有一个，pointerdown 按工具分流而非叠模式标志。
+ *  draft/annotate/edit 是旧对象层手势，仅 MAP_EDITING 下可达；迁移到 place/path/zone 语义工具后删除。 */
+type MapTool = 'select' | 'brush' | 'draft' | 'annotate' | 'edit'
+
 interface Gesture {
   readonly kind: 'stroke' | 'stretch' | 'move' | 'pan' | 'paint' | 'facepaint' | 'shape' | 'wpaint' | 'none'
   readonly obj?: MapObject
@@ -759,6 +763,48 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const [worldView, setWorldView] = useState<WorldView>('political')
   /** 划界笔刷：armed 后拖动把陆格刷给目标实体。id>0 既有实体，0=中立擦除，-1=新建。 */
   const [brush, setBrush] = useState<{ dim: 'state' | 'culture', id: number, name: string, color: string } | null>(null)
+  /** 活动工具：划界刷 armed 时压过选择。后续 place/path/zone 在此注册。 */
+  const tool: MapTool = brush !== null ? 'brush'
+    : !MAP_EDITING ? 'select'
+    : mode === 'draft' ? 'draft'
+    : mode === 'annotate' ? 'annotate'
+    : 'edit'
+  /** 空格按住期间左键=平移（任何工具下可用，对齐通用手势）。 */
+  const spaceRef = useRef(false)
+  useEffect(() => {
+    const dn = (e: KeyboardEvent): void => {
+      if (e.code !== 'Space') return
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      spaceRef.current = true
+    }
+    const up = (e: KeyboardEvent): void => { if (e.code === 'Space') spaceRef.current = false }
+    window.addEventListener('keydown', dn)
+    window.addEventListener('keyup', up)
+    return () => { window.removeEventListener('keydown', dn); window.removeEventListener('keyup', up) }
+  }, [])
+  /** Esc：手势中=取消这笔（不落盘）；否则退出当前工具回选择。
+   *  捕获阶段监听——消费掉才阻断，否则放行给壳层（card-page 的 Esc 关页面）。 */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape') return
+      if (gestureRef.current.kind !== 'none' && gestureRef.current.kind !== 'pan') {
+        gestureRef.current = { kind: 'none' }
+        busyRef.current = false
+        draw()
+        e.preventDefault()
+        e.stopImmediatePropagation()
+        return
+      }
+      if (brush !== null) {
+        setBrush(null)
+        e.preventDefault()
+        e.stopImmediatePropagation()
+      }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brush])
   const toWork = useCallback((p: XY): XY => [p[0] * aspectRef.current, p[1]], [])
   const toStore = useCallback((p: XY): XY => [clamp01(p[0] / aspectRef.current), clamp01(p[1])], [])
   const objWorkPts = useCallback((o: FaceObj | LineObj): XY[] => o.pts.map(toWork), [toWork])
@@ -773,7 +819,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
 
   const sel = docRef.current.objects.find(o => o.id === selId) ?? null
   /** 笔刷态：划界笔、草稿笔、标注涂抹、编辑抹面，都隐藏原生光标改画笔刷圈。 */
-  const brushCursor = brush !== null || (MAP_EDITING && (mode === 'draft' || mode === 'annotate' || (mode === 'edit' && editPaint)))
+  const brushCursor = tool === 'brush' || tool === 'draft' || tool === 'annotate' || (tool === 'edit' && editPaint)
 
   // 草稿默认取第一个语义色。
   useEffect(() => {
@@ -1361,94 +1407,107 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     return () => { ro.disconnect() }
   }, [draw, fitIfNeeded])
 
-  /* ---------- 指针手势 ---------- */
+  /* ---------- 指针手势 ----------
+   * 协议：左键拖=当前工具动作，左键点（未拖动）=选择；
+   * 中/右键或空格+左键=平移（任何工具下可用）；Esc=取消这笔/退出工具。 */
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     cvRef.current?.setPointerCapture(e.pointerId)
     const p = workOfEvent(e)
-    if (brush !== null && e.button !== 2) {
-      busyRef.current = true
-      gestureRef.current = { kind: 'wpaint', path: [p], moved: false, alt: e.altKey || brush.id === 0 }
+    if (e.button !== 0 || spaceRef.current) {
+      gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }
       return
     }
-    if (!MAP_EDITING || e.button === 2) { gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }; return }
-    if (mode === 'draft') {
-      busyRef.current = true
-      gestureRef.current = { kind: draftHow === 'lasso' ? 'shape' : 'paint', path: [p], moved: false }
-      return
-    }
-    if (mode === 'annotate') {
-      busyRef.current = true
-      if (drawLayer === 'landmark') {
-        const m: MarkObj = { id: nid(), type: 'mark', layer: 'landmark', name: '', color: '#D64541', pos: toStore(p), description: '' }
-        docRef.current = { ...docRef.current, objects: [...docRef.current.objects, m] }
-        setSelId(m.id)
-        commit()
-        busyRef.current = false
-        bump()
-        return
-      }
-      const g: Gesture = { kind: 'stroke', path: [p], moved: false }
-      if (layerKind(drawLayer) === 'line') {
-        g.snapStart = snapTarget(p)
-        if (g.snapStart != null && g.path !== undefined) g.path[0] = g.snapStart.point
-      }
-      gestureRef.current = g
-      return
-    }
-    // edit 涂抹子模式：选中面后，内部起笔=补一块、外部起笔=擦一块。
-    if (mode === 'edit' && editPaint) {
-      const target = sel ?? hitTest(p)
-      if (target !== null && target.type === 'face') {
-        setSelId(target.id)
+    switch (tool) {
+      case 'brush':
+        if (brush === null) break
         busyRef.current = true
-        const inside = inPoly(p, objWorkPts(target))
-        gestureRef.current = { kind: 'facepaint', obj: target, sign: inside ? 1 : -1, path: [p], moved: false }
+        gestureRef.current = { kind: 'wpaint', path: [p], moved: false, alt: e.altKey || brush.id === 0 }
         return
-      }
-    }
-    // edit 模式：点哪块改哪块；边界抓点软拉伸，内部拖动整体移。
-    const o = hitTest(p)
-    setSelId(o?.id ?? null)
-    setObjForm(null)
-    if (o === null) { gestureRef.current = { kind: 'none' }; return }
-    busyRef.current = true
-    if (o.type === 'mark') { gestureRef.current = { kind: 'move', obj: o, last: p }; return }
-    if (o.type === 'face') {
-      const pts = objWorkPts(o)
-      if (polyDist(p, pts, true) < 14 / viewRef.current.s) {
+      case 'draft':
+        busyRef.current = true
+        gestureRef.current = { kind: draftHow === 'lasso' ? 'shape' : 'paint', path: [p], moved: false }
+        return
+      case 'annotate':
+        busyRef.current = true
+        if (drawLayer === 'landmark') {
+          const m: MarkObj = { id: nid(), type: 'mark', layer: 'landmark', name: '', color: '#D64541', pos: toStore(p), description: '' }
+          docRef.current = { ...docRef.current, objects: [...docRef.current.objects, m] }
+          setSelId(m.id)
+          commit()
+          busyRef.current = false
+          bump()
+          return
+        }
+        {
+          const g: Gesture = { kind: 'stroke', path: [p], moved: false }
+          if (layerKind(drawLayer) === 'line') {
+            g.snapStart = snapTarget(p)
+            if (g.snapStart != null && g.path !== undefined) g.path[0] = g.snapStart.point
+          }
+          gestureRef.current = g
+        }
+        return
+      case 'edit': {
+        // 涂抹子模式：选中面后，内部起笔=补一块、外部起笔=擦一块。
+        if (editPaint) {
+          const target = sel ?? hitTest(p)
+          if (target !== null && target.type === 'face') {
+            setSelId(target.id)
+            busyRef.current = true
+            const inside = inPoly(p, objWorkPts(target))
+            gestureRef.current = { kind: 'facepaint', obj: target, sign: inside ? 1 : -1, path: [p], moved: false }
+            return
+          }
+        }
+        // 点哪块改哪块；边界抓点软拉伸，内部拖动整体移。
+        const o = hitTest(p)
+        setSelId(o?.id ?? null)
+        setObjForm(null)
+        if (o === null) { gestureRef.current = { kind: 'none' }; return }
+        busyRef.current = true
+        if (o.type === 'mark') { gestureRef.current = { kind: 'move', obj: o, last: p }; return }
+        if (o.type === 'face') {
+          const pts = objWorkPts(o)
+          if (polyDist(p, pts, true) < 14 / viewRef.current.s) {
+            let bi = 0, bd = Infinity, bt = 0
+            for (let i = 0; i < pts.length; i++) {
+              const a = pts[i] ?? [0, 0], b = pts[(i + 1) % pts.length] ?? [0, 0]
+              const dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy || 1
+              const tt = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L))
+              const dd = d2(p, [a[0] + tt * dx, a[1] + tt * dy])
+              if (dd < bd) { bd = dd; bi = i; bt = tt }
+            }
+            if (bt > .05 && bt < .95) { o.pts.splice(bi + 1, 0, toStore(p)); bi++ }
+            else if (bt >= .95) bi = (bi + 1) % o.pts.length
+            gestureRef.current = { kind: 'stretch', obj: o, grab: bi, last: p, moved: false }
+          } else gestureRef.current = { kind: 'move', obj: o, last: p }
+          return
+        }
+        const pts = resolvedPts(o)
         let bi = 0, bd = Infinity, bt = 0
-        for (let i = 0; i < pts.length; i++) {
+        for (let i = 0; i < pts.length - 1; i++) {
           const a = pts[i] ?? [0, 0], b = pts[(i + 1) % pts.length] ?? [0, 0]
           const dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy || 1
           const tt = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L))
           const dd = d2(p, [a[0] + tt * dx, a[1] + tt * dy])
           if (dd < bd) { bd = dd; bi = i; bt = tt }
         }
-        if (bt > .05 && bt < .95) { o.pts.splice(bi + 1, 0, toStore(p)); bi++ }
-        else if (bt >= .95) bi = (bi + 1) % o.pts.length
-        gestureRef.current = { kind: 'stretch', obj: o, grab: bi, last: p, moved: false }
-      } else gestureRef.current = { kind: 'move', obj: o, last: p }
-      return
+        const wLocal = Math.max(...o.widths) / 2 + 6 / viewRef.current.s
+        if (bd ** .5 < wLocal) {
+          if (bt > .05 && bt < .95) { o.pts.splice(bi + 1, 0, toStore(p)); o.widths.splice(bi + 1, 0, o.widths[bi] ?? 0.01); bi++ }
+          else if (bt >= .95) bi++
+          if (bi === 0) o.attachStart = undefined
+          if (bi === o.pts.length - 1) o.attachEnd = undefined
+          gestureRef.current = { kind: 'stretch', obj: o, grab: bi, last: p, alt: e.altKey, moved: false }
+        } else gestureRef.current = { kind: 'move', obj: o, last: p }
+        return
+      }
+      default: break
     }
-    const pts = resolvedPts(o)
-    let bi = 0, bd = Infinity, bt = 0
-    for (let i = 0; i < pts.length - 1; i++) {
-      const a = pts[i] ?? [0, 0], b = pts[i + 1] ?? [0, 0]
-      const dx = b[0] - a[0], dy = b[1] - a[1], L = dx * dx + dy * dy || 1
-      const tt = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / L))
-      const dd = d2(p, [a[0] + tt * dx, a[1] + tt * dy])
-      if (dd < bd) { bd = dd; bi = i; bt = tt }
-    }
-    const wLocal = Math.max(...o.widths) / 2 + 6 / viewRef.current.s
-    if (bd ** .5 < wLocal) {
-      if (bt > .05 && bt < .95) { o.pts.splice(bi + 1, 0, toStore(p)); o.widths.splice(bi + 1, 0, o.widths[bi] ?? 0.01); bi++ }
-      else if (bt >= .95) bi++
-      if (bi === 0) o.attachStart = undefined
-      if (bi === o.pts.length - 1) o.attachEnd = undefined
-      gestureRef.current = { kind: 'stretch', obj: o, grab: bi, last: p, alt: e.altKey, moved: false }
-    } else gestureRef.current = { kind: 'move', obj: o, last: p }
-  }, [brush, commit, draftHow, drawLayer, hitTest, markWork, mode, objWorkPts, resolvedPts, snapTarget, toStore, workOfEvent])
+    // select：拖动平移，未拖动=点选世界实体（onPointerUp 分流）
+    gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }
+  }, [brush, commit, draftHow, drawLayer, editPaint, hitTest, markWork, objWorkPts, resolvedPts, sel, snapTarget, tool, toStore, workOfEvent])
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const p = workOfEvent(e)
