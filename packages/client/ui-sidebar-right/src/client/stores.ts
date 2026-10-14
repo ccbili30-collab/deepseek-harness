@@ -322,19 +322,51 @@ function stepped(surface: SurfaceState, step: HistoryStepper): SurfaceState {
 }
 
 /**
+ * Where a session's surface comes from the first time it mounts with no saved
+ * record of its own, in order: a legacy record to migrate, then a neighbouring
+ * session's surface to inherit the skeleton of.
+ */
+export interface SidebarRightFallback {
+  /** Legacy persisted scope (e.g. a pre-session workspace key) adopted whole when the session has none. */
+  readonly legacyScope?: (scopeKey: string) => string | undefined
+  /** The session whose layout skeleton a brand-new session starts from; undefined starts empty. */
+  readonly inheritFrom?: (scopeKey: string) => string | undefined
+}
+
+/**
+ * The skeleton a new session inherits: the drawer's open state, presentation
+ * mode and zone order. No tabs or panes cross sessions — what is open is each
+ * session's own work, only the arrangement carries over.
+ * @param from - the source session's surface.
+ * @returns a fresh surface with the source's arrangement.
+ */
+export function inheritSurface(from: SurfaceState): SurfaceState {
+  const base = createSurface()
+  return {
+    ...base,
+    layout: { ...base.layout, mode: from.layout.mode },
+    zoneOrder: [...from.zoneOrder],
+    // `expanded` is applied by the caller through `setExpanded`, so the empty
+    // column's default page is seeded the same way any expansion seeds it.
+  }
+}
+
+/**
  * Create the Sidebar store handle with per-Session JSON persistence in localStorage.
  *
  * The default page arrives as a thunk: a pane is seeded when a split or an
  * expansion of an empty column needs one, which can be long after the store was
  * built and in a language the user has since changed to.
  * @param seed - the registered default page, read at each mint.
- * @param persistScope - maps a session's memory key to its persisted scope;
- *   sessions sharing a scope share one saved workbench. Defaults to identity.
+ * @param persistScope - maps a session's memory key to its persisted scope.
+ *   Defaults to identity: every session keeps its own workbench.
+ * @param fallback - first-mount sources for a session with no saved record.
  * @returns the handle (spec, type, identity, and factory in one).
  */
 export function createSidebarRightStore(
   seed: () => SidebarRightSeed,
   persistScope: (scopeKey: string) => string = key => key,
+  fallback: SidebarRightFallback = {},
 ): EngineStoreHandle<SidebarRightState, SidebarRightActions> {
   const handle = defineStore<SidebarRightState, SidebarRightActions>({
     init: (): SidebarRightState => ({ bySession: {} }),
@@ -529,15 +561,31 @@ export function createSidebarRightStore(
   return { ...handle, create(scopeKey) {
     const instance = handle.create(scopeKey)
     if (scopeKey === undefined) return instance
-    // The surface lives under the session's memory key; the persisted record may
-    // carry a wider scope (a workspace) so sibling sessions share one workbench.
     const scope = persistScope(scopeKey)
     const saved = readSidebarLayout(scope)
-    if (saved !== undefined) instance.store.set({ bySession: { [scopeKey]: saved } })
+    if (saved !== undefined) {
+      instance.store.set({ bySession: { [scopeKey]: saved } })
+    } else {
+      // First mount of this session: migrate a legacy record whole, else start
+      // from a neighbour's skeleton so arriving here does not rearrange the page.
+      const legacy = fallback.legacyScope?.(scopeKey)
+      const migrated = legacy === undefined ? undefined : readSidebarLayout(legacy)
+      const sourceKey = migrated === undefined ? fallback.inheritFrom?.(scopeKey) : undefined
+      const source = sourceKey === undefined || sourceKey === scopeKey ? undefined : readSidebarLayout(persistScope(sourceKey))
+      if (migrated !== undefined) {
+        instance.store.set({ bySession: { [scopeKey]: migrated } })
+      } else if (source !== undefined) {
+        instance.store.set({ bySession: { [scopeKey]: inheritSurface(source) } })
+        if (source.layout.expanded) instance.actions.setExpanded(scopeKey, true)
+      }
+    }
     instance.subscribe(() => {
       const surface = instance.getSnapshot().bySession[scopeKey]
       if (surface !== undefined) writeSidebarLayout(scope, surface, scopeKey)
     })
+    // Inheritance or migration produced a surface before the writer subscribed: persist it now.
+    const initial = instance.getSnapshot().bySession[scopeKey]
+    if (saved === undefined && initial !== undefined) writeSidebarLayout(scope, initial, scopeKey)
     return { ...instance, clearPersisted: () => { clearSidebarLayout(scope) } }
   } }
 }

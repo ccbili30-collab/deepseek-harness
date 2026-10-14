@@ -29,9 +29,11 @@ export class SidebarTabInventory {
         const scope = key.slice(sidebarPersistence.length + 1)
         const saved = readSidebarLayoutRecord(scope)
         if (saved === undefined) continue
-        // Workspace-scoped records name the Session that wrote them; a bare
-        // session scope attributes to itself.
-        const sessionId = (saved.owner ?? scope) as SessionId
+        // Legacy workspace records (`ws:<cwd>`) name the Session that wrote
+        // them; a Session's own record attributes to itself. A Session with its
+        // own record outranks a legacy record that still names it.
+        const sessionId = (scope.startsWith('ws:') ? saved.owner ?? scope : scope) as SessionId
+        if (scope.startsWith('ws:') && this.sessions.has(sessionId)) continue
         this.sessions.set(sessionId, Object.values(saved.surface.layout.tabs).map(tab => ({
           sessionId, tabId: tab.id, kind: tab.kind, contentId: tab.contentId,
         })))

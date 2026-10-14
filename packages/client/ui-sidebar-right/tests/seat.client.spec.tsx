@@ -665,7 +665,10 @@ describe('slot-owned useTabInfo', () => {
     act(() => { h.selectSession(OTHER) })
     act(() => { h.controller.openResource('dsh-resource://file/session/s-other/other.txt', { params: { line: 9 } }) })
     const otherTab = h.controller.active()!
-    expect(otherTab.id).toBe(own.id)
+    // OTHER is a brand-new Session: it inherits the left Session's drawer state
+    // (契约 C9 新会话继承), so its ids need not line up with SESSION's. What must
+    // hold is that records never cross Sessions.
+    expect(otherTab.contentId).not.toBe(own.contentId)
     const otherInfo = h.bodies.get(otherTab.id)!
     expect(otherInfo.tab.signal).not.toBe(info.tab.signal)
     act(() => { info.tab.actions.openResource('dsh-resource://file/session/s-test/b.txt') })

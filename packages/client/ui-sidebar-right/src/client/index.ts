@@ -79,16 +79,17 @@ export type { SidebarRightOpenTab } from './tab-inventory.ts'
 const NS = 'sidebarRight'
 
 /**
- * The persisted workbench belongs to the workspace, not the Session: sibling
- * Sessions in one directory share one saved layout, while Sessions without a
- * cwd fall back to their own scope.
+ * The pre-session workspace scope (`ws:<cwd>`): sibling Sessions in one
+ * directory used to share one saved layout. Each Session now persists under
+ * its own id; this key is read once as the migration source for a Session
+ * that has no record yet, and never written.
  * @param sessions - session list face.
  * @param sessionId - the Session a store is being minted for.
- * @returns the localStorage scope key.
+ * @returns the legacy scope, or undefined for a Session without a cwd.
  */
-function persistScope(sessions: ClientContext['sessions'], sessionId: SessionId): string {
+function legacyWorkspaceScope(sessions: ClientContext['sessions'], sessionId: SessionId): string | undefined {
   const cwd = sessions.list.getSnapshot().byId[sessionId]?.cwd
-  return cwd === undefined || cwd === '' ? sessionId : `ws:${cwd}`
+  return cwd === undefined || cwd === '' ? undefined : `ws:${cwd}`
 }
 
 /** Required browser services: the slot registry, the frame's panel actions, copy, and the resource model. */
@@ -121,9 +122,20 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
   const tabs = new SidebarRightTabRegistry(ctx)
   const views = new SidebarSessionViews(ctx.sessions)
+  /**
+   * The Session the user was on before the current one: a brand-new Session
+   * inherits its layout skeleton (契约 C9 新会话继承). Tracked from the
+   * current-Session key so it names the session left, not the one arrived at.
+   */
+  let previousSession: SessionId | undefined
   ctx.effect(() => {
     const current = ctx.uiSession.adapter.current
-    const sync = (): void => { views.select(current.getSnapshot().key as SessionId | undefined) }
+    let shown = current.getSnapshot().key as SessionId | undefined
+    const sync = (): void => {
+      const next = current.getSnapshot().key as SessionId | undefined
+      if (next !== shown) { if (shown !== undefined) previousSession = shown; shown = next }
+      views.select(next)
+    }
     const unsubscribe = current.subscribe(sync)
     sync()
     return () => { unsubscribe(); views.dispose() }
@@ -151,7 +163,13 @@ export function apply(ctx: ClientContext): void {
   if (typeof document !== 'undefined') ctx.effect(() => observeSidebarFocus(document), 'ui-sidebar-right: focus')
 
   ctx.effect(() => {
-    const handle = createSidebarRightStore(() => defaultSeed(tabs), key => persistScope(ctx.sessions, key as SessionId))
+    // Each Session persists its own workbench (契约 C9 布局归会话). A Session
+    // with no record migrates the old shared workspace record, else inherits
+    // the skeleton of the Session the user just left.
+    const handle = createSidebarRightStore(() => defaultSeed(tabs), key => key, {
+      legacyScope: key => legacyWorkspaceScope(ctx.sessions, key as SessionId),
+      inheritFrom: key => previousSession !== key ? previousSession : undefined,
+    })
     // Each Session Context generation owns one Store. Background tab actions
     // use the latest adoption for that Session.
     const adoptions = new Map<SessionId, () => void>()

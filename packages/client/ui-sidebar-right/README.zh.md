@@ -73,7 +73,7 @@ root 作用域的 `rightbar` 入口通过独立的 `rightbar.session` 子树渲�
 
 停靠面的最后一个 tab 还多带一条规则，由 store 的 `closeTab` 决定并经 `canCloseTab` 镜像给套件：画布上没有浮窗时，作为唯一停靠 tab 的引导页对关闭不记录任何东西——它停靠且不可见，移除只会干扰播种规则；一旦有浮窗立着，它就走共享的唯一 tab 路径，连同整列一起关闭。其它任何独自留下的停靠 tab 关闭方式相同——布局保持为空，直到下次展开时创建当时的默认页。浮窗 tab 不参与这条规则：无论列里有什么它们都照常关闭。
 
-store 将工作台的布局、标签身份、选中项、分栏比例、浮窗矩形、呈现方式和身份计数以 JSON 保存到 localStorage 的 `dsh.sidebar-right.v2.<scope>`，scope 为 Session 所在 workspace（`ws:<cwd>`），无 cwd 时退回 Session id——同一 workspace 下的多个 Session 共享一套工作台，记录内附带最后写入它的 Session。刷新时在渲染标签正文前恢复布局。provider 根据保留的标签身份和资源地址恢复自身内容，包括[终端重连](../ui-sidebar-terminal/README.zh.md#use-this-package)。导航参数、资源内容和活动连接不属于布局状态。撤销历史只保留在内存中，刷新后清空。采用布局或启动探测前会校验保存字段类型、节点成员关系、选中项、身份计数，以及单格或左右两格的停靠布局；无效数据只清除对应 scope 的 key。存储失败时，当前布局仍可在内存中使用。同源窗口共享每个 scope 最后保存的布局；活动窗口在刷新前保留各自的当前布局。
+store 将工作台的布局、标签身份、选中项、分栏比例、浮窗矩形、呈现方式和身份计数以 JSON 保存到 localStorage 的 `dsh.sidebar-right.v2.<sessionId>`：每个 Session 各有一套工作台。还没有自己记录的 Session 先迁移旧的 workspace 记录（`dsh.sidebar-right.v2.ws:<cwd>`，只读一次、不再写入），没有则从用户刚离开的 Session 继承骨架——抽屉开合、呈现方式和分区顺序，不带它的标签。刷新时在渲染标签正文前恢复布局。provider 根据保留的标签身份和资源地址恢复自身内容，包括[终端重连](../ui-sidebar-terminal/README.zh.md#use-this-package)。导航参数、资源内容和活动连接不属于布局状态。撤销历史只保留在内存中，刷新后清空。采用布局或启动探测前会校验保存字段类型、节点成员关系、选中项、身份计数，以及单格或左右两格的停靠布局；无效数据只清除对应 scope 的 key。存储失败时，当前布局仍可在内存中使用。同源窗口共享每个 scope 最后保存的布局；活动窗口在刷新前保留各自的当前布局。
 
 `sidebarRight.openTabs` 发布所有已保存和已采用 Session 的打开标签元数据，并保持快照引用稳定。启动时读取布局 key，不挂载非当前内容、pin 文件或激活 Agent。已采用的 store 在标签成员变化时更新自己的元数据，永久清除的 scope 删除对应记录。其他窗口写入 storage 不会覆盖当前窗口的活动成员关系。provider 使用该清单恢复自己的资源生命周期。
 

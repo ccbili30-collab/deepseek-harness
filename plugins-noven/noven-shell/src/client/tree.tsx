@@ -38,6 +38,8 @@ export interface TreeInjected {
     /** 右栏功能页签清单（guide 注册表）——工具菜单的功能行按它枚举。 */
     readonly featureTabs: ObservableSnapshot<readonly SidebarRightGuideBox[]>
   }
+  /** 树挂在哪个会话的抽屉里——折叠/视图这类「怎么看」按它分域（契约 C9）。 */
+  readonly sessionId: SessionId
   /** Studio 组行：把该会话挂进模拟器并切到画布手机屏。 */
   readonly openSim: (id: SessionId) => void
   /** Studio 组头「＋」：建一条 模- 会话。 */
@@ -115,38 +117,78 @@ const FILE_DROP_TYPE = 'application/x-noven-file'
 /** 顶层分组拖排序用的 dataTransfer 类型。 */
 const GROUP_DROP_TYPE = 'application/x-noven-treegroup'
 
-/** 顶层分组的折叠态与排序（按项目根记 localStorage）。`view` 记视图档：
-    缺省 'entity'（模块视图）——只列成品实体；'file' 是文件管理器全量档。 */
+/** 顶层分组偏好，按归属拆成两半（契约 C9）：
+    - `order` 是内容组织，按项目根记——同项目的所有会话看到同一种分组顺序；
+    - `collapsed` 与 `view` 是「怎么看」，按会话记——切回会话就是离开时的样子。
+    `view` 缺省 'entity'（模块视图）——只列成品实体；'file' 是文件管理器全量档。 */
 interface GroupPrefs {
   readonly order: readonly string[]
   readonly collapsed: readonly string[]
   readonly view?: 'file' | 'entity'
 }
 
-const EMPTY_GROUP_PREFS: GroupPrefs = { order: [], collapsed: [] }
-
+/** 项目域键（分组顺序）；旧版整份偏好也写在这个键下，作会话域的迁移来源。 */
 function groupPrefsKey(root: string): string {
   return `noven.tree.groups.v1:${root}`
 }
 
-/** 读某项目的分组偏好；坏档/未存过都回默认。 */
-function readGroupPrefs(root: string | undefined): GroupPrefs {
-  if (root === undefined) return EMPTY_GROUP_PREFS
+/** 会话域键（折叠 + 视图档）。 */
+function viewPrefsKey(sessionId: string): string {
+  return `noven.tree.view.v1:${sessionId}`
+}
+
+function readPrefsJson(key: string): Partial<GroupPrefs> | undefined {
   try {
-    const raw = localStorage.getItem(groupPrefsKey(root))
-    if (raw === null) return EMPTY_GROUP_PREFS
-    const parsed = JSON.parse(raw) as Partial<GroupPrefs>
-    return {
-      order: Array.isArray(parsed.order) ? parsed.order.filter((k): k is string => typeof k === 'string') : [],
-      collapsed: Array.isArray(parsed.collapsed) ? parsed.collapsed.filter((k): k is string => typeof k === 'string') : [],
-      view: parsed.view === 'file' || parsed.view === 'entity' ? parsed.view : undefined,
-    }
+    const raw = localStorage.getItem(key)
+    return raw === null ? undefined : JSON.parse(raw) as Partial<GroupPrefs>
   } catch (parseErr) {
-    // localStorage 在隐私/沙箱态可抛，坏 JSON 也统一回默认——偏好丢了只是顺序复原。
+    // localStorage 在隐私/沙箱态可抛，坏 JSON 也统一回默认——偏好丢了只是复原。
     void parseErr
-    return EMPTY_GROUP_PREFS
+    return undefined
   }
 }
+
+const prefStrings = (value: unknown): readonly string[] =>
+  Array.isArray(value) ? value.filter((k): k is string => typeof k === 'string') : []
+
+/**
+ * 读树偏好：顺序取项目域；折叠/视图取会话域。会话还没有自己的记录时，先拿
+ * 来源会话的（新会话继承，C2），再退到旧版项目整份记录（迁移）。
+ * @param root - 项目根；undefined 时没有项目域。
+ * @param sessionId - 树所在会话。
+ * @param inheritFrom - 新会话继承的来源会话。
+ * @returns 合并后的偏好；坏档/未存过回默认。
+ */
+function readGroupPrefs(root: string | undefined, sessionId: string, inheritFrom: string | undefined): GroupPrefs {
+  const project = root === undefined ? undefined : readPrefsJson(groupPrefsKey(root))
+  const view = readPrefsJson(viewPrefsKey(sessionId))
+    ?? (inheritFrom === undefined || inheritFrom === sessionId ? undefined : readPrefsJson(viewPrefsKey(inheritFrom)))
+    ?? project
+  return {
+    order: prefStrings(project?.order),
+    collapsed: prefStrings(view?.collapsed),
+    view: view?.view === 'file' || view?.view === 'entity' ? view.view : undefined,
+  }
+}
+
+/**
+ * 写树偏好：两半各落各的键。
+ * @param root - 项目根；undefined 时只写会话域。
+ * @param sessionId - 树所在会话。
+ * @param next - 新偏好。
+ */
+function writeGroupPrefsTo(root: string | undefined, sessionId: string, next: GroupPrefs): void {
+  try {
+    if (root !== undefined) localStorage.setItem(groupPrefsKey(root), JSON.stringify({ order: next.order }))
+    localStorage.setItem(viewPrefsKey(sessionId), JSON.stringify({ collapsed: next.collapsed, view: next.view }))
+  } catch (storageErr) {
+    // 隐私/沙箱态可抛，丢了只是回到默认。
+    void storageErr
+  }
+}
+
+/** 本窗口内上一个显示过树的会话：首次出现的会话从它继承折叠/视图（C2）。 */
+let lastTreeSession: string | undefined
 
 /** 模块行的嵌入落点判定；返回拖来的文件路径，没有则 undefined。 */
 function fileDrop(e: DragEvent): string | undefined {
@@ -838,21 +880,27 @@ export function ContentTree(props: TreeProps) {
   /* 顶层分组：折叠态 + 排序 + 视图档按项目根落 localStorage；拖动用专用
      type，与文件拖入模块（FILE_DROP_TYPE）互不干扰。 */
   const root = project?.root
-  const [prefs, setPrefs] = useState<GroupPrefs>(() => readGroupPrefs(root))
-  const [prefsRoot, setPrefsRoot] = useState(root)
-  if (prefsRoot !== root) {
-    setPrefsRoot(root)
-    setPrefs(readGroupPrefs(root))
+  const treeSession = props.sessionId
+  const prefsKey = `${root ?? ''}|${treeSession}`
+  const [prefs, setPrefs] = useState<GroupPrefs>(() => readGroupPrefs(root, treeSession, lastTreeSession))
+  const [prefsAt, setPrefsAt] = useState(prefsKey)
+  if (prefsAt !== prefsKey) {
+    setPrefsAt(prefsKey)
+    setPrefs(readGroupPrefs(root, treeSession, lastTreeSession))
     setSel(null)
   }
+  // 首次出现的会话把继承来的折叠/视图落成自己的记录，再登记为下一个新会话的继承来源。
+  // 现算而不读 prefs：切会话那一帧 prefs 可能还是上一个会话的值。
+  useEffect(() => {
+    if (readPrefsJson(viewPrefsKey(treeSession)) === undefined) {
+      writeGroupPrefsTo(undefined, treeSession, readGroupPrefs(root, treeSession, lastTreeSession))
+    }
+    lastTreeSession = treeSession
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在会话切换时落继承记录。
+  }, [treeSession])
   const writeGroupPrefs = (next: GroupPrefs): void => {
     setPrefs(next)
-    if (root === undefined) return
-    try { localStorage.setItem(groupPrefsKey(root), JSON.stringify(next)) }
-    catch (storageErr) {
-      // 隐私/沙箱态可抛，丢了只是回到默认顺序。
-      void storageErr
-    }
+    writeGroupPrefsTo(root, treeSession, next)
   }
   const viewFile = prefs.view === 'file'
 

@@ -1777,6 +1777,7 @@ export function apply(ctx: ClientContext): void {
       }
       const ensureDockFn = dockApi?.ensureDock
       return {
+      sessionId,
       hooks: {
         tree: treeSource, project: projectFocus, projects,
         sims: simSessionsSource(ctx.sessions, ctx.workspaces, canvasInstance, sessionId),

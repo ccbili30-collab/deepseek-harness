@@ -106,3 +106,60 @@ it('starts from an empty layout when stored JSON is corrupt and keeps working wh
   instance.actions.setExpanded(sessionId, true)
   expect(instance.getSnapshot().bySession[sessionId]!.layout.expanded).toBe(true)
 })
+
+it('keeps each Session its own workbench: two Sessions of one workspace do not share a layout', () => {
+  storage()
+  const handle = createSidebarRightStore(seed)
+  const a = handle.create('a')
+  a.actions.setExpanded('a', true)
+  a.actions.setMode('a', 'fullscreen')
+  const b = handle.create('b')
+  b.actions.open('b')
+  expect(b.getSnapshot().bySession.b!.layout.mode).toBe('push')
+  expect(createSidebarRightStore(seed).create('a').getSnapshot().bySession.a!.layout.mode).toBe('fullscreen')
+  expect(createSidebarRightStore(seed).create('b').getSnapshot().bySession.b!.layout.mode).toBe('push')
+})
+
+it('migrates a legacy workspace record whole on first mount and then persists under the Session', () => {
+  const values = storage()
+  const legacy = createSidebarRightStore(seed, () => 'ws:/proj').create('old')
+  legacy.actions.setExpanded('old', true)
+  legacy.actions.setMode('old', 'fullscreen')
+  expect(values.has('dsh.sidebar-right.v2.ws:/proj')).toBe(true)
+  const migrated = createSidebarRightStore(seed, key => key, { legacyScope: () => 'ws:/proj' }).create('fresh')
+  const surface = migrated.getSnapshot().bySession.fresh!
+  expect(surface.layout.mode).toBe('fullscreen')
+  expect(surface.layout.expanded).toBe(true)
+  expect(values.has('dsh.sidebar-right.v2.fresh')).toBe(true)
+  // Once the Session has its own record, the legacy record no longer applies.
+  legacy.actions.setMode('old', 'push')
+  expect(createSidebarRightStore(seed, key => key, { legacyScope: () => 'ws:/proj' }).create('fresh')
+    .getSnapshot().bySession.fresh!.layout.mode).toBe('fullscreen')
+})
+
+it('starts a new Session from the left Session skeleton without carrying its tabs', () => {
+  storage()
+  const handle = createSidebarRightStore(seed)
+  const left = handle.create('left')
+  left.actions.setExpanded('left', true)
+  left.actions.setMode('left', 'fullscreen')
+  left.actions.openContent('left', { kind: 'text', contentId: 'file:a', title: 'a' }, () => {})
+  const leftTabs = Object.values(left.getSnapshot().bySession.left!.layout.tabs).map(tab => tab.contentId)
+  expect(leftTabs).toContain('file:a')
+  const arrived = createSidebarRightStore(seed, key => key, { inheritFrom: () => 'left' }).create('arrived')
+  const surface = arrived.getSnapshot().bySession.arrived!
+  expect(surface.layout.mode).toBe('fullscreen')
+  expect(surface.layout.expanded).toBe(true)
+  expect(Object.values(surface.layout.tabs).map(tab => tab.contentId)).not.toContain('file:a')
+  expect(surface.layout.floats).toEqual([])
+})
+
+it('ignores inheritance for a Session that already has its own record', () => {
+  storage()
+  const handle = createSidebarRightStore(seed)
+  handle.create('own').actions.open('own')
+  const left = handle.create('left')
+  left.actions.setMode('left', 'fullscreen')
+  const own = createSidebarRightStore(seed, key => key, { inheritFrom: () => 'left' }).create('own')
+  expect(own.getSnapshot().bySession.own!.layout.mode).toBe('push')
+})
