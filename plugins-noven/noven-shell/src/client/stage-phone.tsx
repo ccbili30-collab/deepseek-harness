@@ -5,6 +5,7 @@
  * @module noven-shell/client/stage-phone
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { MarkdownText, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { collectNovexDefs, renderBlocks, stageInputOwn, substituteNovexArtifact, type NovexDef, type RenderBlock } from './stage-artifacts.ts'
 import { StageIsland, type IslandControl, type IslandFrame, type IslandCall } from './stage-island.tsx'
@@ -157,6 +158,15 @@ export function PhoneStage({ t, title, islandHtml, frameBase, transcript, busy, 
     setStageOpen(true)
   }, [])
 
+  /** 助手气泡排版词表——与侧线会话同一份 conv.md.* 词条。 */
+  const labels = useMemo<MarkdownLabels>(() => ({
+    code: {
+      copyLabel: t('conv.md.copy'), copiedLabel: t('conv.md.copied'),
+      toolbarLabels: { codeLabel: t('conv.md.code'), wrapLabel: t('conv.md.wrap'), unwrapLabel: t('conv.md.unwrap') },
+    },
+    footnotes: '',
+  }), [t])
+
   // input:"own" 的作品接管输入层——全屏活动期藏原生栏；退回转录后恢复（逃生口）。
   const ownInput = stageOpen && stage?.inputOwn === true
 
@@ -180,7 +190,7 @@ export function PhoneStage({ t, title, islandHtml, frameBase, transcript, busy, 
         <div className="nv-ptrans" ref={transRef}>
           {transcript.length === 0 ? <div className="nv-pempty">{t('work.stage.noMsgs')}</div> : null}
           {transcript.map(msg => (
-            <PhoneMsg key={msg.key} msg={msg} defs={defs} frame={frame} t={t}
+            <PhoneMsg key={msg.key} msg={msg} defs={defs} frame={frame} t={t} labels={labels}
               onCall={handleCall} resolveAsset={resolveAsset} onOpenStage={openStage} />
           ))}
         </div>
@@ -207,11 +217,12 @@ export function PhoneStage({ t, title, islandHtml, frameBase, transcript, busy, 
 }
 
 /** 单条消息：用户右气泡，助手拆 renderBlocks——novex 件就地投影。 */
-function PhoneMsg({ msg, defs, frame, t, onCall, resolveAsset, onOpenStage }: {
+function PhoneMsg({ msg, defs, frame, t, labels, onCall, resolveAsset, onOpenStage }: {
   readonly msg: TranscriptMsg
   readonly defs: ReadonlyMap<string, NovexDef>
   readonly frame: IslandFrame
   readonly t: ShellT
+  readonly labels: MarkdownLabels
   readonly onCall: (call: IslandCall) => void
   readonly resolveAsset: (path: string, base?: string) => Promise<Blob | null>
   readonly onOpenStage: (mount: StageMount) => void
@@ -222,7 +233,7 @@ function PhoneMsg({ msg, defs, frame, t, onCall, resolveAsset, onOpenStage }: {
   return (
     <div className="nv-pmsg a">
       {renderBlocks(msg.text).map((block, i) => (
-        <MsgBlock key={i} block={block} defs={defs} frame={frame} t={t}
+        <MsgBlock key={i} block={block} defs={defs} frame={frame} t={t} labels={labels}
           onCall={onCall} resolveAsset={resolveAsset} onOpenStage={onOpenStage} />
       ))}
     </div>
@@ -230,17 +241,19 @@ function PhoneMsg({ msg, defs, frame, t, onCall, resolveAsset, onOpenStage }: {
 }
 
 /** 一个渲染块：文字、件注册 chip、use 投影（内联岛或舞台入口）、皮肤 chip、内联岛。 */
-function MsgBlock({ block, defs, frame, t, onCall, resolveAsset, onOpenStage }: {
+function MsgBlock({ block, defs, frame, t, labels, onCall, resolveAsset, onOpenStage }: {
   readonly block: RenderBlock
   readonly defs: ReadonlyMap<string, NovexDef>
   readonly frame: IslandFrame
   readonly t: ShellT
+  readonly labels: MarkdownLabels
   readonly onCall: (call: IslandCall) => void
   readonly resolveAsset: (path: string, base?: string) => Promise<Blob | null>
   readonly onOpenStage: (mount: StageMount) => void
 }) {
   if (block.type === 'text') {
-    return <div className="nv-ptext">{block.text}</div>
+    // 会话气泡要过真机同款排版——GFM + KaTeX 走共享渲染器，与侧线会话同口径。
+    return <div className="nv-ptext"><MarkdownText text={block.text ?? ''} labels={labels} variant="compact" /></div>
   }
   if (block.type === 'def') {
     return <div className="nv-pchip">{fmt(t, 'work.stage.defChip', { name: block.def?.name ?? '?' })}</div>

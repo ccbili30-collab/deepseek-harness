@@ -1074,7 +1074,17 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 /* 分组头 = 纯灰小标签（设计稿 02/03），不折叠；行尾「＋」悬停才显。 */
 .nv-tree-grouprow { display: flex; align-items: center; gap: 4px; width: 100%;
   padding: 12px 6px 3px; font-size: 11px; color: var(--nv-secondary-text); }
-.nv-tree-grouptitle { flex: 1; text-align: left; letter-spacing: 0.04em; }
+.nv-tree-grouprow-toggle { cursor: pointer; user-select: none; }
+.nv-tree-grouptitle { flex: 1; min-width: 0; text-align: left; letter-spacing: 0.04em;
+  border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: inherit; }
+.nv-tree-grouprow-toggle:hover .nv-tree-grouptitle { color: var(--nv-primary-text); }
+/* 分组拖排序：源组半透明，落点上下给 2px 指示线。 */
+.nv-tree-groupslot { position: relative; }
+.nv-tree-groupslot-drag { opacity: 0.45; }
+.nv-tree-drop-before::before, .nv-tree-drop-after::after { content: ''; position: absolute;
+  left: 6px; right: 6px; height: 2px; border-radius: 1px; background: var(--nv-accent); z-index: 2; }
+.nv-tree-drop-before::before { top: -1px; }
+.nv-tree-drop-after::after { bottom: -1px; }
 .nv-tree-count { font-size: 10px; color: var(--nv-secondary-text); }
 /* 折叠箭头移到行最右端（设计稿 02 卡行）；展开时旋 90°。 */
 .nv-tree-fold { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px;
@@ -1134,6 +1144,17 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   background: none; padding: 4px 6px; border-radius: 6px; color: var(--nv-secondary-text); cursor: pointer; }
 .nv-tree-eye:hover { color: var(--nv-primary-text); background: var(--nv-accent-soft); }
 .nv-tree-eyecount { font-size: 11px; }
+/* 同级多选：选中行铺一层主题色底；批量操作条挂在树头下。 */
+.nv-tree-row[data-sel] { background: var(--nv-accent-soft); border-radius: 6px; }
+.nv-tree-row[data-sel] .nv-tree-name { color: var(--nv-accent-deep); }
+.nv-tree-selbar { display: flex; align-items: center; gap: 2px; padding: 2px 12px 6px; border-bottom: 1px solid var(--nv-divider); }
+.nv-tree-selcount { flex: 1; min-width: 0; font-size: 12px; color: var(--nv-secondary-text); }
+.nv-tree-selbtn { border: 0; background: none; padding: 3px 8px; border-radius: 6px; font-size: 12px;
+  color: var(--nv-primary-text); cursor: pointer; }
+.nv-tree-selbtn:hover { background: var(--nv-hover); }
+.nv-tree-selbtn:disabled { color: var(--nv-secondary-text); cursor: default; }
+.nv-tree-selbtn:disabled:hover { background: none; }
+.nv-tree-selbtn-danger { color: #E25252; }
 
 /* 导入对话框：analyze 报告区——卡行（图标+名+类）+ 文件数行。 */
 .nv-import-summary { max-height: 180px; overflow-y: auto; margin: 8px 0 4px;
@@ -1351,6 +1372,22 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 /* 素材列表 */
 .nv-canvas-files { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 16px; }
 .nv-canvas-workframe { width: 100%; height: 100%; border: 0; display: block; background: var(--nv-canvas); }
+
+/* 图片查看器：默认整图 contain，缩放态显式宽度 + translate 平移。 */
+.nv-imgview { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+  overflow: hidden; position: relative; background: var(--nv-canvas); touch-action: none; }
+.nv-imgview img { max-width: 100%; max-height: 100%; object-fit: contain; user-select: none; }
+.nv-imgview-zoom img { cursor: grab; }
+.nv-imgview-zoom img:active { cursor: grabbing; }
+.nv-imgview-ctl { position: absolute; right: 10px; bottom: 10px; display: flex; align-items: center;
+  gap: 2px; background: var(--nv-surface); border: 0.5px solid var(--nv-divider);
+  border-radius: 8px; padding: 3px; box-shadow: 0 2px 10px rgba(0, 0, 0, .08); }
+.nv-imgview-ctl button { border: 0; background: transparent; padding: 3px 8px; font-size: 12px;
+  color: var(--nv-primary-text); cursor: pointer; border-radius: 5px; }
+.nv-imgview-ctl button:hover { background: var(--nv-canvas); }
+.nv-imgview-pct { min-width: 44px; text-align: center; color: var(--nv-secondary-text); }
+/* 手机档的图片体：屏内 contain，背景压暗衬出屏占比。 */
+.nv-imgview-phone { flex: 1; min-height: 0; background: #14100c; }
 
 /* 作品页顶条：桌面/手机分段开关 + 版本下拉 + 采用 + 戏台壳操作 */
 .nv-work { display: flex; flex-direction: column; height: 100%; min-height: 0; }

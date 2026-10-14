@@ -195,6 +195,17 @@ async function applyOp(
         }, base)
         return { libraryRevision: library.revision }
       }
+      case 'rename-work': {
+        const workId = String(body.workId ?? '')
+        const title = String(body.title ?? '').trim()
+        if (title.length === 0) return bad('missing title')
+        const library = await mutateLibrary(root, (lib) => {
+          const work = workById(lib, workId)
+          work.title = title
+          work.updatedAt = now
+        }, base)
+        return { libraryRevision: library.revision }
+      }
       case 'ignore': {
         const path = normalizeRel(String(body.path ?? ''))
         if (!validRelPath(path)) return bad('invalid path')

@@ -658,13 +658,21 @@ function simSessionsSource(sessions: ClientContext['sessions'], workspaces: IWor
   const compute = (): void => {
     const root = sessions.list.getSnapshot().byId[sessionId]?.cwd
     if (root === undefined) { if (snapshot.length !== 0) { snapshot = []; for (const l of listeners) l() } return }
-    const archived = new Set<string>(workspaces?.list.getSnapshot().archivedSessionIds ?? [])
+    const wsSnap = workspaces?.list.getSnapshot()
+    const archived = new Set<string>(wsSnap?.archivedSessionIds ?? [])
+    // 与侧栏同口径：根已登记 workspace 时按成员表，未登记时退回 cwd 匹配。
+    const ws = wsSnap?.items.find(item => item.path === root)
+    const members = ws === undefined ? undefined : new Set<string>(ws.sessionIds)
     const picked = new Set<string>(canvas.getSnapshot().simPick[root] ?? [])
     const rows: SimRow[] = []
     for (const id of sessions.list.getSnapshot().ids) {
       const row = sessions.list.getSnapshot().byId[id]
-      if (row === undefined || row.cwd !== root || row.origin === 'subagent' || archived.has(id)) continue
-      rows.push({ id, title: row.displayTitle, running: row.running, sim: picked.has(id) || (row.title ?? '').startsWith(SIM_TITLE_PREFIX) })
+      if (row === undefined || row.origin === 'subagent' || archived.has(id)) continue
+      if (members === undefined ? row.cwd !== root : !members.has(id)) continue
+      const sim = picked.has(id) || (row.title ?? '').startsWith(SIM_TITLE_PREFIX)
+      // 侧栏的空白行只保留当前会话；模拟行（含刚建的空白行）不受限。
+      if (row.blank && !sim && id !== sessionId) continue
+      rows.push({ id, title: row.displayTitle, running: row.running, sim })
     }
     if (rows.length === snapshot.length && rows.every((r, i) => {
       const prev = snapshot[i]
@@ -1165,8 +1173,20 @@ export function apply(ctx: ClientContext): void {
     },
     openPanel: (id) => {
       capturePanelGhost()
-      try { ctx.layout.selectPanel(id) } catch { /* panel not registered */ }
+      const current = ctx.layout.panelInfo.getSnapshot().activePanelId
+      try {
+        ctx.layout.selectPanel(id)
+        panelTrail.push(current)
+        if (panelTrail.length > 8) panelTrail.shift()
+      } catch { /* panel not registered */ }
     },
+  }
+  /** 面板轨迹：openPanel 入栈来路，页面「返回」弹栈还原（树→创作库即回画布）。 */
+  const panelTrail: (MainPanelId | null)[] = []
+  const backPanel = (): void => {
+    const target = panelTrail.pop() ?? ME_ID
+    capturePanelGhost()
+    try { ctx.layout.selectPanel(target) } catch { /* panel not registered */ }
   }
   const openProject = (row: { readonly sessionId?: SessionId; readonly root: string; readonly title: string }) => {
     instance.actions.openProject({ sessionId: row.sessionId, root: row.root, title: row.title })
@@ -1453,16 +1473,6 @@ export function apply(ctx: ClientContext): void {
     if (command === undefined) return
     await cardOp(addr, { op: 'apply', cardId, version: state.version, command })
       .catch((reason: unknown) => { console.warn('noven-shell: module command failed:', reason) })
-  }
-
-  /** 切换左列项目：复用同 cwd 的会话，没有就为这个工作区建一个并绑定。 */
-  const switchProject = (root: string): void => {
-    const state = ctx.sessions.list.getSnapshot()
-    const hit = state.ids.find(id => state.byId[id]?.cwd === root)
-    if (hit !== undefined) { ctx.uiWorkspace.openSession(hit); return }
-    void createSessionIn(root)
-      .then(id => ctx.uiWorkspace.openSession(id))
-      .catch((reason: unknown) => { console.warn('noven-shell: project switch failed:', reason) })
   }
 
   /** 拿一个能读写文件的会话：绑定会话优先，其次最近工作区会话，最后按当前项目现建并绑定。 */
@@ -1836,7 +1846,54 @@ export function apply(ctx: ClientContext): void {
         canvasInstance.actions.openDialog(sessionId, kind, dir)
         raiseCanvas()
       },
-      switchProject,
+      openProject: () => {
+        const focus = focusSnapshot
+        if (focus === undefined) return
+        openProject({ sessionId: focus.sessionId, root: focus.root, title: focus.title ?? focus.root.split('/').filter(Boolean).pop() ?? focus.root })
+      },
+      renameWork: (workId, title) => {
+        void libraryOp({ sessionId, root: focusSnapshot?.root }, { op: 'rename-work', workId, title })
+          .then(() => { treeSource.refresh(); library.refresh() })
+          .catch((reason: unknown) => { console.warn('noven-shell: work rename failed:', reason) })
+      },
+      dropWork: (workId) => {
+        void libraryOp({ sessionId, root: focusSnapshot?.root }, { op: 'unregister', workId })
+          .then(() => { treeSource.refresh(); library.refresh() })
+          .catch((reason: unknown) => { console.warn('noven-shell: work unregister failed:', reason) })
+      },
+      /* 批量写必须串行：同父目录的 .noven.json 与 library.json 都是
+         read-modify-write，并发写会互相覆盖丢条目。 */
+      presentAll: (paths, view) => {
+        void (async () => {
+          for (const path of paths) {
+            try { await presentNode({ sessionId, root: focusSnapshot?.root }, path, view) }
+            catch (reason) { console.warn('noven-shell: batch present failed:', path, reason) }
+          }
+          treeSource.refresh()
+        })()
+      },
+      deleteSel: (items) => {
+        void (async () => {
+          const addr = { sessionId, root: focusSnapshot?.root }
+          for (const it of items) {
+            try {
+              if (it.cardId !== undefined) await cardOp(addr, { op: 'delete', cardId: it.cardId })
+              else await fileOp(addr, { op: 'rm', path: it.path })
+              if (it.workId !== undefined) await libraryOp(addr, { op: 'unregister', workId: it.workId })
+            } catch (reason) { console.warn('noven-shell: batch delete failed:', it.path, reason) }
+          }
+          for (const row of canvasInstance.getSnapshot().tabs) {
+            if (items.some(i => i.cardId !== undefined && i.cardId === row.cardId) && row.owner === sessionId) {
+              canvasInstance.actions.close(sessionId, row.key)
+            }
+            if (items.some(i => i.cardId === undefined && (`doc:${i.path}` === row.key || `work:${i.path}` === row.key)) && row.owner === sessionId) {
+              canvasInstance.actions.close(sessionId, row.key)
+            }
+          }
+          treeSource.refresh()
+          library.refresh()
+        })()
+      },
       expandDrawer: () => ctx.sidebarRight.toggleExpanded(),
       }
     },
@@ -2083,7 +2140,7 @@ export function apply(ctx: ClientContext): void {
         },
         sessionTitle: (sessionId) => ctx.sessions.list.getSnapshot().byId[sessionId]?.displayTitle,
         openCard: face.openCard,
-        back: () => { face.openPanel(ME_ID) },
+        back: backPanel,
       }),
     }, (p: PageProps & PropsStore<typeof handle> & InjectFace<ProjectPageInjected>) => (
       <ProjectPage t={p.t} project={p.useStore(s => s.project) ?? undefined}

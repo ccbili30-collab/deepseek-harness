@@ -32,6 +32,9 @@ import { collectDeltas, foldArchive, DELTA_WINDOW } from './stage-archive.ts'
 export const fileTabKind = (path: string): 'doc' | 'work' =>
   !path.includes('.') || /\.(md|markdown|mdx|txt|json|ya?ml|toml|xml|csv|css|m?[jt]s)$/i.test(path) ? 'doc' : 'work'
 
+/** 走图片查看器而非 iframe 画框的作品扩展名——与创作库登记的 kind 推断同口径。 */
+const IMAGE_WORK_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'])
+
 /** 画布上一个打开的对象：key 去重，kind 派发体组件，owner 归属会话（C9）。 */
 export interface CanvasTab {
   readonly key: string
@@ -1100,6 +1103,81 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
   )
 }
 
+/**
+ * 图片作品的画框体：默认整图适应窗口（contain，不拉伸）；滚轮以光标为锚
+ * 缩放、缩放态可拖拽平移、双击在「适应 ↔ 原大」间切换。右下控件条给出
+ * −/比例/＋/1:1。
+ */
+function ImageStage({ src, alt, t }: { readonly src: string; readonly alt: string; readonly t: ShellT }) {
+  const boxRef = useRef<HTMLDivElement>(null)
+  const natural = useRef({ w: 0, h: 0 })
+  const dragRef = useRef<{ px: number; py: number; x: number; y: number } | null>(null)
+  /** null = 适应窗口（纯 CSS contain，尺寸交给布局）；否则显式比例 + 平移。 */
+  const [view, setView] = useState<{ readonly factor: number; readonly x: number; readonly y: number } | null>(null)
+
+  /** 适应档下图片的显示比例——滚轮从这起步，第一滚不跳变。 */
+  const fitFactor = useCallback((): number => {
+    const box = boxRef.current
+    const n = natural.current
+    if (box === null || n.w === 0) return 1
+    return Math.min(box.clientWidth / n.w, box.clientHeight / n.h)
+  }, [])
+
+  const zoomAt = useCallback((cx: number, cy: number, step: number): void => {
+    setView(v => {
+      const oldF = v?.factor ?? fitFactor()
+      const factor = Math.min(8, Math.max(0.02, oldF * step))
+      const k = factor / oldF
+      const x = v?.x ?? 0
+      const y = v?.y ?? 0
+      return { factor, x: cx - (cx - x) * k, y: cy - (cy - y) * k }
+    })
+  }, [fitFactor])
+
+  const zoomStep = useCallback((step: number): void => {
+    const box = boxRef.current
+    zoomAt(box === null ? 0 : box.clientWidth / 2, box === null ? 0 : box.clientHeight / 2, step)
+  }, [zoomAt])
+
+  return (
+    <div ref={boxRef} className={`nv-imgview${view !== null ? ' nv-imgview-zoom' : ''}`}
+      onWheel={e => {
+        const rect = boxRef.current?.getBoundingClientRect()
+        if (rect === undefined) return
+        zoomAt(e.clientX - rect.left - rect.width / 2, e.clientY - rect.top - rect.height / 2,
+          Math.exp(-e.deltaY * 0.0015))
+      }}
+      onPointerDown={e => {
+        if (view === null) return
+        dragRef.current = { px: e.clientX, py: e.clientY, x: view.x, y: view.y }
+        e.currentTarget.setPointerCapture(e.pointerId)
+      }}
+      onPointerMove={e => {
+        const d = dragRef.current
+        if (d === null) return
+        setView(v => v === null ? v : { ...v, x: d.x + e.clientX - d.px, y: d.y + e.clientY - d.py })
+      }}
+      onPointerUp={() => { dragRef.current = null }}
+      onPointerCancel={() => { dragRef.current = null }}
+      onDoubleClick={() => setView(v => v === null ? { factor: 1, x: 0, y: 0 } : null)}>
+      <img src={src} alt={alt} draggable={false}
+        onLoad={e => { natural.current = { w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight } }}
+        style={view === null ? undefined : {
+          width: natural.current.w * view.factor, maxWidth: 'none', maxHeight: 'none',
+          transform: `translate(${view.x}px, ${view.y}px)`,
+        }} />
+      <div className="nv-imgview-ctl" onPointerDown={e => e.stopPropagation()} onDoubleClick={e => e.stopPropagation()}>
+        <button type="button" aria-label={t('work.img.zoomOut')} onClick={() => zoomStep(0.8)}>−</button>
+        <button type="button" className="nv-imgview-pct" title={t('work.img.fit')} onClick={() => setView(null)}>
+          {view === null ? t('work.img.fit') : `${String(Math.round(view.factor * 100))}%`}
+        </button>
+        <button type="button" aria-label={t('work.img.zoomIn')} onClick={() => zoomStep(1.25)}>＋</button>
+        <button type="button" title={t('work.img.actual')} onClick={() => setView({ factor: 1, x: 0, y: 0 })}>1:1</button>
+      </div>
+    </div>
+  )
+}
+
 function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTranscript, sim, simSession, useStore, actions, useDocs, ensureDoc, refreshDoc, useDirs, ensureDir, refreshDir, setStatus }: {
   readonly tab: CanvasTab
   readonly t: ShellT
@@ -1154,6 +1232,7 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
   const fileName = path.split('/').pop() ?? path
   const stem = fileName.replace(/\.[^./]+$/u, '')
   const ext = fileName.slice(stem.length)
+  const isImage = IMAGE_WORK_EXTS.has(ext.toLowerCase())
   const servedPath = ver === null ? path : (dir === '' ? ver : `${dir}/${ver}`)
   const stagePath = servedPath.replace(/\.[^./]+$/u, '') + '.stage.json'
 
@@ -1166,9 +1245,12 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
   const islandHtml = htmlEntry?.state === 'ready' ? htmlEntry.content : undefined
   const source = htmlEntry?.state === 'ready' ? htmlEntry.content : undefined
   useEffect(() => {
-    ensureDoc(sessionId, servedPath)
-    ensureDoc(sessionId, stagePath)
-  }, [sessionId, servedPath, stagePath, ensureDoc])
+    // 图片作品不走文本温层——二进制拉成字符串只会得到乱码岛源。
+    if (!isImage) {
+      ensureDoc(sessionId, servedPath)
+      ensureDoc(sessionId, stagePath)
+    }
+  }, [sessionId, servedPath, stagePath, isImage, ensureDoc])
   useEffect(() => {
     if (stageEntry === undefined || stageEntry.state === 'loading') return
     if (stageEntry.state !== 'ready' || stageEntry.content === undefined) {
@@ -1273,7 +1355,7 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
 
   const openPane = useCallback((next: WorkPane): void => {
     setPane(next)
-    if (next === 'source') ensureDoc(sessionId, servedPath)
+    if (next === 'source' && !isImage) ensureDoc(sessionId, servedPath)
     if (next === 'files' || next === 'versions') loadVersions()
   }, [ensureDoc, sessionId, servedPath, loadVersions])
 
@@ -1286,6 +1368,8 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
     // 桌面档保留同源画框——资产直连与 fetch 改写都要会话 Cookie。
     <iframe className="nv-canvas-workframe" src={src} title={tab.title} />
   )
+  /** 图片作品没有戏台/源码面—— pane 落回「文件」。 */
+  const paneNow: WorkPane = isImage && (pane === 'stage' || pane === 'source') ? 'files' : pane
   return (
     <div className="nv-work">
       <div className="nv-work-bar">
@@ -1316,18 +1400,18 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
           </span>
         )}
         <span className="nv-work-barspace" />
-        {device === 'phone' && (
+        {device === 'phone' && !isImage && (
           <button type="button" className={`nv-stage-push${picking ? ' nv-stage-picking' : ''}`}
             onClick={togglePick}>{t('work.stage.pick')}</button>
         )}
-        {device === 'phone' && (
+        {device === 'phone' && !isImage && (
           <button type="button" className="nv-stage-push" onClick={repush}>{t('work.stage.push')}</button>
         )}
-        {device === 'phone' && (
+        {device === 'phone' && !isImage && (
           <button type="button" className="nv-stage-push" aria-pressed={imeOn}
             onClick={() => actions.simImeSet(!imeOn)}>{t('sim.env.ime')}</button>
         )}
-        {device === 'phone' && (
+        {device === 'phone' && !isImage && (
           <button type="button" className="nv-stage-push" aria-pressed={wvMode === 'real'}
             onClick={() => actions.simWebviewSet(wvMode === 'real' ? 'baseline' : 'real')}>
             {fmt(t, 'sim.env.webview', { v: wvMode === 'real' ? realWebview() : WEBVIEW_BASELINE })}
@@ -1351,14 +1435,20 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
             <button type="button" className="nv-work-adopt" onClick={openAdopt}>{t('work.adopt')}</button>
           )} />
       </div>
-      {device === 'desktop' ? frame : (
+      {device === 'desktop' ? (isImage ? <ImageStage src={src} alt={fileName} t={t} /> : frame) : (
         <div className="nv-stage-wrap">
           <div className="nv-stage-scroll">
             <div className="nv-stage-device" style={{ width: `min(${size.w}px, 100%)`, height: `min(${size.h}px, 100%)` }}>
-              <PhoneStage t={t} title={stem} islandHtml={islandHtml} frameBase={frameBase}
-                transcript={transcript.messages} busy={transcript.busy} ask={simAsk}
-                resolveAsset={resolveAsset} onCall={handleCall} picking={picking} />
-              {imeOn && (
+              {isImage ? (
+                <div className="nv-imgview nv-imgview-phone">
+                  <img src={src} alt={fileName} draggable={false} />
+                </div>
+              ) : (
+                <PhoneStage t={t} title={stem} islandHtml={stageEntry !== undefined && stageEntry.state !== 'loading' ? islandHtml : undefined} frameBase={frameBase}
+                  transcript={transcript.messages} busy={transcript.busy} ask={simAsk}
+                  resolveAsset={resolveAsset} onCall={handleCall} picking={picking} />
+              )}
+              {!isImage && imeOn && (
                 <div className="nv-simime" style={{ height: SIM_IME[sizeKey] ?? SIM_IME.p390 }}>
                   {t('sim.env.imeBlock')}
                 </div>
@@ -1369,14 +1459,14 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
       )}
       <div className="nv-work-panes">
         <div className="nv-work-panetabs" role="tablist">
-          {(['stage', 'source', 'files', 'versions'] as const).map(p => (
-            <button key={p} type="button" role="tab" aria-selected={pane === p}
-              className={`nv-work-panetab${pane === p ? ' nv-work-panetab-on' : ''}`}
+          {(['stage', 'source', 'files', 'versions'] as const).filter(p => !isImage || (p !== 'stage' && p !== 'source')).map(p => (
+            <button key={p} type="button" role="tab" aria-selected={paneNow === p}
+              className={`nv-work-panetab${paneNow === p ? ' nv-work-panetab-on' : ''}`}
               onClick={() => openPane(p)}>{t(`work.tabs.${p}`)}</button>
           ))}
         </div>
         <div className="nv-work-panebody">
-          {pane === 'stage' && (
+          {paneNow === 'stage' && (
             <>
               <div className="nv-stage-hint">{fmt(t, 'work.stage.archive', { path: stagePath })}</div>
               {calls.length === 0 && <div className="nv-stage-call nv-stage-emptyrow">{t('work.stage.empty')}</div>}
@@ -1394,12 +1484,12 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
               ))}
             </>
           )}
-          {pane === 'source' && (
+          {paneNow === 'source' && (
             source === undefined
               ? <div className="nv-stage-call nv-stage-emptyrow">{t('work.loading')}</div>
               : <pre className="nv-work-source">{source}</pre>
           )}
-          {pane === 'files' && (
+          {paneNow === 'files' && (
             siblings === undefined
               ? <div className="nv-stage-call nv-stage-emptyrow">{t('work.loading')}</div>
               : siblings.length === 0
@@ -1412,7 +1502,7 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
                   </button>
                 ))
           )}
-          {pane === 'versions' && (
+          {paneNow === 'versions' && (
             vers === undefined
               ? <div className="nv-stage-call nv-stage-emptyrow">{t('work.loading')}</div>
               : vers.length === 0

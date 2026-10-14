@@ -5,13 +5,13 @@
  * 落到画布标签。
  * @module noven-shell/client/tree
  */
-import { useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
 import { Menu, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ProjectRow } from './library-api.ts'
-import type { NovenTree, TreeCardRow, TreeModuleRow, TreeSectionRow } from './tree-api.ts'
+import type { NovenTree, TreeCardRow, TreeModuleRow, TreeSectionRow, TreeWorkRow } from './tree-api.ts'
 import type { ProjectFocus, SimRow } from './canvas.tsx'
 import type { CreateKind } from './creation.tsx'
 import type { SidebarRightGuideBox } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
@@ -72,7 +72,17 @@ export interface TreeInjected {
   readonly openWork: (path: string, title: string) => void
   readonly openFiles: () => void
   readonly openCreate: (kind: CreateKind, dir?: string) => void
-  readonly switchProject: (root: string) => void
+  /** 项目名点击：画布全屏打开当前项目的创作库页（返回由面板栈还原）。 */
+  readonly openProject: () => void
+  /** 改作品清单里的展示名（账本轴，与文件名无关）。 */
+  readonly renameWork: (workId: string, title: string) => void
+  /** 把登记作品移出清单（文件留在盘上）。 */
+  readonly dropWork: (workId: string) => void
+  /** 批量呈现：同父目录的 .noven.json 是 read-modify-write，并发会互相
+      覆盖——宿主侧串行写。 */
+  readonly presentAll: (paths: readonly string[], view: 'hidden' | 'file') => void
+  /** 批量删除：卡走软删、文件走 rm、登记行顺带移出清单——同样串行。 */
+  readonly deleteSel: (items: readonly { readonly path: string; readonly cardId?: string; readonly workId?: string }[]) => void
   /** rail 态里把抽屉展开回来。 */
   readonly expandDrawer: () => void
 }
@@ -101,6 +111,41 @@ function isOverviewRow(module: TreeModuleRow): boolean {
 
 /** 拖放项目文件用的 dataTransfer 类型。 */
 const FILE_DROP_TYPE = 'application/x-noven-file'
+/** 顶层分组拖排序用的 dataTransfer 类型。 */
+const GROUP_DROP_TYPE = 'application/x-noven-treegroup'
+
+/** 顶层分组的折叠态与排序（按项目根记 localStorage）。`view` 记视图档：
+    缺省 'entity'（模块视图）——只列成品实体；'file' 是文件管理器全量档。 */
+interface GroupPrefs {
+  readonly order: readonly string[]
+  readonly collapsed: readonly string[]
+  readonly view?: 'file' | 'entity'
+}
+
+const EMPTY_GROUP_PREFS: GroupPrefs = { order: [], collapsed: [] }
+
+function groupPrefsKey(root: string): string {
+  return `noven.tree.groups.v1:${root}`
+}
+
+/** 读某项目的分组偏好；坏档/未存过都回默认。 */
+function readGroupPrefs(root: string | undefined): GroupPrefs {
+  if (root === undefined) return EMPTY_GROUP_PREFS
+  try {
+    const raw = localStorage.getItem(groupPrefsKey(root))
+    if (raw === null) return EMPTY_GROUP_PREFS
+    const parsed = JSON.parse(raw) as Partial<GroupPrefs>
+    return {
+      order: Array.isArray(parsed.order) ? parsed.order.filter((k): k is string => typeof k === 'string') : [],
+      collapsed: Array.isArray(parsed.collapsed) ? parsed.collapsed.filter((k): k is string => typeof k === 'string') : [],
+      view: parsed.view === 'file' || parsed.view === 'entity' ? parsed.view : undefined,
+    }
+  } catch (parseErr) {
+    // localStorage 在隐私/沙箱态可抛，坏 JSON 也统一回默认——偏好丢了只是顺序复原。
+    void parseErr
+    return EMPTY_GROUP_PREFS
+  }
+}
 
 /** 模块行的嵌入落点判定；返回拖来的文件路径，没有则 undefined。 */
 function fileDrop(e: DragEvent): string | undefined {
@@ -217,14 +262,51 @@ function flatTreeModules(modules: readonly TreeModuleRow[]): readonly TreeModule
   return modules.flatMap(module => [module, ...flatTreeModules(module.children)])
 }
 
+/** 行选择柄：`pick` 处理 Shift 区间/⌘ 离散的修饰键点击；`on` 是选中态；
+    `clear` 由普通点击调用——打开行的同时把选择清掉。 */
+interface RowSel {
+  readonly on: boolean
+  readonly pick: (e: ReactMouseEvent) => void
+  readonly clear: () => void
+}
+
+/** 同级列表里可选的一行：`key` 在同层内唯一，`path` 是呈现轴写面用的项目
+    相对路径（卡行是 `卡/<dir>`）。`kind` 决定批量删除走哪条写面。 */
+interface SelItem {
+  readonly key: string
+  readonly path: string
+  readonly kind: 'file' | 'dir' | 'card' | 'work'
+  readonly cardId?: string
+  /** 登记进作品清单的行带 workId——删除文件时顺带移出清单。 */
+  readonly workId?: string
+}
+
+/** 一份同层多选集：scope 隔离不同父列表，anchor 是 Shift 区间的锚点。 */
+interface Selection {
+  readonly scope: string
+  readonly anchor: string
+  readonly items: ReadonlyMap<string, SelItem>
+}
+
+/** 构造某层某行的选择柄；`order` 是该层可选项的渲染顺序（Shift 区间用）。 */
+type SelFor = (scope: string, order: readonly SelItem[], item: SelItem) => RowSel
+
 /** 一行项目文件/目录占位：点击开文稿页签；⋯ 给「放入模块」二级菜单、
-    复制链接与呈现轴（隐藏/恢复）。`dir` 行不拖拽不内嵌（是目录占位）。 */
-function FileRow({ path, title, dir, hidden, indent = 0, current, t, onOpen, embedTargets, onEmbed, fileOps, present }: {
+    复制链接与呈现轴（隐藏/恢复）。`dir` 行不拖拽不内嵌（是目录占位）。
+    `renameTitle` 给了才出「修改模块名」——登记实体（作品/文稿）的展示名
+    走清单账本，与真实文件名是两件事。 */
+function FileRow({ path, title, dir, hidden, indent = 0, current, fileView, sel, renameTitle, t, onOpen, embedTargets, onEmbed, fileOps, present }: {
   readonly path: string
   readonly title: string
   readonly dir?: boolean
   readonly hidden?: boolean
   readonly current?: boolean
+  /** 文件视图：行名显示真实文件名而不是展示名。 */
+  readonly fileView?: boolean
+  /** 同级多选柄；不给则行不参与批量选择。 */
+  readonly sel?: RowSel
+  /** 展示名写面（作品清单标题）；散文件没有展示名，不出菜单项。 */
+  readonly renameTitle?: (name: string) => void
   /** 架层内的额外缩进层级。 */
   readonly indent?: number
   readonly t: ShellT
@@ -241,11 +323,16 @@ function FileRow({ path, title, dir, hidden, indent = 0, current, t, onOpen, emb
   return (
     <div className={`nv-tree-row nv-tree-module${hidden === true ? ' nv-tree-hidden' : ''}`} style={{ paddingLeft: 28 + indent * 14 }}
       data-current={current || undefined}
+      data-sel={sel?.on === true || undefined}
       draggable={!isDir}
       onDragStart={e => { e.dataTransfer.setData(FILE_DROP_TYPE, path); e.dataTransfer.effectAllowed = 'copy' }}>
-      <button type="button" className="nv-tree-main" onClick={() => { if (!isDir) onOpen(path, title) }}>
+      <button type="button" className="nv-tree-main" onClick={e => {
+        if (sel !== undefined && (e.shiftKey || e.metaKey || e.ctrlKey)) { sel.pick(e); return }
+        sel?.clear()
+        if (!isDir) onOpen(path, title)
+      }}>
         <span className="nv-tree-glyph">{isDir ? glyph.folder(13) : glyph.file(13)}</span>
-        <span className="nv-tree-name">{title}</span>
+        <span className="nv-tree-name">{fileView === true ? fileName : title}</span>
       </button>
       <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
         onClose={() => setMenuOpen(false)}
@@ -257,6 +344,11 @@ function FileRow({ path, title, dir, hidden, indent = 0, current, t, onOpen, emb
             if (next !== undefined && next !== '' && next !== fileName) fileOps.rename(path, next)
             return
           }
+          if (id === 'rename-title' && renameTitle !== undefined) {
+            const next = window.prompt(t('tree.file.renameTitlePrompt'), title)?.trim()
+            if (next !== undefined && next !== '' && next !== title) renameTitle(next)
+            return
+          }
           if (id === 'hide' || id === 'unhide') { present(path, id === 'hide' ? 'hidden' : 'file'); return }
           if (id === 'delete' && window.confirm(t('canvas.doc.deleteConfirm').replace('{name}', fileName))) { fileOps.delete(path); return }
           if (id.startsWith('embed:')) onEmbed(id)
@@ -266,10 +358,75 @@ function FileRow({ path, title, dir, hidden, indent = 0, current, t, onOpen, emb
             { id: 'embed', label: t('tree.file.embed'), submenu: embedTargets },
             { id: 'link', label: t('tree.mod.copyLink') },
             { type: 'separator' as const, id: 'file-sep' },
-            { id: 'rename', label: t('canvas.doc.rename') },
-            { id: 'delete', label: t('canvas.doc.delete'), danger: true as const },
           ] : []),
+          { id: 'rename', label: t('tree.file.renameFile') },
+          ...(renameTitle !== undefined ? [{ id: 'rename-title', label: t('tree.file.renameTitle') }] : []),
+          ...(!isDir ? [{ id: 'delete', label: t('canvas.doc.delete'), danger: true as const }] : []),
           { id: hidden === true ? 'unhide' : 'hide', label: t(hidden === true ? 'tree.unhide' : 'tree.hide') },
+        ]}
+        anchor={(
+          <button type="button" className="nv-tree-more" aria-label={t('tree.file.more')}
+            onClick={() => setMenuOpen(v => !v)}>⋯</button>
+        )} />
+    </div>
+  )
+}
+
+/** 一行登记作品：打开 + ⋯ 菜单（模块名=清单标题 / 文件名=磁盘名 / 隐藏 /
+    移出清单 / 删文件）。文件级选择与同级批量处理走 `sel`。 */
+function WorkRow({ work, current, fileView, sel, t, onOpen, fileOps, present, renameWork, dropWork }: {
+  readonly work: TreeWorkRow
+  readonly current?: boolean
+  readonly fileView?: boolean
+  readonly sel?: RowSel
+  readonly t: ShellT
+  readonly onOpen: (path: string, title: string) => void
+  readonly fileOps: { readonly rename: (path: string, name: string) => void; readonly delete: (path: string) => void }
+  readonly present: (path: string, view: 'hidden' | 'file') => void
+  /** 改清单里的展示名（账本轴，不动文件名）。 */
+  readonly renameWork: (workId: string, title: string) => void
+  /** 移出作品清单（文件留在盘上）。 */
+  readonly dropWork: (workId: string) => void
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const fileName = work.path.split('/').pop() ?? work.path
+  return (
+    <div className={`nv-tree-row nv-tree-module${work.hidden === true ? ' nv-tree-hidden' : ''}`} style={{ paddingLeft: 28 }}
+      data-current={current || undefined}
+      data-sel={sel?.on === true || undefined}>
+      <button type="button" className="nv-tree-main" onClick={e => {
+        if (sel !== undefined && (e.shiftKey || e.metaKey || e.ctrlKey)) { sel.pick(e); return }
+        sel?.clear()
+        onOpen(work.path, work.title)
+      }}>
+        <span className="nv-tree-glyph">{glyph.grid(13)}</span>
+        <span className="nv-tree-name">{fileView === true ? fileName : work.title}</span>
+      </button>
+      <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
+        onClose={() => setMenuOpen(false)}
+        onSelect={id => {
+          setMenuOpen(false)
+          if (id === 'rename') {
+            const next = window.prompt(t('canvas.doc.renamePrompt'), fileName)?.trim()
+            if (next !== undefined && next !== '' && next !== fileName) fileOps.rename(work.path, next)
+            return
+          }
+          if (id === 'rename-title') {
+            const next = window.prompt(t('tree.file.renameTitlePrompt'), work.title)?.trim()
+            if (next !== undefined && next !== '' && next !== work.title) renameWork(work.id, next)
+            return
+          }
+          if (id === 'drop' && window.confirm(t('tree.work.dropConfirm').replace('{name}', work.title))) { dropWork(work.id); return }
+          if (id === 'hide' || id === 'unhide') { present(work.path, id === 'hide' ? 'hidden' : 'file'); return }
+          if (id === 'delete' && window.confirm(t('canvas.doc.deleteConfirm').replace('{name}', fileName))) { fileOps.delete(work.path) }
+        }}
+        items={[
+          { id: 'rename-title', label: t('tree.file.renameTitle') },
+          { id: 'rename', label: t('tree.file.renameFile') },
+          { id: 'drop', label: t('tree.work.drop') },
+          { type: 'separator' as const, id: 'work-sep' },
+          { id: work.hidden === true ? 'unhide' : 'hide', label: t(work.hidden === true ? 'tree.unhide' : 'tree.hide') },
+          { id: 'delete', label: t('canvas.doc.delete'), danger: true as const },
         ]}
         anchor={(
           <button type="button" className="nv-tree-more" aria-label={t('tree.file.more')}
@@ -288,11 +445,15 @@ function cardIcon(kind: string): ReactNode {
 
 /** 一张卡的子树（设计稿 02）：图标 + 名字 + 右端（⋯ 菜单、悬停「＋」加模块、› 折叠）。
     卡内角色收进「角色 N」子组行，成员再缩进一级。 */
-function CardBranch({ card, depth, currentKey, t, onOpen, onAdd, ops, cardOps }: {
+function CardBranch({ card, depth, currentKey, fileView, sel, t, onOpen, onAdd, ops, cardOps }: {
   readonly card: TreeCardRow
   /** 架层深度：卡/ 顶层的卡是 0，每深一层缩进 14。 */
   readonly depth: number
   readonly currentKey: string | undefined
+  /** 文件视图：行名显示真实目录名而不是卡名。 */
+  readonly fileView?: boolean
+  /** 同级多选柄；不给则卡行不参与批量选择。 */
+  readonly sel?: RowSel
   readonly t: ShellT
   readonly onOpen: (moduleId?: string, name?: string) => void
   readonly onAdd: () => void
@@ -313,6 +474,7 @@ function CardBranch({ card, depth, currentKey, t, onOpen, onAdd, ops, cardOps }:
     <div>
       <div className={`nv-tree-row nv-tree-card${card.hidden === true ? ' nv-tree-hidden' : ''}`}
         data-current={currentKey === `card:${card.cardId}` || undefined}
+        data-sel={sel?.on === true || undefined}
         style={{ paddingLeft: indent }}
         onDragOver={e => { if (e.dataTransfer.types.includes(FILE_DROP_TYPE)) e.preventDefault() }}
         onDrop={e => { const path = fileDrop(e); if (path !== undefined) { e.preventDefault(); ops.embedFile(card.cardId, null, path) } }}>
@@ -321,9 +483,13 @@ function CardBranch({ card, depth, currentKey, t, onOpen, onAdd, ops, cardOps }:
             onChange={e => setDraft(e.target.value)} onBlur={commit}
             onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') setRenaming(false) }} />
         ) : (
-          <button type="button" className="nv-tree-main" onClick={() => onOpen()}>
+          <button type="button" className="nv-tree-main" onClick={e => {
+            if (sel !== undefined && (e.shiftKey || e.metaKey || e.ctrlKey)) { sel.pick(e); return }
+            sel?.clear()
+            onOpen()
+          }}>
             <span className="nv-tree-cardicon">{cardIcon(card.kind)}</span>
-            <span className="nv-tree-name">{card.name}</span>
+            <span className="nv-tree-name">{fileView === true ? card.dir : card.name}</span>
             {card.pending && <span className="nv-tree-pending" title={t('tree.pending')} />}
           </button>
         )}
@@ -447,10 +613,13 @@ interface FileOps {
 }
 
 /** 一层架层：文件夹组头（折叠 + ⋯ 隐藏/恢复）+ 子架层 + 卡行 + 散件行。 */
-function ShelfBranch({ node, depth, currentKey, t, onOpen, onAdd, ops, cardOps, fileOps }: {
+function ShelfBranch({ node, depth, currentKey, fileView, selFor, t, onOpen, onAdd, ops, cardOps, fileOps }: {
   readonly node: ShelfNode
   readonly depth: number
   readonly currentKey: string | undefined
+  readonly fileView?: boolean
+  /** 同层多选构造柄；架层目录行自身不进选择集（结构行只留 ⋯ 菜单）。 */
+  readonly selFor?: SelFor
   readonly t: ShellT
   readonly onOpen: (cardId: string, moduleId?: string, name?: string) => void
   readonly onAdd: (cardId: string) => void
@@ -461,6 +630,11 @@ function ShelfBranch({ node, depth, currentKey, t, onOpen, onAdd, ops, cardOps, 
   const [open, setOpen] = useState(true)
   const [menuOpen, setMenuOpen] = useState(false)
   const hidden = shelfHidden(node)
+  const scope = `shelf:${node.path}`
+  const order: readonly SelItem[] = [
+    ...node.cards.map(c => ({ key: `card:${c.cardId}`, path: `卡/${c.dir}`, kind: 'card' as const, cardId: c.cardId })),
+    ...node.rows.map(r => ({ key: `f:${r.path}`, path: r.path, kind: (r.dir === true ? 'dir' : 'file') as 'dir' | 'file' })),
+  ]
   return (
     <div>
       <div className={`nv-tree-row nv-tree-shelf${hidden ? ' nv-tree-hidden' : ''}`} style={{ paddingLeft: 4 + depth * 14 }}>
@@ -489,16 +663,21 @@ function ShelfBranch({ node, depth, currentKey, t, onOpen, onAdd, ops, cardOps, 
         <div>
           {node.shelves.map(shelf => (
             <ShelfBranch key={shelf.path} node={shelf} depth={depth + 1} currentKey={currentKey} t={t}
+              fileView={fileView} selFor={selFor}
               onOpen={onOpen} onAdd={onAdd} ops={ops} cardOps={cardOps} fileOps={fileOps} />
           ))}
           {node.cards.map(card => (
             <CardBranch key={card.cardId} card={card} depth={depth + 1} currentKey={currentKey} t={t}
+              fileView={fileView}
+              sel={selFor?.(scope, order, { key: `card:${card.cardId}`, path: `卡/${card.dir}`, kind: 'card', cardId: card.cardId })}
               onOpen={(moduleId, name) => onOpen(card.cardId, moduleId, name)}
               onAdd={() => onAdd(card.cardId)} ops={ops} cardOps={cardOps} />
           ))}
           {node.rows.map(row => (
             <FileRow key={row.path} path={row.path} title={row.title} dir={row.dir} hidden={row.hidden}
               current={currentKey === `doc:${row.path}`}
+              fileView={fileView}
+              sel={selFor?.(scope, order, { key: `f:${row.path}`, path: row.path, kind: row.dir === true ? 'dir' : 'file' })}
               indent={depth + 1} t={t} onOpen={fileOps.open} embedTargets={fileOps.embedTargets}
               onEmbed={id => fileOps.embed(id, row.path)}
               fileOps={{ rename: fileOps.rename, delete: fileOps.delete }} present={fileOps.present} />
@@ -509,9 +688,9 @@ function ShelfBranch({ node, depth, currentKey, t, onOpen, onAdd, ops, cardOps, 
   )
 }
 
-/** 分组头（设计稿 02）：纯灰小标签，不折叠、不计数；`onAdd` 是行尾
-    悬停才显的「＋」（造一个同级成员）。 */
-function Group({ title, count, children, onAdd, addTitle, onDelete, deleteTitle, always }: {
+/** 分组头（设计稿 02）：单击整行收起/展开，`drag` 给了就可长按拖排序；
+    `onAdd`/`onDelete` 是行尾悬停才显的「＋」「×」。 */
+function Group({ title, count, children, onAdd, addTitle, onDelete, deleteTitle, always, collapsed, onToggle, drag, t }: {
   readonly title: string
   readonly count: number
   readonly children: ReactNode
@@ -522,12 +701,26 @@ function Group({ title, count, children, onAdd, addTitle, onDelete, deleteTitle,
   readonly deleteTitle?: string
   /** 空也渲染：用户显式建出的分组架子不能因为没东西就消失。 */
   readonly always?: boolean
+  readonly collapsed?: boolean
+  readonly onToggle?: () => void
+  /** 组头行拖动：给了即 draggable；落点与排序由调用方的槽位处理。 */
+  readonly drag?: {
+    readonly onDragStart: (e: DragEvent) => void
+    readonly onDragEnd: () => void
+  }
+  readonly t: ShellT
 }) {
   if (count === 0 && always !== true) return null
+  const open = collapsed !== true
   return (
     <div className="nv-tree-group">
-      <div className="nv-tree-grouprow">
-        <span className="nv-tree-grouptitle">{title}</span>
+      <div className={`nv-tree-grouprow${onToggle !== undefined ? ' nv-tree-grouprow-toggle' : ''}`}
+        draggable={drag !== undefined}
+        onDragStart={drag?.onDragStart}
+        onDragEnd={drag?.onDragEnd}
+        onClick={onToggle}>
+        <button type="button" className="nv-tree-grouptitle"
+          onClick={e => { e.stopPropagation(); onToggle?.() }}>{title}</button>
         {onAdd !== undefined && (
           <button type="button" className="nv-tree-add" title={addTitle}
             onClick={e => { e.stopPropagation(); onAdd() }}>+</button>
@@ -536,8 +729,13 @@ function Group({ title, count, children, onAdd, addTitle, onDelete, deleteTitle,
           <button type="button" className="nv-tree-add nv-tree-del" title={deleteTitle}
             onClick={e => { e.stopPropagation(); onDelete() }}>×</button>
         )}
+        {onToggle !== undefined && (
+          <button type="button" className={`nv-tree-fold${open ? ' nv-tree-fold-on' : ''}`}
+            aria-label={t(open ? 'tree.collapse' : 'tree.expand')}
+            onClick={e => { e.stopPropagation(); onToggle() }}>›</button>
+        )}
       </div>
-      {children}
+      {open && children}
     </div>
   )
 }
@@ -550,15 +748,13 @@ type TreeProps = PropsRuntime<'sidebar.right.pane.top'> & PropsLocale<'novenShel
  * @returns 抽屉导航。
  */
 export function ContentTree(props: TreeProps) {
-  const { t, useTree, useProject, useProjects } = props
+  const { t, useTree, useProject } = props
   const tree = useTree(v => v)
   const project = useProject(v => v)
-  const projects = useProjects(v => v)
   const currentKey = props.useActiveTab(v => v)
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
-  const [switchOpen, setSwitchOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
 
   // ⌘K 聚焦树内搜索（设计稿 01 搜索框的 ⌘K 角标是真的快捷键）。抽屉收成
@@ -601,36 +797,106 @@ export function ContentTree(props: TreeProps) {
     }
   }, [tree, needle])
 
-  // 呈现轴：hidden 行默认不渲；眼睛开关掀开时一律画灰占位（给恢复口）。
-  const [showHidden, setShowHidden] = useState(false)
+  /* 同层多选：scope 区分父列表（同级才能一起选），anchor 是 Shift 区间锚。
+     修饰键点击进选择不打开；普通点击照旧打开并清选择。 */
+  const [sel, setSel] = useState<Selection | null>(null)
+  const pickSel = (e: ReactMouseEvent, scope: string, order: readonly SelItem[], item: SelItem): void => {
+    e.preventDefault()
+    if (e.shiftKey && sel !== null && sel.scope === scope) {
+      const keys = order.map(r => r.key)
+      const a = keys.indexOf(sel.anchor)
+      const b = keys.indexOf(item.key)
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a]
+        setSel({ scope, anchor: sel.anchor, items: new Map(order.slice(lo, hi + 1).map(r => [r.key, r])) })
+        return
+      }
+    }
+    if ((e.metaKey || e.ctrlKey) && sel !== null && sel.scope === scope) {
+      const items = new Map(sel.items)
+      if (items.delete(item.key) === false) items.set(item.key, item)
+      setSel(items.size === 0 ? null : { scope, anchor: item.key, items })
+      return
+    }
+    setSel({ scope, anchor: item.key, items: new Map([[item.key, item]]) })
+  }
+  /** 行组件拿的选择柄：scope 是父列表标识，order 是该层渲染顺序。 */
+  const selFor: SelFor = (scope, order, item) => ({
+    on: sel?.items.has(item.key) === true,
+    pick: e => pickSel(e, scope, order, item),
+    clear: () => { if (sel !== null) setSel(null) },
+  })
+
+  /* 顶层分组：折叠态 + 排序 + 视图档按项目根落 localStorage；拖动用专用
+     type，与文件拖入模块（FILE_DROP_TYPE）互不干扰。 */
+  const root = project?.root
+  const [prefs, setPrefs] = useState<GroupPrefs>(() => readGroupPrefs(root))
+  const [prefsRoot, setPrefsRoot] = useState(root)
+  if (prefsRoot !== root) {
+    setPrefsRoot(root)
+    setPrefs(readGroupPrefs(root))
+    setSel(null)
+  }
+  const writeGroupPrefs = (next: GroupPrefs): void => {
+    setPrefs(next)
+    if (root === undefined) return
+    try { localStorage.setItem(groupPrefsKey(root), JSON.stringify(next)) }
+    catch (storageErr) {
+      // 隐私/沙箱态可抛，丢了只是回到默认顺序。
+      void storageErr
+    }
+  }
+  const viewFile = prefs.view === 'file'
+
+  // 呈现轴三态（与会话栏归档过滤同款）：'hide' 默认藏 / 'show' 灰显全列 /
+  // 'only' 只看隐藏项——批量收拾完用 only 复核藏了什么。
+  const [hiddenMode, setHiddenMode] = useState<'hide' | 'show' | 'only'>('hide')
   const display = useMemo((): NovenTree | undefined => {
-    if (filtered === undefined || showHidden) return filtered
+    if (filtered === undefined) return filtered
+    const keep = (hidden?: boolean): boolean =>
+      hiddenMode === 'show' ? true : hiddenMode === 'only' ? hidden === true : hidden !== true
     return {
       ...filtered,
-      cards: filtered.cards.filter(c => c.hidden !== true),
-      docs: filtered.docs.filter(d => d.hidden !== true),
-      works: filtered.works.filter(w => w.hidden !== true),
+      cards: filtered.cards.filter(c => keep(c.hidden)),
+      docs: filtered.docs.filter(d => keep(d.hidden)),
+      works: filtered.works.filter(w => keep(w.hidden)),
       sections: (filtered.sections ?? [])
-        .filter(s => s.hidden !== true)
-        .map(s => ({ ...s, rows: s.rows.filter(r => r.hidden !== true) })),
+        .filter(s => keep(s.hidden) || (hiddenMode === 'only' && s.rows.some(r => r.hidden === true)))
+        .map(s => ({ ...s, rows: s.rows.filter(r => keep(r.hidden)) })),
     }
-  }, [filtered, showHidden])
+  }, [filtered, hiddenMode])
+  /** 模块视图：散文件层（用户分组、卡架散件）整层不渲，只留成品实体。 */
+  const visible = useMemo((): NovenTree | undefined => {
+    if (display === undefined || viewFile) return display
+    return { ...display, sections: [] }
+  }, [display, viewFile])
   const hiddenCount = filtered === undefined ? 0
     : filtered.cards.filter(c => c.hidden === true).length
       + filtered.docs.filter(d => d.hidden === true).length
       + filtered.works.filter(w => w.hidden === true).length
       + (filtered.sections ?? []).reduce((n, s) => n + (s.hidden === true ? 1 : 0) + s.rows.filter(r => r.hidden === true).length, 0)
 
-  const empty = display !== undefined && display.cards.length === 0 && display.docs.length === 0
-    && display.works.length === 0 && (display.sections ?? []).length === 0
+  const empty = visible !== undefined && visible.cards.length === 0 && visible.docs.length === 0
+    && visible.works.length === 0 && (visible.sections ?? []).length === 0
   /** 目录存在性 → 内置分组的空架子也要渲染（用户刚建出的组必须可见）。 */
-  const hasDir = (name: string): boolean => (display?.sections ?? []).some(s => s.name === name)
+  const hasDir = (name: string): boolean => (visible?.sections ?? []).some(s => s.name === name)
   /** 用户分组 = 顶层目录里刨掉内置的 卡/ 文稿/。 */
-  const userSections = (display?.sections ?? []).filter(s => s.name !== '卡' && s.name !== '文稿')
+  const userSections = (visible?.sections ?? []).filter(s => s.name !== '卡' && s.name !== '文稿')
   /** 卡/ 架层散件行（卡目录内部不算散件，服务端已剔）。 */
-  const cardShelfRows = (display?.sections ?? []).find(s => s.name === '卡')?.rows ?? []
+  const cardShelfRows = (visible?.sections ?? []).find(s => s.name === '卡')?.rows ?? []
   /** 卡行与散件行按目录归架层；卡/ 顶层的留在根节点。 */
-  const shelfRoot = useMemo(() => buildShelves(display?.cards ?? [], cardShelfRows), [display, cardShelfRows])
+  const shelfRoot = useMemo(() => buildShelves(visible?.cards ?? [], cardShelfRows), [visible, cardShelfRows])
+  /* 各同层列表的可选顺序：Shift 区间按它取段。卡架根层 = 卡行 ∪ 散件行。 */
+  const cardOrder: readonly SelItem[] = useMemo(() => [
+    ...shelfRoot.cards.map(c => ({ key: `card:${c.cardId}`, path: `卡/${c.dir}`, kind: 'card' as const, cardId: c.cardId })),
+    ...shelfRoot.rows.map(r => ({ key: `f:${r.path}`, path: r.path, kind: (r.dir === true ? 'dir' : 'file') as 'dir' | 'file' })),
+  ], [shelfRoot])
+  const docOrder: readonly SelItem[] = useMemo(() => (visible?.docs ?? [])
+    .map(d => ({ key: `f:${d.path}`, path: d.path, kind: 'file' as const, workId: d.id ?? undefined })), [visible])
+  const workOrder: readonly SelItem[] = useMemo(() => (visible?.works ?? [])
+    .map(w => ({ key: `w:${w.path}`, path: w.path, kind: 'work' as const, workId: w.id })), [visible])
+  /** 选择集里可删的条目数（目录行不进批量删除——unlink 拒收目录）。 */
+  const deletable = sel === null ? 0 : [...sel.items.values()].filter(i => i.kind !== 'dir').length
   const cardOps: CardOps = useMemo(() => ({
     rename: props.renameCard, delete: props.deleteCard,
     showSource: path => props.openDoc(path, 'card.json'),
@@ -658,6 +924,64 @@ export function ContentTree(props: TreeProps) {
   const noProject = filtered === undefined
   const title = project?.title ?? (project === undefined ? t('tree.noProject') : project.root.split('/').filter(Boolean).pop() ?? project.root)
 
+  const collapsedSet = useMemo(() => new Set(prefs.collapsed), [prefs])
+  const toggleGroup = (key: string): void => {
+    const next = new Set(collapsedSet)
+    if (next.has(key)) next.delete(key)
+    else next.add(key)
+    writeGroupPrefs({ ...prefs, collapsed: [...next] })
+  }
+  const [dragGroup, setDragGroup] = useState<string | null>(null)
+  const [dropHint, setDropHint] = useState<{ key: string; before: boolean } | null>(null)
+  const groupKeys = useMemo(() => [
+    'cards', 'docs', 'works',
+    ...userSections.map(s => `sec:${s.name}`),
+    ...(studioOn ? ['studio'] : []),
+  ], [userSections, studioOn])
+  const groupOrder = useMemo(() => {
+    const stored = prefs.order.filter(k => groupKeys.includes(k))
+    return [...stored, ...groupKeys.filter(k => !stored.includes(k))]
+  }, [prefs, groupKeys])
+  const groupDrag = (key: string) => ({
+    onDragStart: (e: DragEvent) => {
+      e.dataTransfer.setData(GROUP_DROP_TYPE, key)
+      e.dataTransfer.effectAllowed = 'move'
+      setDragGroup(key)
+    },
+    onDragEnd: () => { setDragGroup(null); setDropHint(null) },
+  })
+  const groupSlot = (key: string, node: ReactNode): ReactNode => (
+    <div key={key}
+      className={`nv-tree-groupslot${dragGroup === key ? ' nv-tree-groupslot-drag' : ''}${dropHint?.key === key ? (dropHint.before ? ' nv-tree-drop-before' : ' nv-tree-drop-after') : ''}`}
+      onDragOver={e => {
+        if (!e.dataTransfer.types.includes(GROUP_DROP_TYPE)) return
+        e.preventDefault()
+        e.dataTransfer.dropEffect = 'move'
+        const rect = e.currentTarget.getBoundingClientRect()
+        const before = e.clientY < rect.top + rect.height / 2
+        setDropHint(h => (h?.key === key && h.before === before ? h : { key, before }))
+      }}
+      onDrop={e => {
+        if (!e.dataTransfer.types.includes(GROUP_DROP_TYPE)) return
+        e.preventDefault()
+        const moved = e.dataTransfer.getData(GROUP_DROP_TYPE)
+        const rect = e.currentTarget.getBoundingClientRect()
+        const before = e.clientY < rect.top + rect.height / 2
+        if (moved !== '' && moved !== key) {
+          const order = groupOrder.filter(k => k !== moved)
+          const at = order.indexOf(key)
+          if (at >= 0) {
+            order.splice(at + (before ? 0 : 1), 0, moved)
+            writeGroupPrefs({ ...prefs, order })
+          }
+        }
+        setDragGroup(null)
+        setDropHint(null)
+      }}>
+      {node}
+    </div>
+  )
+
   if (props.rail) {
     return (
       <div className="nv-tree nv-tree-rail">
@@ -672,26 +996,42 @@ export function ContentTree(props: TreeProps) {
   return (
     <div className="nv-tree">
       <div className="nv-tree-head">
-        <Menu open={switchOpen} side="bottom" align="start" selection="fill"
-          onClose={() => setSwitchOpen(false)}
-          onSelect={id => { setSwitchOpen(false); props.switchProject(id) }}
-          items={projects.map(row => ({ id: row.root, label: row.title }))}
-          anchor={(
-            <button type="button" className="nv-tree-project" title={t('tree.switch')}
-              onClick={() => setSwitchOpen(v => !v)}>
-              <span className="nv-tree-projectname">{title}</span>
-              <span className="nv-tree-caret">⌄</span>
-            </button>
-          )} />
+        {/* 项目名不再是切换器——单击开创作库的项目页；切换项目在库里做。 */}
+        <button type="button" className="nv-tree-project" title={t('tree.library.open')}
+          onClick={props.openProject}>
+          <span className="nv-tree-projectname">{title}</span>
+          <span className="nv-tree-caret">›</span>
+        </button>
+        <button type="button" className={`nv-tree-eye${viewFile ? ' nv-tree-eye-on' : ''}`}
+          title={t(viewFile ? 'tree.view.entity' : 'tree.view.files')}
+          onClick={() => writeGroupPrefs({ ...prefs, view: viewFile ? 'entity' : 'file' })}>
+          {viewFile ? glyph.folder(13) : glyph.layers(13)}
+        </button>
         {hiddenCount > 0 && (
-          <button type="button" className={`nv-tree-eye${showHidden ? ' nv-tree-eye-on' : ''}`}
-            title={t(showHidden ? 'tree.hideHidden' : 'tree.showHidden')}
-            onClick={() => setShowHidden(v => !v)}>
+          <button type="button" className={`nv-tree-eye${hiddenMode !== 'hide' ? ' nv-tree-eye-on' : ''}`}
+            title={t(hiddenMode === 'hide' ? 'tree.showHidden' : hiddenMode === 'show' ? 'tree.onlyHidden' : 'tree.hideHidden')}
+            onClick={() => setHiddenMode(m => m === 'hide' ? 'show' : m === 'show' ? 'only' : 'hide')}>
             {glyph.eye(13)}
             <span className="nv-tree-eyecount">{hiddenCount}</span>
           </button>
         )}
       </div>
+      {sel !== null && (
+        <div className="nv-tree-selbar">
+          <span className="nv-tree-selcount">{t('tree.sel.count').replace('{n}', String(sel.items.size))}</span>
+          <button type="button" className="nv-tree-selbtn" onClick={() => { props.presentAll([...sel.items.values()].map(i => i.path), 'hidden'); setSel(null) }}>{t('tree.hide')}</button>
+          <button type="button" className="nv-tree-selbtn" onClick={() => { props.presentAll([...sel.items.values()].map(i => i.path), 'file'); setSel(null) }}>{t('tree.unhide')}</button>
+          <button type="button" className="nv-tree-selbtn nv-tree-selbtn-danger" disabled={deletable === 0}
+            onClick={() => {
+              if (!window.confirm(t('tree.sel.deleteConfirm').replace('{n}', String(deletable)))) return
+              props.deleteSel([...sel.items.values()]
+                .filter(i => i.kind !== 'dir')
+                .map(i => ({ path: i.path, cardId: i.cardId, workId: i.workId })))
+              setSel(null)
+            }}>{t('canvas.doc.delete')}</button>
+          <button type="button" className="nv-tree-selbtn" title={t('tree.sel.clear')} onClick={() => setSel(null)}>✕</button>
+        </div>
+      )}
       <div className="nv-tree-search">
         <div className="nv-tree-searchwrap">
           <span className="nv-tree-searchicon" aria-hidden="true">{glyph.search(13)}</span>
@@ -710,75 +1050,104 @@ export function ContentTree(props: TreeProps) {
           </div>
         )}
         {empty && <div className="nv-tree-empty">{t('tree.empty')}</div>}
-        <Group title={t('tree.cards')} count={display?.cards.length ?? 0} always={hasDir('卡')}
-          onAdd={() => props.openCreate('world')} addTitle={t('create.world.title')}>
-          {shelfRoot.shelves.map(shelf => (
-            <ShelfBranch key={shelf.path} node={shelf} depth={0} currentKey={currentKey} t={t}
-              onOpen={props.openCard} onAdd={props.addModule}
-              ops={{ rename: props.renameModule, copy: props.copyModule, delete: props.deleteModule, embedFile: props.embedFile }}
-              cardOps={cardOps} fileOps={fileOps} />
-          ))}
-          {shelfRoot.cards.map(card => (
-            <CardBranch key={card.cardId} card={card} depth={0} currentKey={currentKey} t={t}
-              onOpen={(moduleId, name) => props.openCard(card.cardId, moduleId, name)}
-              onAdd={() => props.addModule(card.cardId)}
-              ops={{ rename: props.renameModule, copy: props.copyModule, delete: props.deleteModule, embedFile: props.embedFile }}
-              cardOps={cardOps} />
-          ))}
-          {shelfRoot.rows.map(row => (
-            <FileRow key={row.path} path={row.path} title={row.title} dir={row.dir} hidden={row.hidden} t={t}
-              current={currentKey === `doc:${row.path}`}
-              onOpen={fileOps.open} embedTargets={embedTargets} onEmbed={id => embedFromId(id, row.path)}
-              fileOps={{ rename: fileOps.rename, delete: fileOps.delete }} present={fileOps.present} />
-          ))}
-        </Group>
-        <Group title={t('tree.docs')} count={display?.docs.length ?? 0} always={hasDir('文稿')}
-          onAdd={() => props.openCreate('doc')} addTitle={t('create.doc.title')}>
-          {display?.docs.map(doc => (
-            <FileRow key={doc.path} path={doc.path} title={doc.title} hidden={doc.hidden} t={t}
-              current={currentKey === `doc:${doc.path}`}
-              onOpen={props.openDoc} embedTargets={embedTargets} onEmbed={id => embedFromId(id, doc.path)}
-              fileOps={fileOps} present={props.present} />
-          ))}
-        </Group>
-        <Group title={t('tree.works')} count={display?.works.length ?? 0}>
-          {display?.works.map(work => (
-            <button key={work.id} type="button" className={`nv-tree-row nv-tree-module${work.hidden === true ? ' nv-tree-hidden' : ''}`} style={{ paddingLeft: 28 }}
-              data-current={currentKey === `work:${work.path}` || undefined}
-              onClick={() => props.openWork(work.path, work.title)}>
-              <span className="nv-tree-glyph">{glyph.grid(13)}</span>
-              <span className="nv-tree-name">{work.title}</span>
-            </button>
-          ))}
-        </Group>
-        {userSections.map(section => (
-          <Group key={section.name} title={section.name} count={section.rows.length} always
-            onAdd={() => props.openCreate('doc', section.name)} addTitle={t('create.doc.title')}
-            onDelete={() => {
-              if (window.confirm(t('tree.group.deleteConfirm').replace('{name}', section.name).replace('{count}', String(section.rows.length))))
-                props.deleteGroup(section.name)
-            }}
-            deleteTitle={t('tree.group.delete')}>
-            {section.rows.map(row => (
-              <FileRow key={row.path} path={row.path} title={row.title} dir={row.dir} hidden={row.hidden} t={t}
-                onOpen={props.openDoc} embedTargets={embedTargets} onEmbed={id => embedFromId(id, row.path)}
-                fileOps={fileOps} present={props.present} />
-            ))}
-          </Group>
-        ))}
-        {studioOn && (
-        <Group title={t('tree.studio')} count={simRows.length}
-          onAdd={props.createSim} addTitle={t('sim.list.new')}>
-          {simRows.map(row => (
-            <button key={row.id} type="button" className="nv-tree-row nv-tree-module" style={{ paddingLeft: 28 }}
-              onClick={() => props.openSim(row.id)}>
-              <span className="nv-tree-glyph">{glyph.phone(13)}</span>
-              <span className="nv-tree-name">{row.title}</span>
-              {row.running && <span className="nv-simrow-dot" />}
-            </button>
-          ))}
-        </Group>
-        )}
+        {groupOrder.map(key => {
+          const shared = {
+            collapsed: collapsedSet.has(key),
+            onToggle: () => toggleGroup(key),
+            drag: groupDrag(key),
+            t,
+          }
+          if (key === 'cards') return groupSlot('cards', (
+            <Group title={t('tree.cards')} count={visible?.cards.length ?? 0} always={hasDir('卡')}
+              onAdd={() => props.openCreate('world')} addTitle={t('create.world.title')} {...shared}>
+              {shelfRoot.shelves.map(shelf => (
+                <ShelfBranch key={shelf.path} node={shelf} depth={0} currentKey={currentKey} t={t}
+                  fileView={viewFile} selFor={selFor}
+                  onOpen={props.openCard} onAdd={props.addModule}
+                  ops={{ rename: props.renameModule, copy: props.copyModule, delete: props.deleteModule, embedFile: props.embedFile }}
+                  cardOps={cardOps} fileOps={fileOps} />
+              ))}
+              {shelfRoot.cards.map(card => (
+                <CardBranch key={card.cardId} card={card} depth={0} currentKey={currentKey} t={t}
+                  fileView={viewFile}
+                  sel={selFor('cards', cardOrder, { key: `card:${card.cardId}`, path: `卡/${card.dir}`, kind: 'card', cardId: card.cardId })}
+                  onOpen={(moduleId, name) => props.openCard(card.cardId, moduleId, name)}
+                  onAdd={() => props.addModule(card.cardId)}
+                  ops={{ rename: props.renameModule, copy: props.copyModule, delete: props.deleteModule, embedFile: props.embedFile }}
+                  cardOps={cardOps} />
+              ))}
+              {shelfRoot.rows.map(row => (
+                <FileRow key={row.path} path={row.path} title={row.title} dir={row.dir} hidden={row.hidden} t={t}
+                  current={currentKey === `doc:${row.path}`}
+                  fileView={viewFile}
+                  sel={selFor('cards', cardOrder, { key: `f:${row.path}`, path: row.path, kind: row.dir === true ? 'dir' : 'file' })}
+                  onOpen={fileOps.open} embedTargets={embedTargets} onEmbed={id => embedFromId(id, row.path)}
+                  fileOps={{ rename: fileOps.rename, delete: fileOps.delete }} present={fileOps.present} />
+              ))}
+            </Group>
+          ))
+          if (key === 'docs') return groupSlot('docs', (
+            <Group title={t('tree.docs')} count={visible?.docs.length ?? 0} always={hasDir('文稿')}
+              onAdd={() => props.openCreate('doc')} addTitle={t('create.doc.title')} {...shared}>
+              {visible?.docs.map(doc => (
+                <FileRow key={doc.path} path={doc.path} title={doc.title} hidden={doc.hidden} t={t}
+                  current={currentKey === `doc:${doc.path}`}
+                  fileView={viewFile}
+                  sel={selFor('docs', docOrder, { key: `f:${doc.path}`, path: doc.path, kind: 'file', workId: doc.id ?? undefined })}
+                  renameTitle={doc.id === null ? undefined : name => props.renameWork(doc.id ?? '', name)}
+                  onOpen={props.openDoc} embedTargets={embedTargets} onEmbed={id => embedFromId(id, doc.path)}
+                  fileOps={fileOps} present={props.present} />
+              ))}
+            </Group>
+          ))
+          if (key === 'works') return groupSlot('works', (
+            <Group title={t('tree.works')} count={visible?.works.length ?? 0} {...shared}>
+              {visible?.works.map(work => (
+                <WorkRow key={work.id} work={work} t={t}
+                  current={currentKey === `work:${work.path}`}
+                  fileView={viewFile}
+                  sel={selFor('works', workOrder, { key: `w:${work.path}`, path: work.path, kind: 'work', workId: work.id })}
+                  onOpen={props.openWork}
+                  fileOps={{ rename: fileOps.rename, delete: fileOps.delete }} present={props.present}
+                  renameWork={props.renameWork} dropWork={props.dropWork} />
+              ))}
+            </Group>
+          ))
+          if (key === 'studio') return groupSlot('studio', (
+            <Group title={t('tree.studio')} count={simRows.length}
+              onAdd={props.createSim} addTitle={t('sim.list.new')} {...shared}>
+              {simRows.map(row => (
+                <button key={row.id} type="button" className="nv-tree-row nv-tree-module" style={{ paddingLeft: 28 }}
+                  onClick={() => props.openSim(row.id)}>
+                  <span className="nv-tree-glyph">{glyph.phone(13)}</span>
+                  <span className="nv-tree-name">{row.title}</span>
+                  {row.running && <span className="nv-simrow-dot" />}
+                </button>
+              ))}
+            </Group>
+          ))
+          const section = userSections.find(s => `sec:${s.name}` === key)
+          if (section === undefined) return null
+          const secOrder: readonly SelItem[] = section.rows
+            .map(r => ({ key: `f:${r.path}`, path: r.path, kind: (r.dir === true ? 'dir' : 'file') as 'dir' | 'file' }))
+          return groupSlot(key, (
+            <Group title={section.name} count={section.rows.length} always
+              onAdd={() => props.openCreate('doc', section.name)} addTitle={t('create.doc.title')}
+              onDelete={() => {
+                if (window.confirm(t('tree.group.deleteConfirm').replace('{name}', section.name).replace('{count}', String(section.rows.length))))
+                  props.deleteGroup(section.name)
+              }}
+              deleteTitle={t('tree.group.delete')} {...shared}>
+              {section.rows.map(row => (
+                <FileRow key={row.path} path={row.path} title={row.title} dir={row.dir} hidden={row.hidden} t={t}
+                  fileView={viewFile}
+                  sel={selFor(key, secOrder, { key: `f:${row.path}`, path: row.path, kind: row.dir === true ? 'dir' : 'file' })}
+                  onOpen={props.openDoc} embedTargets={embedTargets} onEmbed={id => embedFromId(id, row.path)}
+                  fileOps={fileOps} present={props.present} />
+              ))}
+            </Group>
+          ))
+        })}
       </div>
       {!noProject && (
       <div className="nv-tree-foot">
