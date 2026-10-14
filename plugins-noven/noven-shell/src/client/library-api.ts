@@ -65,6 +65,16 @@ export interface ProjectRow {
   /** Up to four workspace-relative image paths for the cover collage. */
   readonly covers: readonly string[]
   readonly updatedAt: string | undefined
+  /** The permanent 杂项 project — UI hides remove/rename for it (设计理念 §15). */
+  readonly misc?: boolean
+}
+
+/** Root of the permanent 杂项 project; everything ungrouped lands here. Mirrors noven-ledger's constant. */
+export function miscProjectRoot(): string {
+  const home = typeof process !== 'undefined' && typeof process.env?.HOME === 'string' && process.env.HOME !== ''
+    ? process.env.HOME
+    : '/'
+  return `${home}/诺文/杂项`
 }
 
 /** A project address: the session whose cwd names it, or the workspace root itself. */
@@ -136,6 +146,11 @@ export function libraryFor(addr: ProjectAddr): ObservableSnapshot<LibraryPayload
 }
 
 /** Registry mutation: register / unregister / create against `/api/noven-projects`. */
+/** Whether a root is the permanent 杂项 project. */
+export function isMiscRoot(root: string | undefined): boolean {
+  return root !== undefined && root === miscProjectRoot()
+}
+
 export async function projectOp(op: { op: 'register' | 'unregister' | 'create' | 'rename'; root: string; title?: string; description?: string }): Promise<ProjectRow | undefined> {
   const response = await fetch('/api/noven-projects', {
     method: 'POST',

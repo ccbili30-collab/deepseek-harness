@@ -51,7 +51,9 @@ export const TurnTailNodeView = memo(function TurnTailNodeView({
   const turnStartSeq = useChat(snapshot => snapshot.timeline.turns.get(data.turn)?.start?.seq)
   const assistantActions = messageId === undefined
     ? null
-    : renderSlot('conversation.chat.assistant-actions', { messageId, turnStartSeq })
+    : renderSlot('conversation.chat.assistant-actions', turnStartSeq === undefined
+      ? { messageId }
+      : { messageId, turnStartSeq })
   return (
     <div
       className={css.root}

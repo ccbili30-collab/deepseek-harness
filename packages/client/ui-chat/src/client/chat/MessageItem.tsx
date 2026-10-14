@@ -1,6 +1,7 @@
 import { Fragment, memo, useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { PendingSubmission } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { MessageImageSource } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { fileExtension, FileTypeIcon, fileSizeText, JsonBlock, projectUserText, StateDot } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNodeOwnerProps, ChatNodeViewProps, ChatViewSlotProps } from '../contract/slots.ts'
@@ -314,10 +315,33 @@ export function PendingSubmissionBubble({ submission, renderMessageImages, t }: 
   )
 }
 
-/** User and admitted-steering keyed Chat renderer. */
-export const UserMessageNodeView = memo(function UserMessageNodeView({
-  node, renderMessageImages, openFile, openSkill, renderSlot, t,
-}: ChatNodeViewProps<'user' | 'steering'>) {
+// The component renders under the 'user' registration, whose composed props are
+// PropsRenderSlots<'conversation.chat.user-actions'> (declared children only;
+// node-own slots ride PropsRuntime). Naming it after the composed shape keeps
+// the registration's SlotComponent contravariance check clean.
+type UserNodeViewProps =
+  ChatNodeViewProps<'user'> & PropsRenderSlots<'conversation.chat.user-actions'>
+type SteeringNodeViewProps =
+  ChatNodeViewProps<'steering'> & PropsRenderSlots<never>
+
+/** Props of whichever durable message node (user or admitted steering) renders in the user bubble. */
+type AnyMessageNode = UserNodeViewProps['node'] | SteeringNodeViewProps['node']
+
+/**
+ * Shared bubble of the two keyed renderers. `renderUserActions` renders the
+ * user-actions child slot; it is given the bubble's joined plain text because
+ * the slot owner needs copy text, and it exists only under the 'user' key.
+ */
+function UserMessageBubble({
+  node, renderMessageImages, openFile, openSkill, t, renderUserActions,
+}: {
+  readonly node: AnyMessageNode
+  readonly renderMessageImages: UserNodeViewProps['renderMessageImages']
+  readonly openFile: UserNodeViewProps['openFile']
+  readonly openSkill: UserNodeViewProps['openSkill']
+  readonly t: UserNodeViewProps['t']
+  readonly renderUserActions?: UserNodeViewProps['renderSlot']
+}) {
   const data = node.data
   return (
     <UserStyleBubble
@@ -333,12 +357,41 @@ export const UserMessageNodeView = memo(function UserMessageNodeView({
           time={data.time}
           clock="start"
           className={css.actions}
-          extraActions={renderSlot === undefined
-            ? undefined
-            : renderSlot('conversation.chat.user-actions', { seq: data.seq, text })}
+          extraActions={renderUserActions?.('conversation.chat.user-actions', { seq: data.seq, text })}
           t={t}
         />
       )}
+    />
+  )
+}
+
+/** User keyed Chat renderer: declares and renders the user-actions child slot. */
+export const UserMessageNodeView = memo(function UserMessageNodeView({
+  node, renderMessageImages, openFile, openSkill, renderSlot, t,
+}: UserNodeViewProps) {
+  return (
+    <UserMessageBubble
+      node={node}
+      renderMessageImages={renderMessageImages}
+      openFile={openFile}
+      openSkill={openSkill}
+      t={t}
+      renderUserActions={renderSlot}
+    />
+  )
+})
+
+/** Steering shares the user bubble but registers no child slot, so its rows render without actions. */
+export const SteeringMessageNodeView = memo(function SteeringMessageNodeView({
+  node, renderMessageImages, openFile, openSkill, t,
+}: SteeringNodeViewProps) {
+  return (
+    <UserMessageBubble
+      node={node}
+      renderMessageImages={renderMessageImages}
+      openFile={openFile}
+      openSkill={openSkill}
+      t={t}
     />
   )
 })

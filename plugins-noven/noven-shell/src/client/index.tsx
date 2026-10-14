@@ -46,7 +46,7 @@ import { Messages } from './pages/Messages.tsx'
 import { CardStudio } from './pages/CardStudio.tsx'
 import { ProjectPage } from './pages/Library.tsx'
 import type { ProjectRef } from './pages/Library.tsx'
-import { fetchLibrary, libraryOp, projectOp, projectsCatalog } from './library-api.ts'
+import { fetchLibrary, isMiscRoot, libraryOp, miscProjectRoot, projectOp, projectsCatalog } from './library-api.ts'
 import type { LibraryOp, LibraryPayload, ProjectAddr, ProjectRow } from './library-api.ts'
 import { cardOp, exportCardPackage, fetchCard, fetchCardList, type CardCommand } from './card-api.ts'
 import type { CardAddr, CardOp } from './card-api.ts'
@@ -245,8 +245,10 @@ export interface WorkspaceLibraryInjected {
 /** Workspace ⋯ menu row: 移入创作库 while the root is unregistered, 移出创作库 once it is. */
 function WorkspaceLibraryItem({ path, useMenuOpenState, useProjects, setMembership, t }: WorkspaceMenuItemProps & InjectFace<WorkspaceLibraryInjected>) {
   const [, setMenuOpen] = useMenuOpenState()
-  const registered = useProjects(rows => path !== undefined && rows.some(row => row.root === path))
-  if (path === undefined) return null
+  const row = useProjects(rows => path !== undefined ? rows.find(r => r.root === path) : undefined)
+  const registered = row !== undefined
+  // 杂项项目：没有「移出创作库」；只在它意外失登（迁移前的状态）时允许补登。
+  if (path === undefined || (isMiscRoot(path) && registered)) return null
   return (
     <MenuItemButton
       icon={glyph.book(16)}
@@ -1119,6 +1121,13 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => installPanelGhost(), 'noven-shell: panel ghost')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'noven-shell: dictionaries')
   const t = ctx.locale.bind(NS)
+  // 杂项项目是永久兜底（设计理念 §15）：启动幂等确保目录 + 注册表 + 上游工作区都有它。
+  void (async () => {
+    const misc = miscProjectRoot()
+    const row = await projectOp({ op: 'register', root: misc, title: '杂项' }).catch(() => undefined)
+    if (row === undefined) return
+    await (ctx.get('workspaces') as IWorkspaces | undefined)?.create({ path: misc }).catch(() => undefined)
+  })()
 
   // Noven palette over the shipped tokens (light drives the product; dark
   // keeps the same accents on dark surfaces).
@@ -1203,8 +1212,12 @@ export function apply(ctx: ClientContext): void {
   /** 建卡后要打开画布编辑器：拿到落在该工作区的会话（无则 connect 出/复用一个 blank）。 */
   const cardSessionFor = async (workspaceId: WorkspaceId | undefined): Promise<{ sessionId?: SessionId; root?: string }> => {
     if (workspaceId === undefined) {
+      // 未指定项目：复用最近会话；连会话都没有时落杂项，绝不留无 cwd 的卡（设计理念 §15）。
       const target = recentSession()
-      return { sessionId: target?.id ?? await createSessionIn(undefined) }
+      if (target !== undefined) return { sessionId: target.id, root: target.cwd || miscProjectRoot() }
+      const misc = miscProjectRoot()
+      const id = await createSessionIn(misc)
+      return { sessionId: id, root: misc }
     }
     const root = workspaceRootFor(workspaceId)
     if (root === undefined) return { sessionId: recentSession()?.id ?? await createSessionIn(undefined) }
@@ -1525,7 +1538,10 @@ export function apply(ctx: ClientContext): void {
       if (id !== undefined) ctx.uiWorkspace.openSession(id)
       return id
     }
-    return undefined
+    // 没有任何项目时，新会话落进杂项（设计理念 §15），不再留下无 cwd 的会话。
+    const id = await createSessionIn(miscProjectRoot()).catch(() => undefined)
+    if (id !== undefined) ctx.uiWorkspace.openSession(id)
+    return id
   }
 
   const readDoc = async (sessionId: SessionId, path: string): Promise<string | undefined> => {
@@ -1632,12 +1648,18 @@ export function apply(ctx: ClientContext): void {
     void (async () => {
       let ensured: CardAddr = {}
       if (focusSnapshot === undefined && request.kind !== 'import') {
+        // 无项目态不再立项：新东西一律落杂项项目（设计理念 §15）；真正的立项走「新建项目」。
+        const misc = miscProjectRoot()
         const sessionId = await ensureSession()
-        const cwd = sessionId === undefined ? undefined : ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
-        if (cwd === undefined) return
-        if ((await projectOp({ op: 'register', root: cwd, title: request.name })) === undefined) return
-        projects.refresh()
-        ensured = { sessionId, root: cwd }
+        if (sessionId === undefined) return
+        if (ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd !== misc) {
+          const id = await createSessionIn(misc).catch(() => undefined)
+          if (id === undefined) return
+          ctx.uiWorkspace.openSession(id)
+          ensured = { sessionId: id, root: misc }
+        } else {
+          ensured = { sessionId, root: misc }
+        }
       }
       if (request.kind === 'group') {
         // 顶层目录即分组：mkdir 后下一轮树轮询把它渲染成和「卡」平级的分组头。
@@ -2137,12 +2159,14 @@ export function apply(ctx: ClientContext): void {
         projects.refresh()
       },
       removeProject: async (root) => {
+        if (isMiscRoot(root)) return
         await projectOp({ op: 'unregister', root })
         projects.refresh()
       },
       // 项目名的权威是注册表 title：rename 写注册表（顺带刷纹身备份），再单向
       // 推到 Workspace 行；反向（侧栏改名 → 注册表）由下面的 workspaces.list 桥负责。
       renameProject: async (root, title) => {
+        if (isMiscRoot(root)) return
         await projectOp({ op: 'rename', root, title })
         const ws = (ctx.get('workspaces') as IWorkspaces | undefined)?.list.getSnapshot().items.find(w => w.path === root)
         if (ws !== undefined && ws.title !== title) {

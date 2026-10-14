@@ -10,6 +10,7 @@ import { Modal } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ShellT } from './Home.tsx'
 import type { NovenShellLocaleKey } from '../locales.ts'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import { isMiscRoot } from '../library-api.ts'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { CardRow } from '../index.tsx'
 import type { InboxItem, LibraryOp, LibraryPayload, LibraryWork, ProjectAddr, ProjectRow, WorkKind, WorkStage } from '../library-api.ts'
@@ -152,8 +153,8 @@ export function LibraryOverview({ t, useProjects, useCards, onOpenProject, onNew
         {projects.map(p => (
           <ProjectTile key={p.root} t={t} row={p} cards={cards}
             onOpen={() => onOpenProject?.(p)}
-            onRename={onRenameProject === undefined ? undefined : () => { setRenameTarget(p) }}
-            onRemove={onRemoveProject === undefined ? undefined : () => { void onRemoveProject(p.root) }} />
+            onRename={onRenameProject === undefined || isMiscRoot(p.root) ? undefined : () => { setRenameTarget(p) }}
+            onRemove={onRemoveProject === undefined || isMiscRoot(p.root) ? undefined : () => { void onRemoveProject(p.root) }} />
         ))}
         {onRenameProject !== undefined && (
           <RenameProjectDialog t={t} row={renameTarget} onClose={() => { setRenameTarget(undefined) }} onRename={onRenameProject} />

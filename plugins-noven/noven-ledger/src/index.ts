@@ -66,6 +66,34 @@ export function mintProjectId(): string {
   return `proj-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`
 }
 
+/**
+ * 杂项项目（设计理念 §15）：没有归属的新会话/新卡/散件的默认落点。
+ * 固定根、固定 id、固定名——宿主每次启动幂等保证它存在；它不可被移出注册表，
+ * 名字也不允许改，保证上游工作区与创作库始终用同一把钥匙找到它。
+ */
+export const MISC_PROJECT_ROOT = join(homedir(), '诺文', '杂项')
+export const MISC_PROJECT_ID = 'proj-misc'
+export const MISC_PROJECT_TITLE = '杂项'
+
+/**
+ * 幂等保证杂项项目存在：目录建出、注册进表（带固定 id 与名）、从 excluded 移除。
+ * 已经被用户改名的注册表标题不覆盖——它只能从「杂项」开始，移动过的文件夹不会
+ * 被这里重建（normalizeRoot 后路径不同则视为另一个目录）。
+ * @returns 杂项项目的注册表行（保证已存在）。
+ */
+export async function ensureMiscProject(): Promise<RegisteredProject> {
+  await mkdir(MISC_PROJECT_ROOT, { recursive: true })
+  const projects = await registerProject(MISC_PROJECT_ROOT, { id: MISC_PROJECT_ID, title: MISC_PROJECT_TITLE })
+  const row = projects.find(p => p.root === normalizeRoot(MISC_PROJECT_ROOT))
+  if (row === undefined) throw new Error('misc project missing after register')
+  return row
+}
+
+/** 一个根是否就是杂项项目（防被移出/改名）。 */
+export function isMiscProjectRoot(root: string): boolean {
+  return normalizeRoot(root) === normalizeRoot(MISC_PROJECT_ROOT)
+}
+
 // ---------- 注册表（~/.noven/projects.json） ----------
 
 /** One registered project pointer; title is the single display authority. */
@@ -216,9 +244,11 @@ export async function upgradeRegistry(): Promise<readonly RegisteredProject[]> {
   return projects
 }
 
-/** Drop the pointer and exclude its id from marker-based auto-claim; the folder is never touched. */
+/** Drop the pointer and exclude its id from marker-based auto-claim; the folder is never touched.
+ *  The 杂项 project is permanent and rejects removal (设计理念 §15). */
 export async function unregisterProject(root: string): Promise<readonly RegisteredProject[]> {
   const canonical = normalizeRoot(root)
+  if (canonical === normalizeRoot(MISC_PROJECT_ROOT)) throw new Error('misc project cannot be unregistered')
   return withRegistryLock(async () => {
     const file = await loadFile()
     const row = file.projects.find(p => p.root === canonical)
@@ -233,6 +263,7 @@ export async function unregisterProject(root: string): Promise<readonly Register
 /** Update the authoritative title; refreshes the marker's backup copy in the same write. */
 export async function renameProject(root: string, title: string): Promise<readonly RegisteredProject[]> {
   const canonical = normalizeRoot(root)
+  if (canonical === normalizeRoot(MISC_PROJECT_ROOT)) throw new Error('misc project cannot be renamed')
   const row = await withRegistryLock(async () => {
     const file = await loadFile()
     const found = file.projects.find(p => p.root === canonical)

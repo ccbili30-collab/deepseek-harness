@@ -43,6 +43,9 @@ import {
   relinkProject,
   renameProject,
   unregisterProject,
+  ensureMiscProject,
+  isMiscProjectRoot,
+  MISC_PROJECT_ROOT,
   upgradeRegistry,
   writeMarker,
 } from 'noven-ledger'
@@ -319,6 +322,8 @@ async function projectRow(entry: { root: string; title?: string; id?: string }):
   return {
     root,
     missing: false,
+    /** Permanent 杂项 project (设计理念 §15) — UI hides remove/rename. */
+    misc: isMiscProjectRoot(root),
     /** Registry title is the single display authority; marker/dirname only backstop it. */
     title: entry.title ?? project?.title ?? root.split('/').pop() ?? root,
     description: project?.description,
@@ -341,6 +346,8 @@ async function projectRow(entry: { root: string; title?: string; id?: string }):
  */
 async function autoClaim(ctx: Context): Promise<void> {
   await upgradeRegistry().catch(() => { /* a lost upgrade never blocks the listing */ })
+  // 杂项项目是永久兜底：每次列项目都幂等确保它存在（设计理念 §15）。
+  await ensureMiscProject().catch(() => { /* a lost misc bootstrap never blocks the listing */ })
   const persisted = await ctx.get('sessionPersistence')?.list().catch(() => undefined)
   const cwds = new Set<string>()
   for (const snap of persisted ?? []) {
@@ -398,12 +405,14 @@ async function serveProjects(request: Request, ctx: Context): Promise<Response> 
       return new Response(JSON.stringify({ ok: true, row: await projectRow(await registryRow(root) ?? { root }) }), { headers: JSON_HEADERS })
     }
     case 'unregister': {
+      if (isMiscProjectRoot(root)) return bad('misc project cannot be removed')
       await unregisterProject(root)
       return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS })
     }
     case 'rename': {
       const title = String(body.title ?? '').trim()
       if (title.length === 0) return bad('missing title')
+      if (isMiscProjectRoot(root)) return bad('misc project cannot be renamed')
       if (!(await dirExists(root))) return bad(`directory does not exist: ${root}`)
       await renameProject(root, title)
       return new Response(JSON.stringify({ ok: true, row: await projectRow(await registryRow(root) ?? { root }) }), { headers: JSON_HEADERS })
