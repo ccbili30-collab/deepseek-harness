@@ -6,7 +6,7 @@
 // the trail are reassigned to the resolved entity (or to 0/neutral when nothing
 // resolves — that is the eraser). `add` creates a state/culture when no entity
 // resolves, so "paint a realm onto empty land" works after a seed change too.
-import type { Burg, Culture, State, World } from "./types.ts";
+import type { Burg, Culture, Route, State, World } from "./types.ts";
 
 /** one override record — mirrors MapWorldEdit in noven-cards/formats */
 export interface WorldEntityEdit {
@@ -23,8 +23,13 @@ export interface WorldEntityEdit {
   readonly lock?: boolean;
   /** brush trail: pts are [x/width, y/height] fractions, r a height fraction */
   readonly stroke?: { readonly pts: readonly (readonly [number, number])[]; readonly r: number };
-  /** create the entity (state/culture) when resolution fails */
+  /** polyline for a created route: same normalization as `at` */
+  readonly path?: readonly (readonly [number, number])[];
+  /** create the entity when resolution fails: state/culture anchor `at` (a
+   *  stroke paints its cells), burg anchors `at`, route follows `path` */
   readonly add?: boolean;
+  /** route group for created routes */
+  readonly group?: "roads" | "trails" | "searoutes";
   readonly color?: string;
 }
 
@@ -111,19 +116,22 @@ const cellsAlongStroke = (world: World, stroke: NonNullable<WorldEntityEdit["str
   return out;
 };
 
-/** nearest land cell to a normalized point — anchors freshly created entities */
-const nearestLandCell = (world: World, at: readonly [number, number]): number | undefined => {
-  const px = at[0] * world.config.width, py = at[1] * world.config.height;
+/** nearest cell to world-pixel coordinates; landOnly skips water (h < 20) */
+const nearestCell = (world: World, px: number, py: number, landOnly: boolean): number | undefined => {
   const cells = world.pack.cells;
   let best = Infinity, cell: number | undefined;
   for (let i = 0; i < cells.i.length; i++) {
-    if ((cells.h[i] ?? 0) < 20) continue;
+    if (landOnly && (cells.h[i] ?? 0) < 20) continue;
     const [x, y] = cells.p[i];
     const d = (x - px) ** 2 + (y - py) ** 2;
     if (d < best) { best = d; cell = i; }
   }
   return cell;
 };
+
+/** nearest land cell to a normalized point — anchors freshly created entities */
+const nearestLandCell = (world: World, at: readonly [number, number]): number | undefined =>
+  nearestCell(world, at[0] * world.config.width, at[1] * world.config.height, true);
 
 /** deterministic pastel for user-created entities */
 const freshColor = (i: number): string => `hsl(${(i * 61 + 25) % 360} 45% 62%)`;
@@ -152,6 +160,51 @@ const createEntity = (world: World, kind: "state" | "culture", edit: WorldEntity
   return cu;
 };
 
+/** user-placed town: sits at the land cell nearest `at`, inherits that cell's
+ *  state/culture; coastal cells register the port's served water feature */
+const createBurg = (world: World, edit: WorldEntityEdit): Burg | undefined => {
+  if (edit.at === undefined) return undefined;
+  const cell = nearestLandCell(world, edit.at);
+  if (cell === undefined) return undefined;
+  const cells = world.pack.cells;
+  const haven = cells.haven?.[cell];
+  const port = (cells.harbor?.[cell] ?? 0) > 0 && haven !== undefined ? cells.f[haven] ?? 0 : 0;
+  const i = world.pack.burgs.length;
+  const burg: Burg = {
+    i, cell, x: cells.p[cell][0], y: cells.p[cell][1],
+    state: cells.state[cell] ?? 0, culture: cells.culture[cell] ?? 0,
+    feature: cells.f[cell] ?? 0, capital: 0, population: 1,
+    ...(port > 0 ? { port } : {}),
+    ...(edit.name !== undefined && edit.name !== '' ? { name: edit.name } : {}),
+    ...(edit.lock === true ? { lock: true } : {}),
+  };
+  (world.pack.burgs as Burg[]).push(burg);
+  cells.burg[cell] = i;
+  return burg;
+};
+
+/** user-drawn road/trail/searoute: `path` normalized pts re-anchor to this
+ *  generation's cells, so a redrawn world keeps the same drawn line */
+const createRoute = (world: World, edit: WorldEntityEdit): Route | undefined => {
+  const path = edit.path;
+  if (path === undefined || path.length < 2) return undefined;
+  const { width: w, height: h } = world.config;
+  const points = path.map(([nx, ny]) => {
+    const x = nx * w, y = ny * h;
+    return [x, y, nearestCell(world, x, y, false) ?? 0] as [number, number, number];
+  });
+  const i = world.pack.routes.length;
+  const route: Route = {
+    i, group: edit.group ?? "roads",
+    feature: world.pack.cells.f[points[0]?.[2] ?? 0] ?? 0,
+    cells: points.map(p => p[2]), points,
+    ...(edit.name !== undefined && edit.name !== '' ? { name: edit.name } : {}),
+    ...(edit.lock === true ? { lock: true } : {}),
+  };
+  world.pack.routes.push(route);
+  return route;
+};
+
 /**
  * Re-apply stored entity edits onto a freshly generated world.
  * Match order: same original name → nearest entity within `radius` of `at`.
@@ -165,9 +218,9 @@ export function applyWorldEdits(world: World, edits: readonly WorldEntityEdit[])
   for (const edit of edits) {
     const list = namedOf(world, edit.kind);
     let target: Named | undefined;
-    // add 实体只按名认领——就近匹配会把邻家生成实体错当目标
+    // add 实体只按名认领——就近匹配会把邻家生成实体错当目标；空名不匹配
     const matchName = edit.key ?? (edit.add === true ? edit.name : undefined);
-    if (matchName !== undefined) {
+    if (matchName !== undefined && matchName !== '') {
       target = list.find(e => e.removed !== true && e.name === matchName);
     }
     if (target === undefined && edit.at !== undefined && edit.add !== true) {
@@ -186,8 +239,10 @@ export function applyWorldEdits(world: World, edits: readonly WorldEntityEdit[])
     if (target === undefined && edit.id !== undefined) {
       target = list.find(e => e.removed !== true && e.i === edit.id);
     }
-    if (target === undefined && edit.add === true && (edit.kind === "state" || edit.kind === "culture")) {
-      target = createEntity(world, edit.kind, edit);
+    if (target === undefined && edit.add === true) {
+      if (edit.kind === "state" || edit.kind === "culture") target = createEntity(world, edit.kind, edit);
+      else if (edit.kind === "burg") target = createBurg(world, edit);
+      else if (edit.kind === "route") target = createRoute(world, edit);
     }
     if (edit.stroke !== undefined && (edit.kind === "state" || edit.kind === "culture")) {
       const dim = edit.kind === "state" ? world.pack.cells.state : world.pack.cells.culture;

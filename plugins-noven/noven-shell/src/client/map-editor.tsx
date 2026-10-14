@@ -686,8 +686,8 @@ const MAP_WORLD = true
 type DrawLayer = LayerId
 
 /** 地图工具：一次只有一个，pointerdown 按工具分流而非叠模式标志。
- *  draft/annotate/edit 是旧对象层手势，仅 MAP_EDITING 下可达；迁移到 place/path/zone 语义工具后删除。 */
-type MapTool = 'select' | 'brush' | 'draft' | 'annotate' | 'edit'
+ *  draft/annotate/edit 是旧对象层手势，仅 MAP_EDITING 下可达；迁移到 zone 语义工具后删除。 */
+type MapTool = 'select' | 'brush' | 'place' | 'path' | 'draft' | 'annotate' | 'edit'
 
 interface Gesture {
   readonly kind: 'stroke' | 'stretch' | 'move' | 'pan' | 'paint' | 'facepaint' | 'shape' | 'wpaint' | 'none'
@@ -698,6 +698,8 @@ interface Gesture {
   path?: XY[]
   last?: XY
   moved?: boolean
+  /** pan 手势松手不点选（连线工具里左键拖=平移但不该改选中） */
+  readonly quiet?: boolean
   snapped?: { id: string, t: number, kind: 'line' | 'mark', point: XY } | null
   snapStart?: { id: string, t: number, kind: 'line' | 'mark', point: XY } | null
   alt?: boolean
@@ -763,12 +765,26 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const [worldView, setWorldView] = useState<WorldView>('political')
   /** 划界笔刷：armed 后拖动把陆格刷给目标实体。id>0 既有实体，0=中立擦除，-1=新建。 */
   const [brush, setBrush] = useState<{ dim: 'state' | 'culture', id: number, name: string, color: string } | null>(null)
-  /** 活动工具：划界刷 armed 时压过选择。后续 place/path/zone 在此注册。 */
+  /** 放置工具：点击落点。burg=世界城邦（可重放 edit）；mark=标注层图钉。 */
+  const [placing, setPlacing] = useState<'burg' | 'mark' | null>(null)
+  /** 连线工具：点点加点、双击/回车收线。group 决定是道路还是航线。 */
+  const [routing, setRouting] = useState<'roads' | 'searoutes' | null>(null)
+  /** 连线中未收的点（归一化存储坐标）；pathTick 仅驱动条上点数展示。 */
+  const pathRef = useRef<XY[]>([])
+  const [, setPathTick] = useState(0)
+  /** 活动工具：放置/连线/划界刷 armed 时压过选择。 */
   const tool: MapTool = brush !== null ? 'brush'
+    : placing !== null ? 'place'
+    : routing !== null ? 'path'
     : !MAP_EDITING ? 'select'
     : mode === 'draft' ? 'draft'
     : mode === 'annotate' ? 'annotate'
     : 'edit'
+  /** 工具互斥：arm 一个清掉其余；连线草稿随 routing 一起清。 */
+  const armPlace = (kind: 'burg' | 'mark'): void => { setBrush(null); setRouting(null); pathRef.current = []; setPlacing(cur => cur === kind ? null : kind) }
+  const armRoute = (group: 'roads' | 'searoutes'): void => { setBrush(null); setPlacing(null); pathRef.current = []; setRouting(cur => cur === group ? null : group) }
+  const armBrush = (b: { dim: 'state' | 'culture', id: number, name: string, color: string } | null): void => { setPlacing(null); setRouting(null); pathRef.current = []; setBrush(b) }
+  const exitTools = (): void => { setBrush(null); setPlacing(null); setRouting(null); pathRef.current = [] }
   /** 空格按住期间左键=平移（任何工具下可用，对齐通用手势）。 */
   const spaceRef = useRef(false)
   useEffect(() => {
@@ -782,29 +798,38 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     window.addEventListener('keyup', up)
     return () => { window.removeEventListener('keydown', dn); window.removeEventListener('keyup', up) }
   }, [])
-  /** Esc：手势中=取消这笔（不落盘）；否则退出当前工具回选择。
-   *  捕获阶段监听——消费掉才阻断，否则放行给壳层（card-page 的 Esc 关页面）。 */
+  /** 键盘协议：Esc 手势中=取消这笔，连线中=清草稿点，否则退出工具；
+   *  Enter=连线收线；⌫=连线删上一点。捕获阶段监听——消费掉才阻断壳层 Esc。 */
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
-      if (e.key !== 'Escape') return
-      if (gestureRef.current.kind !== 'none' && gestureRef.current.kind !== 'pan') {
-        gestureRef.current = { kind: 'none' }
-        busyRef.current = false
-        draw()
-        e.preventDefault()
-        e.stopImmediatePropagation()
+      if (e.key === 'Escape') {
+        if (gestureRef.current.kind !== 'none' && gestureRef.current.kind !== 'pan') {
+          gestureRef.current = { kind: 'none' }
+          busyRef.current = false
+          draw()
+          e.preventDefault(); e.stopImmediatePropagation()
+          return
+        }
+        if (pathRef.current.length > 0) { pathRef.current = []; draw(); e.preventDefault(); e.stopImmediatePropagation(); return }
+        if (brush !== null || placing !== null || routing !== null) {
+          setBrush(null); setPlacing(null); setRouting(null)
+          e.preventDefault(); e.stopImmediatePropagation()
+        }
         return
       }
-      if (brush !== null) {
-        setBrush(null)
-        e.preventDefault()
-        e.stopImmediatePropagation()
+      if (routing !== null && e.key === 'Enter') { commitRoute(); e.preventDefault(); e.stopImmediatePropagation(); return }
+      if (routing !== null && (e.key === 'Backspace' || e.key === 'Delete')) {
+        if (pathRef.current.length > 0) {
+          pathRef.current = pathRef.current.slice(0, -1)
+          setPathTick(v => v + 1); draw()
+          e.preventDefault(); e.stopImmediatePropagation()
+        }
       }
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brush])
+  }, [brush, placing, routing])
   const toWork = useCallback((p: XY): XY => [p[0] * aspectRef.current, p[1]], [])
   const toStore = useCallback((p: XY): XY => [clamp01(p[0] / aspectRef.current), clamp01(p[1])], [])
   const objWorkPts = useCallback((o: FaceObj | LineObj): XY[] => o.pts.map(toWork), [toWork])
@@ -928,6 +953,45 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     builtRef.current = null
     commit(); bump()
   }, [commit, bump])
+
+  /** 落一条 world edit 并给可撤销回执：撤销按规范化签名删末条同形记录
+   *  （回声往返后 edits 是解码克隆且字段序不同，不能比对象引用）。 */
+  const pushWorldEditUndo = useCallback((edit: WorldEntityEdit, text: string): void => {
+    pushWorldEdit(edit)
+    notifyUndo({
+      text,
+      undoLabel: t('ui.undo'),
+      undo: () => {
+        const src = docRef.current.world
+        if (src?.edits === undefined) return
+        const sigOf = (x: WorldEntityEdit): string =>
+          `${x.kind}|${x.key ?? ''}|${x.name ?? ''}|${x.id ?? ''}|${JSON.stringify(x.stroke ?? null)}|${JSON.stringify(x.path ?? null)}|${x.group ?? ''}`
+        const idx = src.edits.map(sigOf).lastIndexOf(sigOf(edit))
+        if (idx < 0) return
+        const edits = [...src.edits]
+        edits.splice(idx, 1)
+        docRef.current = { ...docRef.current, world: { ...src, edits } }
+        builtRef.current = null
+        commit(); bump()
+      },
+    })
+  }, [commit, bump, pushWorldEdit, t])
+
+  /** 连线收线：草稿折线落成 route 实体 edit；点数不够则丢弃。定义在 draw 之后——
+   *  useCallback 的依赖数组会立即求值 draw。 */
+  const commitRoute = useCallback((): void => {
+    const pts = pathRef.current
+    pathRef.current = []
+    setPathTick(v => v + 1)
+    if (routing === null) return
+    if (pts.length >= 2) {
+      pushWorldEditUndo(
+        { kind: 'route', add: true, group: routing, path: pts, at: pts[0] ?? [0.5, 0.5], lock: true },
+        fmt(t, 'ui.receipt.routeDrawn', { kind: t(routing === 'roads' ? 'wg.map.world.route.roads' : 'wg.map.world.route.searoutes') }),
+      )
+    }
+    draw()
+  }, [pushWorldEditUndo, routing, t])
 
   /** 点选世界对象：点击未拖动时命中河 > 特征。 */
   const selectWorldAt = useCallback((p: XY): void => {
@@ -1340,6 +1404,21 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       c.stroke()
       c.globalAlpha = 1
     }
+    // 连线草稿：已落点折线 + 到光标的橡皮筋，色随 group（道路棕实线/航线蓝虚线）
+    if (tool === 'path' && routing !== null && pathRef.current.length > 0) {
+      const pts = pathRef.current.map(toWork)
+      const cur = cursorRef.current
+      c.strokeStyle = routing === 'searoutes' ? 'rgba(62,124,171,.7)' : 'rgba(112,86,56,.75)'
+      c.lineWidth = 1.2 / v.s
+      c.setLineDash(routing === 'searoutes' ? [5 / v.s, 4 / v.s] : [])
+      c.beginPath()
+      pts.forEach((p, i) => { i === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
+      if (cur !== null) c.lineTo(cur[0], cur[1])
+      c.stroke()
+      c.setLineDash([])
+      c.fillStyle = c.strokeStyle
+      for (const p of pts) { c.beginPath(); c.arc(p[0], p[1], 2.4 / v.s, 0, 7); c.fill() }
+    }
     // 笔刷光标：隐藏原生指针，画当前语义色/墨色的空心圈 + 中心点——一眼看到画在哪、画多大。
     const cp = cursorRef.current
     if (cp !== null && brushCursor) {
@@ -1353,7 +1432,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       c.beginPath(); c.arc(cp[0], cp[1], 1.5 / v.s, 0, 7)
       c.fillStyle = col; c.fill()
     }
-  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, markWork, mode, objWorkPts, pal?.color, resolveBuilt, resolvedPts, selId, selRegion, selWorld, toWork])
+  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, markWork, mode, objWorkPts, pal?.color, resolveBuilt, resolvedPts, routing, selId, selRegion, selWorld, tool, toWork])
 
   useEffect(() => { draw() })
 
@@ -1423,6 +1502,38 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         if (brush === null) break
         busyRef.current = true
         gestureRef.current = { kind: 'wpaint', path: [p], moved: false, alt: e.altKey || brush.id === 0 }
+        return
+      case 'place':
+        // 点击落点即提交；工具保持 armed 可连放，Esc/完成退出
+        if (placing === 'mark') {
+          const m: MarkObj = { id: nid(), type: 'mark', layer: 'landmark', name: '', color: '#D64541', pos: toStore(p), description: '' }
+          docRef.current = { ...docRef.current, objects: [...docRef.current.objects, m] }
+          setSelId(m.id)
+          commit(); bump()
+          return
+        }
+        if (placing === 'burg') {
+          const at = toStore(p)
+          pushWorldEditUndo({ kind: 'burg', add: true, at, lock: true }, t('ui.receipt.burgPlaced'))
+          // add 永远 push 到 burgs 末尾——取末位即新落点，选中后直接可改名
+          const nb = resolveBuilt()?.world.pack.burgs.at(-1)
+          if (nb !== undefined && nb.removed !== true) {
+            setSelWorld({ kind: 'burg', id: nb.i, biome: 0, state: nb.state ?? 0, culture: nb.culture ?? 0, pos: at })
+          }
+          return
+        }
+        break
+      case 'path':
+        // 点击加点（去抖相邻重复点）；左键拖动仍是平移，但松手不点选
+        {
+          const pt = toStore(p)
+          const last = pathRef.current[pathRef.current.length - 1]
+          if (last === undefined || Math.hypot(last[0] - pt[0], last[1] - pt[1]) > 1e-4) {
+            pathRef.current = [...pathRef.current, pt]
+            setPathTick(v => v + 1)
+          }
+          gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false, quiet: true }
+        }
         return
       case 'draft':
         busyRef.current = true
@@ -1507,7 +1618,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     }
     // select：拖动平移，未拖动=点选世界实体（onPointerUp 分流）
     gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }
-  }, [brush, commit, draftHow, drawLayer, editPaint, hitTest, markWork, objWorkPts, resolvedPts, sel, snapTarget, tool, toStore, workOfEvent])
+  }, [brush, bump, commit, draftHow, drawLayer, editPaint, hitTest, markWork, objWorkPts, placing, pushWorldEditUndo, resolveBuilt, resolvedPts, sel, snapTarget, tool, toStore, workOfEvent, worldView])
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const p = workOfEvent(e)
@@ -1571,7 +1682,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     gestureRef.current = { kind: 'none' }
     const releaseBusy = (): void => { busyRef.current = false }
     if (g.kind === 'pan') {
-      if (g.moved !== true && g.path?.[0] !== undefined) { setSelId(null); selectWorldAt(g.path[0]) }
+      if (g.moved !== true && g.quiet !== true && g.path?.[0] !== undefined) { setSelId(null); selectWorldAt(g.path[0]) }
       draw(); return
     }
     if (g.kind === 'wpaint' && g.path !== undefined && brush !== null) {
@@ -1583,26 +1694,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         : brush.id === -1
           ? { kind: brush.dim, add: true, name: brush.name, color: brush.color, at: first, stroke: { pts, r }, lock: true }
           : { kind: brush.dim, key: brush.name, id: brush.id, at: first, stroke: { pts, r } }
-      pushWorldEdit(edit)
-      notifyUndo({
-        text: fmt(t, 'ui.receipt.worldPainted', { name: brush.name }),
-        undoLabel: t('ui.undo'),
-        undo: () => {
-          const src = docRef.current.world
-          if (src?.edits === undefined) return
-          // 回声往返后 edits 是解码克隆且字段序不同——按规范化签名删末条同形记录
-          const sigOf = (x: WorldEntityEdit): string =>
-            `${x.kind}|${x.key ?? ''}|${x.name ?? ''}|${x.id ?? ''}|${JSON.stringify(x.stroke ?? null)}`
-          const sig = sigOf(edit)
-          const idx = src.edits.map(sigOf).lastIndexOf(sig)
-          if (idx < 0) return
-          const edits = [...src.edits]
-          edits.splice(idx, 1)
-          docRef.current = { ...docRef.current, world: { ...src, edits } }
-          builtRef.current = null
-          commit(); bump()
-        },
-      })
+      pushWorldEditUndo(edit, fmt(t, 'ui.receipt.worldPainted', { name: brush.name }))
       // 新建实体：重算后按名找回并选中；既有实体同一 id 仍在
       if (brush.id === -1) {
         const built = resolveBuilt()
@@ -1699,7 +1791,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     }
     releaseBusy()
     draw()
-  }, [brush, brushPx, commit, drawLayer, erasing, how, markWork, objWorkPts, pal?.color, pushWorldEdit, resolveBuilt, selectWorldAt, snapTarget, t, toStore, workOfEvent])
+  }, [brush, brushPx, commit, drawLayer, erasing, how, markWork, objWorkPts, pal?.color, pushWorldEditUndo, resolveBuilt, selectWorldAt, snapTarget, t, toStore, workOfEvent])
 
   const onWheel = useCallback((e: React.WheelEvent) => {
     if (!e.ctrlKey && !e.metaKey) return
@@ -1859,7 +1951,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
               <div className="nv-maped-seg" role="group" aria-label={t('wg.map.world.view')}>
                 {(['political', 'cultural', 'biomes', 'relief'] as const).map(v => (
                   <button key={v} type="button" className={worldView === v ? 'on' : ''}
-                    onClick={() => { setWorldView(v); setSelWorld(null); setBrush(null) }}>
+                    onClick={() => { setWorldView(v); setSelWorld(null); exitTools() }}>
                     {t(`wg.map.world.view.${v}` as Parameters<ShellT>[0])}
                   </button>
                 ))}
@@ -1870,12 +1962,29 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
                     const dim = worldView === 'political' ? 'state' : 'culture'
                     const built = resolveBuilt()
                     const n = dim === 'state' ? built?.world.pack.states.length ?? 1 : built?.world.pack.cultures.length ?? 1
-                    setBrush({ dim, id: -1, name: t(dim === 'state' ? 'wg.map.world.newState' : 'wg.map.world.newCulture'), color: `hsl(${(n * 61 + 25) % 360} 45% 62%)` })
+                    armBrush({ dim, id: -1, name: t(dim === 'state' ? 'wg.map.world.newState' : 'wg.map.world.newCulture'), color: `hsl(${(n * 61 + 25) % 360} 45% 62%)` })
                     setSelWorld(null)
                   }}>
                   {t(worldView === 'political' ? 'wg.map.world.addState' : 'wg.map.world.addCulture')}
                 </button>
               )}
+              {/* 放置/连线工具：正交于视图维度，落在世界实体层（城邦/地标/道路/航线） */}
+              <button type="button" className={`nv-maped-chip${placing === 'burg' ? ' cur' : ''}`} title={t('wg.map.world.placeHint')}
+                onClick={() => armPlace('burg')}>
+                {t('wg.map.world.addBurg')}
+              </button>
+              <button type="button" className={`nv-maped-chip${placing === 'mark' ? ' cur' : ''}`} title={t('wg.map.world.placeHint')}
+                onClick={() => armPlace('mark')}>
+                {t('wg.map.world.addMark')}
+              </button>
+              <button type="button" className={`nv-maped-chip${routing === 'roads' ? ' cur' : ''}`} title={t('wg.map.world.pathHint')}
+                onClick={() => armRoute('roads')}>
+                {t('wg.map.world.addRoad')}
+              </button>
+              <button type="button" className={`nv-maped-chip${routing === 'searoutes' ? ' cur' : ''}`} title={t('wg.map.world.pathHint')}
+                onClick={() => armRoute('searoutes')}>
+                {t('wg.map.world.addSea')}
+              </button>
               {(['states', 'routes', 'burgs', 'names'] as const)
                 .filter(l => l !== 'states' || worldView === 'political')
                 .map(l => (
@@ -1920,12 +2029,37 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
               {t('wg.map.world.brushErase')}
             </button>
           )}
-          <button type="button" className="nv-maped-chip" onClick={() => setBrush(null)}>{t('wg.map.world.brushDone')}</button>
+          <button type="button" className="nv-maped-chip" onClick={exitTools}>{t('wg.map.world.brushDone')}</button>
+        </div>
+        )}
+        {placing !== null && (
+        <div className="nv-maped-brushbar">
+          <span className="nv-maped-brushdot" style={{ background: placing === 'burg' ? '#4A4A55' : '#D64541' }} />
+          <span className="nv-maped-brushname">
+            {t(placing === 'burg' ? 'wg.map.world.addBurg' : 'wg.map.world.addMark')}
+            <em>{t('wg.map.world.placeHint')}</em>
+          </span>
+          <button type="button" className="nv-maped-chip" onClick={exitTools}>{t('wg.map.world.brushDone')}</button>
+        </div>
+        )}
+        {routing !== null && (
+        <div className="nv-maped-brushbar">
+          <span className="nv-maped-brushdot" style={{ background: routing === 'searoutes' ? '#3E7CAB' : '#705638' }} />
+          <span className="nv-maped-brushname">
+            {fmt(t, 'wg.map.world.pathBar', { n: pathRef.current.length })}
+            <em>{t('wg.map.world.pathHint')}</em>
+          </span>
+          <button type="button" className="nv-maped-chip" disabled={pathRef.current.length < 2}
+            onClick={commitRoute}>
+            {t('wg.map.world.pathFinish')}
+          </button>
+          <button type="button" className="nv-maped-chip" onClick={exitTools}>{t('wg.map.world.brushDone')}</button>
         </div>
         )}
         <canvas ref={cvRef} className="nv-maped-canvas"
-          style={brushCursor ? { cursor: 'none' } : undefined}
+          style={brushCursor ? { cursor: 'none' } : tool === 'place' || tool === 'path' ? { cursor: 'crosshair' } : undefined}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+          onDoubleClick={() => { if (routing !== null) commitRoute() }}
           onPointerLeave={() => { cursorRef.current = null; draw() }}
           onWheel={onWheel} onContextMenu={e => e.preventDefault()} />
         {sel !== null && mode === 'edit' && (
@@ -1999,7 +2133,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
             </button>
             {(selWorld.kind === 'state' || selWorld.kind === 'culture') && (
             <button type="button" className="nv-maped-ok" title={t('wg.map.world.paintDesc')}
-              onClick={() => setBrush({
+              onClick={() => armBrush({
                 dim: selWorld.kind === 'state' ? 'state' : 'culture',
                 id: selWorld.id, name: displayName,
                 color: selStateEnt?.color ?? selCultureEnt?.color ?? '#8A8F94',

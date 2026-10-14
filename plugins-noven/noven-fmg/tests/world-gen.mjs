@@ -301,6 +301,32 @@ check(
   const edits = [{ kind: 'state', add: true, name: '新朝', color: '#A85F32', at: [hx / w, hy / h], stroke }]
   applyWorldEdits(e, edits)
   check(e.pack.states.filter(s => s.name === '新朝').length === 1, '换种子后新建实体唯一')
+
+  // 放城邦：add+kind:'burg' 在 at 最近陆格落点，格上登记 burg id
+  const f = mk()
+  const nBurgs0 = f.pack.burgs.length
+  applyWorldEdits(f, [{ kind: 'burg', add: true, at: [hx / w, hy / h], name: '商丘', lock: true }])
+  const burg = f.pack.burgs.at(-1)
+  check(f.pack.burgs.length === nBurgs0 + 1 && burg?.name === '商丘', 'add 放城邦')
+  check(burg !== undefined && f.pack.cells.burg[burg.cell] === burg.i && (f.pack.cells.h[burg.cell] ?? 0) >= 20, '城邦落在陆格且可命中')
+
+  // 画路线：add+kind:'route'+path 重建折线，每点锚回当代格
+  const g = mk()
+  const nRoutes0 = g.pack.routes.length
+  applyWorldEdits(g, [{ kind: 'route', add: true, group: 'roads', name: '官道', lock: true,
+    path: [[hx / w - 0.05, hy / h], [hx / w, hy / h - 0.02], [hx / w + 0.05, hy / h]] }])
+  const route = g.pack.routes.at(-1)
+  check(g.pack.routes.length === nRoutes0 + 1 && route?.group === 'roads' && route.points.length === 3, 'add 画道路')
+  check(route !== undefined && route.cells.every(ci => ci >= 0 && ci < g.pack.cells.i.length), '路线每点锚到合法格')
+
+  // 换种子后城邦/路线仍按 at/path 重建
+  const h2 = generateWorld({ seed: seed + '-brush-2', config: { points: 5000, names: true }, heightmap: { kind: 'template', template: 'continents' } })
+  applyWorldEdits(h2, [
+    { kind: 'burg', add: true, at: [hx / w, hy / h], name: '商丘', lock: true },
+    { kind: 'route', add: true, group: 'roads', name: '官道', lock: true, path: [[hx / w - 0.05, hy / h], [hx / w, hy / h - 0.02], [hx / w + 0.05, hy / h]] },
+  ])
+  check(h2.pack.burgs.some(bg => bg?.name === '商丘' && !bg.removed), '换种子后城邦仍在')
+  check(h2.pack.routes.some(rt => rt.name === '官道' && !rt.removed), '换种子后路线仍在')
 }
 
 console.log(failures ? `\n${failures} FAIL` : '\nALL PASS')

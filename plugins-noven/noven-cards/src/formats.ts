@@ -580,8 +580,13 @@ export interface MapWorldEdit {
   /** 划界笔刷：归一化折线 + 笔径（高度比）。回贴时把笔迹覆盖的陆格刷给目标
    *  实体；目标解析不到时刷回中立/荒野（=擦除）。state→cells.state，culture→cells.culture。 */
   readonly stroke?: { readonly pts: readonly MapXY[]; readonly r: number }
-  /** 解析不到就按 name/color/at 新建实体（state/culture），配合 stroke 即「划区建国」。 */
+  /** 连线工具：归一化折线，配合 add+kind:'route' 新建道路/航线。 */
+  readonly path?: readonly MapXY[]
+  /** 解析不到就按 name/color/at/path 新建实体——state/culture 需 at（配合 stroke
+   *  即「划区建国」）；burg 需 at；route 需 path+group。 */
   readonly add?: boolean
+  /** 新建路线的分组：roads 主干道 / trails 小径 / searoutes 航线。 */
+  readonly group?: 'roads' | 'trails' | 'searoutes'
   readonly color?: string
 }
 
@@ -759,6 +764,8 @@ function worldEditOf(raw: unknown): MapWorldEdit | null {
   const strokePts = xyListOf(strokeSrc.pts)
   const strokeR = num(strokeSrc.r, 0)
   const stroke = strokePts.length > 0 && strokeR > 0 ? { pts: strokePts, r: Math.min(0.5, strokeR) } : undefined
+  const pathPts = xyListOf(source.path)
+  const group = str(source.group)
   const color = str(source.color)
   const edit: MapWorldEdit = {
     kind,
@@ -769,11 +776,13 @@ function worldEditOf(raw: unknown): MapWorldEdit | null {
     ...(source.remove === true ? { remove: true } : {}),
     ...(source.lock === true ? { lock: true } : {}),
     ...(stroke !== undefined ? { stroke } : {}),
+    ...(pathPts.length > 0 ? { path: pathPts } : {}),
+    ...(group === 'roads' || group === 'trails' || group === 'searoutes' ? { group } : {}),
     ...(source.add === true ? { add: true } : {}),
     ...(HEX6.test(color) ? { color } : {}),
   }
-  // 无定位手段也没有笔迹/新建意图的条目没有意义
-  return edit.key !== undefined || edit.at !== undefined || edit.id !== undefined || edit.stroke !== undefined || edit.add === true ? edit : null
+  // 无定位手段也没有笔迹/连线/新建意图的条目没有意义
+  return edit.key !== undefined || edit.at !== undefined || edit.id !== undefined || edit.stroke !== undefined || edit.path !== undefined || edit.add === true ? edit : null
 }
 
 /** 解码世界生成源：缺 heightmap 或字段非法时整段丢弃（退回旧行为）。 */
