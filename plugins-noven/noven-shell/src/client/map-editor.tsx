@@ -403,7 +403,12 @@ interface BuiltWorld {
   readonly tree: ReturnType<typeof createPackQuadtree>
   readonly layers: ReadonlySet<WorldLayer>
   readonly canvas: HTMLCanvasElement
+  /** 各政权占格数，构建时算一次——地名分级用，不随帧重算。 */
+  readonly stateCells: ReadonlyMap<number, number>
 }
+
+/** Safari 触控板捏合走非标准的 gesture 事件而非 ctrl+wheel。 */
+interface WebkitGestureEvent extends Event { readonly scale: number, readonly clientX: number, readonly clientY: number }
 
 /** 语义色解析成高度：palette 显式 level 优先，否则按名字猜，最后兜底陆地。 */
 const levelOfPalette = (doc: EditorDoc, color: string): number | undefined => {
@@ -748,6 +753,15 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const [baseForm, setBaseForm] = useState<{ name: string, desc: string, color: string } | null>(null)
 
   const viewRef = useRef({ s: 200, x: 0, y: 0 })   // s = px per work unit
+  /** 相机动画句柄与「指针是否在舞台上」（键盘缩放按悬停判定）。 */
+  const viewAnimRef = useRef(0)
+  const hoverRef = useRef(false)
+  const lastSizeRef = useRef<{ w: number, h: number } | null>(null)
+  /** 相对适配的缩放百分比，仅驱动导航簇读数。 */
+  const [zoomPct, setZoomPct] = useState(100)
+  /** stage 挂载态：空视图阶段不渲染 stage，滚轮/手势监听靠它重新挂接。 */
+  const [stageEl, setStageEl] = useState<HTMLDivElement | null>(null)
+  const stageCb = useCallback((el: HTMLDivElement | null) => { stageRef.current = el; setStageEl(el) }, [])
   const gestureRef = useRef<Gesture>({ kind: 'none' })
   const cursorRef = useRef<XY | null>(null)
   const draftLayerRef = useRef<HTMLCanvasElement | null>(null)
@@ -824,6 +838,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           setPathTick(v => v + 1); draw()
           e.preventDefault(); e.stopImmediatePropagation()
         }
+        return
       }
     }
     window.addEventListener('keydown', onKey, true)
@@ -890,7 +905,12 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     try {
       const world = generateWorld({ seed: src.seed, config: src.config, heightmap: worldHeightmap(doc, src), postSteps: [...(src.postSteps ?? [])] })
       if (src.edits !== undefined && src.edits.length > 0) applyWorldEdits(world, src.edits)
-      const built: BuiltWorld = { world, tree: createPackQuadtree(world.pack), layers: worldLayers, canvas: paintWorld(world, worldLayers, worldView) }
+      const stateCells = new Map<number, number>()
+      for (const i of world.pack.cells.i) {
+        const s = world.pack.cells.state[i] ?? 0
+        stateCells.set(s, (stateCells.get(s) ?? 0) + 1)
+      }
+      const built: BuiltWorld = { world, tree: createPackQuadtree(world.pack), layers: worldLayers, canvas: paintWorld(world, worldLayers, worldView), stateCells }
       builtRef.current = { key, built }
       return built
     } catch {
@@ -1215,7 +1235,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         if (built.layers.has('states')) {
           for (const s of pack.states) {
             if (!s.i || s.removed || s.pole === undefined || !s.name) continue
-            const cellsN = pack.cells.i.reduce((acc, i) => acc + (pack.cells.state[i] === s.i ? 1 : 0), 0)
+            const cellsN = built.stateCells.get(s.i ?? 0) ?? 0
             const size = Math.min(10 + Math.sqrt(cellsN) * 1.1, 26)
             place(s.pole[0], s.pole[1], s.name, size, 'rgba(60,66,74,.3)', '700')
           }
@@ -1446,8 +1466,110 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     v.s = Math.min(stage.clientWidth / aspectRef.current, stage.clientHeight) * .96
     v.x = (stage.clientWidth - aspectRef.current * v.s) / 2
     v.y = (stage.clientHeight - v.s) / 2
+    setZoomPct(100)
     return true
   }, [])
+
+  /* ---------- 相机 ----------
+   * z 是相对缩放量：z=1 = 适配全图；s = fitScale() × z，界面上读百分比。
+   * 上限按格子密度推：放大到单格约 48px 为止，不写死绝对像素。 */
+
+  /** 当前舞台下 z=1 的像素比例。 */
+  const fitScale = useCallback((): number => {
+    const st = stageRef.current
+    if (st === null || st.clientWidth === 0 || st.clientHeight === 0) return viewRef.current.s
+    return Math.min(st.clientWidth / aspectRef.current, st.clientHeight) * .96
+  }, [])
+
+  /** [最小, 最大] s：下限 0.7×适配，上限放到单格 ~48 屏 px（无世界时兜底 10×）。 */
+  const zoomBounds = useCallback((): readonly [number, number] => {
+    const fit = fitScale()
+    const built = builtRef.current?.built
+    if (built === undefined) return [fit * .7, fit * 10]
+    const { width, height } = built.world.config
+    const n = Math.max(1, built.world.pack.cells.i.length)
+    const spacing = Math.sqrt(width * height / n)
+    return [fit * .7, Math.max(fit * 4, 48 * height / spacing)]
+  }, [fitScale])
+
+  /** 平移边界：地图在两轴上都至少留 ~30%（至多 120px）在屏内，拖不丢。 */
+  const clampView = useCallback((): void => {
+    const st = stageRef.current
+    if (st === null) return
+    const v = viewRef.current
+    const mw = aspectRef.current * v.s
+    const kx = Math.min(120, st.clientWidth * .3, mw)
+    const ky = Math.min(120, st.clientHeight * .3, v.s)
+    v.x = Math.min(Math.max(v.x, kx - mw), st.clientWidth - kx)
+    v.y = Math.min(Math.max(v.y, ky - v.s), st.clientHeight - ky)
+  }, [])
+
+  /** 立即缩放（滚轮路径）：锚定光标下的世界点。 */
+  const setZoomAt = useCallback((sRaw: number, mx: number, my: number): void => {
+    const v = viewRef.current
+    const [lo, hi] = zoomBounds()
+    const s2 = Math.min(Math.max(sRaw, lo), hi)
+    if (s2 === v.s) return
+    v.x = mx - (mx - v.x) * (s2 / v.s)
+    v.y = my - (my - v.y) * (s2 / v.s)
+    v.s = s2
+    clampView()
+    setZoomPct(Math.round(v.s / fitScale() * 100))
+    draw()
+  }, [clampView, draw, fitScale, zoomBounds])
+
+  /** 平滑飞到目标取景（按钮/双击/快捷键路径）。 */
+  const animView = useCallback((to: { s: number, x: number, y: number }, ms = 240): void => {
+    cancelAnimationFrame(viewAnimRef.current)
+    const from = { ...viewRef.current }
+    const t0 = performance.now()
+    const tick = (now: number): void => {
+      const k = Math.min(1, (now - t0) / ms)
+      const e = 1 - Math.pow(1 - k, 3)
+      const v = viewRef.current
+      v.s = from.s + (to.s - from.s) * e
+      v.x = from.x + (to.x - from.x) * e
+      v.y = from.y + (to.y - from.y) * e
+      draw()
+      if (k < 1) viewAnimRef.current = requestAnimationFrame(tick)
+      else { clampView(); setZoomPct(Math.round(v.s / fitScale() * 100)) }
+    }
+    viewAnimRef.current = requestAnimationFrame(tick)
+  }, [clampView, draw, fitScale])
+
+  /** 按档缩放：锚点缺省取舞台中心。 */
+  const zoomStep = useCallback((factor: number, mx?: number, my?: number): void => {
+    const st = stageRef.current
+    if (st === null) return
+    const cx = mx ?? st.clientWidth / 2, cy = my ?? st.clientHeight / 2
+    const v = viewRef.current
+    const [lo, hi] = zoomBounds()
+    const s2 = Math.min(Math.max(v.s * factor, lo), hi)
+    if (s2 === v.s) return
+    animView({ s: s2, x: cx - (cx - v.x) * (s2 / v.s), y: cy - (cy - v.y) * (s2 / v.s) })
+  }, [animView, zoomBounds])
+
+  /** 回到全图（动画）。 */
+  const flyFit = useCallback((): void => {
+    const st = stageRef.current
+    if (st === null) return
+    const s = fitScale()
+    animView({ s, x: (st.clientWidth - aspectRef.current * s) / 2, y: (st.clientHeight - s) / 2 }, 300)
+  }, [animView, fitScale])
+
+  /* 缩放键：＋/− 按档缩放、0/⇧1 回全图。仅当指针悬在地图上，且不吃 ⌘/⌃ 组合键、
+   * 不打断输入框。放在相机 helper 之后——deps 数组在渲染期求值，不能前向引用。 */
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.metaKey || e.ctrlKey || !hoverRef.current) return
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.key === '+' || e.key === '=') { zoomStep(1.25); e.preventDefault(); return }
+      if (e.key === '-' || e.key === '_') { zoomStep(1 / 1.25); e.preventDefault(); return }
+      if (e.key === '0' || e.key === '!') { flyFit(); e.preventDefault() }
+    }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [zoomStep, flyFit])
   // 子视图（带 window/固定 aspect）的宽高比不从底图实测——几何是按取景框归一化的。
   const aspectOf = useCallback((imgW: number, imgH: number): number => {
     const doc = docRef.current
@@ -1481,10 +1603,60 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   useEffect(() => {
     const stage = stageRef.current
     if (stage === null) return
-    const ro = new ResizeObserver(() => { fitIfNeeded(); draw() })
+    const ro = new ResizeObserver(() => {
+      // 窗口/侧栏变化时以视野中心的世界点为锚——相机不跳，z 含义随适配重算。
+      const last = lastSizeRef.current
+      if (last !== null && fitRef.current !== null) {
+        const v = viewRef.current
+        const cx = (last.w / 2 - v.x) / v.s, cy = (last.h / 2 - v.y) / v.s
+        v.x = stage.clientWidth / 2 - cx * v.s
+        v.y = stage.clientHeight / 2 - cy * v.s
+        clampView(); setZoomPct(Math.round(v.s / fitScale() * 100))
+      }
+      lastSizeRef.current = { w: stage.clientWidth, h: stage.clientHeight }
+      fitIfNeeded(); draw()
+    })
     ro.observe(stage)
     return () => { ro.disconnect() }
-  }, [draw, fitIfNeeded])
+  }, [clampView, draw, fitIfNeeded, fitScale])
+
+  /* 滚轮协议（原生 passive:false，拦下浏览器自身的页面缩放/捏合）：
+   *   滑动/滚轮 = 平移；捏合或 ⌘/⌃+滚轮 = 以光标为锚的连续缩放。 */
+  useEffect(() => {
+    const stage = stageEl
+    if (stage === null) return
+    const onWheel = (e: WheelEvent): void => {
+      e.preventDefault()
+      cancelAnimationFrame(viewAnimRef.current)
+      const rect = stage.getBoundingClientRect()
+      const unit = e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? rect.height : 1
+      if (e.ctrlKey || e.metaKey) {
+        setZoomAt(viewRef.current.s * Math.exp(-e.deltaY * unit * .01), e.clientX - rect.left, e.clientY - rect.top)
+        return
+      }
+      const v = viewRef.current
+      v.x -= e.deltaX * unit; v.y -= e.deltaY * unit
+      clampView()
+      draw()
+    }
+    let gPrev = 1
+    const onGestureStart = (e: Event): void => { e.preventDefault(); gPrev = (e as WebkitGestureEvent).scale }
+    const onGestureChange = (e: Event): void => {
+      e.preventDefault()
+      const ge = e as WebkitGestureEvent
+      const rect = stage.getBoundingClientRect()
+      setZoomAt(viewRef.current.s * (ge.scale / gPrev), ge.clientX - rect.left, ge.clientY - rect.top)
+      gPrev = ge.scale
+    }
+    stage.addEventListener('wheel', onWheel, { passive: false })
+    stage.addEventListener('gesturestart', onGestureStart)
+    stage.addEventListener('gesturechange', onGestureChange)
+    return () => {
+      stage.removeEventListener('wheel', onWheel)
+      stage.removeEventListener('gesturestart', onGestureStart)
+      stage.removeEventListener('gesturechange', onGestureChange)
+    }
+  }, [stageEl, clampView, draw, setZoomAt])
 
   /* ---------- 指针手势 ----------
    * 协议：左键拖=当前工具动作，左键点（未拖动）=选择；
@@ -1492,6 +1664,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
 
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     cvRef.current?.setPointerCapture(e.pointerId)
+    cancelAnimationFrame(viewAnimRef.current)
     const p = workOfEvent(e)
     if (e.button !== 0 || spaceRef.current) {
       gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }
@@ -1629,6 +1802,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       if (Math.abs(e.clientX - last[0]) + Math.abs(e.clientY - last[1]) > 2) g.moved = true
       viewRef.current.x += e.clientX - last[0]
       viewRef.current.y += e.clientY - last[1]
+      clampView()
       g.last = [e.clientX, e.clientY]
       draw(); return
     }
@@ -1675,7 +1849,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       draw(); return
     }
     draw()
-  }, [draw, drawLayer, markWork, objWorkPts, resolvedPts, snapTarget, toStore, toWork, workOfEvent])
+  }, [clampView, draw, drawLayer, markWork, objWorkPts, resolvedPts, snapTarget, toStore, toWork, workOfEvent])
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
     const g = gestureRef.current
@@ -1792,20 +1966,6 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     releaseBusy()
     draw()
   }, [brush, brushPx, commit, drawLayer, erasing, how, markWork, objWorkPts, pal?.color, pushWorldEditUndo, resolveBuilt, selectWorldAt, snapTarget, t, toStore, workOfEvent])
-
-  const onWheel = useCallback((e: React.WheelEvent) => {
-    if (!e.ctrlKey && !e.metaKey) return
-    e.preventDefault()
-    const rect = cvRef.current?.getBoundingClientRect()
-    if (rect === undefined) return
-    const mx = e.clientX - rect.left, my = e.clientY - rect.top
-    const v = viewRef.current
-    const s2 = Math.max(60, Math.min(4000, v.s * (e.deltaY < 0 ? 1.12 : 1 / 1.12)))
-    v.x = mx - (mx - v.x) * (s2 / v.s)
-    v.y = my - (my - v.y) * (s2 / v.s)
-    v.s = s2
-    draw()
-  }, [draw])
 
   /* ---------- 对象卡 ---------- */
 
@@ -2013,7 +2173,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         </div>
         )}
       </div>
-      <div className="nv-maped-stage" ref={stageRef}>
+      <div className="nv-maped-stage" ref={stageCb}>
         {brush !== null && (
         <div className="nv-maped-brushbar">
           <span className="nv-maped-brushdot" style={{ background: brush.id === 0 ? '#6E6E73' : brush.color }} />
@@ -2059,9 +2219,20 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         <canvas ref={cvRef} className="nv-maped-canvas"
           style={brushCursor ? { cursor: 'none' } : tool === 'place' || tool === 'path' ? { cursor: 'crosshair' } : undefined}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
-          onDoubleClick={() => { if (routing !== null) commitRoute() }}
-          onPointerLeave={() => { cursorRef.current = null; draw() }}
-          onWheel={onWheel} onContextMenu={e => e.preventDefault()} />
+          onDoubleClick={e => {
+            if (routing !== null) { commitRoute(); return }
+            if (tool !== 'select') return
+            const rect = cvRef.current?.getBoundingClientRect()
+            if (rect !== undefined) zoomStep(1.6, e.clientX - rect.left, e.clientY - rect.top)
+          }}
+          onPointerEnter={() => { hoverRef.current = true }}
+          onPointerLeave={() => { hoverRef.current = false; cursorRef.current = null; draw() }}
+          onContextMenu={e => e.preventDefault()} />
+        <div className="nv-maped-nav">
+          <button type="button" title={t('wg.map.nav.zoomOut')} onClick={() => zoomStep(1 / 1.4)}>−</button>
+          <button type="button" className="nv-maped-navpct" title={t('wg.map.nav.fit')} onClick={flyFit}>{zoomPct}%</button>
+          <button type="button" title={t('wg.map.nav.zoomIn')} onClick={() => zoomStep(1.4)}>＋</button>
+        </div>
         {sel !== null && mode === 'edit' && (
           <div className="nv-maped-objcard">
             <input value={objForm?.name ?? sel.name} placeholder={t('wg.field.title')}
