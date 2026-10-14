@@ -2007,6 +2007,13 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   font-size: 10px; color: var(--nv-secondary-text); background: rgba(255,255,255,.78);
   border-radius: 6px 6px 0 0; padding: 3px 10px; pointer-events: none; max-width: calc(100% - 24px);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nv-maped-brushbar { position: absolute; bottom: 26px; left: 50%; transform: translateX(-50%); z-index: 3;
+  display: flex; align-items: center; gap: 6px; background: var(--nv-surface);
+  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 5px 10px;
+  box-shadow: 0 4px 16px rgba(22,24,26,.10); }
+.nv-maped-brushdot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.nv-maped-brushname { font-size: 12px; color: var(--nv-primary-text); white-space: nowrap; }
+.nv-maped-brushname em { font-style: normal; color: var(--nv-secondary-text); margin-left: 6px; font-size: 11px; }
 /* 集合渲染器（设计稿 06 + collection-v2 B/C）：视图切换 + 图鉴卡 + 表格 + 编年长卷。 */
 .nv-coll { margin-top: 10px; }
 .nv-coll-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }

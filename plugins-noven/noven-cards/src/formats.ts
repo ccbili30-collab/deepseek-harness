@@ -577,6 +577,12 @@ export interface MapWorldEdit {
   readonly name?: string
   readonly remove?: boolean
   readonly lock?: boolean
+  /** 划界笔刷：归一化折线 + 笔径（高度比）。回贴时把笔迹覆盖的陆格刷给目标
+   *  实体；目标解析不到时刷回中立/荒野（=擦除）。state→cells.state，culture→cells.culture。 */
+  readonly stroke?: { readonly pts: readonly MapXY[]; readonly r: number }
+  /** 解析不到就按 name/color/at 新建实体（state/culture），配合 stroke 即「划区建国」。 */
+  readonly add?: boolean
+  readonly color?: string
 }
 
 /** 世界生成源：确定性管线的全部输入；派生几何（grid/pack/河网）不落盘。 */
@@ -749,6 +755,11 @@ function worldEditOf(raw: unknown): MapWorldEdit | null {
   const at = Array.isArray(source.at) && source.at.length >= 2 ? [num(source.at[0], -1), num(source.at[1], -1)] as const : undefined
   const id = typeof source.id === 'number' && Number.isInteger(source.id) && source.id > 0 ? source.id : undefined
   const name = str(source.name)
+  const strokeSrc = record(source.stroke)
+  const strokePts = xyListOf(strokeSrc.pts)
+  const strokeR = num(strokeSrc.r, 0)
+  const stroke = strokePts.length > 0 && strokeR > 0 ? { pts: strokePts, r: Math.min(0.5, strokeR) } : undefined
+  const color = str(source.color)
   const edit: MapWorldEdit = {
     kind,
     ...(key !== '' ? { key } : {}),
@@ -757,9 +768,12 @@ function worldEditOf(raw: unknown): MapWorldEdit | null {
     ...(name !== '' ? { name } : {}),
     ...(source.remove === true ? { remove: true } : {}),
     ...(source.lock === true ? { lock: true } : {}),
+    ...(stroke !== undefined ? { stroke } : {}),
+    ...(source.add === true ? { add: true } : {}),
+    ...(HEX6.test(color) ? { color } : {}),
   }
-  // 无定位手段的条目没有意义
-  return edit.key !== undefined || edit.at !== undefined || edit.id !== undefined ? edit : null
+  // 无定位手段也没有笔迹/新建意图的条目没有意义
+  return edit.key !== undefined || edit.at !== undefined || edit.id !== undefined || edit.stroke !== undefined || edit.add === true ? edit : null
 }
 
 /** 解码世界生成源：缺 heightmap 或字段非法时整段丢弃（退回旧行为）。 */

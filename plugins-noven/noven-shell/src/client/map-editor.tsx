@@ -686,7 +686,7 @@ const MAP_WORLD = true
 type DrawLayer = LayerId
 
 interface Gesture {
-  readonly kind: 'stroke' | 'stretch' | 'move' | 'pan' | 'paint' | 'facepaint' | 'shape' | 'none'
+  readonly kind: 'stroke' | 'stretch' | 'move' | 'pan' | 'paint' | 'facepaint' | 'shape' | 'wpaint' | 'none'
   readonly obj?: MapObject
   readonly grab?: number
   sigma?: number
@@ -757,6 +757,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const [worldLayers, setWorldLayers] = useState<ReadonlySet<WorldLayer>>(() => new Set<WorldLayer>(['states', 'routes', 'burgs', 'names']))
   /** 主视图：切维度改着色/命中/实体卡，图层开关（路线/城邦/地名）与正交。 */
   const [worldView, setWorldView] = useState<WorldView>('political')
+  /** 划界笔刷：armed 后拖动把陆格刷给目标实体。id>0 既有实体，0=中立擦除，-1=新建。 */
+  const [brush, setBrush] = useState<{ dim: 'state' | 'culture', id: number, name: string, color: string } | null>(null)
   const toWork = useCallback((p: XY): XY => [p[0] * aspectRef.current, p[1]], [])
   const toStore = useCallback((p: XY): XY => [clamp01(p[0] / aspectRef.current), clamp01(p[1])], [])
   const objWorkPts = useCallback((o: FaceObj | LineObj): XY[] => o.pts.map(toWork), [toWork])
@@ -770,8 +772,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   }, [data])
 
   const sel = docRef.current.objects.find(o => o.id === selId) ?? null
-  /** 笔刷态：草稿笔、标注涂抹、编辑抹面，都隐藏原生光标改画笔刷圈。 */
-  const brushCursor = MAP_EDITING && (mode === 'draft' || mode === 'annotate' || (mode === 'edit' && editPaint))
+  /** 笔刷态：划界笔、草稿笔、标注涂抹、编辑抹面，都隐藏原生光标改画笔刷圈。 */
+  const brushCursor = brush !== null || (MAP_EDITING && (mode === 'draft' || mode === 'annotate' || (mode === 'edit' && editPaint)))
 
   // 草稿默认取第一个语义色。
   useEffect(() => {
@@ -843,11 +845,22 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     ;(window as { __nvMap?: unknown }).__nvMap = { resolveBuilt, view: viewRef, aspect: aspectRef }
   }, [resolveBuilt])
 
-  // 世界出现/换源时：宽高比跟世界尺寸，重新取景。
+  // 世界出现/换源时：宽高比跟世界尺寸，重新取景。生成签名不含 edits——
+  // 实体覆写（改名/划界）回流只换底图，不清选中、不重置取景。
+  const worldGenRef = useRef<string | null>(null)
   useEffect(() => {
     if (!MAP_WORLD) return
     const src = data.world
-    if (src === undefined) { builtRef.current = null; setSelWorld(null); return }
+    if (src === undefined) { builtRef.current = null; worldGenRef.current = null; setSelWorld(null); return }
+    const hm = src.heightmap
+    const sample = (a: readonly number[]): string => `${a.length}:${a[0]}:${a[Math.floor(a.length / 2)]}:${a[a.length - 1]}`
+    const hmSig = hm.kind === 'template' ? `t:${hm.template}`
+      : hm.kind === 'script' ? `s:${hm.script.length}:${hm.script.slice(0, 64)}`
+      : hm.kind === 'heights' ? `h:${sample(hm.heights)}`
+      : hm.kind === 'gray' ? `g:${sample(hm.gray)}` : 'draft'
+    const genKey = `${src.seed}|${JSON.stringify(src.config ?? {})}|${hmSig}|${JSON.stringify(src.postSteps ?? [])}`
+    if (worldGenRef.current === genKey) return
+    worldGenRef.current = genKey
     aspectRef.current = worldAspectOf(src) ?? aspectRef.current
     fitRef.current = null
     fitIfNeeded()
@@ -1258,7 +1271,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           c.fill()
           c.restore()
         }
-      } else if (g.kind !== 'paint') {
+      } else if (g.kind !== 'paint' && g.kind !== 'wpaint') {
         c.strokeStyle = ACCENT; c.lineWidth = 1.5 / v.s
         c.setLineDash([5 / v.s, 4 / v.s])
         c.beginPath()
@@ -1270,12 +1283,24 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         c.beginPath(); c.arc(g.snapped.point[0], g.snapped.point[1], 5 / v.s, 0, 7); c.fill()
       }
     }
+    // 划界笔迹预览：实体色半透明宽带，擦除（⌥/中立）灰带
+    if (g.kind === 'wpaint' && g.path !== undefined && brush !== null && g.path.length > 1) {
+      c.strokeStyle = g.alt === true ? '#6E6E73' : brush.color
+      c.globalAlpha = .32
+      c.lineWidth = (brushPx / v.s) * 2
+      c.lineCap = 'round'; c.lineJoin = 'round'
+      c.beginPath()
+      g.path.forEach((p, i) => { i === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
+      c.stroke()
+      c.globalAlpha = 1
+    }
     // 笔刷光标：隐藏原生指针，画当前语义色/墨色的空心圈 + 中心点——一眼看到画在哪、画多大。
     const cp = cursorRef.current
     if (cp !== null && brushCursor) {
       const small = mode === 'annotate' && (drawLayer === 'landmark' || (layerKind(drawLayer) === 'face' && how === 'lasso'))
       const r = small ? 4 / v.s : brushPx / v.s
-      const col = mode === 'draft' ? (erasing ? '#D64541' : pal?.color ?? INK) : INK
+      const col = brush !== null ? (brush.id === 0 ? '#6E6E73' : brush.color)
+        : mode === 'draft' ? (erasing ? '#D64541' : pal?.color ?? INK) : INK
       c.beginPath(); c.arc(cp[0], cp[1], r, 0, 7)
       c.fillStyle = `${col}26`; c.fill()
       c.strokeStyle = col; c.lineWidth = 1.5 / v.s; c.stroke()
@@ -1341,6 +1366,11 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     cvRef.current?.setPointerCapture(e.pointerId)
     const p = workOfEvent(e)
+    if (brush !== null && e.button !== 2) {
+      busyRef.current = true
+      gestureRef.current = { kind: 'wpaint', path: [p], moved: false, alt: e.altKey || brush.id === 0 }
+      return
+    }
     if (!MAP_EDITING || e.button === 2) { gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }; return }
     if (mode === 'draft') {
       busyRef.current = true
@@ -1418,7 +1448,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       if (bi === o.pts.length - 1) o.attachEnd = undefined
       gestureRef.current = { kind: 'stretch', obj: o, grab: bi, last: p, alt: e.altKey, moved: false }
     } else gestureRef.current = { kind: 'move', obj: o, last: p }
-  }, [commit, draftHow, drawLayer, hitTest, markWork, mode, objWorkPts, resolvedPts, snapTarget, toStore, workOfEvent])
+  }, [brush, commit, draftHow, drawLayer, hitTest, markWork, mode, objWorkPts, resolvedPts, snapTarget, toStore, workOfEvent])
 
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const p = workOfEvent(e)
@@ -1432,7 +1462,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       g.last = [e.clientX, e.clientY]
       draw(); return
     }
-    if ((g.kind === 'paint' || g.kind === 'facepaint') && g.path !== undefined) {
+    if ((g.kind === 'paint' || g.kind === 'facepaint' || g.kind === 'wpaint') && g.path !== undefined) {
       const last = g.path[g.path.length - 1]
       if (last === undefined || d2(p, last) > (4 / viewRef.current.s) ** 2) g.path.push(p)
       g.moved = true
@@ -1484,6 +1514,48 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     if (g.kind === 'pan') {
       if (g.moved !== true && g.path?.[0] !== undefined) { setSelId(null); selectWorldAt(g.path[0]) }
       draw(); return
+    }
+    if (g.kind === 'wpaint' && g.path !== undefined && brush !== null) {
+      const pts = g.path.map(toStore)
+      const r = brushPx / viewRef.current.s
+      const first = pts[0] ?? [0.5, 0.5]
+      const edit: WorldEntityEdit = g.alt === true
+        ? { kind: brush.dim, stroke: { pts, r } }
+        : brush.id === -1
+          ? { kind: brush.dim, add: true, name: brush.name, color: brush.color, at: first, stroke: { pts, r }, lock: true }
+          : { kind: brush.dim, key: brush.name, id: brush.id, at: first, stroke: { pts, r } }
+      pushWorldEdit(edit)
+      notifyUndo({
+        text: fmt(t, 'ui.receipt.worldPainted', { name: brush.name }),
+        undoLabel: t('ui.undo'),
+        undo: () => {
+          const src = docRef.current.world
+          if (src?.edits === undefined) return
+          // 回声往返后 edits 是解码克隆且字段序不同——按规范化签名删末条同形记录
+          const sigOf = (x: WorldEntityEdit): string =>
+            `${x.kind}|${x.key ?? ''}|${x.name ?? ''}|${x.id ?? ''}|${JSON.stringify(x.stroke ?? null)}`
+          const sig = sigOf(edit)
+          const idx = src.edits.map(sigOf).lastIndexOf(sig)
+          if (idx < 0) return
+          const edits = [...src.edits]
+          edits.splice(idx, 1)
+          docRef.current = { ...docRef.current, world: { ...src, edits } }
+          builtRef.current = null
+          commit(); bump()
+        },
+      })
+      // 新建实体：重算后按名找回并选中；既有实体同一 id 仍在
+      if (brush.id === -1) {
+        const built = resolveBuilt()
+        const list = brush.dim === 'state' ? built?.world.pack.states : built?.world.pack.cultures
+        const ent = list?.find(x => x?.name === brush.name && x.removed !== true)
+        if (ent !== undefined) {
+          const i = ent.i
+          setBrush({ ...brush, id: i })
+          setSelWorld({ kind: brush.dim, id: i, biome: 0, state: brush.dim === 'state' ? i : 0, culture: brush.dim === 'culture' ? i : 0, pos: first })
+        }
+      }
+      releaseBusy(); bump(); draw(); return
     }
     if (g.kind === 'paint' && g.path !== undefined && g.path.length > 1) {
       // 橡皮也是一笔：渲染时 destination-out 擦掉下方草稿，撤销粒度仍是一笔。
@@ -1568,7 +1640,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     }
     releaseBusy()
     draw()
-  }, [brushPx, commit, drawLayer, erasing, how, markWork, objWorkPts, pal?.color, selectWorldAt, snapTarget, toStore, workOfEvent])
+  }, [brush, brushPx, commit, drawLayer, erasing, how, markWork, objWorkPts, pal?.color, pushWorldEdit, resolveBuilt, selectWorldAt, snapTarget, t, toStore, workOfEvent])
 
   const onWheel = useCallback((e: React.WheelEvent) => {
     if (!e.ctrlKey && !e.metaKey) return
@@ -1639,7 +1711,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
               onClick={() => setWorld({ seed: generateSeed(), heightmap: { kind: 'template', template: 'continents' } })}>
               <span className="nv-map-entryicon">{glyph.globe(20)}</span>
               <span className="nv-map-entryname">{t('wg.map.world.new')}</span>
-              <span className="nv-map-entrydesc">{t('wg.map.world.newDesc')}</span>
+              <span className="nv-map-entrydesc">{t('wg.map.world.addDesc')}</span>
             </button>
           </div>
           )}
@@ -1728,11 +1800,23 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
               <div className="nv-maped-seg" role="group" aria-label={t('wg.map.world.view')}>
                 {(['political', 'cultural', 'biomes', 'relief'] as const).map(v => (
                   <button key={v} type="button" className={worldView === v ? 'on' : ''}
-                    onClick={() => { setWorldView(v); setSelWorld(null) }}>
+                    onClick={() => { setWorldView(v); setSelWorld(null); setBrush(null) }}>
                     {t(`wg.map.world.view.${v}` as Parameters<ShellT>[0])}
                   </button>
                 ))}
               </div>
+              {(worldView === 'political' || worldView === 'cultural') && (
+                <button type="button" className="nv-maped-chip" title={t('wg.map.world.addDesc')}
+                  onClick={() => {
+                    const dim = worldView === 'political' ? 'state' : 'culture'
+                    const built = resolveBuilt()
+                    const n = dim === 'state' ? built?.world.pack.states.length ?? 1 : built?.world.pack.cultures.length ?? 1
+                    setBrush({ dim, id: -1, name: t(dim === 'state' ? 'wg.map.world.newState' : 'wg.map.world.newCulture'), color: `hsl(${(n * 61 + 25) % 360} 45% 62%)` })
+                    setSelWorld(null)
+                  }}>
+                  {t(worldView === 'political' ? 'wg.map.world.addState' : 'wg.map.world.addCulture')}
+                </button>
+              )}
               {(['states', 'routes', 'burgs', 'names'] as const)
                 .filter(l => l !== 'states' || worldView === 'political')
                 .map(l => (
@@ -1762,6 +1846,24 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         )}
       </div>
       <div className="nv-maped-stage" ref={stageRef}>
+        {brush !== null && (
+        <div className="nv-maped-brushbar">
+          <span className="nv-maped-brushdot" style={{ background: brush.id === 0 ? '#6E6E73' : brush.color }} />
+          <span className="nv-maped-brushname">
+            {fmt(t, 'wg.map.world.brushBar', { name: brush.name })}
+            <em>{t('wg.map.world.brushHint')}</em>
+          </span>
+          <button type="button" className="nv-maped-chip" onClick={() => setBrushPx(v => Math.max(6, v - 8))}>−</button>
+          <button type="button" className="nv-maped-chip" onClick={() => setBrushPx(v => Math.min(120, v + 8))}>＋</button>
+          {brush.id !== 0 && (
+            <button type="button" className="nv-maped-chip"
+              onClick={() => setBrush({ ...brush, id: 0, name: t(brush.dim === 'state' ? 'wg.map.world.neutrals' : 'wg.map.world.wildlands') })}>
+              {t('wg.map.world.brushErase')}
+            </button>
+          )}
+          <button type="button" className="nv-maped-chip" onClick={() => setBrush(null)}>{t('wg.map.world.brushDone')}</button>
+        </div>
+        )}
         <canvas ref={cvRef} className="nv-maped-canvas"
           style={brushCursor ? { cursor: 'none' } : undefined}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
@@ -1836,6 +1938,16 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
               onClick={() => setWorldRenaming(true)}>
               {t('wg.map.world.rename')}
             </button>
+            {(selWorld.kind === 'state' || selWorld.kind === 'culture') && (
+            <button type="button" className="nv-maped-ok" title={t('wg.map.world.paintDesc')}
+              onClick={() => setBrush({
+                dim: selWorld.kind === 'state' ? 'state' : 'culture',
+                id: selWorld.id, name: displayName,
+                color: selStateEnt?.color ?? selCultureEnt?.color ?? '#8A8F94',
+              })}>
+              {t('wg.map.world.paint')}
+            </button>
+            )}
             <button type="button" className="nv-maped-del nv-armbtn" title={t('wg.map.world.removeDesc')}
               data-armed={worldArm.armed === 'remove' || undefined}
               onClick={() => {

@@ -249,5 +249,59 @@ check(
   check(appliedId === 1 && e.pack.burgs.find(b => b?.i === target.i)?.name === 'Id Named', '无名城邦按 id 回贴改名')
 }
 
+// 9. 划界笔刷：stroke 把陆格刷给实体；add+stroke 划区建国；裸 stroke 擦回中立
+{
+  const mk = () => generateWorld({ seed: seed + '-brush', config: { points: 5000, names: true }, heightmap: { kind: 'template', template: 'continents' } })
+  const a = mk()
+  const cells = a.pack.cells
+  // 找一片陆地密集区当笔迹中心
+  let hub = -1
+  for (let i = 0; i < cells.i.length; i++) {
+    if ((cells.h[i] ?? 0) >= 20) { hub = i; break }
+  }
+  check(hub >= 0, '笔刷测试有陆格可用')
+  const [hx, hy] = cells.p[hub]
+  const w = a.config.width, h = a.config.height
+  const stroke = { pts: [[hx / w - 0.03, hy / h], [hx / w, hy / h], [hx / w + 0.03, hy / h]], r: 0.025 }
+
+  // 刷给既有国：cells.state 改写
+  const state = a.pack.states.find(s => s.i && s.name)
+  const b = mk()
+  applyWorldEdits(b, [{ kind: 'state', key: state.name, stroke }])
+  const sid = state.i
+  const painted = cells.i.filter(i => b.pack.cells.state[i] === sid).length
+  check(painted >= 1, `笔刷改格归属（刷给 ${state.name}，${painted} 格）`)
+  const waterKept = cells.i.every(i => (cells.h[i] ?? 0) < 20 ? b.pack.cells.state[i] !== sid || a.pack.cells.state[i] === sid : true)
+  check(waterKept, '笔刷不刷水格')
+
+  // 划区建国：add+stroke 新建实体并占地
+  const c = mk()
+  applyWorldEdits(c, [{ kind: 'state', add: true, name: '新朝', color: '#A85F32', at: [hx / w, hy / h], stroke, lock: true }])
+  const created = c.pack.states.find(s => s.name === '新朝')
+  check(created !== undefined && created.lock === true, 'add+stroke 新建国家')
+  const claimed = cells.i.filter(i => c.pack.cells.state[i] === created.i).length
+  check(claimed >= 1, `新国家占地 ${claimed} 格`)
+
+  // 擦除：无目标的 stroke 把有主陆格刷回 0（中立）
+  let ownHub = -1
+  for (let i = 0; i < cells.i.length; i++) {
+    if ((cells.h[i] ?? 0) >= 20 && (cells.state[i] ?? 0) > 0) { ownHub = i; break }
+  }
+  if (ownHub >= 0) {
+    const [ox, oy] = cells.p[ownHub]
+    const owner = a.pack.cells.state[ownHub]
+    const erase = { pts: [[ox / w - 0.02, oy / h], [ox / w, oy / h], [ox / w + 0.02, oy / h]], r: 0.02 }
+    const d = mk()
+    applyWorldEdits(d, [{ kind: 'state', stroke: erase }])
+    check(d.pack.cells.state[ownHub] === 0 && owner > 0, `擦除笔迹回中立（${owner}→0）`)
+  }
+
+  // 换种子重算：add+stroke 按名幂等重建（两次回贴不重复建）
+  const e = generateWorld({ seed: seed + '-brush-2', config: { points: 5000, names: true }, heightmap: { kind: 'template', template: 'continents' } })
+  const edits = [{ kind: 'state', add: true, name: '新朝', color: '#A85F32', at: [hx / w, hy / h], stroke }]
+  applyWorldEdits(e, edits)
+  check(e.pack.states.filter(s => s.name === '新朝').length === 1, '换种子后新建实体唯一')
+}
+
 console.log(failures ? `\n${failures} FAIL` : '\nALL PASS')
 process.exit(failures ? 1 : 0)
