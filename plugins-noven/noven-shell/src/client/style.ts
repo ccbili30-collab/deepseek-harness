@@ -1530,6 +1530,23 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   border-radius: 8px; padding: 6px 9px; font-size: 12.5px; font-family: inherit;
   background: var(--nv-surface); color: var(--nv-primary-text); }
 .nv-simset-hint { font-size: 11px; color: var(--nv-secondary-text); padding: 8px 4px; }
+.nv-sesset { display: flex; flex-direction: column; gap: 2px; padding: 6px 10px 24px; }
+.nv-sesset-group { display: flex; flex-direction: column; padding: 6px 0 10px; }
+.nv-sesset-group h4 { margin: 6px 2px 6px; font-size: 11px; font-weight: 600; letter-spacing: .02em;
+  color: var(--nv-secondary-text); text-transform: uppercase; }
+.nv-sesset-field { display: flex; flex-direction: column; gap: 4px; padding: 7px 2px; }
+.nv-sesset-field > span { font-size: 11.5px; color: var(--nv-secondary-text); }
+.nv-sesset-field textarea { resize: vertical; border: 0.5px solid var(--nv-divider); border-radius: 8px;
+  padding: 6px 9px; font-size: 12.5px; line-height: 1.55; font-family: inherit;
+  background: var(--nv-surface); color: var(--nv-primary-text); }
+.nv-sesset-field textarea::placeholder { color: var(--nv-tertiary-text, var(--nv-secondary-text)); opacity: .7; }
+.nv-sesset-field textarea:focus { outline: none; border-color: color-mix(in srgb, var(--nv-accent) 45%, var(--nv-divider)); }
+.nv-sesset-row { display: flex; align-items: center; gap: 10px; padding: 10px 2px; }
+.nv-sesset-rowtext { display: flex; flex: 1; min-width: 0; flex-direction: column; gap: 2px; }
+.nv-sesset-rowtitle { font-size: 12.5px; color: var(--nv-primary-text); }
+.nv-sesset-rowhint { font-size: 11px; line-height: 1.5; color: var(--nv-secondary-text); }
+.nv-sesset-foot { padding: 10px 2px 0; font-size: 11px; line-height: 1.6; color: var(--nv-secondary-text);
+  border-top: 0.5px solid var(--nv-divider); margin-top: 4px; }
 .nv-simrec-row { cursor: default; }
 
 /* Studio 底排：戏台调试盘 / 源码 / 文件 / 版本 页签。 */

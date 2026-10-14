@@ -47,19 +47,36 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
     const data = store.load()
     // 打开设定栏即让管理员上岗——惰性建会话，幂等。
     const adminSessionId = await ensureAdminId(ctx, resolved.root).catch(() => store.adminSession())
+    // 自动整理按会话（契约 C9）。会话还没有自己的档时，先继承旧的 workspace
+    // 开关（迁移），再默认开；只在被明确写过时才以会话值为准。
+    const url = new URL(request.url)
+    const sessionId = url.searchParams.get('session')
+    let paused = false
+    if (sessionId !== null) {
+      const own = data.sessionPaused?.[sessionId]
+      paused = own ?? (data.paused === true)
+    }
     return new Response(JSON.stringify({
       revision: data.revision,
       entities: data.entities.filter(e => e.status !== 'dismissed'),
       relations: data.relations,
-      paused: data.paused === true,
+      paused,
       ...(adminSessionId !== undefined ? { adminSessionId } : {}),
     }), { headers: JSON_HEADERS })
   }
   const body = await request.json() as OpBody
-  // workspace 级开关：自动整理暂停/恢复——不涉及实体，先分发。
+  // 会话级开关：自动整理暂停/恢复（契约 C9）——按请求的 session 落 sessionPaused。
   if (body.op === 'paused') {
-    await withEntityStore(resolved.root, data => { data.paused = body.paused === true ? true : undefined })
-    return new Response(JSON.stringify({ ok: true, paused: body.paused === true }), { headers: JSON_HEADERS })
+    const sid = body.session
+    if (sid === undefined) return new Response('missing session', { status: 400, headers: JSON_HEADERS })
+    const paused = body.paused === true
+    await withEntityStore(resolved.root, data => {
+      const next = { ...(data.sessionPaused ?? {}) }
+      if (paused) next[sid] = true
+      else delete next[sid]
+      data.sessionPaused = Object.keys(next).length > 0 ? next : undefined
+    })
+    return new Response(JSON.stringify({ ok: true, paused }), { headers: JSON_HEADERS })
   }
   const data = store.load()
   const entity = data.entities.find(e => e.id === body.id && e.status !== 'dismissed')

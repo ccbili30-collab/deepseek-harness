@@ -1,6 +1,6 @@
 /**
  * `/api/noven-sidecar` 的客户端——实体库读取、人工操作（收下/略过/改描述/
- * 自动整理开关）与管理员会话编号。对话流不走这里：pane 直接订阅管理员
+ * 会话级自动整理开关）与管理员会话编号。对话流不走这里：pane 直接订阅管理员
  * 会话的事件、发送走正常 prompt 通道。
  * @module noven-shell/client/sidecar-api
  */
@@ -24,7 +24,7 @@ export interface SidecarPayload {
   readonly revision: number
   readonly entities: readonly SidecarEntityView[]
   readonly relations: readonly SidecarRelationView[]
-  /** 这个 workspace 关了自动整理。 */
+  /** 本会话关了自动整理（旧 workspace 开关作迁移兜底）。 */
   readonly paused?: boolean
   /** 项目管理员会话——下半区对话流订阅的就是这条真会话。 */
   readonly adminSessionId?: SessionId

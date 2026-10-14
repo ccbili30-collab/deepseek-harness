@@ -28,10 +28,12 @@ export interface SidecarRelation {
 export interface SidecarData {
   revision: number
   nextId: number
-  /** 这个 workspace 的自动整理开关；true = 消化循环空转（攒了也丢）。 */
+  /** 旧的 workspace 级自动整理开关（迁移来源）；新开关按会话存 sessionPaused。 */
   paused?: boolean
   /** 每个会话消化到哪个事件 seq。 */
   cursors: Record<string, number>
+  /** 会话级自动整理开关（契约 C9）：true = 该会话的消化循环空转（攒了也丢）。 */
+  sessionPaused?: Record<string, boolean>
   entities: SidecarEntity[]
   relations: SidecarRelation[]
 }

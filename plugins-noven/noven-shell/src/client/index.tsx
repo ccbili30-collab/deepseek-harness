@@ -55,6 +55,7 @@ import type { BindingOp, BindingState } from './bindings-api.ts'
 import { ContextTab } from './tabs/Context.tsx'
 import { LibraryTab } from './tabs/Library.tsx'
 import { SidecarTab, type SidecarMessage, type SidecarState } from './tabs/Sidecar.tsx'
+import { SettingsTab } from './tabs/Settings.tsx'
 import { fetchSidecar, sidecarOp, type SidecarOp } from './sidecar-api.ts'
 import type { SessionEventLikeEntry, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import { HeaderChips } from './tabs/HeaderChips.tsx'
@@ -95,9 +96,11 @@ export const LIBRARY_PROJECT_ID = 'noven-library-project' as MainPanelId
 export const CONTEXT_TAB_ID = 'noven:context'
 export const LIBRARY_TAB_ID = 'noven:library'
 export const SIDECAR_TAB_ID = 'noven:sidecar'
+export const SETTINGS_TAB_ID = 'noven:session-settings'
 const CONTEXT_DEF_ID = 'noven-shell.context'
 const LIBRARY_DEF_ID = 'noven-shell.library'
 const SIDECAR_DEF_ID = 'noven-shell.sidecar'
+const SETTINGS_DEF_ID = 'noven-shell.session-settings'
 /** The canvas's tab type: `kind` is what `openTab` names, `id` keys its body under `sidebar.right.pane.tab`. */
 const CANVAS_KIND = 'noven.canvas'
 const CANVAS_DEF_ID = 'noven-shell.canvas'
@@ -151,6 +154,18 @@ export interface SidecarTabInjected {
   readonly hooks: { readonly sidecar: ObservableSnapshot<SidecarState> }
   readonly run: (op: SidecarOp) => Promise<void>
   readonly send: (text: string) => Promise<{ ok: boolean; error?: string }>
+}
+
+/** 会话设置页签注入：侧车实况只用于自动整理开关；设置走会话文档温层。 */
+export interface SettingsTabInjected {
+  readonly sessionId: SessionId
+  readonly hooks: {
+    readonly sidecar: ObservableSnapshot<SidecarState>
+    readonly docs: ObservableSnapshot<Readonly<Record<string, DocEntry>>>
+  }
+  readonly run: (op: SidecarOp) => Promise<void>
+  readonly ensureDoc: CanvasInjected['ensureDoc']
+  readonly saveDoc: CanvasInjected['saveDoc']
 }
 
 /** The face main-panel inject factories hand to their pages. */
@@ -333,6 +348,7 @@ function FeatureMenuItems({ useGuide, useMenuOpenState, openTab }: FeatureMenuPr
 function ContextTabIcon({ size }: { size?: number }) { return glyph.chat(size ?? 16) }
 function LibraryTabIcon({ size }: { size?: number }) { return glyph.book(size ?? 16) }
 function SidecarTabIcon({ size }: { size?: number }) { return glyph.sparkle(size ?? 16) }
+function SettingsTabIcon({ size }: { size?: number }) { return glyph.gear(size ?? 16) }
 
 /** Required browser services: slots, panel selection, theme, copy, right rail, session navigation, command and skill catalogs. */
 export const inject = ['slots', 'locale', 'layout', 'theme', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiWorkspace', 'uiSession', 'remote', 'remote.commands', 'remote.session', 'remote.skills', 'remote.workspaceFiles', 'sessions', 'workspaces']
@@ -2302,6 +2318,37 @@ export function apply(ctx: ClientContext): void {
   }, (p: TabBodyProps & InjectFace<SidecarTabInjected>) => (
     <SidecarTab t={p.t} useTabInfo={p.useTabInfo} useSidecar={p.useSidecar} run={p.run} send={p.send} />
   ))), 'noven-shell: 设定 body')
+  ctx.effect(() => ctx.sidebarRightTabs.register({
+    id: SETTINGS_DEF_ID,
+    kind: SETTINGS_TAB_ID,
+    title: () => t('tab.settings'),
+    guide: [{ id: 'session-settings', order: 6, title: () => t('tab.settings'), description: () => t('tab.settings.hint'), icon: SettingsTabIcon }],
+  }), 'noven-shell: 会话设置 type')
+  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
+    name: 'sidebar.right.pane.tab', key: SETTINGS_DEF_ID, locale: NS,
+    inject: (sessionId: Parameters<typeof ctx.remote.commands.list>[0]): SettingsTabInjected => {
+      let source = sidecars.get(sessionId)
+      if (source === undefined) sidecars.set(sessionId, source = sidecarSource(ctx.sessions, sessionId))
+      return {
+        sessionId,
+        hooks: { sidecar: source, docs: docCache.snapshot },
+        run: async (op: SidecarOp) => {
+          await sidecarOp(sessionId, op)
+          source.refresh()
+        },
+        ensureDoc,
+        saveDoc: async (sid, path, content, base) => {
+          const res = await saveDoc(sid, path, content, base)
+          if (res === 'ok') docCache.put(docKey(sid, path), { state: 'ready', content })
+          return res
+        },
+      }
+    },
+  }, (p: TabBodyProps & InjectFace<SettingsTabInjected>) => (
+    <SettingsTab t={p.t} useTabInfo={p.useTabInfo} sessionId={p.sessionId}
+      useSidecar={p.useSidecar} run={p.run}
+      useDocs={p.useDocs} ensureDoc={p.ensureDoc} saveDoc={p.saveDoc} />
+  ))), 'noven-shell: 会话设置 body')
   // Workspace ⋯ menu membership row: 移入 writes project.json when absent and
   // registers the root; 移出 lifts only the registry pointer — files and the
   // Workspace itself stay untouched.

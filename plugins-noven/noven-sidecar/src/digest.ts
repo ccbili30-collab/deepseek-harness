@@ -104,8 +104,11 @@ async function flushOnce(ctx: Context, session: Session, p: Pending): Promise<vo
   const fresh = p.entries.filter(e => e.seq > cursor)
   if (fresh.length === 0) { p.entries = []; return }
   const lastSeq = Math.max(...fresh.map(e => e.seq))
-  // 停了这个 workspace 的自动整理：攒的增量丢掉、游标照走，恢复后不重审旧回合。
-  if (store.load().paused === true) {
+  // 停了这条会话的自动整理（会话开关；旧 workspace 开关作迁移兜底）：
+  // 攒的增量丢掉、游标照走，恢复后不重审旧回合。
+  const loaded = store.load()
+  const pausedFor = loaded.sessionPaused?.[session.id] ?? loaded.paused === true
+  if (pausedFor) {
     p.entries = []
     await withEntityStore(cwd, data => { data.cursors[session.id] = lastSeq })
     return

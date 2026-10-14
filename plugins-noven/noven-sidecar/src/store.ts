@@ -31,6 +31,7 @@ export class SidecarStore {
         nextId: raw.nextId ?? 1,
         ...(raw.paused === true ? { paused: true } : {}),
         cursors: raw.cursors ?? {},
+        ...(raw.sessionPaused !== undefined ? { sessionPaused: raw.sessionPaused } : {}),
         entities: raw.entities ?? [],
         relations: raw.relations ?? [],
       }

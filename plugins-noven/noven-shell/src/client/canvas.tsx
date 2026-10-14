@@ -28,6 +28,7 @@ import type { ModelCatalog, ModelSelection } from '@deepseek-ai/dsh-api-session-
 import type { IslandCall, IslandFrame } from './stage-island.tsx'
 import { buildEnv, realWebview, SIM_IME, WEBVIEW_BASELINE, type FrameSendResult } from './stage-frame.ts'
 import { collectDeltas, foldArchive, DELTA_WINDOW } from './stage-archive.ts'
+import { useSessionSettings } from './session-settings.tsx'
 
 /** 文件行的标签种类：可编辑文本走文稿编辑器，其余（HTML/图片/二进制）走画框预览。 */
 export const fileTabKind = (path: string): 'doc' | 'work' =>
@@ -549,6 +550,9 @@ export interface CanvasInjected {
 
 type CanvasProps = PropsRuntime<'sidebar.right.pane.tab'> & PropsLocale<'novenShell'> & PropsStore<ReturnType<typeof createCanvasStore>> & InjectFace<CanvasInjected>
 
+/** 文档温层选择器——tab 体通过注入 hooks.docs 拿到的 hook 类型。 */
+export type DocsHook = CanvasProps['useDocs']
+
 /** 起点页：设计稿 01 的中列空态——四张动作卡加一句引导；无项目只剩一句提示。 */
 function StartTab({ t, empty, noProject, onCreate }: {
   readonly t: ShellT
@@ -775,24 +779,11 @@ const SIM_SIZES = [
   { key: 't1024', w: 1024, h: 768 },
 ] as const
 
-/** 会话级设置（.noven/sim/<id>.json）——对齐 Android novexConfiguration 的文本字段。 */
-interface SimSettings {
-  readonly answerIdentity: string
-  readonly myIdentity: string
-  readonly prompt: string
-  readonly background: string
-  readonly perTurn: string
-  readonly style: string
-}
-
-const SIM_SETTINGS_EMPTY: SimSettings = { answerIdentity: '', myIdentity: '', prompt: '', background: '', perTurn: '', style: '' }
-
-const simSettingsPath = (sessionId: SessionId): string => `.noven/sim/${sessionId}.json`
-
 /**
  * 会话页签 = 手机模拟器：给项目根下的真实会话套手机渲染。
  * 返回界面列模拟会话 + 绑定会话（标灰，悬停出「模拟」/红「取消」）；
- * 设置落 .noven/sim/<id>.json，发送时把每轮注入/文风拼进 prompt parts。
+ * 设置与会话设置页签共用 `.noven/session/<id>.json`（见 session-settings.tsx），
+ * 发送时把每轮注入/文风拼进 prompt parts。
  */
 function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, useProject, sim, saveDoc, useDocs, ensureDoc, useDirs, ensureDir, refreshDir }: {
   readonly t: ShellT
@@ -824,9 +815,6 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
   const setRoute = useCallback((v: 'chat' | 'list' | 'settings' | 'records'): void => {
     actions.simViewSet(sessionId, v)
   }, [actions, sessionId])
-  const [settings, setSettings] = useState<SimSettings>(SIM_SETTINGS_EMPTY)
-  const [settingsBase, setSettingsBase] = useState<string | null>(null)
-  const [settingsFor, setSettingsFor] = useState<SessionId | undefined>(undefined)
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const [draftTitle, setDraftTitle] = useState('')
@@ -843,28 +831,8 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
 
   const size = SIM_SIZES.find(s => s.key === sizeKey) ?? SIM_SIZES[1]
 
-  // 设置文件走文档温层：remount 时缓存已在，表单不闪空。
-  const settingsEntry = useDocs(s => openId === undefined ? undefined : s[docKey(openId, simSettingsPath(openId))])
-  useEffect(() => {
-    if (openId === undefined) return
-    ensureDoc(openId, simSettingsPath(openId))
-  }, [openId, ensureDoc])
-  useEffect(() => {
-    if (openId === settingsFor) return
-    if (openId === undefined) { setSettingsFor(undefined); setSettings(SIM_SETTINGS_EMPTY); setSettingsBase(null); return }
-    if (settingsEntry === undefined || settingsEntry.state === 'loading') return
-    setSettingsFor(openId)
-    if (settingsEntry.state === 'ready' && settingsEntry.content !== undefined) {
-      try {
-        const parsed = JSON.parse(settingsEntry.content) as Partial<SimSettings>
-        setSettings({ ...SIM_SETTINGS_EMPTY, ...parsed })
-        setSettingsBase(settingsEntry.content)
-        return
-      } catch { /* 坏 JSON 当空设置 */ }
-    }
-    setSettings(SIM_SETTINGS_EMPTY)
-    setSettingsBase(null)
-  }, [openId, settingsEntry, settingsFor])
+  // 设置走会话设置统一读写（文档温层 + 旧 sim 文件迁移）；remount 时表单不闪空。
+  const { settings, save: saveSettings } = useSessionSettings(openId, useDocs, ensureDoc, saveDoc)
 
   // 资料与存档：.noven 目录清单走目录温层，进 records 屏时先渲缓存再重拉。
   const recordsEntry = useDirs(s => openId === undefined ? undefined : s[dirKey(openId, '.noven')])
@@ -872,13 +840,6 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
     if (view === 'records' && openId !== undefined) refreshDir(openId, '.noven')
   }, [view, openId, refreshDir])
   const files = recordsEntry?.state === 'ready' ? recordsEntry.entries : undefined
-
-  const saveSettings = useCallback((next: SimSettings) => {
-    setSettings(next)
-    if (openId === undefined) return
-    void saveDoc(openId, simSettingsPath(openId), JSON.stringify(next, null, 2), settingsBase)
-      .then(res => { if (res === 'ok') setSettingsBase(JSON.stringify(next, null, 2)) })
-  }, [openId, saveDoc, settingsBase])
 
   /** 沙箱岛拿不到会话 Cookie——资产字节由壳代取为 blob；基目录即工作区根。 */
   const resolveAsset = useCallback((relPath: string, base?: string): Promise<Blob | null> => {
