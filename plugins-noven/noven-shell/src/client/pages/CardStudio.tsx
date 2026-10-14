@@ -15,6 +15,7 @@ import type { CardEditorProps } from './CardEditor.tsx'
 import { findModule, flatten } from './CardEditor.tsx'
 import { fmt } from './Home.tsx'
 import { notifyUndo, useArmedPress } from '../ui/interact.tsx'
+import { useRetainedCard } from '../ui/retain.ts'
 
 /** localStorage key remembering which editor layout the user last used. */
 const VIEW_KEY = 'noven.editor.view'
@@ -136,7 +137,9 @@ interface MdLabels { readonly code: { copyLabel: string; copiedLabel: string; to
 /** Read-side of a module: text blocks render as Markdown, image blocks as captioned figures. */
 export function CardStudio({ t, useStore, loadCard, op, workspaceRoot, back, focusModuleId }: CardEditorProps & { readonly focusModuleId?: string }) {
   const card = useStore(s => s.card)
-  const [state, setState] = useState<CardState | 'loading' | undefined>(undefined)
+  /** 温层（设计理念 §14）：同一张卡再进来直接渲快照、后台刷新。 */
+  const retained = useRetainedCard(card, card?.cardId, loadCard)
+  const state = retained.state
   const [targetId, setTargetId] = useState<string | undefined>(undefined)
   const [selected, setSelected] = useState<string | undefined>(undefined)
   const [collapsed, setCollapsed] = useState<ReadonlySet<string>>(new Set())
@@ -174,22 +177,13 @@ export function CardStudio({ t, useStore, loadCard, op, workspaceRoot, back, foc
   const sizeRef = useRef({ w: 0, h: 0 })
   const ctlRef = useRef<{ move: (e: PointerEvent) => void; up: () => void; undo: () => void; redo: () => void; copy: () => void; paste: () => void }>({ move: () => undefined, up: () => undefined, undo: () => undefined, redo: () => undefined, copy: () => undefined, paste: () => undefined })
 
-  const refresh = async (): Promise<CardState | undefined> => {
-    if (card === null) return undefined
-    const next = await loadCard(card, card.cardId)
-    setState(next)
-    return next
-  }
+  const refresh = retained.refresh
 
   useEffect(() => {
-    let live = true
     setSelected(undefined); setTargetId(undefined); setCollapsed(new Set()); setTabId(undefined)
     setNotice(undefined); setPending(null); setEditing(null); setOpenMenu(null)
     setFaceAt(null); setCardRename(null)
-    if (card === null) { setState(undefined); return }
-    setState('loading')
-    void loadCard(card, card.cardId).then(d => { if (live) setState(d) })
-    return () => { live = false }
+    // 取数交给 useRetainedCard（有快照先渲、后台刷新）；这里只复位本卡的视图态。
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [card?.cardId, card?.sessionId, loadCard])
 

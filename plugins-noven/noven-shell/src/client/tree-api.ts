@@ -229,15 +229,18 @@ export async function fetchNovenTree(addr: CardAddr, since?: string): Promise<No
 }
 
 /**
- * 一棵树的轮询源：首个订阅者到来时开始按 {@link POLL_MS} 轮询，最后一个
- * 退订即停。地址变了由调用方重建源（hook 绑定按源身份缓存，换源即重绑）。
- * @param addr - 会话或裸项目根；undefined 表示还没有项目，源停在 undefined。
- * @returns 可订阅快照加主动 refresh。
+ * 内容树轮询源，按项目留快照（设计理念 §14）：首个订阅者到来时开始按
+ * {@link POLL_MS} 轮询，最后一个退订即停。切到另一个项目时立刻发布那个
+ * 项目上次的快照（没有才是 undefined），再后台轮询覆盖——不清屏、不串项目。
+ * @param addr - 当前要看的项目地址（请求用）；`scope` 是它的留存键（项目根优先）；undefined 表示还没有项目。
+ * @returns 可订阅快照 + 手动刷新。
  */
-export function novenTreeSource(addr: () => CardAddr | undefined): ObservableSnapshot<NovenTree | undefined> & { readonly refresh: () => void } {
+export function novenTreeSource(addr: () => (CardAddr & { readonly scope?: string }) | undefined): ObservableSnapshot<NovenTree | undefined> & { readonly refresh: () => void } {
   let snapshot: NovenTree | undefined
   let lastKey: string | undefined
   let timer: ReturnType<typeof setInterval> | undefined
+  /** 每个项目最近一份树；since token 只在同项目内带，不同项目同树撞哈希不会假 304。 */
+  const byScope = new Map<string, NovenTree>()
   const listeners = new Set<() => void>()
   const publish = (next: NovenTree | undefined): void => {
     if (next === snapshot) return
@@ -246,17 +249,17 @@ export function novenTreeSource(addr: () => CardAddr | undefined): ObservableSna
   }
   const poll = async (): Promise<void> => {
     const target = addr()
-    const key = target === undefined ? undefined : api(target)
-    // 地址换了或没了：上一份快照立刻作废——不留上一个项目的残影，
-    // since token 也不跨项目带（不同项目同树撞哈希会假 304）。
+    const key = target === undefined ? undefined : target.scope ?? api(target)
     if (key !== lastKey) {
       lastKey = key
-      publish(undefined)
+      publish(key === undefined ? undefined : byScope.get(key))
     }
-    if (target === undefined) return
-    const next = await fetchNovenTree(target, snapshot?.revision)
+    if (target === undefined || key === undefined) return
+    const next = await fetchNovenTree(target, byScope.get(key)?.revision)
     if (next === undefined || next === 'unchanged') return
-    publish(next)
+    byScope.set(key, next)
+    // 请求在飞期间可能已切走：只在仍是同一项目时发布。
+    if (lastKey === key) publish(next)
   }
   return {
     getSnapshot: () => snapshot,

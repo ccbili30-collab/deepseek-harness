@@ -39,6 +39,7 @@ import { defineStore } from '@deepseek-ai/dsh-client-store'
 import type { ObservableSnapshot, SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { Home, fmt } from './pages/Home.tsx'
 import { notifyUndo } from './ui/interact.tsx'
+import { cardCache } from './ui/retain.ts'
 import { Create } from './pages/Create.tsx'
 import { Me } from './pages/Me.tsx'
 import { Messages } from './pages/Messages.tsx'
@@ -1414,7 +1415,7 @@ export function apply(ctx: ClientContext): void {
   const treeSource = novenTreeSource(() => {
     const focus = focusSnapshot
     if (focus === undefined) return undefined
-    return focus.sessionId !== undefined ? { sessionId: focus.sessionId } : { root: focus.root }
+    return focus.sessionId !== undefined ? { sessionId: focus.sessionId, scope: focus.root } : { root: focus.root, scope: focus.root }
   })
 
   // 启动时无绑定会话：回最近有工作区的会话；会话目录后到齐也补一次。只做一次。
@@ -1493,6 +1494,7 @@ export function apply(ctx: ClientContext): void {
   const deleteCardWithUndo = (addr: CardAddr, cardId: string, name: string, owner: SessionId): void => {
     void cardOp(addr, { op: 'delete', cardId })
       .then(() => {
+        cardCache.put(addr, cardId, undefined)
         for (const row of canvasInstance.getSnapshot().tabs) {
           if (row.cardId === cardId && row.owner === owner) canvasInstance.actions.close(owner, row.key)
         }
@@ -1928,7 +1930,7 @@ export function apply(ctx: ClientContext): void {
           const addr = { sessionId, root: focusSnapshot?.root }
           for (const it of items) {
             try {
-              if (it.cardId !== undefined) await cardOp(addr, { op: 'delete', cardId: it.cardId })
+              if (it.cardId !== undefined) { await cardOp(addr, { op: 'delete', cardId: it.cardId }); cardCache.put(addr, it.cardId, undefined) }
               else await fileOp(addr, { op: 'rm', path: it.path })
               if (it.workId !== undefined) await libraryOp(addr, { op: 'unregister', workId: it.workId })
             } catch (reason) { console.warn('noven-shell: batch delete failed:', it.path, reason) }
@@ -2152,7 +2154,7 @@ export function apply(ctx: ClientContext): void {
       setMeTab: tab => { instance.actions.setMeTab(tab) },
       exportCard: (addr, cardId, name) => exportCardPackage(addr, cardId, name),
       deleteCard: (addr, cardId) => cardOp(addr, { op: 'delete', cardId })
-        .then(() => { cards.refresh() }),
+        .then(() => { cardCache.put(addr, cardId, undefined); cards.refresh() }),
       moveCard: (addr, cardId, target) => cardOp(addr, { op: 'move', cardId, targetSession: target.sessionId, targetRoot: target.root })
         .then(() => { cards.refresh() }),
     }) }, (p: PageProps & PropsStore<ReturnType<typeof createShellStore>> & InjectFace<MePageInjected>) => (

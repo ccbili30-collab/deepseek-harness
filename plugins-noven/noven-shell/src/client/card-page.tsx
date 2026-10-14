@@ -5,7 +5,7 @@
  * 自带完整详情界面。
  * @module noven-shell/client/card-page
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MarkdownDelegateProvider, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardAddr, CardBlockView, CardDocView, CardModuleDoc, CardOpResult, CardState } from './card-api.ts'
 import { CardConflict, cardContentUrl, fetchCard } from './card-api.ts'
@@ -16,6 +16,7 @@ import { MapEditor } from './map-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
 import { InlineRename, notifyUndo, useArmedMenu } from './ui/interact.tsx'
+import { useRetainedCard, useRetainedScroll } from './ui/retain.ts'
 import { MODLIB_ART } from './modlib-art.ts'
 import { islandDoc } from './stage-island.tsx'
 
@@ -401,12 +402,14 @@ function OverviewPage({ target, overviewModule, isCharacter, t, mdLabels, imageU
  * @param props - 卡地址、读写注入、开其它页签的回调。
  * @returns 头栏 + 总览或单个模块页 + 模块库。
  */
-export function CardPage({ addr, cardId, pageModuleId, autoLibrary, t, loadCard, op, ask, readFile, onOpenFile, onOpenCard }: {
+export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t, loadCard, op, ask, readFile, onOpenFile, onOpenCard }: {
   readonly addr: CardAddr
   readonly cardId: string
   readonly pageModuleId?: string
   /** 树里卡行尾「＋」直达：就绪即弹模块库（一次性信号，标签上已清）。 */
   readonly autoLibrary?: boolean
+  /** 滚动留存键（会话 × 页签）；不给则不记滚动。 */
+  readonly scrollKey?: string
   readonly t: ShellT
   readonly loadCard: (addr: CardAddr, cardId: string) => Promise<CardState | undefined>
   readonly op: (addr: CardAddr, op: import('./card-api.ts').CardOp) => Promise<CardOpResult>
@@ -419,7 +422,10 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, t, loadCard,
   /** noven://card/<id>[/module/<id>] 深链：开卡总览页签或模块页签。 */
   readonly onOpenCard?: (cardId: string, moduleId?: string) => void
 }) {
-  const [state, setState] = useState<CardState | 'loading' | undefined>('loading')
+  /** 温层（设计理念 §14）：见过的卡直接渲快照、后台刷新，不回 loading。 */
+  const retained = useRetainedCard(addr, cardId, loadCard)
+  const state = retained.state
+  const setState = retained.setState
   /** 总览页内钻角色：undefined = 卡根。 */
   const [roleId, setRoleId] = useState<string | undefined>(undefined)
   const [version, setVersion] = useState('')
@@ -455,22 +461,11 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, t, loadCard,
   const targetId = pageModuleId === undefined ? roleId
     : pageOwner !== undefined && pageOwner.id !== doc?.id ? pageOwner.id : undefined
 
-  const refresh = useCallback(async () => {
-    const next = await loadCard(addr, cardId)
-    if (next !== undefined) setVersion(next.version)
-    setState(next)
-  }, [addr, cardId, loadCard])
-
-  useEffect(() => {
-    let live = true
-    setState('loading')
-    void loadCard(addr, cardId).then(next => {
-      if (!live) return
-      setState(next)
-      if (next !== undefined) setVersion(next.version)
-    })
-    return () => { live = false }
-  }, [addr, cardId, loadCard])
+  const refresh = retained.refresh
+  const scrollRef = useRef<HTMLDivElement>(null)
+  useRetainedScroll(scrollRef, scrollKey, typeof state === 'object' && state !== null)
+  /** version 跟随最新快照（缓存命中与后台刷新都会推进它）。 */
+  useEffect(() => { if (typeof state === 'object' && state !== null) setVersion(state.version) }, [state])
 
   // 树里卡行尾「＋」：卡页进来直接弹模块库。
   useEffect(() => { if (autoLibrary === true) setLibrary(true) }, [autoLibrary])
@@ -697,7 +692,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, t, loadCard,
           </span>
         </div>
       )}
-      <div className="nv-cardpage-scroll">
+      <div className="nv-cardpage-scroll" ref={scrollRef}>
         {pageModuleId !== undefined ? (
           <div className="nv-cardpage-module">
             <button type="button" className="nv-page-back" onClick={() => onOpenCard?.(cardId)}>

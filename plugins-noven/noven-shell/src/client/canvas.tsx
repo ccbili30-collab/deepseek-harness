@@ -628,6 +628,7 @@ function CardTab({ tab, t, loadCard, op, ask, readFile, onOpenFile, onOpenCard, 
         cardId={tab.cardId}
         pageModuleId={tab.moduleId}
         autoLibrary={autoLib}
+        scrollKey={`${tab.owner}|${tab.key}`}
         t={t}
         loadCard={loadCard}
         op={op}
