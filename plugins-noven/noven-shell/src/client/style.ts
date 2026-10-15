@@ -1966,18 +1966,12 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 
 /* ---------- 地图编辑器（map-editor.tsx） ---------- */
 .nv-maped { display: flex; flex-direction: column; gap: 8px; }
-.nv-maped-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .nv-maped-seg { display: inline-flex; border: 1px solid var(--nv-divider); border-radius: 8px; overflow: hidden; }
 .nv-maped-seg button { border: none; background: var(--nv-surface); color: var(--nv-secondary-text);
   font-size: 12px; padding: 5px 14px; cursor: pointer; }
 .nv-maped-seg button.on { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-maped-layers { display: flex; gap: 4px; flex-wrap: wrap; }
-.nv-maped-chip { border: 1px solid var(--nv-divider); background: var(--nv-surface); color: var(--nv-secondary-text);
-  font-size: 11px; border-radius: 999px; padding: 3px 10px; cursor: pointer; }
-.nv-maped-chip.cur { border-color: var(--nv-accent); color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
-.nv-maped-chip.off { opacity: .4; text-decoration: line-through; }
 .nv-maped-stage { position: relative; border: 1px solid var(--nv-divider); border-radius: 10px;
-  overflow: hidden; height: clamp(420px, 62vh, 720px); background: #EFE6D0; touch-action: none; }
+  overflow: hidden; height: clamp(420px, 62vh, 720px); max-height: 62vh; background: #EFE6D0; touch-action: none; }
 .nv-maped-canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
 .nv-maped-panel { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%);
   display: flex; flex-direction: column; gap: 6px; background: var(--nv-surface);
@@ -2013,102 +2007,137 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-maped-objcard button { border: none; font-size: 12px; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 .nv-maped-ok { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 .nv-maped-del { background: none; color: var(--nv-danger); }
-.nv-maped-world { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.nv-maped-wcard { position: absolute; top: 0; left: 0; z-index: 4; display: flex; align-items: center;
-  flex-wrap: wrap; gap: 4px 8px; max-width: calc(100% - 16px);
-  background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 10px;
-  padding: 6px 10px; box-shadow: 0 4px 16px rgba(22,24,26,.10); }
 .nv-maped-tip { position: absolute; z-index: 5; pointer-events: none; max-width: 230px;
   background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 8px;
   padding: 6px 9px; box-shadow: 0 4px 16px rgba(22,24,26,.12); }
 .nv-maped-tipt { font-size: 12px; font-weight: 600; color: var(--nv-primary-text); }
 .nv-maped-tipd { font-size: 11px; color: var(--nv-secondary-text); margin-top: 2px; }
 .nv-maped-tipd .cur { color: var(--nv-accent-deep); font-weight: 600; }
-.nv-maped-wname { font-size: 13px; font-weight: 600; color: var(--nv-primary-text); white-space: nowrap; }
 .nv-maped-wnamein { min-width: 0; width: 9em; border: 0; border-bottom: 1px solid var(--nv-accent-deep); background: transparent; padding: 0; font-family: inherit; outline: none; }
-.nv-maped-wcard button { border: none; font-size: 12px; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
-.nv-maped-note { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
-  font-size: 10px; color: var(--nv-secondary-text); background: rgba(255,255,255,.78);
-  border-radius: 6px 6px 0 0; padding: 3px 10px; pointer-events: none; max-width: calc(100% - 24px);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nv-maped-brushbar { position: absolute; bottom: 52px; left: 50%; transform: translateX(-50%); z-index: 3;
-  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px;
-  max-width: calc(100% - 16px); background: var(--nv-surface);
-  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 5px 10px;
-  box-shadow: 0 4px 16px rgba(22,24,26,.10); }
 .nv-maped-brushdot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-.nv-maped-brushname { font-size: 12px; color: var(--nv-primary-text); white-space: nowrap;
-  overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
-.nv-maped-brushname em { font-style: normal; color: var(--nv-secondary-text); margin-left: 6px; font-size: 11px; }
-.nv-maped-nav { position: absolute; right: 10px; bottom: 10px; z-index: 3;
+/* 卡片预览：控件在地图之外排一行，地图按世界宽高比，不留空纸。 */
+.nv-maped-pbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.nv-maped-viewseg { flex-wrap: nowrap; }
+.nv-maped-viewseg button { flex: 0 0 auto; white-space: nowrap; }
+.nv-maped-expand { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none;
+  color: var(--nv-secondary-text); font-size: 12px; padding: 5px 8px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+.nv-maped-expand:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-maped-caption { font-size: 10.5px; color: var(--nv-secondary-text); }
+.nv-maped-away { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  border: 1px dashed var(--nv-divider); border-radius: 10px; padding: 14px 16px;
+  font-size: 12px; color: var(--nv-secondary-text); }
+/* 展开编辑：盖住卡片列与右栏；顶栏 + 舞台为主列，详情栏在右侧挤开地图。 */
+.nv-maped-full { position: fixed; right: 0; bottom: 0; z-index: 90; display: flex;
+  background: var(--nv-surface); border-left: 1px solid var(--nv-divider); }
+.nv-maped-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.nv-maped-top { flex: none; height: 48px; display: flex; align-items: center; gap: 12px; padding: 0 12px;
+  border-bottom: 1px solid var(--nv-divider); }
+.nv-maped-topr { margin-left: auto; display: flex; align-items: center; gap: 2px; }
+.nv-maped-top .nv-maped-viewseg { flex: none; }
+.nv-maped-top .nv-maped-viewseg button { padding: 5px 10px; }
+.nv-maped-topsep { width: 1px; height: 18px; background: var(--nv-divider); margin: 0 6px; }
+.nv-maped-full .nv-maped-stage { flex: 1; height: auto; max-height: none; border: 0; border-radius: 0; }
+.nv-maped-icon { width: 28px; height: 28px; flex: none; display: inline-flex; align-items: center; justify-content: center;
+  border: 0; background: none; color: var(--nv-secondary-text); border-radius: 7px; cursor: pointer; }
+.nv-maped-icon:hover, .nv-maped-icon.cur { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-maped-txt { border: 0; background: none; color: var(--nv-primary-text); font-size: 12px;
+  padding: 5px 8px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+.nv-maped-txt:hover { background: var(--nv-hover); }
+.nv-maped-txt:disabled { opacity: .4; cursor: default; background: none; }
+.nv-maped-pri { display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  border: 0; background: var(--nv-accent); color: #fff; font-size: 12.5px; font-weight: 600;
+  padding: 7px 12px; border-radius: 8px; cursor: pointer; }
+.nv-maped-pri:hover { filter: brightness(.96); }
+.nv-maped-search { position: relative; flex: 1 1 0; max-width: 340px; min-width: 140px; margin: 0 auto; height: 30px; display: flex; align-items: center;
+  gap: 6px; padding: 0 8px; border: 1px solid var(--nv-divider); border-radius: 8px; background: var(--nv-canvas);
+  color: var(--nv-secondary-text); }
+.nv-maped-search:focus-within { border-color: var(--nv-accent); background: var(--nv-surface); }
+.nv-maped-search input { flex: 1; min-width: 0; border: 0; background: none; outline: none;
+  font-size: 12.5px; color: var(--nv-primary-text); }
+.nv-maped-search kbd { font: inherit; font-size: 10.5px; color: var(--nv-secondary-text);
+  border: 1px solid var(--nv-divider); border-radius: 5px; padding: 0 5px; }
+.nv-maped-searchlist { position: absolute; left: 0; right: 0; top: calc(100% + 6px); z-index: 6;
+  display: flex; flex-direction: column; gap: 1px; max-height: 300px; overflow-y: auto;
+  background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 10px; padding: 4px;
+  box-shadow: 0 8px 24px rgba(22,24,26,.14); }
+.nv-maped-searchlist button { border: none; background: none; color: var(--nv-primary-text);
+  font-size: 12.5px; text-align: left; padding: 6px 9px; border-radius: 7px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nv-maped-searchlist button.cur { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-maped-searchempty { font-size: 12px; color: var(--nv-secondary-text); padding: 8px 10px; }
+.nv-maped-srk { flex: none; min-width: 34px; font-size: 10.5px; color: var(--nv-secondary-text); }
+.nv-maped-morewrap { position: relative; display: inline-flex; }
+.nv-maped-pop { position: absolute; top: calc(100% + 6px); z-index: 6; min-width: 180px;
+  display: flex; flex-direction: column; gap: 1px; background: var(--nv-surface);
+  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 5px;
+  box-shadow: 0 8px 24px rgba(22,24,26,.14); }
+.nv-maped-pop-r { right: 0; }
+.nv-maped-menulab { font-size: 10.5px; color: var(--nv-secondary-text); padding: 6px 9px 2px; }
+.nv-maped-item, .nv-maped-check { border: 0; background: none; color: var(--nv-primary-text);
+  font-size: 12.5px; text-align: left; padding: 6px 9px; border-radius: 7px; cursor: pointer; white-space: nowrap; }
+.nv-maped-item:hover, .nv-maped-check:hover { background: var(--nv-hover); }
+.nv-maped-check { display: flex; align-items: center; gap: 8px; color: var(--nv-secondary-text); }
+.nv-maped-check::before { content: ''; width: 12px; height: 12px; flex: none; border-radius: 4px;
+  border: 1.5px solid var(--nv-divider); box-sizing: border-box; }
+.nv-maped-check.on { color: var(--nv-primary-text); }
+.nv-maped-check.on::before { background: var(--nv-accent); border-color: var(--nv-accent); }
+.nv-maped-danger { color: var(--nv-danger); }
+.nv-maped-popnote { font-size: 11px; line-height: 1.5; color: var(--nv-secondary-text); padding: 7px 9px 4px;
+  margin-top: 3px; border-top: 1px solid var(--nv-divider); max-width: 240px; white-space: normal; }
+/* 舞台内：左上工具栏 + 激活工具旁的选项；右下缩放。 */
+.nv-maped-tools { position: absolute; left: 12px; top: 12px; z-index: 3;
+  display: flex; flex-direction: column; gap: 4px; background: var(--nv-surface);
+  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 4px;
+  box-shadow: 0 4px 16px rgba(22,24,26,.10); }
+.nv-maped-tools button { border: none; background: none; color: var(--nv-secondary-text);
+  width: 30px; height: 30px; border-radius: 7px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; }
+.nv-maped-tools button:hover { background: var(--nv-hover); color: var(--nv-primary-text); }
+.nv-maped-tools button.cur { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-maped-fly { position: absolute; left: 60px; z-index: 4; display: flex; align-items: center; gap: 8px;
+  max-width: calc(100% - 80px); background: var(--nv-surface); border: 1px solid var(--nv-divider);
+  border-radius: 10px; padding: 4px 4px 4px 10px; box-shadow: 0 4px 16px rgba(22,24,26,.10); white-space: nowrap; }
+.nv-maped-flyname { font-size: 12px; font-weight: 600; color: var(--nv-primary-text); overflow: hidden; text-overflow: ellipsis; }
+.nv-maped-flyhint { font-size: 11.5px; color: var(--nv-secondary-text); }
+.nv-maped-step { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; color: var(--nv-secondary-text); }
+.nv-maped-step span { min-width: 22px; text-align: center; }
+.nv-maped-step button { width: 22px; height: 22px; border: 0; background: none; border-radius: 6px;
+  color: var(--nv-secondary-text); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.nv-maped-step button:hover { background: var(--nv-hover); color: var(--nv-primary-text); }
+.nv-maped-seg-sm button { padding: 3px 9px; font-size: 11.5px; }
+.nv-maped-nav { position: absolute; right: 12px; bottom: 12px; z-index: 3;
   display: flex; align-items: center; gap: 2px; background: var(--nv-surface);
   border: 1px solid var(--nv-divider); border-radius: 10px; padding: 3px;
   box-shadow: 0 4px 16px rgba(22,24,26,.10); }
 .nv-maped-nav button { border: none; background: none; color: var(--nv-secondary-text);
-  font-size: 13px; min-width: 26px; height: 24px; border-radius: 7px; cursor: pointer; }
+  font-size: 11px; min-width: 26px; height: 24px; border-radius: 7px; cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center; }
 .nv-maped-nav button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-maped-navpct { font-size: 11px !important; min-width: 42px !important; }
-.nv-maped-tools { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); z-index: 3;
-  display: flex; flex-direction: column; gap: 3px; background: var(--nv-surface);
-  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 4px;
-  box-shadow: 0 4px 16px rgba(22,24,26,.10); }
-.nv-maped-tools button { border: none; background: none; color: var(--nv-secondary-text);
-  width: 26px; height: 26px; border-radius: 7px; font-size: 13px; cursor: pointer;
-  display: flex; align-items: center; justify-content: center; }
-.nv-maped-tools button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-maped-tools button.cur { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-maped-viewseg { position: absolute; left: 10px; bottom: 10px; z-index: 3;
-  max-width: calc(100% - 160px); flex-wrap: wrap; overflow: visible;
-  background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 10px;
-  padding: 3px; box-shadow: 0 4px 16px rgba(22,24,26,.10); }
-.nv-maped-viewseg button { flex: 0 0 auto; }
-.nv-maped-menu { position: absolute; right: 10px; top: 10px; z-index: 3; display: flex; }
-.nv-maped-menupop { position: absolute; right: 0; top: calc(100% + 6px); width: 168px;
-  display: flex; flex-wrap: wrap; gap: 4px; background: var(--nv-surface);
-  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 8px;
-  box-shadow: 0 8px 24px rgba(22,24,26,.14); }
-.nv-maped-menulab { width: 100%; font-size: 10px; color: var(--nv-secondary-text);
-  letter-spacing: .04em; margin: 4px 0 0; }
-.nv-maped-menulab:first-child { margin-top: 0; }
+.nv-maped-navpct { min-width: 42px !important; }
 .nv-maped-ctx { position: absolute; z-index: 4; min-width: 140px;
   display: flex; flex-direction: column; gap: 1px; background: var(--nv-surface);
   border: 1px solid var(--nv-divider); border-radius: 10px; padding: 4px;
   box-shadow: 0 8px 24px rgba(22,24,26,.16); }
-.nv-maped-ctx button { border: none; background: none; color: var(--nv-text);
+.nv-maped-ctx button { border: none; background: none; color: var(--nv-primary-text);
   font-size: 12px; text-align: left; padding: 6px 9px; border-radius: 7px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nv-maped-ctx button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-maped-search { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5;
-  width: min(320px, calc(100% - 40px)); background: var(--nv-surface);
-  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 6px;
-  box-shadow: 0 8px 24px rgba(22,24,26,.16); }
-.nv-maped-search input { width: 100%; box-sizing: border-box; border: 1px solid var(--nv-divider);
-  border-radius: 7px; padding: 6px 9px; font-size: 12.5px; color: var(--nv-primary-text);
-  background: var(--nv-canvas); outline: none; }
-.nv-maped-search input:focus { border-color: var(--nv-accent); }
-.nv-maped-searchlist { display: flex; flex-direction: column; gap: 1px; margin-top: 5px;
-  max-height: 260px; overflow-y: auto; }
-.nv-maped-searchlist button { border: none; background: none; color: var(--nv-text);
-  font-size: 12px; text-align: left; padding: 6px 9px; border-radius: 7px; cursor: pointer;
-  display: flex; align-items: center; gap: 8px;
+/* 详情栏：选中实体 / 圈出区域的唯一信息与操作位置。 */
+.nv-maped-side { flex: 0 0 300px; min-width: 0; overflow-y: auto; border-left: 1px solid var(--nv-divider);
+  padding: 14px 16px 24px; display: flex; flex-direction: column; gap: 10px; }
+.nv-maped-sidehead { display: flex; align-items: center; gap: 2px; }
+.nv-maped-sidename { flex: 1; min-width: 0; margin: 0; font-size: 15px; font-weight: 600; color: var(--nv-primary-text);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nv-maped-searchlist button.cur { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-maped-srk { flex: none; font-size: 10px; color: var(--nv-secondary-text);
-  border: 1px solid var(--nv-divider); border-radius: 5px; padding: 1px 5px; }
-.nv-maped-inspect { position: absolute; right: 10px; top: 48px; bottom: 48px; z-index: 4;
-  width: min(220px, calc(100% - 40px)); overflow-y: auto; background: var(--nv-surface);
-  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 10px 12px;
-  box-shadow: 0 8px 24px rgba(22,24,26,.14); }
-.nv-maped-inshead { display: flex; align-items: center; justify-content: space-between; gap: 8px;
-  margin-bottom: 6px; }
+.nv-maped-sidesub { font-size: 12px; color: var(--nv-secondary-text); margin-top: -6px; }
+.nv-maped-sideacts { display: flex; align-items: center; gap: 2px; margin-left: -8px; }
+.nv-maped-sidesec { border-top: 1px solid var(--nv-divider); padding-top: 10px; }
 .nv-maped-insrow { display: flex; justify-content: space-between; gap: 10px; font-size: 12px;
   padding: 3px 0; color: var(--nv-secondary-text); }
 .nv-maped-insrow b { color: var(--nv-primary-text); font-weight: 500; text-align: right; }
-.nv-maped-inslab { font-size: 10px; color: var(--nv-secondary-text); letter-spacing: .04em;
-  margin-top: 8px; border-top: 1px solid var(--nv-divider); padding-top: 8px; }
-.nv-maped-insmembers { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.nv-maped-inslab { font-size: 11px; color: var(--nv-secondary-text); margin-bottom: 6px; }
+.nv-maped-insmembers { display: flex; flex-wrap: wrap; gap: 4px; }
 .nv-maped-insmembers button { border: 1px solid var(--nv-divider); background: none;
-  color: var(--nv-text); font-size: 11.5px; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+  color: var(--nv-primary-text); font-size: 11.5px; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
 .nv-maped-insmembers button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep);
   border-color: var(--nv-accent); }
 /* 集合渲染器（设计稿 06 + collection-v2 B/C）：视图切换 + 图鉴卡 + 表格 + 编年长卷。 */
