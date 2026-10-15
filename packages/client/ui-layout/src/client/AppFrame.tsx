@@ -35,6 +35,14 @@ export type AppFrameProps =
   & PropsStore<ReturnType<typeof createLayoutStore>>
   & PropsLocale<'common'>
 
+/**
+ * After a visible-session switch, the target session's right panel reports
+ * its recovered presentation over the next few commits. Work-layer changes
+ * inside this window are recovery and land instantly; a user toggle comes
+ * later than this.
+ */
+const RECOVERY_WINDOW_MS = 400
+
 /** Center column grid item (session-body building block). */
 function CenterColumn(props: { order: number; children?: ReactNode }) {
   // data-region-grip: blank presses inside the conversation column arm the
@@ -147,6 +155,14 @@ export function AppFrame({
   useSyncExternalStore(listener => unitSide.subscribe(listener), () => unitSide.getSnapshot())
   const unitLeft = unitSide.get() === 'left'
 
+  // Session recovery lands on the target's saved geometry instantly: a change
+  // of the visible session lifts the work-layer track transition for that
+  // render. The page turn itself is the View Transition started by the
+  // navigation (ui-workspace page-turn.ts), not a frame animation.
+  const currentSessionId = useSessions(state =>
+    Object.values(state.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)?.id ?? null)
+  const previousSessionId = useRef<string | null>(null)
+
   // Track the frame's own box (not the window): rAF-throttled ResizeObserver.
   useLayoutEffect(() => {
     const el = frameRef.current
@@ -217,32 +233,73 @@ export function AppFrame({
   // Track-level transitions pause for the whole gesture: eased tracks would
   // detach the column edge from the pointer (AppFrame.module.css).
   const [dragging, setDragging] = useState(false)
-  // Track easing is scoped to a discrete open/close toggle: data-animating
-  // goes up when the collapse state or the rightbar track flips and comes down
-  // at transition end (timeout as the reduced-motion/covered-frame fallback).
-  // Steady-state viewport updates stay instant (AppFrame.module.css), and so
-  // does a toggle arriving together with a viewport change — that is the
-  // responsive auto-collapse firing mid window-resize, where easing would
-  // chase the live window edge. The counter restarts the settle window when a
-  // re-toggle interrupts a running transition.
-  const [animating, setAnimating] = useState(0)
-  const trackToggle = `${sidebarCollapsed}:${layoutInfo.rightbarTrack}:${canvas !== null}:${rail}`
-  const previousToggle = useRef(trackToggle)
+  // Track easing is scoped to a discrete user toggle. Two counters because the
+  // frame is two structural layers: outerAnim drives the stable navigation
+  // column (its own collapse/expand only); workAnim drives the conversation |
+  // unit split (drawer/canvas open-close). Session recovery never eases either
+  // — suppressWorkTransition holds the work layer still for the render that
+  // lands on a switched session, so only the content-face transition plays.
+  // Each counter settles on its own template's transitionend, with a timeout
+  // as the reduced-motion/covered-frame fallback.
+  const [outerAnim, setOuterAnim] = useState(0)
+  const [workAnim, setWorkAnim] = useState(0)
+  const sidebarToggle = sidebarCollapsed
+  const workToggle = `${layoutInfo.rightbarTrack}:${canvas !== null}:${rail}`
+  const previousSidebarToggle = useRef(sidebarToggle)
+  const previousWorkToggle = useRef(workToggle)
   const previousViewport = useRef(viewport)
+
+  // One-shot canvas halving: the first time the USER opens a canvas in a layout
+  // that carries no saved unit width, conversation and canvas split the work
+  // layer (minus the drawer panel) evenly. It seeds once and is persisted, so a
+  // later drag owns it. A canvas that appears together with a session switch
+  // is recovery, not an open, and does not seed.
+  const wasCanvasOpen = useRef(canvas !== null)
+  const canvasSessionRef = useRef(currentSessionId)
+  useEffect(() => {
+    const openNow = canvas !== null
+    const sameSession = canvasSessionRef.current === currentSessionId
+    canvasSessionRef.current = currentSessionId
+    if (openNow && !wasCanvasOpen.current && sameSession && layoutInfo.unit === null) {
+      const panelShare = layoutInfo.rightbarTrack ? normal.rightbar : 0
+      const half = Math.round((viewport - cols.sidebar - panelShare) / 2)
+      const target = Math.max(CANVAS_MIN, half + panelShare)
+      actions.setUnit(target)
+    }
+    wasCanvasOpen.current = openNow
+  }, [canvas, currentSessionId, layoutInfo.unit, layoutInfo.rightbarTrack, normal.rightbar, viewport, cols.sidebar, actions])
+
+  // Easing only follows a discrete USER toggle. A work-layer change arriving
+  // with a visible-session change (or settling within the switch window right
+  // after it) is the target session's recovered geometry: it lands instantly.
+  const switchedAt = useRef<number | null>(null)
   useLayoutEffect(() => {
     const viewportChanged = previousViewport.current !== viewport
     previousViewport.current = viewport
-    if (previousToggle.current === trackToggle) return
-    previousToggle.current = trackToggle
-    if (viewportChanged) return
-    setAnimating(token => token + 1)
-  }, [trackToggle, viewport])
+
+    const sessionChanged = previousSessionId.current !== null && currentSessionId !== null
+      && previousSessionId.current !== currentSessionId
+    previousSessionId.current = currentSessionId
+    if (sessionChanged) switchedAt.current = performance.now()
+    const recovering = sessionChanged
+      || (switchedAt.current !== null && performance.now() - switchedAt.current < RECOVERY_WINDOW_MS)
+
+    const sidebarChanged = previousSidebarToggle.current !== sidebarToggle
+    previousSidebarToggle.current = sidebarToggle
+    if (sidebarChanged && !viewportChanged) setOuterAnim(token => token + 1)
+
+    const workChanged = previousWorkToggle.current !== workToggle
+    previousWorkToggle.current = workToggle
+    if (workChanged && !viewportChanged && !recovering) setWorkAnim(token => token + 1)
+    if (recovering) setWorkAnim(0)
+  }, [workToggle, sidebarToggle, viewport, currentSessionId])
+
   useEffect(() => {
-    if (animating === 0) return
+    if (outerAnim === 0) return
     const frame = frameRef.current
     /* v8 ignore next -- the ref is always attached by effect time: the frame div renders unconditionally. */
     if (frame === null) return
-    const settle = () => { setAnimating(0) }
+    const settle = () => { setOuterAnim(0) }
     const onTransitionEnd = (event: TransitionEvent) => {
       if (event.target === frame && event.propertyName === 'grid-template-columns') settle()
     }
@@ -252,7 +309,24 @@ export function AppFrame({
       frame.removeEventListener('transitionend', onTransitionEnd)
       clearTimeout(timer)
     }
-  }, [animating])
+  }, [outerAnim])
+  const workRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (workAnim === 0) return
+    const stage = workRef.current
+    /* v8 ignore next -- the ref is attached whenever the work layer renders. */
+    if (stage === null) return
+    const settle = () => { setWorkAnim(0) }
+    const onTransitionEnd = (event: TransitionEvent) => {
+      if (event.target === stage && event.propertyName === 'grid-template-columns') settle()
+    }
+    stage.addEventListener('transitionend', onTransitionEnd)
+    const timer = setTimeout(settle, 600)
+    return () => {
+      stage.removeEventListener('transitionend', onTransitionEnd)
+      clearTimeout(timer)
+    }
+  }, [workAnim])
   const onDragEnd = useCallback(() => { setDragging(false) }, [])
   // The rightbar release settles the collapse preview: an armed drag folds the
   // panel to its rail here, an unarmed one just ends.
@@ -283,6 +357,16 @@ export function AppFrame({
   // the third track's max bound — so grid-template-columns interpolates on the
   // open/close transition instead of freezing at its start value.
   const centerCap = Math.max(CENTER_MIN, Math.max(440, SIDEBAR_COLLAPSED + viewport * 0.3) - cols.sidebar)
+  // One-shot even split, rendered on the opening paint: with no saved unit
+  // width and a canvas up, conversation and canvas halve the remainder after
+  // the drawer panel. The open effect above persists this into layoutInfo.unit
+  // so a later drag overrides it; the derived value keeps the first paint at
+  // the same geometry (no jump from the computed fallback).
+  const halveUnit = canvas === null
+    ? null
+    : Math.max(CANVAS_MIN,
+      Math.round((viewport - cols.sidebar - (layoutInfo.rightbarTrack ? normal.rightbar : 0)) / 2)
+      + (layoutInfo.rightbarTrack ? normal.rightbar : 0))
   // A claimed canvas widens the right column into the region that holds both
   // the canvas page and the panel. Its conversation-facing edge is the unit
   // seam: draggable between the conversation's protected share and a floor of
@@ -291,7 +375,7 @@ export function AppFrame({
   const unitFloor = Math.min(normal.rightbar + CANVAS_MIN, unitCeiling)
   const rightTrackMax = canvas === null
     ? rightbarMax
-    : Math.min(unitCeiling, Math.max(unitFloor, layoutInfo.unit ?? (viewport - cols.sidebar - centerCap)))
+    : Math.min(unitCeiling, Math.max(unitFloor, layoutInfo.unit ?? halveUnit ?? (viewport - cols.sidebar - centerCap)))
   // The handles sit on the moving edges: the panel's free edge inside the
   // column, and the column's own conversation-facing edge while a canvas is up.
   const unitW = canvas === null ? cols.rightbar : rightTrackMax
@@ -334,17 +418,11 @@ export function AppFrame({
       style={{
         ...(document.documentElement.hasAttribute('data-windows-titlebar')
           ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
-        gridTemplateColumns: unitLeft
-          ? `${cols.sidebar}px minmax(0px, ${rightTrackMax}px) minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr)`
-          : `${cols.sidebar}px minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightTrackMax}px)`,
+        gridTemplateColumns: `${cols.sidebar}px minmax(0px, 1fr)`,
       }}
-      data-unit-side={unitLeft ? 'left' : 'right'}
       data-sidebar-collapsed={sidebarCollapsed || undefined}
-      data-rightbar-collapsed={(cols.rightbar === 0 && canvas === null) || undefined}
-      data-rightbar-fullscreen={layoutInfo.rightbarFullscreen || undefined}
-      data-rightbar-instant={layoutInfo.rightbarInstant || undefined}
       data-dragging={dragging || undefined}
-      data-animating={animating > 0 || undefined}
+      data-animating={outerAnim > 0 || undefined}
     >
       <DocumentTitle
         productTitle={productTitle}
@@ -354,12 +432,45 @@ export function AppFrame({
       <div className={css.sidebarCol}>
         {sidebar}
       </div>
-      <>
+      <div
+        ref={workRef}
+        className={css.work}
+        data-work
+        data-unit-side={unitLeft ? 'left' : 'right'}
+        data-rightbar-collapsed={(cols.rightbar === 0 && canvas === null) || undefined}
+        data-rightbar-fullscreen={layoutInfo.rightbarFullscreen || undefined}
+        data-rightbar-instant={layoutInfo.rightbarInstant || undefined}
+        data-dragging={dragging || undefined}
+        data-animating={workAnim > 0 || undefined}
+        style={{
+          // Set inline, not in the CSS module: the module would hash the
+          // ident, and the ::view-transition-*(noven-work) rules match the
+          // literal name (ui-workspace page-turn.ts).
+          viewTransitionName: 'noven-work',
+          gridTemplateColumns: unitLeft
+            ? `minmax(0px, ${rightTrackMax}px) minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr)`
+            : `minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightTrackMax}px)`,
+        }}
+      >
         <CenterColumn order={unitLeft ? 2 : 1}>{main}</CenterColumn>
         <RightbarColumn order={unitLeft ? 1 : 2}>
           {renderSlot('rightbar', { width: normal.rightbar, viewportWidth: viewport, canShow: normal.rightbar > 0, collapsePreview: layoutInfo.rightbarCollapsePreview })}
         </RightbarColumn>
-      </>
+        {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && !rail && normal.rightbar > 0
+          && (canvas === null || layoutInfo.rightbarTrack) && (
+          <DragHandle side="rightbar" left={rightbarHandleLeft - cols.sidebar} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onRightbarEnd} />
+        )}
+        {/* The unit seam exists only while a canvas claims the column: it moves
+            the whole region against the conversation, the panel's own handle
+            keeps dividing canvas from panel inside it. */}
+        {canvas !== null && layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && (
+          <DragHandle side="unit" left={unitHandleLeft - cols.sidebar} onStart={onUnitStart} onDrag={onUnitDrag} onEnd={onDragEnd} />
+        )}
+      </div>
+      {/* The sidebar seam belongs to the stable layer: a frame-level handle at
+          the navigation/work border, animated only by the user's own sidebar
+          toggle (the collapsed rail is fixed-width: none while closed). */}
+      {!sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
       <div className={css.overlayLayer} data-shell-overlay>
         {overlays}
       </div>
@@ -367,18 +478,6 @@ export function AppFrame({
         <div className={css.leadingSeat} data-shell-leading>
           {leading}
         </div>
-      )}
-      {/* The collapsed rail is fixed-width: no resize handle while closed. */}
-      {!sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
-      {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && !rail && normal.rightbar > 0
-        && (canvas === null || layoutInfo.rightbarTrack) && (
-        <DragHandle side="rightbar" left={rightbarHandleLeft} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onRightbarEnd} />
-      )}
-      {/* The unit seam exists only while a canvas claims the column: it moves
-          the whole region against the conversation, the panel's own handle
-          keeps dividing canvas from panel inside it. */}
-      {canvas !== null && layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && (
-        <DragHandle side="unit" left={unitHandleLeft} onStart={onUnitStart} onDrag={onUnitDrag} onEnd={onDragEnd} />
       )}
     </div>
   )

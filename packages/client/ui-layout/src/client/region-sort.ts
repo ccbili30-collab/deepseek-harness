@@ -52,6 +52,10 @@ export function useRegionSort(frameRef: RefObject<HTMLDivElement | null>, enable
   useEffect(() => {
     const frame = frameRef.current
     if (frame === null || !enabled) return
+    // The sortable tracks live in the work layer; the sorting attribute that
+    // styles the gesture must land on it, not the outer frame the stable
+    // navigation column shares.
+    const stage = frame.querySelector<HTMLElement>('[data-work]') ?? frame
 
     /** Eat the release click so it cannot land on whatever sat underneath. */
     const swallow = (event: Event): void => {
@@ -64,7 +68,7 @@ export function useRegionSort(frameRef: RefObject<HTMLDivElement | null>, enable
       lifted.style.transition = ''
       sibling.removeAttribute('data-region-yield')
       sibling.style.transition = ''
-      frame.removeAttribute('data-region-sorting')
+      stage.removeAttribute('data-region-sorting')
     }
 
     const drop = (commit: boolean): void => {
@@ -147,7 +151,7 @@ export function useRegionSort(frameRef: RefObject<HTMLDivElement | null>, enable
             if (live !== null) {
               live.armed = true
               live.lifted.setAttribute('data-region-lift', '')
-              frame.setAttribute('data-region-sorting', '')
+              stage.setAttribute('data-region-sorting', '')
               grip.setPointerCapture?.(live.pointerId)
             }
           }

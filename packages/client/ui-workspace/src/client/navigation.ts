@@ -17,6 +17,7 @@ import type {
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { RowToast } from './contract/slots.ts'
+import { rowDirection, turnPage, type PageTurnWeight } from './page-turn.ts'
 import { pinOrderAccounts, pinOrderSource } from './pin-order.ts'
 import type { WorkspaceViewStoreActions } from './stores.ts'
 
@@ -197,7 +198,15 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   }
 
   openSession(target: SessionTarget): void {
-    this.replaceMain(target, this.lifetime.signal, 'reveal')
+    const current = this.mainReference?.sessionId
+    const targetId = typeof target === 'string' ? target : target.childSessionId
+    if (current === undefined || current === targetId) {
+      this.replaceMain(target, this.lifetime.signal, 'reveal')
+      return
+    }
+    const byId = this.sessions.list.getSnapshot().byId
+    const weight: PageTurnWeight = byId[current]?.cwd !== byId[targetId]?.cwd ? 'project' : 'session'
+    turnPage(() => { this.replaceMain(target, this.lifetime.signal, 'reveal') }, rowDirection(current, targetId), weight)
   }
 
   async openWorkspace(workspaceId: WorkspaceId, beforeOpen?: (sessionId: SessionId) => void): Promise<void> {
@@ -212,7 +221,17 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       throw error
     }
     if (navigation.aborted) return
-    this.replaceMain(sessionId, navigation, 'reveal', beforeOpen)
+    const current = this.mainReference?.sessionId
+    if (current === undefined || current === sessionId) {
+      this.replaceMain(sessionId, navigation, 'reveal', beforeOpen)
+      return
+    }
+    const byId = this.sessions.list.getSnapshot().byId
+    const weight: PageTurnWeight = byId[current]?.cwd !== byId[sessionId]?.cwd ? 'project' : 'session'
+    turnPage(() => {
+      if (navigation.aborted) return
+      this.replaceMain(sessionId, navigation, 'reveal', beforeOpen)
+    }, rowDirection(current, sessionId), weight)
   }
 
   async forkSession(sessionId: SessionId): Promise<void> {

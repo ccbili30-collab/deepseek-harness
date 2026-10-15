@@ -14,6 +14,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 const useResource = (() => ({ status: 'none' as const, value: undefined, failure: undefined })) as GlobalStandardProps['useResource']
 let selectedSession: SessionId | undefined
 let selectedSessionTitle: string | undefined
+let selectedSessionCwd: string | undefined
 let workspacesReady = true
 type AttentionSnapshot = Parameters<Parameters<AppFrameProps['useSessionStatus']>[0]>[0]
 const noAttention: AttentionSnapshot = new Map()
@@ -74,6 +75,7 @@ function mountFrame(windowWidth = frameWidth) {
       [selectedSession]: {
         id: selectedSession, displayTitle: 'Test', running: false, retainedBy: { mainView: 1 }, blank: false, updatedAt: 1,
         ...(selectedSessionTitle === undefined ? {} : { title: selectedSessionTitle }),
+        ...(selectedSessionCwd === undefined ? {} : { cwd: selectedSessionCwd }),
       },
     },
     phase: 'ready',
@@ -112,15 +114,27 @@ function mountFrame(windowWidth = frameWidth) {
   }
 }
 
-/* The template delegates the squeeze to the grid (jsdom does no layout, so
-   specs read the specified tracks): [sidebar px, rightbar growth limit].
-   The centre's protected minimum must accompany an open right track. */
+/* The frame is two structural layers: the outer template only carries the
+   stable navigation track ([sidebar px, 1fr]), and the work layer carries the
+   conversation | unit split. specs read the sidebar from the frame and the
+   right track's growth limit from [data-work] (jsdom does no layout, so they
+   read the specified tracks). The centre's protected minimum must accompany an
+   open right track. */
+function workEl(frame: HTMLElement): HTMLElement {
+  const work = frame.querySelector<HTMLElement>('[data-work]')
+  if (work === null) throw new Error('missing work layer')
+  return work
+}
+
 function tracks(frame: HTMLElement): number[] {
-  const match = /^([\d.]+)px minmax\((0|400)px, 1fr\) minmax\(0px, ([\d.]+)px\)$/.exec(frame.style.gridTemplateColumns)
-  if (match === null) throw new Error(`unexpected template: ${frame.style.gridTemplateColumns}`)
-  const rightbar = Number(match[3])
-  if ((match[2] === '400') !== (rightbar > 0)) throw new Error(`centre minimum out of step: ${frame.style.gridTemplateColumns}`)
-  return [Number(match[1]), rightbar]
+  const outer = /^([\d.]+)px minmax\(0px, 1fr\)$/.exec(frame.style.gridTemplateColumns)
+  if (outer === null) throw new Error(`unexpected outer template: ${frame.style.gridTemplateColumns}`)
+  const work = workEl(frame)
+  const match = /^minmax\((0|400)px, 1fr\) minmax\(0px, ([\d.]+)px\)$/.exec(work.style.gridTemplateColumns)
+  if (match === null) throw new Error(`unexpected work template: ${work.style.gridTemplateColumns}`)
+  const rightbar = Number(match[2])
+  if ((match[1] === '400') !== (rightbar > 0)) throw new Error(`centre minimum out of step: ${work.style.gridTemplateColumns}`)
+  return [Number(outer[1]), rightbar]
 }
 
 function handleFor(frame: HTMLElement, side: 'sidebar' | 'rightbar'): HTMLElement {
@@ -147,6 +161,7 @@ beforeEach(() => {
   frameWidth = 1920
   selectedSession = 's-test' as SessionId
   selectedSessionTitle = undefined
+  selectedSessionCwd = undefined
   workspacesReady = true
   observers = []
   animationFrames = new Map()
@@ -401,11 +416,11 @@ describe('AppFrame right panel presentation', () => {
     expect(tracks(frame)).toEqual([280, 340])
     act(() => { instance.actions.closeRightbar() })
     expect(tracks(frame)).toEqual([280, 0])
-    expect(frame.dataset.rightbarFullscreen).toBeUndefined()
-    expect(frame.dataset.rightbarInstant).toBe('true')
+    expect(workEl(frame).dataset.rightbarFullscreen).toBeUndefined()
+    expect(workEl(frame).dataset.rightbarInstant).toBe('true')
     expect(frame.querySelector('[data-side="rightbar"]')).toBeNull()
     act(() => { instance.actions.closeRightbar() })
-    expect(frame.dataset.rightbarInstant).toBe('true')
+    expect(workEl(frame).dataset.rightbarInstant).toBe('true')
   })
 
   it('marks restoration instant without suppressing the following normal close', () => {
@@ -413,26 +428,26 @@ describe('AppFrame right panel presentation', () => {
     act(() => { instance.actions.openRightbar(true, true, null, false) })
     act(() => { instance.actions.openRightbar(true, false, null, false) })
     expect(tracks(frame)).toEqual([280, 340])
-    expect(frame.dataset.rightbarFullscreen).toBeUndefined()
-    expect(frame.dataset.rightbarInstant).toBe('true')
+    expect(workEl(frame).dataset.rightbarFullscreen).toBeUndefined()
+    expect(workEl(frame).dataset.rightbarInstant).toBe('true')
     act(() => { instance.actions.closeRightbar() })
     expect(tracks(frame)).toEqual([280, 0])
-    expect(frame.dataset.rightbarFullscreen).toBeUndefined()
-    expect(frame.dataset.rightbarInstant).toBeUndefined()
+    expect(workEl(frame).dataset.rightbarFullscreen).toBeUndefined()
+    expect(workEl(frame).dataset.rightbarInstant).toBeUndefined()
   })
 
   it.each(['setSidebar', 'toggleSidebar', 'setRightbar', 'viewport', 'open'] as const)('reenables normal transitions after %s', (action) => {
     const { frame, instance } = mountFrame()
     act(() => { instance.actions.openRightbar(true, true, null, false); instance.actions.closeRightbar() })
-    expect(frame.dataset.rightbarInstant).toBe('true')
+    expect(workEl(frame).dataset.rightbarInstant).toBe('true')
     act(() => {
       if (action === 'viewport') resize(1800)
       else if (action === 'open') instance.actions.openRightbar(true, false, null, false)
       else if (action === 'toggleSidebar') instance.actions.toggleSidebar()
       else instance.actions[action](350)
     })
-    expect(frame.dataset.rightbarInstant).toBeUndefined()
-    expect(frame.dataset.rightbarFullscreen).toBeUndefined()
+    expect(workEl(frame).dataset.rightbarInstant).toBeUndefined()
+    expect(workEl(frame).dataset.rightbarFullscreen).toBeUndefined()
   })
 
   it('eases tracks only across a discrete toggle, never for viewport updates', () => {
@@ -472,10 +487,10 @@ describe('AppFrame right panel presentation', () => {
     try {
       const { frame, instance } = mountFrame()
       act(() => { instance.actions.openRightbar(true, false, null, false) })
-      expect(frame.dataset.animating).toBe('true')
+      expect(workEl(frame).dataset.animating).toBe('true')
       // Covered or reduced-motion frames fire no transitionend; the timeout settles.
       act(() => { vi.advanceTimersByTime(600) })
-      expect(frame.dataset.animating).toBeUndefined()
+      expect(workEl(frame).dataset.animating).toBeUndefined()
     } finally {
       vi.useRealTimers()
     }
@@ -485,28 +500,28 @@ describe('AppFrame right panel presentation', () => {
     const { frame, instance } = mountFrame()
     act(() => { instance.actions.openRightbar(true, true, null, false) })
     act(() => { instance.actions.setSidebar(350) })
-    expect(frame.dataset.rightbarInstant).toBeUndefined()
-    expect(frame.dataset.rightbarFullscreen).toBe('true')
+    expect(workEl(frame).dataset.rightbarInstant).toBeUndefined()
+    expect(workEl(frame).dataset.rightbarFullscreen).toBe('true')
   })
 
   it('preserves normal tracks through fullscreen and hides the outer resize handle', () => {
     const { frame, instance, rightOwner } = mountFrame()
     act(() => { instance.actions.openRightbar(true, false, null, false) })
     expect(tracks(frame)).toEqual([280, 340])
-    expect(handleFor(frame, 'rightbar').style.left).toBe('1580px')
+    expect(handleFor(frame, 'rightbar').style.left).toBe('1300px')
     act(() => { instance.actions.openRightbar(true, true, null, false) })
     expect(tracks(frame)).toEqual([280, 340])
     expect(rightOwner().width).toBe(340)
-    expect(frame.dataset.rightbarFullscreen).toBe('true')
+    expect(workEl(frame).dataset.rightbarFullscreen).toBe('true')
     expect(frame.querySelector('[data-side="rightbar"]')).toBeNull()
     act(() => { instance.actions.openRightbar(true, false, null, false) })
     expect(tracks(frame)).toEqual([280, 340])
-    expect(handleFor(frame, 'rightbar').style.left).toBe('1580px')
-    expect(frame.dataset.rightbarFullscreen).toBeUndefined()
+    expect(handleFor(frame, 'rightbar').style.left).toBe('1300px')
+    expect(workEl(frame).dataset.rightbarFullscreen).toBeUndefined()
     act(() => { instance.actions.closeRightbar() })
     expect(tracks(frame)).toEqual([280, 0])
     expect(frame.querySelector('[data-side="rightbar"]')).toBeNull()
-    expect(frame.dataset.rightbarFullscreen).toBeUndefined()
+    expect(workEl(frame).dataset.rightbarFullscreen).toBeUndefined()
   })
 
   it('inserts a fullscreen track and its transition-suppression marker in the same render', () => {
@@ -515,11 +530,11 @@ describe('AppFrame right panel presentation', () => {
     expect(frame.dataset.rightbarFullscreen).toBeUndefined()
     act(() => { instance.actions.openRightbar(true, true, null, false) })
     expect(tracks(frame)).toEqual([280, 340])
-    expect(frame.dataset.rightbarFullscreen).toBe('true')
+    expect(workEl(frame).dataset.rightbarFullscreen).toBe('true')
     expect(frame.querySelector('[data-side="rightbar"]')).toBeNull()
     act(() => { instance.actions.openRightbar(true, false, null, false) })
     expect(tracks(frame)).toEqual([280, 340])
-    expect(frame.dataset.rightbarFullscreen).toBeUndefined()
+    expect(workEl(frame).dataset.rightbarFullscreen).toBeUndefined()
   })
 
   it('retains fullscreen without a track when normal columns cannot fit', () => {
@@ -572,12 +587,12 @@ describe('AppFrame pointer resizing', () => {
     const handle = handleFor(frame, 'rightbar')
     expect(rightOwner().width).toBe(340)
     expect(tracks(frame)[1]).toBe(340)
-    expect(handle.style.left).toBe('760px')
-    drag(handle, 760, 770)
+    expect(handle.style.left).toBe('480px')
+    drag(handle, 480, 490)
     expect(instance.getSnapshot().layoutInfo.rightbar).toBe(330)
     expect(rightOwner().width).toBe(330)
     expect(tracks(frame)[1]).toBe(330)
-    expect(handle.style.left).toBe('770px')
+    expect(handle.style.left).toBe('490px')
   })
 
   it('widens to the 70% limit and parks the rail request below the floor through pointer input', () => {
@@ -601,20 +616,24 @@ describe('AppFrame pointer resizing', () => {
     expect(rightOwner().width).toBe(1990)
   })
 
-  it('resizes the unit column through the conversation seam while a canvas is up', () => {
+  it('halves conversation and canvas on the first user open, then owns the ratio by drag', () => {
     const { frame, instance } = mountFrame()
     act(() => { instance.actions.openRightbar(true, false, 'left', false) })
-    expect(tracks(frame)).toEqual([280, 1240])
-    // The unit seam sits at the column's conversation-facing edge; the panel
-    // handle keeps the canvas/panel split inside it.
+    // One-shot halving: (1920 - 280 sidebar - 340 panel) / 2 + 340 = 990.
+    expect(tracks(frame)).toEqual([280, 990])
+    expect(instance.getSnapshot().layoutInfo.unit).toBe(990)
+    // The unit seam sits at the column's conversation-facing edge (work-layer
+    // coordinates); the panel handle keeps canvas/panel split inside it.
     const unit = frame.querySelector<HTMLElement>('[data-side="unit"]')!
-    expect(unit.style.left).toBe('680px')
-    expect(handleFor(frame, 'rightbar').style.left).toBe('1580px')
-    drag(unit, 680, 760)
-    expect(instance.getSnapshot().layoutInfo.unit).toBe(1160)
-    expect(tracks(frame)).toEqual([280, 1160])
-    expect(handleFor(frame, 'rightbar').style.left).toBe('1500px')
-    // The floor keeps the drawn panel plus a canvas page inside the unit.
+    expect(unit.style.left).toBe('650px')
+    expect(handleFor(frame, 'rightbar').style.left).toBe('1300px')
+    drag(unit, 650, 760)
+    expect(instance.getSnapshot().layoutInfo.unit).toBe(880)
+    expect(tracks(frame)).toEqual([280, 880])
+    // The panel stays anchored to the right edge while the seam moves.
+    expect(handleFor(frame, 'rightbar').style.left).toBe('1300px')
+    // The floor keeps the drawn panel plus a canvas page inside the unit:
+    // 340 panel + 280 canvas minimum.
     drag(unit, 760, 3000)
     expect(tracks(frame)).toEqual([280, 620])
     act(() => { instance.actions.openRightbar(true, false, 'left', true) })
@@ -725,5 +744,33 @@ describe('AppFrame frame measurement lifecycle', () => {
     act(() => { observer.fire(); flushFrames() })
     expect(instance.getSnapshot().layoutInfo.viewportWidth).toBe(1920)
     expect(animationFrames.size).toBe(0)
+  })
+})
+
+describe('AppFrame session switching', () => {
+  it('lands a switched session on its geometry without easing the work layer', () => {
+    const { frame, instance, rerenderFrame } = mountFrame()
+    act(() => { instance.actions.openRightbar(true, false, null, false) })
+    act(() => {
+      workEl(frame).dispatchEvent(Object.assign(new Event('transitionend'), { propertyName: 'grid-template-columns' }))
+    })
+    expect(workEl(frame).dataset.animating).toBeUndefined()
+    // Switching session and recovering a different presentation in the same
+    // commit is recovery, not a user toggle: no track easing.
+    selectedSession = 's-other' as SessionId
+    selectedSessionCwd = '/Users/noven/诺文/另一项目'
+    act(() => {
+      rerenderFrame()
+      instance.actions.openRightbar(true, false, 'left', false)
+    })
+    expect(workEl(frame).dataset.animating).toBeUndefined()
+  })
+
+  it('keeps the navigation column outside the page-turned work layer', () => {
+    const { frame } = mountFrame()
+    const work = workEl(frame)
+    expect(work.contains(frame.querySelector('[data-testid="sidebar-content"]'))).toBe(false)
+    expect(work.contains(frame.querySelector('[data-testid="main-content"]'))).toBe(true)
+    expect(work.contains(frame.querySelector('[data-testid="rightbar-content"]'))).toBe(true)
   })
 })

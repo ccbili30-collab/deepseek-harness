@@ -1,24 +1,44 @@
 .frame {
   position: relative; /* anchors the drag handles, which straddle column borders */
   display: grid;
+  /* Two structural layers: the stable navigation column, and the flexible work
+     layer (conversation | unit). The navigation column is an anchored input —
+     only the user's own collapse/drag changes it; the work layer solves its own
+     split inside the remainder, so opening a drawer/canvas or switching
+     sessions never moves the navigation. */
   grid-template-rows: 100%;
   height: 100%;
   overflow: hidden;
   background: var(--dsw-alias-bg-base);
 }
 
-/* Only a discrete collapse/expand toggle eases the tracks (the TSX holds
-   data-animating across the toggle on the deepsuite sider curve). Steady-state
-   tracks move only with the viewport, and those updates must land instantly:
-   an eased track chases the live window edge and the centre column visibly
-   rubber-bands while the user resizes the window. */
+/* The navigation track animates only for the user's own sidebar toggle; the
+   work layer's 1fr share then concedes on the same curve. Work-layer geometry
+   changes (drawer/canvas) do not animate this outer template at all. */
 .frame[data-animating] {
+  transition: grid-template-columns var(--ds-transition-duration-slow) var(--ds-ease-in-out);
+}
+
+/* The work layer owns the conversation/unit split. It eases only for a discrete
+   user toggle while staying put on a session switch: AppFrame lifts
+   data-animating for the recovery render, so switching lands on the final
+   geometry instantly and only the content-face transition plays. */
+.work {
+  position: relative;
+  display: grid;
+  grid-template-rows: 100%;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.work[data-animating] {
   transition: grid-template-columns var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
 /* Dragging writes widths at pointer cadence; easing them would detach the
    column from the handle. */
-.frame[data-dragging] {
+.frame[data-dragging],
+.work[data-dragging] {
   transition: none;
 }
 
@@ -55,7 +75,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .frame[data-animating] {
+  .frame[data-animating],
+  .work[data-animating] {
     transition: none;
   }
 }
@@ -220,20 +241,20 @@
 
 /* Rides the same curve as the tracks so the pill stays on the moving border
    during collapse/expand; instant at steady state (viewport-driven moves)
-   and while dragging. */
-.frame[data-animating] .handle {
+   and while dragging. Handles live in the work layer, so they key off it. */
+.work[data-animating] .handle {
   transition: left var(--ds-transition-duration-slow) var(--ds-ease-in-out);
 }
 
-.frame[data-dragging] .handle {
+.work[data-dragging] .handle {
   transition: none;
 }
 
 /* Fullscreen covers the frame while its underlying columns enter or exit. */
-.frame[data-rightbar-fullscreen],
-.frame[data-rightbar-fullscreen] .handle,
-.frame[data-rightbar-instant],
-.frame[data-rightbar-instant] .handle {
+.work[data-rightbar-fullscreen],
+.work[data-rightbar-fullscreen] .handle,
+.work[data-rightbar-instant],
+.work[data-rightbar-instant] .handle {
   transition: none;
 }
 
@@ -241,17 +262,17 @@
    the pointer; its sibling slides aside on the transform the gesture writes
    inline (region-sort.ts). The columns paint their own ground while airborne
    so nothing shows through, and selection is suspended for the gesture. */
-.frame[data-region-sorting] {
+.work[data-region-sorting] {
   cursor: grabbing;
   user-select: none;
 }
 
-.frame[data-region-sorting] .centerCol,
-.frame[data-region-sorting] .rightbarCol {
+.work[data-region-sorting] .centerCol,
+.work[data-region-sorting] .rightbarCol {
   will-change: transform;
 }
 
-.frame [data-region-lift] {
+.work [data-region-lift] {
   z-index: 12;
   background: var(--dsw-alias-bg-base);
   box-shadow: var(--dsw-elevation-prominent);
@@ -260,14 +281,14 @@
 /* The armed swap's preview: the sibling that would trade places floats too —
    a touch lighter than the dragged block — so letting go reads as the swap
    and pulling back reads as the cancel before anything moves for real. */
-.frame [data-region-yield] {
+.work [data-region-yield] {
   z-index: 11;
   background: var(--dsw-alias-bg-base);
   box-shadow: var(--dsw-elevation-raised, 0 2px 8px rgb(0 0 0 / 0.10));
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .frame[data-animating] .handle {
+  .work[data-animating] .handle {
     transition: none;
   }
 }
@@ -290,6 +311,106 @@
   inset: 0;
   z-index: 20;
   pointer-events: none;
+}
+
+/*
+ * Session page turn (View Transitions; started by ui-workspace page-turn.ts).
+ * Only the work layer is named, so the navigation column stays live and never
+ * moves. html[data-page-turn] is `<session|project>-<up|down>`; `down` means
+ * the target sits below, so the old page leaves upward and the new one enters
+ * from below. Switching is rare and deliberate, so the turn is paced for feel,
+ * not for speed: 420ms, eased in and out.
+ *  - session: one smooth full-page slide, the outgoing page dims a touch as it
+ *    leaves so the incoming one reads as "on top".
+ *  - project: the same 420ms, re-timed — the desktop lifts (shrinks, rounds,
+ *    casts a shadow) over the first third, then accelerates away; the new
+ *    desktop arrives lifted and settles flat at the end. "The whole desk got
+ *    swapped", inside the same total time.
+ * Compositor-only (two bitmaps, transform/opacity/filter), no layout per frame.
+ * The work layer's `view-transition-name: noven-work` is set inline in
+ * AppFrame.tsx — a module declaration would be hashed and stop matching these
+ * literal selectors.
+ */
+
+:global(::view-transition-group(noven-work)) {
+  animation-duration: 420ms;
+}
+
+:global(::view-transition-old(noven-work)),
+:global(::view-transition-new(noven-work)) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+  animation-fill-mode: both;
+  mix-blend-mode: normal;
+  height: 100%;
+}
+
+@keyframes noven-page-out-up { to { transform: translateY(-100%); filter: brightness(0.92); } }
+@keyframes noven-page-in-up { from { transform: translateY(100%); } }
+@keyframes noven-page-out-down { to { transform: translateY(100%); filter: brightness(0.92); } }
+@keyframes noven-page-in-down { from { transform: translateY(-100%); } }
+
+/* Project: per-segment easing — lift eases out, the slide accelerates away,
+   the arrival decelerates and sets down. The outer curve is linear so these
+   segment curves are the whole timing. */
+@keyframes noven-project-out-up {
+  0% { transform: none; border-radius: 0; box-shadow: none; animation-timing-function: cubic-bezier(0.2, 0, 0, 1); }
+  34% { transform: scale(0.94); border-radius: 14px; box-shadow: 0 24px 60px rgb(0 0 0 / 0.18); animation-timing-function: cubic-bezier(0.55, 0, 0.9, 0.4); }
+  100% { transform: translateY(-104%) scale(0.94); border-radius: 14px; box-shadow: 0 24px 60px rgb(0 0 0 / 0.18); }
+}
+@keyframes noven-project-in-up {
+  0% { transform: translateY(104%) scale(0.94); border-radius: 14px; }
+  34% { transform: translateY(104%) scale(0.94); border-radius: 14px; animation-timing-function: cubic-bezier(0.1, 0.6, 0.3, 1); }
+  84% { transform: scale(0.94); border-radius: 14px; animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1); }
+  100% { transform: none; border-radius: 0; }
+}
+@keyframes noven-project-out-down {
+  0% { transform: none; border-radius: 0; box-shadow: none; animation-timing-function: cubic-bezier(0.2, 0, 0, 1); }
+  34% { transform: scale(0.94); border-radius: 14px; box-shadow: 0 24px 60px rgb(0 0 0 / 0.18); animation-timing-function: cubic-bezier(0.55, 0, 0.9, 0.4); }
+  100% { transform: translateY(104%) scale(0.94); border-radius: 14px; box-shadow: 0 24px 60px rgb(0 0 0 / 0.18); }
+}
+@keyframes noven-project-in-down {
+  0% { transform: translateY(-104%) scale(0.94); border-radius: 14px; }
+  34% { transform: translateY(-104%) scale(0.94); border-radius: 14px; animation-timing-function: cubic-bezier(0.1, 0.6, 0.3, 1); }
+  84% { transform: scale(0.94); border-radius: 14px; animation-timing-function: cubic-bezier(0.3, 0, 0.2, 1); }
+  100% { transform: none; border-radius: 0; }
+}
+
+:global(html[data-page-turn='session-down']::view-transition-old(noven-work)) { animation-name: noven-page-out-up; }
+:global(html[data-page-turn='session-down']::view-transition-new(noven-work)) { animation-name: noven-page-in-up; }
+:global(html[data-page-turn='session-up']::view-transition-old(noven-work)) { animation-name: noven-page-out-down; }
+:global(html[data-page-turn='session-up']::view-transition-new(noven-work)) { animation-name: noven-page-in-down; }
+:global(html[data-page-turn='project-down']::view-transition-old(noven-work)) { animation-name: noven-project-out-up; }
+:global(html[data-page-turn='project-down']::view-transition-new(noven-work)) { animation-name: noven-project-in-up; }
+:global(html[data-page-turn='project-up']::view-transition-old(noven-work)) { animation-name: noven-project-out-down; }
+:global(html[data-page-turn='project-up']::view-transition-new(noven-work)) { animation-name: noven-project-in-down; }
+:global(html[data-page-turn^='project']::view-transition-old(noven-work)),
+:global(html[data-page-turn^='project']::view-transition-new(noven-work)) {
+  animation-timing-function: linear;
+}
+
+/* The page clips to its own column: nothing slides over the navigation. While
+   a project desk is lifted, the gap behind it reads as a slightly deeper tray. */
+:global(::view-transition-image-pair(noven-work)) {
+  overflow: hidden;
+}
+
+:global(html[data-page-turn^='project']::view-transition-image-pair(noven-work)) {
+  background: rgb(0 0 0 / 0.06);
+}
+
+/* Root crossfade off: everything outside the work layer swaps in place. */
+:global(::view-transition-old(root)),
+:global(::view-transition-new(root)) {
+  animation: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :global(::view-transition-group(noven-work)),
+  :global(::view-transition-old(noven-work)),
+  :global(::view-transition-new(noven-work)) {
+    animation: none;
+  }
 }
 
 .overlayLayer > * {

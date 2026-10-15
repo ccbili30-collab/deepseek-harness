@@ -454,7 +454,7 @@ function CanvasExit({ side, drawerW, sessionId }: { side: 'left' | 'right'; draw
 }
 
 function CanvasHost(panel: PanelProps & { width: number; toggleSidebar: () => void; held: boolean }): ReactNode {
-  const { surface, width, fullscreen, toggleSidebar, t, held } = panel
+  const { surface, width, fullscreen, t, held } = panel
   useSyncExternalStore(listener => canvasSide.subscribe(listener), () => canvasSide.getSnapshot())
   const side = canvasSide.get()
   const types = panel.useTabTypes(value => value)
@@ -479,16 +479,8 @@ function CanvasHost(panel: PanelProps & { width: number; toggleSidebar: () => vo
   // so the canvas clears it in either expansion state.
   const drawerW = fullscreen ? 0 : width
 
-  // The canvas parks the session rail for room while it is up, and restores
-  // whichever state it found on close — unless the user already unparked it.
-  useLayoutEffect(() => {
-    if (!open) return
-    if (document.querySelector('[data-sidebar-collapsed]') !== null) return
-    toggleSidebar()
-    return () => {
-      if (document.querySelector('[data-sidebar-collapsed]') !== null) toggleSidebar()
-    }
-  }, [toggleSidebar, open])
+  // The navigation sidebar is the stable layer: the canvas never collapses or
+  // restores it. Room for the canvas comes from the work layer's own split.
 
   useLayoutEffect(() => {
     if (!open || tab === undefined) return
