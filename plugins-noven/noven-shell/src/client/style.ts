@@ -2046,6 +2046,28 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   font-size: 13px; min-width: 26px; height: 24px; border-radius: 7px; cursor: pointer; }
 .nv-maped-nav button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 .nv-maped-navpct { font-size: 11px !important; min-width: 42px !important; }
+.nv-maped-tools { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); z-index: 3;
+  display: flex; flex-direction: column; gap: 3px; background: var(--nv-surface);
+  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 4px;
+  box-shadow: 0 4px 16px rgba(22,24,26,.10); }
+.nv-maped-tools button { border: none; background: none; color: var(--nv-secondary-text);
+  width: 26px; height: 26px; border-radius: 7px; font-size: 13px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center; }
+.nv-maped-tools button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-maped-tools button.cur { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-maped-viewseg { position: absolute; left: 10px; bottom: 10px; z-index: 3;
+  max-width: calc(100% - 160px); flex-wrap: wrap; overflow: visible;
+  background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 10px;
+  padding: 3px; box-shadow: 0 4px 16px rgba(22,24,26,.10); }
+.nv-maped-viewseg button { flex: 0 0 auto; }
+.nv-maped-menu { position: absolute; right: 10px; top: 10px; z-index: 3; display: flex; }
+.nv-maped-menupop { position: absolute; right: 0; top: calc(100% + 6px); width: 168px;
+  display: flex; flex-wrap: wrap; gap: 4px; background: var(--nv-surface);
+  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 8px;
+  box-shadow: 0 8px 24px rgba(22,24,26,.14); }
+.nv-maped-menulab { width: 100%; font-size: 10px; color: var(--nv-secondary-text);
+  letter-spacing: .04em; margin: 4px 0 0; }
+.nv-maped-menulab:first-child { margin-top: 0; }
 /* 集合渲染器（设计稿 06 + collection-v2 B/C）：视图切换 + 图鉴卡 + 表格 + 编年长卷。 */
 .nv-coll { margin-top: 10px; }
 .nv-coll-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }

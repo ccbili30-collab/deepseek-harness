@@ -808,6 +808,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     : mode === 'annotate' ? 'annotate'
     : 'edit'
   /** 工具互斥：arm 一个清掉其余；连线草稿随 routing 一起清。 */
+  /** 叠加层/世界操作菜单开合。 */
+  const [menuOpen, setMenuOpen] = useState(false)
   const armPlace = (kind: 'burg' | 'mark'): void => { setBrush(null); setRouting(null); pathRef.current = []; setPlacing(cur => cur === kind ? null : kind) }
   const armRoute = (group: 'roads' | 'searoutes'): void => { setBrush(null); setPlacing(null); pathRef.current = []; setRouting(cur => cur === group ? null : group) }
   const armBrush = (b: { dim: 'state' | 'culture', id: number, name: string, color: string } | null): void => { setPlacing(null); setRouting(null); pathRef.current = []; setBrush(b) }
@@ -1065,6 +1067,23 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     }
     draw()
   }, [pushWorldEditUndo, routing, t])
+
+  /** B/工具钮共用的划领土入口：选中维度实体刷它，否则按当前视图划区建国。 */
+  const armBrushSmart = useCallback((): void => {
+    const built = resolveBuilt()
+    if (selWorld !== null && (selWorld.kind === 'state' || selWorld.kind === 'culture') && built !== null) {
+      const dim = selWorld.kind
+      const ent = dim === 'state' ? built.world.pack.states[selWorld.id] : built.world.pack.cultures[selWorld.id]
+      armBrush({ dim, id: selWorld.id, name: ent?.name ?? '', color: ent?.color ?? '#8A8F94' })
+      return
+    }
+    if (worldView === 'political' || worldView === 'cultural') {
+      const dim = worldView === 'political' ? 'state' : 'culture'
+      const n = dim === 'state' ? built?.world.pack.states.length ?? 1 : built?.world.pack.cultures.length ?? 1
+      armBrush({ dim, id: -1, name: t(dim === 'state' ? 'wg.map.world.newState' : 'wg.map.world.newCulture'), color: `hsl(${(n * 61 + 25) % 360} 45% 62%)` })
+      setSelWorld(null)
+    }
+  }, [resolveBuilt, selWorld, t, worldView])
 
   /** 点选世界对象：点击未拖动时命中河 > 特征。 */
   const selectWorldAt = useCallback((p: XY): void => {
@@ -1662,19 +1681,29 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     animView({ s, x: (st.clientWidth - aspectRef.current * s) / 2, y: (st.clientHeight - s) / 2 }, 300)
   }, [animView, fitScale])
 
-  /* 缩放键：＋/− 按档缩放、0/⇧1 回全图。仅当指针悬在地图上，且不吃 ⌘/⌃ 组合键、
-   * 不打断输入框。放在相机 helper 之后——deps 数组在渲染期求值，不能前向引用。 */
+  /* 快捷键：缩放（＋/−/0）、工具（V/B/C/R/S/M）。仅当指针悬在地图上，不吃
+   * ⌘/⌃ 组合键、不打断输入框。放在相机 helper 之后——deps 渲染期求值不能前向引用。 */
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.metaKey || e.ctrlKey || !hoverRef.current) return
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
-      if (e.key === '+' || e.key === '=') { zoomStep(1.25); e.preventDefault(); return }
-      if (e.key === '-' || e.key === '_') { zoomStep(1 / 1.25); e.preventDefault(); return }
-      if (e.key === '0' || e.key === '!') { flyFit(); e.preventDefault() }
+      switch (e.key) {
+        case '+': case '=': zoomStep(1.25); break
+        case '-': case '_': zoomStep(1 / 1.25); break
+        case '0': case '!': flyFit(); break
+        case 'v': case 'V': exitTools(); break
+        case 'b': case 'B': armBrushSmart(); break
+        case 'c': case 'C': armPlace('burg'); break
+        case 'r': case 'R': armRoute('roads'); break
+        case 's': case 'S': armRoute('searoutes'); break
+        case 'm': case 'M': armPlace('mark'); break
+        default: return
+      }
+      e.preventDefault()
     }
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
-  }, [zoomStep, flyFit])
+  }, [zoomStep, flyFit, armBrushSmart])
   // 子视图（带 window/固定 aspect）的宽高比不从底图实测——几何是按取景框归一化的。
   const aspectOf = useCallback((imgW: number, imgH: number): number => {
     const doc = docRef.current
@@ -1772,6 +1801,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     cancelAnimationFrame(viewAnimRef.current)
     window.clearTimeout(tipTimerRef.current)
     setTip(null)
+    setMenuOpen(false)
     const p = workOfEvent(e)
     if (e.button !== 0 || spaceRef.current) {
       gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }
@@ -2227,107 +2257,92 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
 
   return (
     <div className="nv-maped">
-      <div className="nv-maped-bar">
-        {MAP_EDITING && (
-        <div className="nv-maped-seg">
-          {(['draft', 'annotate', 'edit'] as const).map(m => (
-            <button key={m} type="button" className={mode === m ? 'on' : ''}
-              onClick={() => setMode(m)}>{t(`wg.map.tool.${m}` as Parameters<ShellT>[0])}</button>
-          ))}
+      <div className="nv-maped-stage" ref={stageCb}>
+        {/* 左：工具栏——图标钮与快捷键同一入口；B 按选中实体或当前视图维度划界 */}
+        <div className="nv-maped-tools">
+          <button type="button" className={tool === 'select' ? 'cur' : ''} title={t('wg.map.tools.select')} onClick={exitTools}>↖</button>
+          {MAP_WORLD && data.world !== undefined && (
+          <>
+          <button type="button" className={tool === 'brush' ? 'cur' : ''} title={t('wg.map.tools.brush')} onClick={armBrushSmart}>⬤</button>
+          <button type="button" className={placing === 'burg' ? 'cur' : ''} title={t('wg.map.tools.burg')} onClick={() => armPlace('burg')}>⌂</button>
+          <button type="button" className={routing === 'roads' ? 'cur' : ''} title={t('wg.map.tools.road')} onClick={() => armRoute('roads')}>⟋</button>
+          <button type="button" className={routing === 'searoutes' ? 'cur' : ''} title={t('wg.map.tools.sea')} onClick={() => armRoute('searoutes')}>≈</button>
+          </>
+          )}
+          <button type="button" className={placing === 'mark' ? 'cur' : ''} title={t('wg.map.tools.mark')} onClick={() => armPlace('mark')}>⚑</button>
         </div>
-        )}
-        <div className="nv-maped-layers">
-          {mode !== 'draft' && LAYERS.map(l => (
-            <button key={l.id} type="button"
-              className={`nv-maped-chip${hidden.has(l.id) ? ' off' : ''}`}
-              title={t(`wg.map.layer.${l.id}` as Parameters<ShellT>[0])}
-              onClick={() => setHidden(prev => {
-                const next = new Set(prev)
-                next.has(l.id) ? next.delete(l.id) : next.add(l.id)
-                return next
-              })}>
-              {t(`wg.map.layer.${l.id}` as Parameters<ShellT>[0])}
+        {/* 左下：视图切换——颜色含义换档，相机与操作不动 */}
+        {MAP_WORLD && data.world !== undefined && (
+        <div className="nv-maped-viewseg nv-maped-seg" role="group" aria-label={t('wg.map.world.view')}>
+          {(['political', 'cultural', 'biomes', 'relief'] as const).map(v => (
+            <button key={v} type="button" className={worldView === v ? 'on' : ''}
+              onClick={() => { setWorldView(v); setSelWorld(null); exitTools() }}>
+              {t(`wg.map.world.view.${v}` as Parameters<ShellT>[0])}
             </button>
           ))}
-          <button type="button" className={`nv-maped-chip${grid ? ' cur' : ''}`} onClick={() => setGrid(v => !v)}>{t('wg.map.grid')}</button>
-        </div>
-        {MAP_WORLD && (
-        <div className="nv-maped-world">
-          {data.world === undefined ? (
-            data.draft.length > 0 && (
-              <button type="button" className="nv-maped-chip"
-                onClick={() => setWorld({ seed: generateSeed(), heightmap: { kind: 'draft' }, postSteps: ['Smooth 2 0 0 0'] })}>
-                {t('wg.map.world.draftBtn')}
-              </button>
-            )
-          ) : (
-            <>
-              <div className="nv-maped-seg" role="group" aria-label={t('wg.map.world.view')}>
-                {(['political', 'cultural', 'biomes', 'relief'] as const).map(v => (
-                  <button key={v} type="button" className={worldView === v ? 'on' : ''}
-                    onClick={() => { setWorldView(v); setSelWorld(null); exitTools() }}>
-                    {t(`wg.map.world.view.${v}` as Parameters<ShellT>[0])}
-                  </button>
-                ))}
-              </div>
-              {(worldView === 'political' || worldView === 'cultural') && (
-                <button type="button" className="nv-maped-chip" title={t('wg.map.world.addDesc')}
-                  onClick={() => {
-                    const dim = worldView === 'political' ? 'state' : 'culture'
-                    const built = resolveBuilt()
-                    const n = dim === 'state' ? built?.world.pack.states.length ?? 1 : built?.world.pack.cultures.length ?? 1
-                    armBrush({ dim, id: -1, name: t(dim === 'state' ? 'wg.map.world.newState' : 'wg.map.world.newCulture'), color: `hsl(${(n * 61 + 25) % 360} 45% 62%)` })
-                    setSelWorld(null)
-                  }}>
-                  {t(worldView === 'political' ? 'wg.map.world.addState' : 'wg.map.world.addCulture')}
-                </button>
-              )}
-              {/* 放置/连线工具：正交于视图维度，落在世界实体层（城邦/地标/道路/航线） */}
-              <button type="button" className={`nv-maped-chip${placing === 'burg' ? ' cur' : ''}`} title={t('wg.map.world.placeHint')}
-                onClick={() => armPlace('burg')}>
-                {t('wg.map.world.addBurg')}
-              </button>
-              <button type="button" className={`nv-maped-chip${placing === 'mark' ? ' cur' : ''}`} title={t('wg.map.world.placeHint')}
-                onClick={() => armPlace('mark')}>
-                {t('wg.map.world.addMark')}
-              </button>
-              <button type="button" className={`nv-maped-chip${routing === 'roads' ? ' cur' : ''}`} title={t('wg.map.world.pathHint')}
-                onClick={() => armRoute('roads')}>
-                {t('wg.map.world.addRoad')}
-              </button>
-              <button type="button" className={`nv-maped-chip${routing === 'searoutes' ? ' cur' : ''}`} title={t('wg.map.world.pathHint')}
-                onClick={() => armRoute('searoutes')}>
-                {t('wg.map.world.addSea')}
-              </button>
-              {(['states', 'routes', 'burgs', 'names'] as const)
-                .filter(l => l !== 'states' || worldView === 'political')
-                .map(l => (
-                <button key={l} type="button"
-                  className={`nv-maped-chip${worldLayers.has(l) ? '' : ' off'}`}
-                  onClick={() => setWorldLayers(prev => {
-                    const next = new Set(prev)
-                    next.has(l) ? next.delete(l) : next.add(l)
-                    return next
-                  })}>
-                  {t(`wg.map.world.layer.${l}` as Parameters<ShellT>[0])}
-                </button>
-              ))}
-              <button type="button" className="nv-maped-chip"
-                onClick={() => data.world !== undefined && setWorld({ ...data.world, seed: generateSeed() })}>
-                {t('wg.map.world.reseed')}
-              </button>
-              {data.draft.length > 0 && data.world.heightmap.kind !== 'draft' && (
-                <button type="button" className="nv-maped-chip"
-                  onClick={() => data.world !== undefined && setWorld({ ...data.world, heightmap: { kind: 'draft' } })}>
-                  {t('wg.map.world.regen')}
-                </button>
-              )}
-            </>
-          )}
         </div>
         )}
-      </div>
-      <div className="nv-maped-stage" ref={stageCb}>
+        {/* 右上：图层与世界操作——叠加层可多选，世界级动作收最末 */}
+        <div className="nv-maped-menu">
+          <button type="button" className={`nv-maped-chip${menuOpen ? ' cur' : ''}`}
+            onClick={() => setMenuOpen(v => !v)}>{t('wg.map.layers.menu')}</button>
+          {menuOpen && (
+          <div className="nv-maped-menupop">
+            {MAP_WORLD && data.world !== undefined && (
+            <>
+            <div className="nv-maped-menulab">{t('wg.map.layers.world')}</div>
+            {(['states', 'routes', 'burgs', 'names'] as const)
+              .filter(l => l !== 'states' || worldView === 'political')
+              .map(l => (
+              <button key={l} type="button"
+                className={`nv-maped-chip${worldLayers.has(l) ? '' : ' off'}`}
+                onClick={() => setWorldLayers(prev => {
+                  const next = new Set(prev)
+                  next.has(l) ? next.delete(l) : next.add(l)
+                  return next
+                })}>
+                {t(`wg.map.world.layer.${l}` as Parameters<ShellT>[0])}
+              </button>
+            ))}
+            <div className="nv-maped-menulab">{t('wg.map.layers.ops')}</div>
+            <button type="button" className="nv-maped-chip"
+              onClick={() => { if (data.world !== undefined) setWorld({ ...data.world, seed: generateSeed() }) }}>
+              {t('wg.map.world.reseed')}
+            </button>
+            {data.draft.length > 0 && data.world.heightmap.kind !== 'draft' && (
+            <button type="button" className="nv-maped-chip"
+              onClick={() => { if (data.world !== undefined) setWorld({ ...data.world, heightmap: { kind: 'draft' } }) }}>
+              {t('wg.map.world.regen')}
+            </button>
+            )}
+            </>
+            )}
+            {MAP_WORLD && data.world === undefined && data.draft.length > 0 && (
+            <>
+            <div className="nv-maped-menulab">{t('wg.map.layers.ops')}</div>
+            <button type="button" className="nv-maped-chip"
+              onClick={() => setWorld({ seed: generateSeed(), heightmap: { kind: 'draft' }, postSteps: ['Smooth 2 0 0 0'] })}>
+              {t('wg.map.world.draftBtn')}
+            </button>
+            </>
+            )}
+            <div className="nv-maped-menulab">{t('wg.map.layers.annot')}</div>
+            {mode !== 'draft' && LAYERS.map(l => (
+              <button key={l.id} type="button"
+                className={`nv-maped-chip${hidden.has(l.id) ? ' off' : ''}`}
+                title={t(`wg.map.layer.${l.id}` as Parameters<ShellT>[0])}
+                onClick={() => setHidden(prev => {
+                  const next = new Set(prev)
+                  next.has(l.id) ? next.delete(l.id) : next.add(l.id)
+                  return next
+                })}>
+                {t(`wg.map.layer.${l.id}` as Parameters<ShellT>[0])}
+              </button>
+            ))}
+            <button type="button" className={`nv-maped-chip${grid ? ' cur' : ''}`} onClick={() => setGrid(v => !v)}>{t('wg.map.grid')}</button>
+          </div>
+          )}
+        </div>
         {brush !== null && (
         <div className="nv-maped-brushbar">
           <span className="nv-maped-brushdot" style={{ background: brush.id === 0 ? '#6E6E73' : brush.color }} />
