@@ -52,11 +52,11 @@ type PanelRowProps =
   Pick<SidebarPanelMetadata, 'id' | 'label'>
   & Pick<SidebarSectionOwnerProps, 'wide'>
   & Pick<PropsRuntime<'sidebar'>, 'usePanelInfo'>
-  & Pick<InjectFace<SidebarRootInjected>, 'selectPanel'>
+  & Pick<InjectFace<SidebarRootInjected>, 'selectPanel' | 'activatePanel'>
   & PropsRenderSlots<'sidebar.panellist'>
 
 /** Each panel row subscribes only to its own selection state. */
-function PanelRow({ id, label, wide, usePanelInfo, selectPanel, renderSlot }: PanelRowProps) {
+function PanelRow({ id, label, wide, usePanelInfo, selectPanel, activatePanel, renderSlot }: PanelRowProps) {
   const active = usePanelInfo(info => info.activePanelId === id)
   return (
     <Tooltip label={label} delayMs={500} disabled={wide}>
@@ -65,7 +65,10 @@ function PanelRow({ id, label, wide, usePanelInfo, selectPanel, renderSlot }: Pa
         className={clsx(css.panelRow, active && css.panelActive)}
         aria-label={label}
         aria-current={active ? 'page' : undefined}
-        onClick={() => { selectPanel(id) }}
+        onClick={(event) => {
+          if (activatePanel !== undefined) activatePanel(id, event.currentTarget)
+          else selectPanel(id)
+        }}
       >
         <span className={css.panelGlyph} aria-hidden="true">
           {renderSlot('sidebar.panellist', { size: wide ? 16 : 18, active }, { only: id })}
@@ -91,6 +94,7 @@ export function SidebarRoot({
   startSession,
   toggleSidebar,
   selectPanel,
+  activatePanel,
   usePanels,
   useShortcuts,
   usePanelInfo,
@@ -288,6 +292,7 @@ export function SidebarRoot({
               wide={wide}
               usePanelInfo={usePanelInfo}
               selectPanel={selectPanel}
+              {...(activatePanel === undefined ? {} : { activatePanel })}
               renderSlot={renderSlot}
             />
           ))}

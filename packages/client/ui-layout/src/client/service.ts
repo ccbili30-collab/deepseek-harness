@@ -43,6 +43,11 @@ export interface ILayout {
   /** Toggle the sidebar panel (closed ⟷ contract default width). */
   toggleSidebar(): void
   /**
+   * Set the sidebar's collapsed presentation without flipping an already-correct state.
+   * @param collapsed - true for the rail/hidden presentation, false for the wide column.
+   */
+  setSidebarCollapsed(collapsed: boolean): void
+  /**
    * Report the right panel's presentation without changing its expanded state.
    * @param track - whether the normal panel width reserves a grid track,
    *   including beneath a fullscreen overlay.
@@ -104,6 +109,11 @@ export class LayoutController implements ILayout {
   /** Toggle the sidebar panel (closed ⟷ contract default width). */
   toggleSidebar(): void {
     this.panels.toggleSidebar()
+  }
+
+  /** Set the sidebar presentation idempotently. */
+  setSidebarCollapsed(collapsed: boolean): void {
+    this.panels.setSidebarCollapsed(collapsed)
   }
 
   /** Report the right panel's track, fullscreen presentation, canvas claim, and rail state. */

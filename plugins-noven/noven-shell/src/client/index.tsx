@@ -68,6 +68,8 @@ import { SlashChips } from './inputdock.tsx'
 import { applyQuote } from './quote.tsx'
 import { applyBranches } from './branches.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
+import { showComingSoon } from './coming-soon.ts'
+import { enterIdeScene } from './creation-transition.ts'
 import { injectNovenStyles } from './style.ts'
 import { CanvasHost, createCanvasStore, activeKey, fileTabKind, docKey, dirKey, statusKey, type CanvasInjected, type CanvasState, type DocEntry, type DirEntry, type ImportPack, type ProjectFocus, type SimRow, type TabFlags } from './canvas.tsx'
 import { ContentTree, type TreeInjected } from './tree.tsx'
@@ -216,6 +218,8 @@ export interface CreatePageInjected extends ShellFace {
   readonly startPrompt: (text: string, send: CreateSend) => Promise<boolean>
   readonly newCard: (kind: 'world' | 'character', name: string, workspaceId?: WorkspaceId) => void
   readonly importCard: (file: File, workspaceId?: WorkspaceId) => void
+  /** Connect or create the chosen workspace session, then enter the persisted IDE canvas. */
+  readonly startHandcraft: (workspaceId: WorkspaceId | undefined, source: HTMLElement) => Promise<boolean>
   /** Host 代际的模型目录（默认路由 + 各提供商清单）。 */
   readonly loadModels: () => Promise<ModelCatalog | undefined>
   /** 弹宿主目录选择并把所选目录注册成 Workspace。 */
@@ -351,7 +355,7 @@ function SidecarTabIcon({ size }: { size?: number }) { return glyph.sparkle(size
 function SettingsTabIcon({ size }: { size?: number }) { return glyph.gear(size ?? 16) }
 
 /** Required browser services: slots, panel selection, theme, copy, right rail, session navigation, command and skill catalogs. */
-export const inject = ['slots', 'locale', 'layout', 'theme', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiWorkspace', 'uiSession', 'remote', 'remote.commands', 'remote.session', 'remote.skills', 'remote.workspaceFiles', 'sessions', 'workspaces']
+export const inject = ['slots', 'locale', 'layout', 'theme', 'sidebarPanels', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiWorkspace', 'uiSession', 'remote', 'remote.commands', 'remote.session', 'remote.skills', 'remote.workspaceFiles', 'sessions', 'workspaces']
 
 interface ChipEntry { name: string; description: string }
 
@@ -1363,6 +1367,42 @@ export function apply(ctx: ClientContext): void {
       return false
     })
 
+  const startHandcraft = async (workspaceId: WorkspaceId | undefined, source: HTMLElement): Promise<boolean> => {
+    const root = workspaceRootFor(workspaceId)
+    const reusable = root === undefined ? recentSession() : (() => {
+      let found: { id: SessionId; cwd: string; at: number } | undefined
+      const sessions = ctx.sessions.list.getSnapshot()
+      for (const id of sessions.ids) {
+        const row = sessions.byId[id]
+        if (row?.cwd !== root) continue
+        if (found === undefined || row.updatedAt > found.at) found = { id, cwd: row.cwd, at: row.updatedAt }
+      }
+      return found === undefined ? undefined : { id: found.id, cwd: found.cwd }
+    })()
+    const target = reusable !== undefined
+      ? { sessionId: reusable.id, root: reusable.cwd || root }
+      : await cardSessionFor(workspaceId).catch((reason: unknown) => {
+        console.warn('noven-shell: handcraft session failed:', reason)
+        return undefined
+      })
+    if (target?.sessionId === undefined) return false
+    ctx.uiWorkspace.openSession(target.sessionId)
+    enterIdeScene(source, () => {
+      ctx.layout.selectPanel(null)
+      const layout = ctx.layout as {
+        setSidebarCollapsed?: (collapsed: boolean) => void
+        setUnitSide(side: 'left' | 'right'): void
+        toggleSidebar(): void
+      }
+      if (layout.setSidebarCollapsed !== undefined) layout.setSidebarCollapsed(true)
+      else if (document.querySelector('[data-sidebar-collapsed]') === null) layout.toggleSidebar()
+      layout.setUnitSide('left')
+      try { ctx.sidebarRight.openTab(CANVAS_KIND) }
+      catch (reason: unknown) { console.warn('noven-shell: handcraft canvas failed:', reason) }
+    })
+    return true
+  }
+
   /** Host 代际模型目录（默认路由 + 提供商清单）。 */
   const loadModels = async (): Promise<ModelCatalog | undefined> => {
     const res = await ctx.remote.session.modelCatalog()
@@ -1725,6 +1765,19 @@ export function apply(ctx: ClientContext): void {
     })().catch((reason: unknown) => { console.warn('noven-shell: create failed:', reason) })
   }
 
+  /**
+   * 社区与消息尚未接入：行灰置可见，点击不切面板，只抖一下 + 居中「敬请期待」
+   * （showComingSoon）。它们仍是合法 main key（未来直接接回），此处仅拦截导航。
+   */
+  const sidebarPanels = ctx.get('sidebarPanels') as {
+    registerActivation(id: MainPanelId, activate: (target: HTMLElement) => void): () => void
+  }
+  const SOON_IDS: ReadonlySet<MainPanelId> = new Set([HOME_ID, MESSAGES_ID])
+  for (const id of SOON_IDS) {
+    ctx.effect(() => sidebarPanels.registerActivation(id, target => {
+      showComingSoon(target, t('nav.comingSoon'))
+    }), `noven-shell: unavailable panel ${id}`)
+  }
   const NAV: readonly { id: MainPanelId; order: number; label: () => string; Icon: (p: { size: number; active: boolean }) => React.ReactNode }[] = [
     { id: CREATE_ID, order: 5, label: () => t('nav.create'), Icon: CreateIcon },
     { id: HOME_ID, order: 10, label: () => t('nav.home'), Icon: HomeIcon },
@@ -2082,6 +2135,17 @@ export function apply(ctx: ClientContext): void {
           await reference.binding.session.prompt([{ type: 'text', text }], 'queue')
         })
       },
+      applyLayoutSeed: () => {
+        const layout = ctx.layout as {
+          setSidebarCollapsed?: (collapsed: boolean) => void
+          setUnitSide(side: 'left' | 'right'): void
+          toggleSidebar(): void
+        }
+        if (layout.setSidebarCollapsed !== undefined) layout.setSidebarCollapsed(true)
+        else if (document.querySelector('[data-sidebar-collapsed]') === null) layout.toggleSidebar()
+        layout.setUnitSide('left')
+        if (rightExtras.canvasSide?.get() !== 'right') rightExtras.canvasSide?.toggle()
+      },
       submitCreate,
       importCard,
       commitImport,
@@ -2124,8 +2188,20 @@ export function apply(ctx: ClientContext): void {
     })
   }, 'noven-shell: seed canvas')
 
+  // 社区/消息保留标准 panellist 行；sidebarPanels 的 scoped activation
+  // 覆盖在选择动作之前解释占位状态，插件释放后恢复正常面板导航。
+  const SoonNavGlyph = ({ Icon }: { readonly Icon: (p: { size: number; active: boolean }) => React.ReactNode }): React.ReactNode => (
+    <span className="nv-nav-soon-glyph"><Icon size={18} active={false} /></span>
+  )
   ctx.slots.inject('sidebar.panellist', function* () {
     for (const nav of NAV) {
+      if (SOON_IDS.has(nav.id)) {
+        const Icon = nav.Icon
+        yield ctx.slots.register({
+          name: 'sidebar.panellist', id: nav.id, order: nav.order, label: nav.label, locale: NS,
+        }, () => <SoonNavGlyph Icon={Icon} />)
+        continue
+      }
       yield ctx.slots.register({
         name: 'sidebar.panellist', id: nav.id, order: nav.order, label: nav.label, locale: NS,
       }, nav.Icon)
@@ -2140,6 +2216,7 @@ export function apply(ctx: ClientContext): void {
         ...face,
         hooks: { cards },
         startPrompt: startPromptSession,
+        startHandcraft,
         newCard,
         importCard,
         loadModels,
@@ -2147,7 +2224,7 @@ export function apply(ctx: ClientContext): void {
       }),
     }, (p: FacePageProps & InjectFace<CreatePageInjected>) => (
       <Create t={p.t} useWorkspaces={p.useWorkspaces} useSessions={p.useSessions}
-        onStartPrompt={p.startPrompt} onNewCard={p.newCard}
+        onStartPrompt={p.startPrompt} onStartHandcraft={p.startHandcraft} onNewCard={p.newCard}
         onImportCard={p.importCard} loadModels={p.loadModels} pickWorkspace={p.pickWorkspace}
         useCards={p.useCards} onOpenCard={row => { face.openCard(row.cardId, { sessionId: row.sessionId, root: row.workspaceRoot }) }} />
     ))
