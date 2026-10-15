@@ -86,7 +86,12 @@ export interface Config {
   readonly historyCacheMaxEntries?: number
 }
 
-/** Project browser cache limits into boot HTML without carrying Host business state. */
+/**
+ * Project browser cache limits into boot HTML without carrying Host business state.
+ * @param ctx - Host context publishing the Web index injection event.
+ * @param config - validated cache limits.
+ * @returns a disposer removing the index contribution.
+ */
 export function installHistoryCacheConfig(ctx: Context, config: Config): () => void {
   return ctx.on('webserver/index-inject', (table) => {
     table.push({

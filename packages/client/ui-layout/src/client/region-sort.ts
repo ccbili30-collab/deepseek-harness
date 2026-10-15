@@ -42,7 +42,8 @@ interface SortSession {
 }
 
 /**
- * The frame-side sort gesture. @param frameRef - the frame element every column lives in.
+ * The frame-side sort gesture.
+ * @param frameRef - the frame element every column lives in.
  * @param enabled - false while a global panel owns the main seat: a panel has no
  * swappable sibling, so blank presses there must not arm the sort.
  */
