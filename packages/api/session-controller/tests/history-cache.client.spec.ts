@@ -13,10 +13,16 @@ import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
 
 const SID = 'cache-test' as SessionId
 const address = { kind: 'session', sessionId: SID } as const
-function windowOf(body = 'cached answer'): CachedHistory {
+function windowOf(body = 'cached answer') {
+  const source = new MutableSessionEventSource()
+  source.replace(plainTurn(SessionSeq(0), 0, 'cached question', body).map(event => ({ type: 'event', event })), false)
+  return source.getSnapshot()
+}
+function cachedOf(body = 'cached answer'): CachedHistory {
+  const window = windowOf(body)
   return {
-    entries: plainTurn(SessionSeq(0), 0, 'cached question', body).map(event => ({ type: 'event' as const, event })),
-    hasMore: false,
+    entries: window.entries.filter((entry): entry is CachedHistory['entries'][number] => entry.type === 'event'),
+    hasMore: window.hasMore,
   }
 }
 function cache(factory = new IDBFactory(), maxBytes = 4 * 1024 * 1024, maxEntries = 5) {
@@ -167,7 +173,7 @@ describe('Session history preview', () => {
     const session = await sessionBench(mock, start, SID, { historyCache: store })
     mock.stream(FOLLOW, followScript(history([])))
     await session.open()
-    gate.resolve(windowOf())
+    gate.resolve(cachedOf())
     await Promise.resolve()
     expect(session.eventSource.getSnapshot().entries).toEqual([])
     expect(session.getSnapshot().historyPreview).toBeUndefined()
@@ -180,7 +186,7 @@ describe('Session history preview', () => {
     mock.stream(FOLLOW, followScript(err(new RemoteError('gateway/internal', 'history blocked', {}))))
     await session.open()
     session.handleRemoved()
-    gate.resolve(windowOf())
+    gate.resolve(cachedOf())
     await Promise.resolve()
     expect(session.eventSource.getSnapshot().entries).toEqual([])
     expect(session.getSnapshot().historyPreview).toBeUndefined()
