@@ -876,11 +876,11 @@ type DrawLayer = LayerId
 
 /** 地图工具：一次只有一个，pointerdown 按工具分流而非叠模式标志。
  *  draft/annotate/edit 是旧对象层手势，仅 MAP_EDITING 下可达；迁移到 zone 语义工具后删除。 */
-type MapTool = 'select' | 'brush' | 'place' | 'path' | 'draft' | 'annotate' | 'edit'
+type MapTool = 'select' | 'brush' | 'place' | 'path' | 'region' | 'draft' | 'annotate' | 'edit'
 
 interface Gesture {
   readonly kind: 'stroke' | 'stretch' | 'move' | 'pan' | 'paint' | 'facepaint' | 'shape' | 'wpaint'
-    | 'wmove' | 'wvert' | 'wborder' | 'none'
+    | 'wmove' | 'wvert' | 'wborder' | 'wsel' | 'none'
   readonly obj?: MapObject
   readonly grab?: number
   sigma?: number
@@ -1004,12 +1004,22 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   /** 连线中未收的点（归一化存储坐标）；pathTick 仅驱动条上点数展示。 */
   const pathRef = useRef<XY[]>([])
   const [, setPathTick] = useState(0)
+  /** ⌘K 地名搜索：打开即按内置世界建索引，选中即飞去并选中。 */
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQ, setSearchQ] = useState('')
+  const [searchHi, setSearchHi] = useState(0)
+  /** 检视面板：选中实体的详情抽屉（事实行 + 成员城邦跳转）。 */
+  const [inspect, setInspect] = useState(false)
+  /** 圈区域工具：橡皮筋拖出矩形，松手落成区域选择（归一化 [x0,y0,x1,y1]）。 */
+  const [regioning, setRegioning] = useState(false)
+  const [regionSel, setRegionSel] = useState<readonly [number, number, number, number] | null>(null)
   /** 视图切换：悬停与提示的维度语义失效，立即清。 */
   useEffect(() => { setHoverWorld(null); window.clearTimeout(tipTimerRef.current); setTip(null) }, [worldView])
-  /** 活动工具：放置/连线/划界刷 armed 时压过选择。 */
+  /** 活动工具：放置/连线/划界刷/圈区 armed 时压过选择。 */
   const tool: MapTool = brush !== null ? 'brush'
     : placing !== null ? 'place'
     : routing !== null ? 'path'
+    : regioning ? 'region'
     : !MAP_EDITING ? 'select'
     : mode === 'draft' ? 'draft'
     : mode === 'annotate' ? 'annotate'
@@ -1017,10 +1027,11 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   /** 工具互斥：arm 一个清掉其余；连线草稿随 routing 一起清。 */
   /** 叠加层/世界操作菜单开合。 */
   const [menuOpen, setMenuOpen] = useState(false)
-  const armPlace = (kind: 'burg' | 'mark'): void => { setBrush(null); setRouting(null); pathRef.current = []; setPlacing(cur => cur === kind ? null : kind) }
-  const armRoute = (group: 'roads' | 'searoutes'): void => { setBrush(null); setPlacing(null); pathRef.current = []; setRouting(cur => cur === group ? null : group) }
-  const armBrush = (b: { dim: 'state' | 'culture', id: number, name: string, color: string } | null): void => { setPlacing(null); setRouting(null); pathRef.current = []; setBrush(b) }
-  const exitTools = (): void => { setBrush(null); setPlacing(null); setRouting(null); pathRef.current = [] }
+  const armPlace = (kind: 'burg' | 'mark'): void => { setBrush(null); setRouting(null); setRegioning(false); pathRef.current = []; setPlacing(cur => cur === kind ? null : kind) }
+  const armRoute = (group: 'roads' | 'searoutes'): void => { setBrush(null); setPlacing(null); setRegioning(false); pathRef.current = []; setRouting(cur => cur === group ? null : group) }
+  const armBrush = (b: { dim: 'state' | 'culture', id: number, name: string, color: string } | null): void => { setPlacing(null); setRouting(null); setRegioning(false); pathRef.current = []; setBrush(b) }
+  const armRegion = (): void => { setBrush(null); setPlacing(null); setRouting(null); pathRef.current = []; setRegioning(cur => !cur) }
+  const exitTools = (): void => { setBrush(null); setPlacing(null); setRouting(null); setRegioning(false); pathRef.current = [] }
   /** 空格按住期间左键=平移（任何工具下可用，对齐通用手势）。 */
   const spaceRef = useRef(false)
   useEffect(() => {
@@ -1039,6 +1050,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
+        if (searchOpen) { setSearchOpen(false); e.preventDefault(); e.stopImmediatePropagation(); return }
         if (ctxMenu !== null) { setCtxMenu(null); e.preventDefault(); e.stopImmediatePropagation(); return }
         if (gestureRef.current.kind !== 'none' && gestureRef.current.kind !== 'pan') {
           gestureRef.current = { kind: 'none' }
@@ -1048,14 +1060,24 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           return
         }
         if (pathRef.current.length > 0) { pathRef.current = []; draw(); e.preventDefault(); e.stopImmediatePropagation(); return }
-        if (brush !== null || placing !== null || routing !== null) {
-          setBrush(null); setPlacing(null); setRouting(null)
+        if (brush !== null || placing !== null || routing !== null || regioning) {
+          setBrush(null); setPlacing(null); setRouting(null); setRegioning(false)
           e.preventDefault(); e.stopImmediatePropagation()
           return
         }
+        if (inspect) { setInspect(false); e.preventDefault(); e.stopImmediatePropagation(); return }
         // 阶梯末级：取消选中，仍无消费则放行给壳层关页面
-        if (selWorld !== null || selId !== null) {
-          setSelWorld(null); setSelId(null); setObjForm(null)
+        if (selWorld !== null || selId !== null || regionSel !== null) {
+          setSelWorld(null); setSelId(null); setObjForm(null); setRegionSel(null)
+          e.preventDefault(); e.stopImmediatePropagation()
+        }
+        return
+      }
+      // ⌘K：地名搜索——指针悬在地图上或搜索已开时才消费，不抢别的模块
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'k' || e.key === 'K')) {
+        if (searchOpen) { setSearchOpen(false); e.preventDefault(); e.stopImmediatePropagation() }
+        else if (hoverRef.current && MAP_WORLD) {
+          setSearchQ(''); setSearchHi(0); setSearchOpen(true)
           e.preventDefault(); e.stopImmediatePropagation()
         }
         return
@@ -1079,9 +1101,11 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brush, placing, routing, selWorld, selId, ctxMenu])
+  }, [brush, placing, routing, regioning, selWorld, selId, ctxMenu, searchOpen, inspect, regionSel])
   const toWork = useCallback((p: XY): XY => [p[0] * aspectRef.current, p[1]], [])
   const toStore = useCallback((p: XY): XY => [clamp01(p[0] / aspectRef.current), clamp01(p[1])], [])
+  const toWorkRect = useCallback((r: readonly [number, number, number, number]): [number, number, number, number] =>
+    [r[0] * aspectRef.current, r[1], (r[2] - r[0]) * aspectRef.current, r[3] - r[1]], [])
   const objWorkPts = useCallback((o: FaceObj | LineObj): XY[] => o.pts.map(toWork), [toWork])
   const markWork = useCallback((m: MarkObj): XY => toWork(m.pos), [toWork])
 
@@ -1959,6 +1983,23 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       c.fillStyle = land ? 'rgba(255,255,255,.85)' : 'rgba(214,69,65,.18)'; c.fill()
       c.strokeStyle = land ? ACCENT : '#D64541'; c.lineWidth = 1.4 / v.s; c.stroke()
     }
+    // 框选：拖动中的橡皮筋矩形；已落成的 regionSel 用强调色描边
+    {
+      const a = g.kind === 'wsel' ? g.path?.[0] : undefined
+      const b = g.kind === 'wsel' ? g.last : undefined
+      const rw = a !== undefined && b !== undefined
+        ? [a[0], a[1], b[0] - a[0], b[1] - a[1]] as const
+        : regionSel !== null ? toWorkRect(regionSel) : null
+      if (rw !== null && rw !== undefined) {
+        const [rx, ry, rw2, rh2] = rw
+        c.fillStyle = 'rgba(74,116,156,.10)'
+        c.fillRect(rx, ry, rw2, rh2)
+        c.setLineDash([5 / v.s, 4 / v.s])
+        c.strokeStyle = ACCENT; c.lineWidth = 1.4 / v.s
+        c.strokeRect(rx, ry, rw2, rh2)
+        c.setLineDash([])
+      }
+    }
     // 连线草稿：已落点折线 + 到光标的橡皮筋，色随 group（道路棕实线/航线蓝虚线）
     if (tool === 'path' && routing !== null && pathRef.current.length > 0) {
       const pts = pathRef.current.map(toWork)
@@ -2011,7 +2052,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       x = Math.max(8, Math.min(x, W - cw - 8)); y = Math.max(8, y)
       wc.style.left = `${Math.round(x)}px`; wc.style.top = `${Math.round(y)}px`
     }
-  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, hoverRegion, hoverWorld, markWork, mode, objWorkPts, pal?.color, placing, resolveBuilt, resolvedPts, routing, selId, selRegion, selWorld, t, tool, toWork, worldView])
+  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, hoverRegion, hoverWorld, markWork, mode, objWorkPts, pal?.color, placing, regionSel, resolveBuilt, resolvedPts, routing, selId, selRegion, selWorld, t, tool, toWork, toWorkRect, worldView])
 
   useEffect(() => { draw() })
 
@@ -2116,6 +2157,59 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     animView({ s, x: (st.clientWidth - aspectRef.current * s) / 2, y: (st.clientHeight - s) / 2 }, 300)
   }, [animView, fitScale])
 
+  /* ---------- ⌘K 搜索 / 检视面板 / 圈区域 ---------- */
+
+  /** 世界实体的锚点（世界像素）：城邦用位置，面用 pole/中心格，线用中点。 */
+  const hitAnchor = useCallback((built: BuiltWorld, kind: WorldHit['kind'], id: number): XY | null => {
+    const pack = built.world.pack
+    if (kind === 'burg') { const b = pack.burgs.find(x => x?.i === id); return b !== undefined ? [b.x, b.y] : null }
+    if (kind === 'state') { const s = pack.states[id]; return s?.pole !== undefined ? [s.pole[0], s.pole[1]] : null }
+    if (kind === 'culture') { const c = pack.cultures[id]; return c?.center !== undefined ? [pack.cells.p[c.center][0], pack.cells.p[c.center][1]] : null }
+    if (kind === 'river') { const r = pack.rivers.find(x => x.i === id); const m = r?.points?.[Math.floor((r.points.length) / 2)]; return m !== undefined ? [m[0], m[1]] : null }
+    if (kind === 'route') { const r = pack.routes.find(x => x.i === id); const m = r?.points?.[Math.floor((r.points.length) / 2)]; return m !== undefined ? [m[0], m[1]] : null }
+    if (kind === 'feature') { const f = pack.features[id]; const vi = f?.vertices?.[0]; const vp = vi !== undefined ? pack.vertices.p[vi] : undefined; return vp !== undefined ? [vp[0], vp[1]] : null }
+    return null
+  }, [])
+
+  /** 飞到世界像素点并以当前/目标缩放居中；随后选中实体让浮条就位。 */
+  const flyToHit = useCallback((kind: WorldHit['kind'], id: number, biome = 0, state = 0, culture = 0): void => {
+    const built = resolveBuilt()
+    const st = stageRef.current
+    const a = built !== null ? hitAnchor(built, kind, id) : null
+    if (built === null || st === null || a === null) return
+    const ph = built.world.config.height, pw = built.world.config.width
+    const fit = fitScale()
+    const z = kind === 'state' || kind === 'culture' || kind === 'biome' ? 1.3 : kind === 'burg' ? 2.6 : 1.8
+    const s = Math.max(viewRef.current.s, fit * z)
+    const wx = a[0] / ph, wy = a[1] / ph
+    animView({ s, x: st.clientWidth / 2 - wx * s, y: st.clientHeight / 2 - wy * s }, 340)
+    setSelWorld({ kind, id, biome, state, culture, pos: [a[0] / pw, a[1] / ph] })
+  }, [animView, fitScale, hitAnchor, resolveBuilt])
+
+  interface SearchEntry { kind: WorldHit['kind'] | 'mark', id: number | string, kk: string, name: string, wx: number, wy: number }
+  /** 世界实体 + 标注图钉的搜索索引；打开时按当前 built 现算。kk=词条键后缀。 */
+  const searchEntries = useCallback((): SearchEntry[] => {
+    const built = resolveBuilt()
+    if (built === null) return []
+    const pack = built.world.pack
+    const out: SearchEntry[] = []
+    for (const s of pack.states) if (s !== undefined && s.i > 0 && s.removed !== true && s.name !== '') { const a = hitAnchor(built, 'state', s.i); if (a !== null) out.push({ kind: 'state', id: s.i, kk: 'state', name: s.name, wx: a[0], wy: a[1] }) }
+    for (const c of pack.cultures) if (c !== undefined && c.i > 0 && c.removed !== true && c.name !== '') { const a = hitAnchor(built, 'culture', c.i); if (a !== null) out.push({ kind: 'culture', id: c.i, kk: 'culture', name: c.name, wx: a[0], wy: a[1] }) }
+    for (const b of pack.burgs) if (b !== undefined && b.i > 0 && b.removed !== true && b.name !== undefined && b.name !== '') out.push({ kind: 'burg', id: b.i, kk: 'burg', name: b.name, wx: b.x, wy: b.y })
+    for (const r of pack.rivers) if (r.removed !== true && r.name !== '') { const a = hitAnchor(built, 'river', r.i); if (a !== null) out.push({ kind: 'river', id: r.i, kk: 'river', name: r.name, wx: a[0], wy: a[1] }) }
+    for (const f of pack.features) if (f !== undefined && f.i > 0 && f.removed !== true && f.name !== '') { const a = hitAnchor(built, 'feature', f.i); if (a !== null) out.push({ kind: 'feature', id: f.i, kk: f.type, name: f.name, wx: a[0], wy: a[1] }) }
+    for (const r of pack.routes) if (r.removed !== true && r.name !== undefined && r.name !== '') { const a = hitAnchor(built, 'route', r.i); if (a !== null) out.push({ kind: 'route', id: r.i, kk: `route.${r.group}`, name: r.name, wx: a[0], wy: a[1] }) }
+    const ph = built.world.config.height, pw = built.world.config.width
+    for (const o of docRef.current.objects) if (o.type === 'mark' && o.name !== '') out.push({ kind: 'mark', id: o.id, kk: 'mark', name: o.name, wx: o.pos[0] * pw, wy: o.pos[1] * ph })
+    return out
+  }, [resolveBuilt, hitAnchor])
+
+  const pickSearch = useCallback((e: SearchEntry): void => {
+    setSearchOpen(false)
+    if (e.kind === 'mark') { setSelId(String(e.id)); const st = stageRef.current; if (st !== null) { const ph = builtRef.current?.built?.world.config.height ?? 1; const s = Math.max(viewRef.current.s, fitScale() * 2); animView({ s, x: st.clientWidth / 2 - (e.wx / ph) * s, y: st.clientHeight / 2 - (e.wy / ph) * s }, 340) }; return }
+    flyToHit(e.kind, Number(e.id))
+  }, [animView, fitScale, flyToHit])
+
   /* 快捷键：缩放（＋/−/0）、工具（V/B/C/R/S/M）。仅当指针悬在地图上，不吃
    * ⌘/⌃ 组合键、不打断输入框。放在相机 helper 之后——deps 渲染期求值不能前向引用。 */
   useEffect(() => {
@@ -2132,6 +2226,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         case 'r': case 'R': armRoute('roads'); break
         case 's': case 'S': armRoute('searoutes'); break
         case 'm': case 'M': armPlace('mark'); break
+        case 'z': case 'Z': armRegion(); break
         default: return
       }
       e.preventDefault()
@@ -2281,6 +2376,10 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           }
           gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false, quiet: true }
         }
+        return
+      case 'region':
+        // 橡皮筋框选：拖动成矩形，松手落成区域选择
+        gestureRef.current = { kind: 'wsel', path: [p], last: p, moved: false }
         return
       case 'draft':
         busyRef.current = true
@@ -2511,6 +2610,12 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       g.moved = true
       draw(); return
     }
+    if (g.kind === 'wsel') {
+      const start = g.path?.[0]
+      if (start === undefined || d2(p, start) > (3 / viewRef.current.s) ** 2) g.moved = true
+      g.last = p
+      draw(); return
+    }
     if ((g.kind === 'paint' || g.kind === 'facepaint' || g.kind === 'wpaint') && g.path !== undefined) {
       const last = g.path[g.path.length - 1]
       if (last === undefined || d2(p, last) > (4 / viewRef.current.s) ** 2) g.path.push(p)
@@ -2572,6 +2677,16 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           const st = stageRef.current?.getBoundingClientRect()
           setCtxMenu({ x: e.clientX - (st?.left ?? 0), y: e.clientY - (st?.top ?? 0), at: toStore(g.path[0]), hit })
         } else if (g.quiet !== true) { setSelId(null); selectWorldAt(g.path[0]) }
+      }
+      draw(); return
+    }
+    if (g.kind === 'wsel') {
+      const a = g.path?.[0], b = g.last
+      if (g.moved === true && a !== undefined && b !== undefined) {
+        const s0 = toStore(a), s1 = toStore(b)
+        const r: [number, number, number, number] = [Math.min(s0[0], s1[0]), Math.min(s0[1], s1[1]), Math.max(s0[0], s1[0]), Math.max(s0[1], s1[1])]
+        if (r[2] - r[0] > .005 && r[3] - r[1] > .005) setRegionSel(r)
+        setRegioning(false)
       }
       draw(); return
     }
@@ -2846,7 +2961,9 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
 
   return (
     <div className="nv-maped">
-      <div className="nv-maped-stage" ref={stageCb}>
+      <div className="nv-maped-stage" ref={stageCb}
+        onPointerEnter={() => { hoverRef.current = true }}
+        onPointerLeave={() => { hoverRef.current = false }}>
         {/* 左：工具栏——图标钮与快捷键同一入口；B 按选中实体或当前视图维度划界 */}
         <div className="nv-maped-tools">
           <button type="button" className={tool === 'select' ? 'cur' : ''} title={t('wg.map.tools.select')} onClick={exitTools}>↖</button>
@@ -2856,6 +2973,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           <button type="button" className={placing === 'burg' ? 'cur' : ''} title={t('wg.map.tools.burg')} onClick={() => armPlace('burg')}>⌂</button>
           <button type="button" className={routing === 'roads' ? 'cur' : ''} title={t('wg.map.tools.road')} onClick={() => armRoute('roads')}>⟋</button>
           <button type="button" className={routing === 'searoutes' ? 'cur' : ''} title={t('wg.map.tools.sea')} onClick={() => armRoute('searoutes')}>≈</button>
+          <button type="button" className={regioning ? 'cur' : ''} title={t('wg.map.tools.region')} onClick={armRegion}>◌</button>
           </>
           )}
           <button type="button" className={placing === 'mark' ? 'cur' : ''} title={t('wg.map.tools.mark')} onClick={() => armPlace('mark')}>⚑</button>
@@ -2975,7 +3093,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         </div>
         )}
         <canvas ref={cvRef} className="nv-maped-canvas"
-          style={brushCursor ? { cursor: 'none' } : tool === 'place' || tool === 'path' ? { cursor: 'crosshair' } : hoverWorld !== null ? { cursor: 'pointer' } : undefined}
+          style={brushCursor ? { cursor: 'none' } : tool === 'place' || tool === 'path' || tool === 'region' ? { cursor: 'crosshair' } : hoverWorld !== null ? { cursor: 'pointer' } : undefined}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
           onPointerCancel={onPointerUp}
           onDoubleClick={e => {
@@ -2984,13 +3102,62 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
             const rect = cvRef.current?.getBoundingClientRect()
             if (rect !== undefined) zoomStep(1.6, e.clientX - rect.left, e.clientY - rect.top)
           }}
-          onPointerEnter={() => { hoverRef.current = true }}
           onPointerLeave={() => {
-            hoverRef.current = false; cursorRef.current = null
+            cursorRef.current = null
             setHoverWorld(null); window.clearTimeout(tipTimerRef.current); setTip(null)
             draw()
           }}
           onContextMenu={e => e.preventDefault()} />
+        {searchOpen && (() => {
+          const q = searchQ.trim().toLowerCase()
+          const list = searchEntries().filter(e => q === '' || e.name.toLowerCase().includes(q)).slice(0, 9)
+          const hi = Math.min(searchHi, Math.max(0, list.length - 1))
+          return (
+          <div className="nv-maped-search">
+            <input autoFocus value={searchQ} placeholder={t('wg.map.search.ph')}
+              onChange={e => { setSearchQ(e.target.value); setSearchHi(0) }}
+              onKeyDown={e => {
+                if (e.key === 'ArrowDown') { setSearchHi(Math.min(hi + 1, list.length - 1)); e.preventDefault() }
+                else if (e.key === 'ArrowUp') { setSearchHi(Math.max(hi - 1, 0)); e.preventDefault() }
+                else if (e.key === 'Enter') { const hit = list[hi]; if (hit !== undefined) pickSearch(hit); e.preventDefault() }
+              }} />
+            <div className="nv-maped-searchlist">
+              {list.map((e, i) => (
+                <button key={`${e.kind}:${e.id}`} type="button" className={i === hi ? 'cur' : ''}
+                  onPointerEnter={() => setSearchHi(i)}
+                  onClick={() => pickSearch(e)}>
+                  <span className="nv-maped-srk">{e.kind === 'mark' ? t('wg.map.layer.landmark') : t(`wg.map.world.kind.${e.kk}` as Parameters<ShellT>[0])}</span>
+                  {e.name}
+                </button>
+              ))}
+              {list.length === 0 && <div className="nv-maped-mini" style={{ padding: '8px 10px' }}>{t('wg.map.search.empty')}</div>}
+            </div>
+          </div>
+          )
+        })()}
+        {regioning && regionSel === null && (
+        <div className="nv-maped-brushbar">
+          <span className="nv-maped-brushdot" style={{ background: 'var(--nv-accent)' }} />
+          <span className="nv-maped-brushname">
+            {t('wg.map.region.bar')}
+            <em>{t('wg.map.region.hint')}</em>
+          </span>
+          <button type="button" className="nv-maped-chip" onClick={exitTools}>{t('wg.map.world.brushDone')}</button>
+        </div>
+        )}
+        {regionSel !== null && (
+        <div className="nv-maped-brushbar">
+          <span className="nv-maped-brushdot" style={{ background: 'var(--nv-accent)' }} />
+          <span className="nv-maped-brushname">{t('wg.map.region.sel')}</span>
+          <button type="button" className="nv-maped-chip"
+            onClick={() => {
+              void send({ kind: 'map_spawn_view', moduleId: module.id, bbox: regionSel as [number, number, number, number], aspect: aspectRef.current })
+            }}>
+            {t('wg.map.ctx.spawn')}
+            </button>
+          <button type="button" className="nv-maped-chip" onClick={() => { setRegionSel(null); draw() }}>×</button>
+        </div>
+        )}
         {tip !== null && (
         <div className="nv-maped-tip" style={{ left: tip.x, top: tip.y }}>
           <div className="nv-maped-tipt">{tip.title}</div>
@@ -3147,7 +3314,74 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
               }}>
               {t('wg.map.world.spawn')}
             </button>
+            <button type="button" className="nv-maped-ok" title={t('wg.map.inspect.desc')}
+              onClick={() => setInspect(v => !v)}>
+              {t('wg.map.inspect.btn')}
+            </button>
             <button type="button" className="nv-maped-del" onClick={() => setSelWorld(null)}>×</button>
+          </div>
+          )
+        })()}
+        {inspect && selWorld !== null && selKindKey !== undefined && builtNow !== null && (() => {
+          const pack = builtNow.world.pack
+          const rows: [string, string][] = []
+          const st = selWorld.state > 0 ? pack.states[selWorld.state] : undefined
+          const cu = selWorld.culture > 0 ? pack.cultures[selWorld.culture] : undefined
+          const stName = st !== undefined ? dimName(st.name) : undefined
+          const cuName = cu !== undefined ? dimName(cu.name) : undefined
+          if (selStateEnt !== undefined) {
+            const cap = pack.burgs.find(b => b?.i === selStateEnt.capital)
+            if (cap?.name !== undefined && cap.name !== '') rows.push([t('wg.map.inspect.capital'), cap.name])
+            if (cuName !== undefined && cuName !== '') rows.push([t('wg.map.inspect.culture'), cuName])
+            let n = 0
+            for (let i = 0; i < pack.cells.state.length; i++) if (pack.cells.state[i] === selWorld.id) n++
+            rows.push([t('wg.map.inspect.cells'), String(n)])
+          } else if (selCultureEnt !== undefined) {
+            if (selCultureEnt.type !== undefined) rows.push([t('wg.map.inspect.cultype'), t(`wg.map.world.cult.${selCultureEnt.type}` as Parameters<ShellT>[0])])
+            let n = 0
+            for (let i = 0; i < pack.cells.culture.length; i++) if (pack.cells.culture[i] === selWorld.id) n++
+            rows.push([t('wg.map.inspect.cells'), String(n)])
+          } else if (selBurg !== undefined) {
+            if (stName !== undefined && stName !== '') rows.push([t('wg.map.inspect.state'), stName])
+            if (cuName !== undefined && cuName !== '') rows.push([t('wg.map.inspect.culture'), cuName])
+            if (selBurg.population !== undefined) rows.push([t('wg.map.inspect.pop'), String(Math.round(selBurg.population * 1000))])
+          } else if (selRiver !== undefined) {
+            if (selRiver.type !== '') rows.push([t('wg.map.inspect.kind'), t(`wg.map.world.riv.${selRiver.type}` as Parameters<ShellT>[0])])
+            rows.push([t('wg.map.inspect.len'), String(Math.round(selRiver.length))])
+          } else if (selRoute !== undefined) {
+            rows.push([t('wg.map.inspect.kind'), t(`wg.map.world.kind.route.${selRoute.group}` as Parameters<ShellT>[0])])
+            rows.push([t('wg.map.inspect.len'), String(selRoute.points.length)])
+          } else if (selFeature !== undefined) {
+            if (selFeature.subtype !== '') rows.push([t('wg.map.inspect.kind'), t(`wg.map.world.sub.${selFeature.subtype}` as Parameters<ShellT>[0])])
+            rows.push([t('wg.map.inspect.cells'), String(selFeature.cells)])
+            if (stName !== undefined && stName !== '') rows.push([t('wg.map.inspect.state'), stName])
+            if (cuName !== undefined && cuName !== '') rows.push([t('wg.map.inspect.culture'), cuName])
+          }
+          const members = (selWorld.kind === 'state' || selWorld.kind === 'culture')
+            ? pack.burgs.filter(b => b !== undefined && b.i > 0 && b.removed !== true &&
+                (selWorld.kind === 'state' ? b.state === selWorld.id : b.culture === selWorld.id))
+            : []
+          return (
+          <div className="nv-maped-inspect">
+            <div className="nv-maped-inshead">
+              <span className="nv-maped-wname">{selName !== '' ? selName : t(`wg.map.world.kind.${selKindKey}` as Parameters<ShellT>[0])}</span>
+              <button type="button" className="nv-maped-del" onClick={() => setInspect(false)}>×</button>
+            </div>
+            {rows.map(([k, v]) => (
+              <div key={k} className="nv-maped-insrow"><span>{k}</span><b>{v}</b></div>
+            ))}
+            {members.length > 0 && (
+            <>
+            <div className="nv-maped-inslab">{t('wg.map.inspect.burgs')}</div>
+            <div className="nv-maped-insmembers">
+              {members.slice(0, 24).map(b => b !== undefined && (
+                <button key={b.i} type="button" onClick={() => flyToHit('burg', b.i, 0, b.state ?? 0, b.culture ?? 0)}>
+                  {b.name ?? '—'}
+                </button>
+              ))}
+            </div>
+            </>
+            )}
           </div>
           )
         })()}

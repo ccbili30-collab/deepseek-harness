@@ -2078,6 +2078,39 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   font-size: 12px; text-align: left; padding: 6px 9px; border-radius: 7px; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .nv-maped-ctx button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-maped-search { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5;
+  width: min(320px, calc(100% - 40px)); background: var(--nv-surface);
+  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 6px;
+  box-shadow: 0 8px 24px rgba(22,24,26,.16); }
+.nv-maped-search input { width: 100%; box-sizing: border-box; border: 1px solid var(--nv-divider);
+  border-radius: 7px; padding: 6px 9px; font-size: 12.5px; color: var(--nv-primary-text);
+  background: var(--nv-canvas); outline: none; }
+.nv-maped-search input:focus { border-color: var(--nv-accent); }
+.nv-maped-searchlist { display: flex; flex-direction: column; gap: 1px; margin-top: 5px;
+  max-height: 260px; overflow-y: auto; }
+.nv-maped-searchlist button { border: none; background: none; color: var(--nv-text);
+  font-size: 12px; text-align: left; padding: 6px 9px; border-radius: 7px; cursor: pointer;
+  display: flex; align-items: center; gap: 8px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nv-maped-searchlist button.cur { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-maped-srk { flex: none; font-size: 10px; color: var(--nv-secondary-text);
+  border: 1px solid var(--nv-divider); border-radius: 5px; padding: 1px 5px; }
+.nv-maped-inspect { position: absolute; right: 10px; top: 48px; bottom: 48px; z-index: 4;
+  width: min(220px, calc(100% - 40px)); overflow-y: auto; background: var(--nv-surface);
+  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 10px 12px;
+  box-shadow: 0 8px 24px rgba(22,24,26,.14); }
+.nv-maped-inshead { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-bottom: 6px; }
+.nv-maped-insrow { display: flex; justify-content: space-between; gap: 10px; font-size: 12px;
+  padding: 3px 0; color: var(--nv-secondary-text); }
+.nv-maped-insrow b { color: var(--nv-primary-text); font-weight: 500; text-align: right; }
+.nv-maped-inslab { font-size: 10px; color: var(--nv-secondary-text); letter-spacing: .04em;
+  margin-top: 8px; border-top: 1px solid var(--nv-divider); padding-top: 8px; }
+.nv-maped-insmembers { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 5px; }
+.nv-maped-insmembers button { border: 1px solid var(--nv-divider); background: none;
+  color: var(--nv-text); font-size: 11.5px; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
+.nv-maped-insmembers button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep);
+  border-color: var(--nv-accent); }
 /* 集合渲染器（设计稿 06 + collection-v2 B/C）：视图切换 + 图鉴卡 + 表格 + 编年长卷。 */
 .nv-coll { margin-top: 10px; }
 .nv-coll-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
