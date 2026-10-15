@@ -580,8 +580,11 @@ export interface MapWorldEdit {
   /** 划界笔刷：归一化折线 + 笔径（高度比）。回贴时把笔迹覆盖的陆格刷给目标
    *  实体；目标解析不到时刷回中立/荒野（=擦除）。state→cells.state，culture→cells.culture。 */
   readonly stroke?: { readonly pts: readonly MapXY[]; readonly r: number }
-  /** 连线工具：归一化折线，配合 add+kind:'route' 新建道路/航线。 */
+  /** 连线：归一化折线。配合 add 新建路线；对解析到的既有路线则是整线覆写
+   *  （拖折点改形），回贴时按当次生成的格重新锚定。 */
   readonly path?: readonly MapXY[]
+  /** 挪动城邦：归一化目标点，解析到的城邦重锚到最近陆格。 */
+  readonly move?: readonly [number, number]
   /** 解析不到就按 name/color/at/path 新建实体——state/culture 需 at（配合 stroke
    *  即「划区建国」）；burg 需 at；route 需 path+group。 */
   readonly add?: boolean
@@ -765,6 +768,7 @@ function worldEditOf(raw: unknown): MapWorldEdit | null {
   const strokeR = num(strokeSrc.r, 0)
   const stroke = strokePts.length > 0 && strokeR > 0 ? { pts: strokePts, r: Math.min(0.5, strokeR) } : undefined
   const pathPts = xyListOf(source.path)
+  const move = Array.isArray(source.move) && source.move.length >= 2 ? [num(source.move[0], -1), num(source.move[1], -1)] as const : undefined
   const group = str(source.group)
   const color = str(source.color)
   const edit: MapWorldEdit = {
@@ -777,6 +781,7 @@ function worldEditOf(raw: unknown): MapWorldEdit | null {
     ...(source.lock === true ? { lock: true } : {}),
     ...(stroke !== undefined ? { stroke } : {}),
     ...(pathPts.length > 0 ? { path: pathPts } : {}),
+    ...(move !== undefined && move[0] >= 0 ? { move } : {}),
     ...(group === 'roads' || group === 'trails' || group === 'searoutes' ? { group } : {}),
     ...(source.add === true ? { add: true } : {}),
     ...(HEX6.test(color) ? { color } : {}),

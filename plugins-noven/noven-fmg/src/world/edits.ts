@@ -23,8 +23,12 @@ export interface WorldEntityEdit {
   readonly lock?: boolean;
   /** brush trail: pts are [x/width, y/height] fractions, r a height fraction */
   readonly stroke?: { readonly pts: readonly (readonly [number, number])[]; readonly r: number };
-  /** polyline for a created route: same normalization as `at` */
+  /** polyline for a created route (with `add`) or the replacement polyline for
+   *  a resolved route: same normalization as `at` */
   readonly path?: readonly (readonly [number, number])[];
+  /** burg relocation target: resolved burg re-anchors to the land cell
+   *  nearest this normalized point */
+  readonly move?: readonly [number, number];
   /** create the entity when resolution fails: state/culture anchor `at` (a
    *  stroke paints its cells), burg anchors `at`, route follows `path` */
   readonly add?: boolean;
@@ -183,17 +187,41 @@ const createBurg = (world: World, edit: WorldEntityEdit): Burg | undefined => {
   return burg;
 };
 
+/** normalized path → world-px points anchored to this generation's cells */
+const routePoints = (world: World, path: readonly (readonly [number, number])[]): [number, number, number][] => {
+  const { width: w, height: h } = world.config;
+  return path.map(([nx, ny]) => {
+    const x = nx * w, y = ny * h;
+    return [x, y, nearestCell(world, x, y, false) ?? 0] as [number, number, number];
+  });
+};
+
+/** relocate a burg to the land cell nearest `at`: re-register the cell index
+ *  and refresh state/culture/feature/port to match the new site */
+const moveBurg = (world: World, burg: Burg, at: readonly [number, number]): void => {
+  const cell = nearestLandCell(world, at);
+  if (cell === undefined) return;
+  const cells = world.pack.cells;
+  if (cells.burg[burg.cell] === burg.i) cells.burg[burg.cell] = 0;
+  cells.burg[cell] = burg.i;
+  burg.cell = cell;
+  burg.x = cells.p[cell][0];
+  burg.y = cells.p[cell][1];
+  burg.state = cells.state[cell] ?? 0;
+  burg.culture = cells.culture[cell] ?? 0;
+  burg.feature = cells.f[cell] ?? 0;
+  const haven = cells.haven?.[cell];
+  burg.port = (cells.harbor?.[cell] ?? 0) > 0 && haven !== undefined ? cells.f[haven] ?? 0 : 0;
+};
+
 /** user-drawn road/trail/searoute: `path` normalized pts re-anchor to this
  *  generation's cells, so a redrawn world keeps the same drawn line */
 const createRoute = (world: World, edit: WorldEntityEdit): Route | undefined => {
   const path = edit.path;
   if (path === undefined || path.length < 2) return undefined;
-  const { width: w, height: h } = world.config;
-  const points = path.map(([nx, ny]) => {
-    const x = nx * w, y = ny * h;
-    return [x, y, nearestCell(world, x, y, false) ?? 0] as [number, number, number];
-  });
-  const i = world.pack.routes.length;
+  const points = routePoints(world, path);
+  // 生成的路线 id 从 1 起且无占位项——length 会撞上既有 id
+  const i = world.pack.routes.reduce((m, r) => Math.max(m, r.i), 0) + 1;
   const route: Route = {
     i, group: edit.group ?? "roads",
     feature: world.pack.cells.f[points[0]?.[2] ?? 0] ?? 0,
@@ -256,6 +284,16 @@ export function applyWorldEdits(world: World, edits: readonly WorldEntityEdit[])
       continue;
     }
     if (target === undefined) continue;
+    // path on a resolved route rewrites its polyline; move relocates a burg —
+    // both re-anchor against this generation's cells like `add` does
+    if (edit.kind === "route" && edit.path !== undefined && edit.add !== true && edit.path.length >= 2) {
+      const points = routePoints(world, edit.path);
+      const route = target as Route;
+      route.points = points;
+      route.cells = points.map(p => p[2]);
+      route.feature = world.pack.cells.f[points[0]?.[2] ?? 0] ?? 0;
+    }
+    if (edit.kind === "burg" && edit.move !== undefined) moveBurg(world, target as Burg, edit.move);
     if (edit.remove === true) target.removed = true;
     if (edit.name !== undefined && edit.add !== true) target.name = edit.name;
     if (edit.color !== undefined) (target as { color?: string }).color = edit.color;

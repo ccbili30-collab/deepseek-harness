@@ -796,7 +796,7 @@ type WorldHit = {
   /** 点击位置（归一化）：实体覆写 `at` 兜底匹配用。 */
   readonly pos?: XY
 }
-const hitWorld = (world: World, tree: BuiltWorld['tree'], wx: number, wy: number, view: WorldView, layers: ReadonlySet<WorldLayer>): WorldHit | null => {
+const hitWorld = (world: World, tree: BuiltWorld['tree'], wx: number, wy: number, view: WorldView, layers: ReadonlySet<WorldLayer>, tolPx = 0): WorldHit | null => {
   const cell = findPackCell(wx, wy, Infinity, tree)
   if (cell === undefined || cell >= world.pack.cells.i.length) return null
   const cells = world.pack.cells
@@ -805,9 +805,10 @@ const hitWorld = (world: World, tree: BuiltWorld['tree'], wx: number, wy: number
   const culture = cells.culture[cell] ?? 0
   const b = cells.burg?.[cell] ?? 0
   if (layers.has('burgs') && b > 0 && world.pack.burgs[b]?.removed !== true) return { kind: 'burg', id: b, biome, state, culture }
-  // 路线：距任一路线折线足够近即命中
+  // 路线：距任一路线折线足够近即命中。阈值取下限 height/80 与屏幕 ~10px
+  // 的较大者——深缩放下固定世界像素阈值会小到点不中。
   if (layers.has('routes')) {
-    const threshold = (world.config.height / 80) ** 2
+    const threshold = Math.max((world.config.height / 80) ** 2, tolPx * tolPx)
     let bestRoute = 0, bestDist = Infinity
     for (const r of world.pack.routes) {
       if (r.removed || r.points.length < 2) continue
@@ -878,7 +879,8 @@ type DrawLayer = LayerId
 type MapTool = 'select' | 'brush' | 'place' | 'path' | 'draft' | 'annotate' | 'edit'
 
 interface Gesture {
-  readonly kind: 'stroke' | 'stretch' | 'move' | 'pan' | 'paint' | 'facepaint' | 'shape' | 'wpaint' | 'none'
+  readonly kind: 'stroke' | 'stretch' | 'move' | 'pan' | 'paint' | 'facepaint' | 'shape' | 'wpaint'
+    | 'wmove' | 'wvert' | 'wborder' | 'none'
   readonly obj?: MapObject
   readonly grab?: number
   sigma?: number
@@ -890,6 +892,15 @@ interface Gesture {
   readonly btn?: number
   /** pan 手势松手不点选（连线工具里左键拖=平移但不该改选中） */
   readonly quiet?: boolean
+  /** 世界实体手势的目标 id：wmove=城邦，wvert=路线，wborder=维度实体 */
+  readonly wId?: number
+  /** wborder：段 i（path[i-1]→path[i]）扫过的格划给 path[i-1] 下格的 owner；
+   *  反向拖回即回吐给另一侧 */
+  owners?: number[]
+  /** wborder 笔径（工作坐标） */
+  readonly wr?: number
+  /** wvert：按压在线段而非折点上——拖动时在 grab 处虚插一个折点 */
+  readonly ins?: boolean
   snapped?: { id: string, t: number, kind: 'line' | 'mark', point: XY } | null
   snapStart?: { id: string, t: number, kind: 'line' | 'mark', point: XY } | null
   alt?: boolean
@@ -955,6 +966,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   /** 世界缓存：源（draft 输入时含草稿内容）变了才重算；生成 ~0.5s 只付一次。 */
   const builtRef = useRef<{ key: string, built: BuiltWorld } | null>(null)
   const [selWorld, setSelWorld] = useState<WorldHit | null>(null)
+  const selWorldRef = useRef<WorldHit | null>(null)
+  selWorldRef.current = selWorld
   /** 世界实体卡：行内改名态 + 「移除」两段确认。换选中即复位。 */
   const [worldRenaming, setWorldRenaming] = useState(false)
   const worldArm = useArmedPress()
@@ -1185,11 +1198,19 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     selAnchorRef.current = a
   }, [selWorld, resolveBuilt])
 
+  /** 世界像素 → 视口像素：跟 draw()/workOfEvent 同一套变换。 */
+  const toScreen = useCallback((wx: number, wy: number): XY => {
+    const r = cvRef.current?.getBoundingClientRect()
+    const v = viewRef.current
+    const ph = builtRef.current?.built?.world.config.height ?? 1
+    return [r !== undefined ? r.left + v.x + (wx / ph) * v.s : 0, r !== undefined ? r.top + v.y + (wy / ph) * v.s : 0]
+  }, [])
+
   // localhost 调试钩子：浏览器自动化拿当前世界几何做确定性命中（不随包发到远端）。
   useEffect(() => {
     if (location.hostname !== '127.0.0.1' && location.hostname !== 'localhost') return
-    ;(window as { __nvMap?: unknown }).__nvMap = { resolveBuilt, view: viewRef, aspect: aspectRef }
-  }, [resolveBuilt])
+    ;(window as { __nvMap?: unknown }).__nvMap = { resolveBuilt, view: viewRef, aspect: aspectRef, sel: () => selWorldRef.current, toScreen }
+  }, [resolveBuilt, toScreen])
 
   // 世界出现/换源时：宽高比跟世界尺寸，重新取景。生成签名不含 edits——
   // 实体覆写（改名/划界）回流只换底图，不清选中、不重置取景。
@@ -1229,21 +1250,26 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     commit(); bump()
   }, [commit, bump])
 
-  /** 落一条 world edit 并给可撤销回执：撤销按规范化签名删末条同形记录
-   *  （回声往返后 edits 是解码克隆且字段序不同，不能比对象引用）。 */
-  const pushWorldEditUndo = useCallback((edit: WorldEntityEdit, text: string): void => {
-    pushWorldEdit(edit)
+  /** 落 world edit 并给可撤销回执：撤销按规范化签名删末条同形记录
+   *  （回声往返后 edits 是解码克隆且字段序不同，不能比对象引用）。
+   *  一次手势产生多条记录（拖界按 owner 分程）时整组入/出。 */
+  const pushWorldEditUndo = useCallback((one: WorldEntityEdit | readonly WorldEntityEdit[], text: string): void => {
+    const edits: readonly WorldEntityEdit[] = Array.isArray(one) ? one : [one]
+    if (edits.length === 0) return
+    for (const edit of edits) pushWorldEdit(edit)
+    const sigOf = (x: WorldEntityEdit): string =>
+      `${x.kind}|${x.key ?? ''}|${x.name ?? ''}|${x.id ?? ''}|${JSON.stringify(x.stroke ?? null)}|${JSON.stringify(x.path ?? null)}|${JSON.stringify(x.move ?? null)}|${x.group ?? ''}`
+    const sigs = edits.map(sigOf)
     const undo = (): void => {
       lastUndoRef.current = null
       const src = docRef.current.world
       if (src?.edits === undefined) return
-      const sigOf = (x: WorldEntityEdit): string =>
-        `${x.kind}|${x.key ?? ''}|${x.name ?? ''}|${x.id ?? ''}|${JSON.stringify(x.stroke ?? null)}|${JSON.stringify(x.path ?? null)}|${x.group ?? ''}`
-      const idx = src.edits.map(sigOf).lastIndexOf(sigOf(edit))
-      if (idx < 0) return
-      const edits = [...src.edits]
-      edits.splice(idx, 1)
-      docRef.current = { ...docRef.current, world: { ...src, edits } }
+      const next = [...src.edits]
+      for (const sig of [...sigs].reverse()) {
+        const idx = next.map(sigOf).lastIndexOf(sig)
+        if (idx >= 0) next.splice(idx, 1)
+      }
+      docRef.current = { ...docRef.current, world: { ...src, edits: next } }
       builtRef.current = null
       commit(); bump()
     }
@@ -1326,7 +1352,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     const built = resolveBuilt()
     if (built === null) { setSelWorld(null); return }
     const h = built.world.config.height
-    const hit = hitWorld(built.world, built.tree, p[0] * h, p[1] * h, worldView, built.layers)
+    const hit = hitWorld(built.world, built.tree, p[0] * h, p[1] * h, worldView, built.layers, 10 / viewRef.current.s * h)
     // pos 存 [0,1] 空间（x/宽度、y/高度），与 objects/draft/edits.at/bbox 同一约定
     setSelWorld(hit === null ? null : { ...hit, pos: [p[0] / aspectRef.current, p[1]] })
   }, [resolveBuilt, worldView])
@@ -1339,6 +1365,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     if (rect === undefined) return [0, 0]
     return [(e.clientX - rect.left - v.x) / v.s, (e.clientY - rect.top - v.y) / v.s]
   }, [])
+
+
 
   /** 吸附：线端点画到已有骨架/地标附近时贴上，存 attach 跟随目标。 */
   const snapTarget = useCallback((p: XY, excludeId?: string): Gesture['snapped'] => {
@@ -1867,6 +1895,70 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         }
       }
     }
+    // 拖界预览：逐段扫过的格按"来路一侧"owner 着色——推进涂己色，回吐涂邻色/灰。
+    if (g.kind === 'wborder' && g.path !== undefined && g.owners !== undefined && g.path.length > 1) {
+      const bw = builtRef.current?.built
+      if (bw !== undefined) {
+        const ph = bw.world.config.height
+        const cells = bw.world.pack.cells
+        const rp = (g.wr ?? .02) * ph
+        const list = worldView === 'cultural' ? bw.world.pack.cultures : bw.world.pack.states
+        const byOwner = new Map<number, Set<number>>()
+        for (let i = 1; i < g.path.length; i++) {
+          const owner = g.owners[i] ?? 0
+          let set = byOwner.get(owner)
+          if (set === undefined) { set = new Set(); byOwner.set(owner, set) }
+          const pi = g.path[i]
+          if (pi === undefined) continue
+          for (const ci of findAllPack(pi[0] * ph, pi[1] * ph, rp, bw.tree)) {
+            if ((cells.h[ci] ?? 0) >= 20) set.add(ci)
+          }
+        }
+        c.save(); c.scale(1 / ph, 1 / ph)
+        for (const [owner, set] of byOwner) {
+          const col = owner === 0 ? '#6E6E73' : list.find(x => x?.i === owner)?.color ?? '#8A8F94'
+          c.beginPath()
+          for (const i of set) {
+            const poly = getPolygon(i, bw.world.pack)
+            if (poly.length < 3) continue
+            poly.forEach((q, j) => { j === 0 ? c.moveTo(q[0], q[1]) : c.lineTo(q[0], q[1]) })
+            c.closePath()
+          }
+          c.globalAlpha = .45; c.fillStyle = col; c.fill()
+          c.globalAlpha = .8; c.strokeStyle = col; c.lineWidth = 1.6; c.stroke()
+        }
+        c.restore()
+      }
+    }
+    // 路线折点预览：折线按拖动折点重画，全部折点露柄（压线段起的手势在 grab 处虚插点）
+    if (g.kind === 'wvert' && g.wId !== undefined && g.last !== undefined && g.grab !== undefined) {
+      const r = builtRef.current?.built?.world.pack.routes.find(rt => rt.i === g.wId)
+      const ph = builtRef.current?.built?.world.config.height ?? 1
+      if (r !== undefined) {
+        const pts: XY[] = r.points.map(pt => [pt[0] / ph, pt[1] / ph])
+        if (g.ins === true) pts.splice(g.grab, 0, g.last)
+        else if (g.grab < pts.length) pts[g.grab] = g.last
+        c.strokeStyle = ACCENT; c.lineWidth = 1.6 / v.s; c.lineJoin = 'round'
+        c.setLineDash([5 / v.s, 4 / v.s])
+        c.beginPath(); pts.forEach((q, i) => { i === 0 ? c.moveTo(q[0], q[1]) : c.lineTo(q[0], q[1]) }); c.stroke()
+        c.setLineDash([])
+        for (const q of pts) {
+          c.beginPath(); c.arc(q[0], q[1], 3 / v.s, 0, 7)
+          c.fillStyle = '#FFFFFF'; c.fill()
+          c.strokeStyle = ACCENT; c.lineWidth = 1.2 / v.s; c.stroke()
+        }
+      }
+    }
+    // 城邦挪位 ghost：与放置预览同一语义——陆=白点灰环可落，水=红环（落点会重锚邻陆）
+    if (g.kind === 'wmove' && g.last !== undefined) {
+      const bw = builtRef.current?.built
+      const ph = bw?.world.config.height ?? 0
+      const cell = bw !== undefined ? findPackCell(g.last[0] * ph, g.last[1] * ph, Infinity, bw.tree) : undefined
+      const land = cell !== undefined && (bw?.world.pack.cells.h[cell] ?? 0) >= 20
+      c.beginPath(); c.arc(g.last[0], g.last[1], 4.5 / v.s, 0, 7)
+      c.fillStyle = land ? 'rgba(255,255,255,.85)' : 'rgba(214,69,65,.18)'; c.fill()
+      c.strokeStyle = land ? ACCENT : '#D64541'; c.lineWidth = 1.4 / v.s; c.stroke()
+    }
     // 连线草稿：已落点折线 + 到光标的橡皮筋，色随 group（道路棕实线/航线蓝虚线）
     if (tool === 'path' && routing !== null && pathRef.current.length > 0) {
       const pts = pathRef.current.map(toWork)
@@ -2271,9 +2363,73 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       }
       default: break
     }
+    // select 直接拖动，优先于平移：选中路线压折点/贴线段 → 拖折点；
+    // 屏距内城邦 → 挪位；选中区域（跟当前视图维度）压其边界格 → 拖界。
+    const bw = builtRef.current?.built
+    if (bw !== undefined) {
+      const ph = bw.world.config.height
+      const grab = 10 / viewRef.current.s
+      if (selWorld?.kind === 'route') {
+        const r = bw.world.pack.routes.find(rt => rt.i === selWorld.id)
+        if (r !== undefined && r.points.length > 1) {
+          let vi = -1, vd = grab
+          r.points.forEach((pt, i) => {
+            const dd = Math.hypot(pt[0] / ph - p[0], pt[1] / ph - p[1])
+            if (dd < vd) { vd = dd; vi = i }
+          })
+          let si = -1, sd = grab * .8
+          if (vi < 0) {
+            for (let i = 0; i + 1 < r.points.length; i++) {
+              const ax = r.points[i][0] / ph, ay = r.points[i][1] / ph
+              const bx = r.points[i + 1][0] / ph, by = r.points[i + 1][1] / ph
+              const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy || 1
+              const tt = Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / L))
+              const dd = Math.hypot(ax + tt * dx - p[0], ay + tt * dy - p[1])
+              if (dd < sd) { sd = dd; si = i }
+            }
+          }
+          if (vi >= 0 || si >= 0) {
+            busyRef.current = true
+            gestureRef.current = { kind: 'wvert', wId: r.i, grab: vi >= 0 ? vi : si + 1, ins: si >= 0, last: p, path: [p], moved: false }
+            return
+          }
+        }
+      }
+      {
+        let bi = 0, bd = grab
+        for (const b of bw.world.pack.burgs) {
+          if (b === undefined || b.removed === true) continue
+          const dd = Math.hypot(b.x / ph - p[0], b.y / ph - p[1])
+          if (dd < bd) { bd = dd; bi = b.i }
+        }
+        if (bi > 0) {
+          busyRef.current = true
+          gestureRef.current = { kind: 'wmove', wId: bi, last: p, path: [p], moved: false }
+          return
+        }
+      }
+      if ((worldView === 'political' && selWorld?.kind === 'state') || (worldView === 'cultural' && selWorld?.kind === 'culture')) {
+        const cells = bw.world.pack.cells
+        const dim = worldView === 'political' ? cells.state : cells.culture
+        const cell = findPackCell(p[0] * ph, p[1] * ph, Infinity, bw.tree)
+        if (cell !== undefined && (cells.h[cell] ?? 0) >= 20) {
+          const own = dim[cell] ?? 0
+          const nb = cells.c[cell] ?? []
+          const touchesSel = own === selWorld.id || nb.some(j => dim[j] === selWorld.id)
+          const onBorder = nb.some(j => (cells.h[j] ?? 0) >= 20 && dim[j] !== own)
+          if (touchesSel && onBorder) {
+            busyRef.current = true
+            // 笔径≈1.4 倍格半径——拖过的格划给"来路一侧"的实体
+            const wr = Math.sqrt(bw.world.config.width * ph / cells.i.length / Math.PI) * 1.4 / ph
+            gestureRef.current = { kind: 'wborder', wId: selWorld.id, path: [p], owners: [own], wr, moved: false }
+            return
+          }
+        }
+      }
+    }
     // select：拖动平移，未拖动=点选世界实体（onPointerUp 分流）
     gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }
-  }, [brush, bump, commit, draftHow, drawLayer, editPaint, hitTest, markWork, objWorkPts, placing, pushWorldEditUndo, resolveBuilt, resolvedPts, sel, snapTarget, tool, toStore, workOfEvent, worldView])
+  }, [brush, bump, commit, draftHow, drawLayer, editPaint, hitTest, markWork, objWorkPts, placing, pushWorldEditUndo, resolveBuilt, resolvedPts, sel, selWorld, snapTarget, tool, toStore, workOfEvent, worldView])
 
   /** 悬停提示内容：实体名 + 全维度归属，当前视图维度加粗。 */
   const tipOf = useCallback((built: BuiltWorld, hit: WorldHit): { title: string, dims: { label: string, cur: boolean }[] } => {
@@ -2305,7 +2461,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     if (g.kind === 'none' && tool === 'select' && !busyRef.current) {
       const built = builtRef.current?.built ?? null
       const hit = built !== null
-        ? hitWorld(built.world, built.tree, p[0] * built.world.config.height, p[1] * built.world.config.height, worldView, built.layers)
+        ? hitWorld(built.world, built.tree, p[0] * built.world.config.height, p[1] * built.world.config.height, worldView, built.layers,
+            10 / viewRef.current.s * built.world.config.height)
         : null
       setHoverWorld(cur => cur?.kind === hit?.kind && cur?.id === hit?.id ? cur : hit)
       window.clearTimeout(tipTimerRef.current)
@@ -2333,6 +2490,25 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       viewRef.current.y += e.clientY - last[1]
       clampView()
       g.last = [e.clientX, e.clientY]
+      draw(); return
+    }
+    if (g.kind === 'wmove' || g.kind === 'wvert') {
+      const start = g.path?.[0]
+      if (start === undefined || d2(p, start) > (3 / viewRef.current.s) ** 2) g.moved = true
+      g.last = p
+      draw(); return
+    }
+    if (g.kind === 'wborder' && g.path !== undefined) {
+      const last = g.path[g.path.length - 1]
+      if (last !== undefined && d2(p, last) > (3 / viewRef.current.s) ** 2) {
+        const bw = builtRef.current?.built
+        const ph = bw?.world.config.height ?? 1
+        const dim = bw !== undefined ? (worldView === 'cultural' ? bw.world.pack.cells.culture : bw.world.pack.cells.state) : undefined
+        const prev = bw !== undefined ? findPackCell(last[0] * ph, last[1] * ph, Infinity, bw.tree) : undefined
+        g.owners?.push(prev !== undefined && dim !== undefined ? dim[prev] ?? 0 : 0)
+        g.path.push(p)
+      }
+      g.moved = true
       draw(); return
     }
     if ((g.kind === 'paint' || g.kind === 'facepaint' || g.kind === 'wpaint') && g.path !== undefined) {
@@ -2390,13 +2566,71 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           // 右键未拖动：「此地」菜单——动作从地方出发，不经顶栏
           const built = builtRef.current?.built ?? null
           const hit = built !== null
-            ? hitWorld(built.world, built.tree, g.path[0][0] * built.world.config.height, g.path[0][1] * built.world.config.height, worldView, built.layers)
+            ? hitWorld(built.world, built.tree, g.path[0][0] * built.world.config.height, g.path[0][1] * built.world.config.height, worldView, built.layers,
+                10 / viewRef.current.s * built.world.config.height)
             : null
           const st = stageRef.current?.getBoundingClientRect()
           setCtxMenu({ x: e.clientX - (st?.left ?? 0), y: e.clientY - (st?.top ?? 0), at: toStore(g.path[0]), hit })
         } else if (g.quiet !== true) { setSelId(null); selectWorldAt(g.path[0]) }
       }
       draw(); return
+    }
+    if (g.kind === 'wmove' && g.wId !== undefined) {
+      const built = builtRef.current?.built
+      if (g.moved === true && g.last !== undefined) {
+        const b = built?.world.pack.burgs.find(x => x?.i === g.wId)
+        // at 记旧位作兜底匹配锚；move 是落点目标
+        const at: XY = b !== undefined && built !== undefined
+          ? [b.x / built.world.config.width, b.y / built.world.config.height] : toStore(g.last)
+        pushWorldEditUndo(
+          { kind: 'burg', id: g.wId, ...(b?.name !== undefined && b.name !== '' ? { key: b.name } : {}), at, move: toStore(g.last) },
+          b?.name !== undefined && b.name !== '' ? fmt(t, 'ui.receipt.burgMoved', { name: b.name }) : t('ui.receipt.burgMovedAnon'),
+        )
+        setSelWorld({ kind: 'burg', id: g.wId, biome: 0, state: 0, culture: 0, pos: toStore(g.last) })
+      } else if (g.path?.[0] !== undefined) selectWorldAt(g.path[0])
+      releaseBusy(); draw(); return
+    }
+    if (g.kind === 'wvert' && g.wId !== undefined && g.grab !== undefined) {
+      const built = builtRef.current?.built
+      const r = built?.world.pack.routes.find(rt => rt.i === g.wId)
+      if (g.moved === true && built !== undefined && r !== undefined && g.last !== undefined) {
+        const pw = built.world.config.width, ph = built.world.config.height
+        const np = toStore(g.last)
+        const base = r.points.map(pt => [pt[0] / pw, pt[1] / ph] as [number, number])
+        const path = g.ins === true ? [...base.slice(0, g.grab), np, ...base.slice(g.grab)] : base.map((pt, i) => (i === g.grab ? np : pt))
+        if (path.length >= 2) {
+          // 定位锚用路径中点——edits 匹配时 posOf(route) 取的也是中点
+          pushWorldEditUndo(
+            { kind: 'route', id: r.i, ...(r.name !== undefined && r.name !== '' ? { key: r.name } : {}), at: path[Math.floor(path.length / 2)] ?? [0.5, 0.5], path },
+            t('ui.receipt.routeBent'),
+          )
+        }
+      } else if (g.moved !== true && g.path?.[0] !== undefined) selectWorldAt(g.path[0])
+      releaseBusy(); draw(); return
+    }
+    if (g.kind === 'wborder' && g.path !== undefined && g.owners !== undefined) {
+      const built = builtRef.current?.built
+      if (g.moved === true && built !== undefined && g.path.length > 1) {
+        const dim = worldView === 'cultural' ? 'culture' : 'state'
+        const list = dim === 'state' ? built.world.pack.states : built.world.pack.cultures
+        const r = g.wr ?? .02
+        // 逐段归属分程：连续同 owner 的段并为一条 stroke 覆写；
+        // owner 0 不带定位锚——解析不到实体的笔迹即擦除回中立
+        const edits: WorldEntityEdit[] = []
+        let i = 1
+        while (i < g.path.length) {
+          const owner = g.owners[i] ?? 0
+          const j0 = i
+          while (i < g.path.length && (g.owners[i] ?? 0) === owner) i++
+          const run = [g.path[j0 - 1] ?? g.path[0] ?? [0, 0], ...g.path.slice(j0, i)].map(toStore)
+          const ent = owner > 0 ? list.find(x => x?.i === owner) : undefined
+          edits.push(owner > 0
+            ? { kind: dim, id: owner, ...(ent !== undefined && ent.name !== '' ? { key: ent.name } : {}), at: run[0] ?? [0.5, 0.5], stroke: { pts: run, r } }
+            : { kind: dim, stroke: { pts: run, r } })
+        }
+        pushWorldEditUndo(edits, t('ui.receipt.borderPulled'))
+      } else if (g.moved !== true && g.path?.[0] !== undefined) selectWorldAt(g.path[0])
+      releaseBusy(); draw(); return
     }
     if (g.kind === 'wpaint' && g.path !== undefined && brush !== null) {
       const pts = g.path.map(toStore)
@@ -2504,7 +2738,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     }
     releaseBusy()
     draw()
-  }, [brush, brushPx, commit, drawLayer, erasing, how, markWork, objWorkPts, pal?.color, pushWorldEditUndo, resolveBuilt, selectWorldAt, snapTarget, t, toStore, workOfEvent])
+  }, [brush, brushPx, commit, drawLayer, erasing, how, markWork, objWorkPts, pal?.color, pushWorldEditUndo, resolveBuilt, selectWorldAt, selWorld, snapTarget, t, toStore, workOfEvent, worldView])
 
   /* ---------- 对象卡 ---------- */
 
@@ -2743,6 +2977,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         <canvas ref={cvRef} className="nv-maped-canvas"
           style={brushCursor ? { cursor: 'none' } : tool === 'place' || tool === 'path' ? { cursor: 'crosshair' } : hoverWorld !== null ? { cursor: 'pointer' } : undefined}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
+          onPointerCancel={onPointerUp}
           onDoubleClick={e => {
             if (routing !== null) { commitRoute(); return }
             if (tool !== 'select') return
