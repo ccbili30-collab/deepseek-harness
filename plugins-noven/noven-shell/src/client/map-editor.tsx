@@ -11,7 +11,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { getStroke } from 'perfect-freehand'
 import { expandShape } from 'noven-fmg/mapgeom'
 import {
-  createPackQuadtree, findPackCell, generateSeed, generateWorld, getGridDims, getPolygon,
+  createPackQuadtree, findAllPack, findPackCell, generateSeed, generateWorld, getGridDims, getPolygon,
   getRiverPath, guessDraftLevel, rasterizeDraft, regionOfPoints, applyWorldEdits,
 } from 'noven-fmg/world'
 import type { HeightmapInput, PackGraph, World, WorldEntityEdit } from 'noven-fmg/world'
@@ -703,6 +703,8 @@ interface Gesture {
   path?: XY[]
   last?: XY
   moved?: boolean
+  /** pan 手势记按下的键：右键未拖动=「此地」菜单，拖动=纯平移。 */
+  readonly btn?: number
   /** pan 手势松手不点选（连线工具里左键拖=平移但不该改选中） */
   readonly quiet?: boolean
   snapped?: { id: string, t: number, kind: 'line' | 'mark', point: XY } | null
@@ -773,7 +775,12 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   /** 世界实体卡：行内改名态 + 「移除」两段确认。换选中即复位。 */
   const [worldRenaming, setWorldRenaming] = useState(false)
   const worldArm = useArmedPress()
-  useEffect(() => { setWorldRenaming(false); worldArm.reset() }, [selWorld, worldArm.reset])
+  useEffect(() => {
+    worldArm.reset()
+    const pending = pendingRenameRef.current
+    pendingRenameRef.current = false
+    setWorldRenaming(pending)
+  }, [selWorld, worldArm.reset])
   /** 悬停实体（仅选择工具下维护）：驱动淡描边、光标与悬停提示。 */
   const [hoverWorld, setHoverWorld] = useState<WorldHit | null>(null)
   /** 悬停提示：静止 ~300ms 才出现；位置是舞台内坐标。 */
@@ -785,6 +792,10 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const selAnchorRef = useRef<[number, number] | null>(null)
   /** 最近一次可撤销的世界编辑，⌘Z 用它。 */
   const lastUndoRef = useRef<(() => void) | null>(null)
+  /** 放下即改名：下一次 setSelWorld 之后直接进入改名态，不被换选中复位吃掉。 */
+  const pendingRenameRef = useRef(false)
+  /** 「此地」右键菜单：舞台内坐标 + 落点（存储系）+ 命中实体。 */
+  const [ctxMenu, setCtxMenu] = useState<{ x: number, y: number, at: XY, hit: WorldHit | null } | null>(null)
   const [worldLayers, setWorldLayers] = useState<ReadonlySet<WorldLayer>>(() => new Set<WorldLayer>(['states', 'routes', 'burgs', 'names']))
   /** 主视图：切维度改着色/命中/实体卡，图层开关（路线/城邦/地名）与正交。 */
   const [worldView, setWorldView] = useState<WorldView>('political')
@@ -832,6 +843,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.key === 'Escape') {
+        if (ctxMenu !== null) { setCtxMenu(null); e.preventDefault(); e.stopImmediatePropagation(); return }
         if (gestureRef.current.kind !== 'none' && gestureRef.current.kind !== 'pan') {
           gestureRef.current = { kind: 'none' }
           busyRef.current = false
@@ -871,7 +883,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brush, placing, routing, selWorld, selId])
+  }, [brush, placing, routing, selWorld, selId, ctxMenu])
   const toWork = useCallback((p: XY): XY => [p[0] * aspectRef.current, p[1]], [])
   const toStore = useCallback((p: XY): XY => [clamp01(p[0] / aspectRef.current), clamp01(p[1])], [])
   const objWorkPts = useCallback((o: FaceObj | LineObj): XY[] => o.pts.map(toWork), [toWork])
@@ -1084,6 +1096,43 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       setSelWorld(null)
     }
   }, [resolveBuilt, selWorld, t, worldView])
+
+  /* ---------- 「此地」菜单动作：落点在菜单打开处，动作完成即关菜单 ---------- */
+
+  /** 在 at 直接放城邦并选中改名——与工具钮连放走不同的即落即选路径。 */
+  const placeBurgAt = (at: XY): void => {
+    pushWorldEditUndo({ kind: 'burg', add: true, at, lock: true }, t('ui.receipt.burgPlaced'))
+    const nb = resolveBuilt()?.world.pack.burgs.at(-1)
+    if (nb !== undefined && nb.removed !== true) {
+      pendingRenameRef.current = true
+      setSelWorld({ kind: 'burg', id: nb.i, biome: 0, state: nb.state ?? 0, culture: nb.culture ?? 0, pos: at })
+    }
+  }
+  /** 以 at 为首个折点 armed 连线工具——不 toggle，菜单语义是「从这里开始画」。 */
+  const routeFrom = (group: 'roads' | 'searoutes', at: XY): void => {
+    setBrush(null); setPlacing(null)
+    pathRef.current = [at]
+    setRouting(group)
+    setPathTick(v => v + 1)
+    draw()
+  }
+  const placeMarkAt = (at: XY): void => {
+    const m: MarkObj = { id: nid(), type: 'mark', layer: 'landmark', name: '', color: '#D64541', pos: at, description: '' }
+    docRef.current = { ...docRef.current, objects: [...docRef.current.objects, m] }
+    setSelId(m.id)
+    commit(); bump()
+  }
+  /** 给命中实体划领土：dim 跟当前视图（政治→国、文化→文化），无主地不给入口。 */
+  const paintEntity = (hit: WorldHit): boolean => {
+    const built = resolveBuilt()
+    if (built === null) return false
+    const dim = worldView === 'cultural' ? 'culture' : 'state'
+    const id = dim === 'state' ? hit.state : hit.culture
+    const ent = dim === 'state' ? built.world.pack.states[id] : built.world.pack.cultures[id]
+    if (id <= 0 || ent === undefined || ent.removed === true) return false
+    armBrush({ dim, id, name: ent.name, color: ent.color ?? '#8A8F94' })
+    return true
+  }
 
   /** 点选世界对象：点击未拖动时命中河 > 特征。 */
   const selectWorldAt = useCallback((p: XY): void => {
@@ -1524,16 +1573,38 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         c.beginPath(); c.arc(g.snapped.point[0], g.snapped.point[1], 5 / v.s, 0, 7); c.fill()
       }
     }
-    // 划界笔迹预览：实体色半透明宽带，擦除（⌥/中立）灰带
-    if (g.kind === 'wpaint' && g.path !== undefined && brush !== null && g.path.length > 1) {
-      c.strokeStyle = g.alt === true ? '#6E6E73' : brush.color
-      c.globalAlpha = .32
-      c.lineWidth = (brushPx / v.s) * 2
-      c.lineCap = 'round'; c.lineJoin = 'round'
-      c.beginPath()
-      g.path.forEach((p, i) => { i === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
-      c.stroke()
-      c.globalAlpha = 1
+    // 划界实时着色：笔迹覆盖的格子直接按实体色填——所见即所得，松手回填不跳变。
+    // findAllPack 给出笔刷圆盘内全部格；擦除（⌥/中立）用灰色。
+    if (g.kind === 'wpaint' && g.path !== undefined && brush !== null && g.path.length > 0) {
+      const bw = builtRef.current?.built
+      if (bw !== undefined) {
+        const ph = bw.world.config.height
+        const rp = (brushPx / v.s) * ph
+        const seen = new Set<number>()
+        for (const p of g.path) {
+          for (const i of findAllPack(p[0] * ph, p[1] * ph, rp, bw.tree)) seen.add(i)
+        }
+        if (seen.size > 0) {
+          const col = g.alt === true ? '#6E6E73' : brush.color
+          c.save()
+          c.scale(1 / ph, 1 / ph)
+          c.beginPath()
+          for (const i of seen) {
+            const poly = getPolygon(i, bw.world.pack)
+            if (poly.length < 3) continue
+            poly.forEach((p, j) => { j === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
+            c.closePath()
+          }
+          c.fillStyle = col
+          c.globalAlpha = .45
+          c.fill()
+          c.globalAlpha = .8
+          c.strokeStyle = col
+          c.lineWidth = 1.6
+          c.stroke()
+          c.restore()
+        }
+      }
     }
     // 连线草稿：已落点折线 + 到光标的橡皮筋，色随 group（道路棕实线/航线蓝虚线）
     if (tool === 'path' && routing !== null && pathRef.current.length > 0) {
@@ -1563,6 +1634,17 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       c.beginPath(); c.arc(cp[0], cp[1], 1.5 / v.s, 0, 7)
       c.fillStyle = col; c.fill()
     }
+    // 放置预览：城邦 ghost 随光标——陆=白点灰环可落，水=红环提示会重锚邻陆
+    if (tool === 'place' && placing === 'burg' && cp !== null) {
+      const bw = builtRef.current?.built
+      const ph = bw?.world.config.height ?? 0
+      const cell = bw !== undefined ? findPackCell(cp[0] * ph, cp[1] * ph, Infinity, bw.tree) : undefined
+      const land = cell !== undefined && (bw?.world.pack.cells.h[cell] ?? 0) >= 20
+      c.beginPath(); c.arc(cp[0], cp[1], 4.5 / v.s, 0, 7)
+      c.fillStyle = land ? 'rgba(255,255,255,.85)' : 'rgba(214,69,65,.18)'
+      c.fill()
+      c.strokeStyle = land ? '#4A4A55' : '#D64541'; c.lineWidth = 1.4 / v.s; c.stroke()
+    }
     // 实体浮条随相机：锚点世界 px → 屏 px，实体下方优先，越界翻转/夹回
     const wc = wcardRef.current, an = selAnchorRef.current, builtForCard = builtRef.current?.built
     if (wc !== null && an !== null && builtForCard !== undefined) {
@@ -1576,7 +1658,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       x = Math.max(8, Math.min(x, W - cw - 8)); y = Math.max(8, y)
       wc.style.left = `${Math.round(x)}px`; wc.style.top = `${Math.round(y)}px`
     }
-  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, hoverRegion, hoverWorld, markWork, mode, objWorkPts, pal?.color, resolveBuilt, resolvedPts, routing, selId, selRegion, selWorld, tool, toWork])
+  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, hoverRegion, hoverWorld, markWork, mode, objWorkPts, pal?.color, placing, resolveBuilt, resolvedPts, routing, selId, selRegion, selWorld, tool, toWork])
 
   useEffect(() => { draw() })
 
@@ -1802,9 +1884,10 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     window.clearTimeout(tipTimerRef.current)
     setTip(null)
     setMenuOpen(false)
+    setCtxMenu(null)
     const p = workOfEvent(e)
     if (e.button !== 0 || spaceRef.current) {
-      gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }
+      gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false, btn: e.button }
       return
     }
     switch (tool) {
@@ -1825,9 +1908,10 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         if (placing === 'burg') {
           const at = toStore(p)
           pushWorldEditUndo({ kind: 'burg', add: true, at, lock: true }, t('ui.receipt.burgPlaced'))
-          // add 永远 push 到 burgs 末尾——取末位即新落点，选中后直接可改名
+          // add 永远 push 到 burgs 末尾——取末位即新落点，选中后直接改名
           const nb = resolveBuilt()?.world.pack.burgs.at(-1)
           if (nb !== undefined && nb.removed !== true) {
+            pendingRenameRef.current = true
             setSelWorld({ kind: 'burg', id: nb.i, biome: 0, state: nb.state ?? 0, culture: nb.culture ?? 0, pos: at })
           }
           return
@@ -2040,7 +2124,17 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     gestureRef.current = { kind: 'none' }
     const releaseBusy = (): void => { busyRef.current = false }
     if (g.kind === 'pan') {
-      if (g.moved !== true && g.quiet !== true && g.path?.[0] !== undefined) { setSelId(null); selectWorldAt(g.path[0]) }
+      if (g.moved !== true && g.path?.[0] !== undefined) {
+        if (g.btn === 2) {
+          // 右键未拖动：「此地」菜单——动作从地方出发，不经顶栏
+          const built = builtRef.current?.built ?? null
+          const hit = built !== null
+            ? hitWorld(built.world, built.tree, g.path[0][0] * built.world.config.height, g.path[0][1] * built.world.config.height, worldView, built.layers)
+            : null
+          const st = stageRef.current?.getBoundingClientRect()
+          setCtxMenu({ x: e.clientX - (st?.left ?? 0), y: e.clientY - (st?.top ?? 0), at: toStore(g.path[0]), hit })
+        } else if (g.quiet !== true) { setSelId(null); selectWorldAt(g.path[0]) }
+      }
       draw(); return
     }
     if (g.kind === 'wpaint' && g.path !== undefined && brush !== null) {
@@ -2411,6 +2505,49 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           </div>
         </div>
         )}
+        {ctxMenu !== null && (() => {
+          // 靠边翻转：菜单宽约 170px，逐项高约 30px
+          const W = stageEl?.clientWidth ?? 0, H = stageEl?.clientHeight ?? 0
+          const fx = ctxMenu.x > W - 180, fy = ctxMenu.y > H - 200
+          const hit = ctxMenu.hit
+          const paintDim = worldView === 'cultural' ? 'culture' : 'state'
+          const paintId = hit !== null ? (paintDim === 'state' ? hit.state : hit.culture) : 0
+          const paintEnt = paintId > 0 && builtNow !== null
+            ? (paintDim === 'state' ? builtNow.world.pack.states[paintId] : builtNow.world.pack.cultures[paintId])
+            : undefined
+          const title = hit !== null && builtNow !== null ? tipOf(builtNow, hit).title : ''
+          return (
+          <div className="nv-maped-ctx" style={{ left: ctxMenu.x, top: ctxMenu.y,
+            transform: `translate(${fx ? '-100%' : '0'},${fy ? '-100%' : '0'})` }}>
+            {MAP_WORLD && data.world !== undefined && (
+            <>
+            <button type="button" onClick={() => { placeBurgAt(ctxMenu.at); setCtxMenu(null) }}>{t('wg.map.ctx.burg')}</button>
+            <button type="button" onClick={() => { routeFrom('roads', ctxMenu.at); setCtxMenu(null) }}>{t('wg.map.ctx.road')}</button>
+            <button type="button" onClick={() => { routeFrom('searoutes', ctxMenu.at); setCtxMenu(null) }}>{t('wg.map.ctx.sea')}</button>
+            {(worldView === 'political' || worldView === 'cultural') && paintEnt !== undefined && paintEnt.removed !== true && (
+            <button type="button" onClick={() => { if (hit !== null && paintEntity(hit)) setCtxMenu(null) }}>
+              {fmt(t, 'wg.map.ctx.paint', { name: paintEnt.name })}
+            </button>
+            )}
+            </>
+            )}
+            <button type="button" onClick={() => { placeMarkAt(ctxMenu.at); setCtxMenu(null) }}>{t('wg.map.ctx.mark')}</button>
+            {MAP_WORLD && data.world !== undefined && (
+            <button type="button" onClick={() => {
+              void ask(fmt(t, 'wg.map.world.askText', { name: title !== '' ? title : t('wg.map.ctx.here') }))
+              setCtxMenu(null)
+            }}>{t('wg.map.ctx.ask')}</button>
+            )}
+            {hit !== null && (
+            <button type="button" onClick={() => {
+              const bbox = builtNow !== null ? worldRegion(builtNow, hit) : null
+              if (bbox !== null) void send({ kind: 'map_spawn_view', moduleId: module.id, bbox, aspect: aspectRef.current })
+              setCtxMenu(null)
+            }}>{t('wg.map.ctx.spawn')}</button>
+            )}
+          </div>
+          )
+        })()}
         <div className="nv-maped-nav">
           <button type="button" title={t('wg.map.nav.zoomOut')} onClick={() => zoomStep(1 / 1.4)}>−</button>
           <button type="button" className="nv-maped-navpct" title={t('wg.map.nav.fit')} onClick={flyFit}>{zoomPct}%</button>

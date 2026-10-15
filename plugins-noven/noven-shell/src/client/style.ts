@@ -2031,12 +2031,14 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   font-size: 10px; color: var(--nv-secondary-text); background: rgba(255,255,255,.78);
   border-radius: 6px 6px 0 0; padding: 3px 10px; pointer-events: none; max-width: calc(100% - 24px);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nv-maped-brushbar { position: absolute; bottom: 26px; left: 50%; transform: translateX(-50%); z-index: 3;
-  display: flex; align-items: center; gap: 6px; background: var(--nv-surface);
+.nv-maped-brushbar { position: absolute; bottom: 52px; left: 50%; transform: translateX(-50%); z-index: 3;
+  display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 6px;
+  max-width: calc(100% - 16px); background: var(--nv-surface);
   border: 1px solid var(--nv-divider); border-radius: 10px; padding: 5px 10px;
   box-shadow: 0 4px 16px rgba(22,24,26,.10); }
 .nv-maped-brushdot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-.nv-maped-brushname { font-size: 12px; color: var(--nv-primary-text); white-space: nowrap; }
+.nv-maped-brushname { font-size: 12px; color: var(--nv-primary-text); white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .nv-maped-brushname em { font-style: normal; color: var(--nv-secondary-text); margin-left: 6px; font-size: 11px; }
 .nv-maped-nav { position: absolute; right: 10px; bottom: 10px; z-index: 3;
   display: flex; align-items: center; gap: 2px; background: var(--nv-surface);
@@ -2068,6 +2070,14 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-maped-menulab { width: 100%; font-size: 10px; color: var(--nv-secondary-text);
   letter-spacing: .04em; margin: 4px 0 0; }
 .nv-maped-menulab:first-child { margin-top: 0; }
+.nv-maped-ctx { position: absolute; z-index: 4; min-width: 140px;
+  display: flex; flex-direction: column; gap: 1px; background: var(--nv-surface);
+  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 4px;
+  box-shadow: 0 8px 24px rgba(22,24,26,.16); }
+.nv-maped-ctx button { border: none; background: none; color: var(--nv-text);
+  font-size: 12px; text-align: left; padding: 6px 9px; border-radius: 7px; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nv-maped-ctx button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 /* 集合渲染器（设计稿 06 + collection-v2 B/C）：视图切换 + 图鉴卡 + 表格 + 编年长卷。 */
 .nv-coll { margin-top: 10px; }
 .nv-coll-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
