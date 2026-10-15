@@ -11,6 +11,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type { SidebarPanelMetadata, SidebarRootInjected } from './contract/slots.ts'
 import { HeaderLeadingControls } from './HeaderLeadingControls.tsx'
+import { SidebarPanelService } from './service.ts'
 import { SidebarRoot } from './SidebarRoot.tsx'
 import { en, zh, type SidebarKey } from './locales.ts'
 
@@ -20,6 +21,8 @@ export type {
   SidebarRootComponentProps, SidebarRootInjected, SidebarSectionOwnerProps, SidebarSettingsOwnerProps,
 } from './contract/slots.ts'
 export type { SidebarKey } from './locales.ts'
+export { SidebarPanelService } from './service.ts'
+export type { ISidebarPanels, SidebarPanelActivation } from './service.ts'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -42,55 +45,59 @@ export const inject = ['slots', 'layout', 'uiWorkspace', 'locale', 'shortcuts']
  * @param ctx - Client root context.
  */
 export function apply(ctx: ClientContext): void {
-  const workspaceNavigation = ctx.get('uiWorkspace') as unknown as WorkspaceNavigation
-  ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-sidebar: dictionaries')
-  const panels = createSnapshotStore<readonly SidebarPanelMetadata[]>([])
-  const syncPanels = (): void => {
-    const next = ctx.slots.entriesOfSlot('sidebar.panellist').map(({ options }) => {
-      // The list registration requires an id; StoredEntry erases the slot kind.
-      const id = options.id as MainPanelId
-      return { id, order: options.order ?? 0, label: resolveSlotLabel(options.label) ?? id }
-    }).sort((a, b) => a.order - b.order)
-    const previous = panels.getSnapshot()
-    if (previous.length === next.length && previous.every((panel, index) => {
-      const candidate = next[index] as SidebarPanelMetadata
-      return panel.id === candidate.id && panel.order === candidate.order && panel.label === candidate.label
-    })) return
-    panels.set(next)
-  }
-  ctx.effect(() => ctx.slots.subscribe('sidebar.panellist', syncPanels), 'ui-sidebar: panel entries')
-  ctx.effect(() => ctx.locale.subscribe(syncPanels), 'ui-sidebar: panel labels')
+  ctx.plugin(SidebarPanelService)
+  ctx.inject(['sidebarPanels'], (scope: ClientContext) => {
+    const workspaceNavigation = scope.get('uiWorkspace') as unknown as WorkspaceNavigation
+    scope.effect(() => scope.locale.register(NS, { zh, en }), 'ui-sidebar: dictionaries')
+    const panels = createSnapshotStore<readonly SidebarPanelMetadata[]>([])
+    const syncPanels = (): void => {
+      const next = scope.slots.entriesOfSlot('sidebar.panellist').map(({ options }) => {
+        // The list registration requires an id; StoredEntry erases the slot kind.
+        const id = options.id as MainPanelId
+        return { id, order: options.order ?? 0, label: resolveSlotLabel(options.label) ?? id }
+      }).sort((a, b) => a.order - b.order)
+      const previous = panels.getSnapshot()
+      if (previous.length === next.length && previous.every((panel, index) => {
+        const candidate = next[index] as SidebarPanelMetadata
+        return panel.id === candidate.id && panel.order === candidate.order && panel.label === candidate.label
+      })) return
+      panels.set(next)
+    }
+    scope.effect(() => scope.slots.subscribe('sidebar.panellist', syncPanels), 'ui-sidebar: panel entries')
+    scope.effect(() => scope.locale.subscribe(syncPanels), 'ui-sidebar: panel labels')
 
-  const injectProps = (): SidebarRootInjected => ({
-    // The shell's New Session button rides the Workspace UI's shared action
-    // (current Session Workspace, then recent Workspace).
-    startSession: (workspaceId) => { workspaceNavigation.startSession(workspaceId) },
-    toggleSidebar: () => { ctx.layout.toggleSidebar() },
-    selectPanel: (id) => { ctx.layout.selectPanel(id) },
-    hooks: { panels, shortcuts: ctx.shortcuts.catalog },
+    const injectProps = (): SidebarRootInjected => ({
+      // The shell's New Session button rides the Workspace UI's shared action
+      // (current Session Workspace, then recent Workspace).
+      startSession: (workspaceId) => { workspaceNavigation.startSession(workspaceId) },
+      toggleSidebar: () => { scope.layout.toggleSidebar() },
+      selectPanel: (id) => { scope.layout.selectPanel(id) },
+      activatePanel: (id, target) => { scope.sidebarPanels.activate(id, target) },
+      hooks: { panels, shortcuts: scope.shortcuts.catalog },
+    })
+    scope.slots.inject('sidebar', () => scope.slots.register({
+      name: 'sidebar',
+      locale: NS,
+      children: {
+        'sidebar.brand.mark': { kind: 'single', scope: 'root' },
+        'sidebar.brand.name': { kind: 'single', scope: 'root' },
+        'sidebar.toggle.badge': { kind: 'single', scope: 'root' },
+        'sidebar.panellist': { kind: 'list', scope: 'root' },
+        'sidebar.workspaces': { kind: 'single', scope: 'root' },
+        'sidebar.settings': { kind: 'single', scope: 'root' },
+        'sidebar.footer.action': { kind: 'list', scope: 'root' },
+      },
+      inject: injectProps,
+    }, SidebarRoot))
+    // macOS desktop hides the collapsed sidebar entirely, so the open/New
+    // Session controls move into the frame's window-chrome seat beside the
+    // traffic lights; the occupant reuses the shell's injected actions, and
+    // the AppFrame mounts the seat only while the column is fully hidden.
+    scope.slots.inject('shell.leading', () => scope.slots.register({
+      name: 'shell.leading',
+      locale: NS,
+      inject: injectProps,
+    }, HeaderLeadingControls))
+    syncPanels()
   })
-  ctx.slots.inject('sidebar', () => ctx.slots.register({
-    name: 'sidebar',
-    locale: NS,
-    children: {
-      'sidebar.brand.mark': { kind: 'single', scope: 'root' },
-      'sidebar.brand.name': { kind: 'single', scope: 'root' },
-      'sidebar.toggle.badge': { kind: 'single', scope: 'root' },
-      'sidebar.panellist': { kind: 'list', scope: 'root' },
-      'sidebar.workspaces': { kind: 'single', scope: 'root' },
-      'sidebar.settings': { kind: 'single', scope: 'root' },
-      'sidebar.footer.action': { kind: 'list', scope: 'root' },
-    },
-    inject: injectProps,
-  }, SidebarRoot))
-  // macOS desktop hides the collapsed sidebar entirely, so the open/New
-  // Session controls move into the frame's window-chrome seat beside the
-  // traffic lights; the occupant reuses the shell's injected actions, and
-  // the AppFrame mounts the seat only while the column is fully hidden.
-  ctx.slots.inject('shell.leading', () => ctx.slots.register({
-    name: 'shell.leading',
-    locale: NS,
-    inject: injectProps,
-  }, HeaderLeadingControls))
-  syncPanels()
 }

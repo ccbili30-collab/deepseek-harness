@@ -41,6 +41,7 @@ async function bench(collapsed = false) {
     panelInfo: runtime.panelInfo,
     beginNavigation: vi.fn(() => new AbortController().signal),
     toggleSidebar: vi.fn(),
+    setSidebarCollapsed: vi.fn(),
     selectPanel: vi.fn((activePanelId: MainPanelId | null) => { runtime.panelInfo.set({ activePanelId }) }),
     openRightbar: vi.fn(),
     closeRightbar: vi.fn(),
@@ -213,6 +214,30 @@ describe('sidebar global panels', () => {
     expect(within(beta).getByTestId(`${BETA}-icon`).getAttribute('data-active')).toBe('true')
     expect(view.queryByRole('heading', { name: 'Alpha content' })).toBeNull()
     expect(view.getByRole('heading', { name: 'Beta content' })).toBeTruthy()
+  })
+
+  it('lets a scoped activation override explain a row without selecting it, then restores default navigation', async () => {
+    const { runtime, locale, layout, view } = await bench()
+    await mountPanels(runtime, locale)
+    const activate = vi.fn<(target: HTMLElement) => void>()
+    const override = await runtime.mount({
+      inject: ['sidebarPanels'],
+      apply(ctx: Context) {
+        ctx.effect(() => ctx.sidebarPanels.registerActivation(ALPHA, activate), 'panel test: activation override')
+      },
+    })
+    const alpha = await view.findByRole('button', { name: 'Alpha panel' })
+    fireEvent.click(alpha)
+    expect(activate).toHaveBeenCalledExactlyOnceWith(alpha)
+    expect(layout.selectPanel).not.toHaveBeenCalled()
+    expect(runtime.panelInfo.getSnapshot()).toEqual({ activePanelId: null })
+    expect(view.getByText('Conversation content')).toBeTruthy()
+
+    await override.dispose()
+    fireEvent.click(alpha)
+    expect(layout.selectPanel).toHaveBeenCalledExactlyOnceWith(ALPHA)
+    expect(runtime.panelInfo.getSnapshot()).toEqual({ activePanelId: ALPHA })
+    expect(view.getByRole('heading', { name: 'Alpha content' })).toBeTruthy()
   })
 
   it('refreshes locale labels without re-registering icons or changing plain labels', async () => {

@@ -106,17 +106,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'openRightbar(track: boolean, fullscreen: boolean, canvas: \'left\' | \'right\' | null, rail: boolean): void',
         description: 'Report the right panel\'s presentation without changing its expanded state.',
-        parameters: [{ name: 'track', description: 'whether the normal panel width reserves a grid track, including beneath a fullscreen overlay.' }, { name: 'fullscreen', description: 'whether the panel covers the frame and hides its outer resize handle; independent of the underlying grid track.' }, { name: 'canvas', description: 'which side of the panel a canvas page occupies, or null when no canvas is open; a claimed canvas widens the right column to hold it in the layout.' }, { name: 'rail', description: 'whether the shown panel stands collapsed to its icon rail; the track then holds the rail width instead of the panel preference.' }],
+        parameters: [{ name: 'track', description: 'whether the normal panel width reserves a grid track, including beneath a fullscreen overlay.' }, { name: 'fullscreen', description: 'whether the panel covers the frame and hides its outer resize handle; independent of the underlying grid track.' }, { name: 'canvas', description: 'which side of the panel a canvas page occupies, or null when no canvas is open. A claimed canvas makes the right region flexible: it takes the width between the conversation\'s reserved share and the panel.' }, { name: 'rail', description: 'whether the shown panel stands collapsed to its icon rail; the track then holds the rail width instead of the panel preference.' }],
       },
       {
         signature: 'closeRightbar(): void',
         description: 'Report the right panel as hidden: no track, no handle.',
         parameters: [],
-      },
-      {
-        signature: 'setUnitSide(side: UnitSide): void',
-        description: 'Move the navigation+canvas unit to a side of the conversation column — the same persisted preference the region-sort gesture flips.',
-        parameters: [{ name: 'side', description: "'left' parks the unit against the sidebar; 'right' is the shipping order." }],
       },
     ],
   },
@@ -220,7 +215,7 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       {
         signature: 'fork(opts: { sessionId: SessionId; atSeq?: number; increaseTitle?: boolean; origin?: \'service\' }): Promise<SessionId>',
         description: 'Fork a session from an exact inclusive prefix of the source; on resolution the child is catalogued and can be explicitly retained.',
-        parameters: [{ name: 'opts', description: 'source session id, the optional exact inclusive boundary seq (a real event seq the caller already knows; a cut inside an open turn is balanced Host-side with synthetic closers, and omission selects the latest completed-turn prefix), and whether to increment an inherited durable title before resolving.' }],
+        parameters: [{ name: 'opts', description: 'source session id, the optional exact inclusive boundary seq (a real event seq the caller already knows; a cut inside an open turn is balanced Host-side with synthetic closers, and omission selects the latest completed-turn prefix), whether to increment an inherited durable title before resolving, and the optional `service` origin that keeps the child out of ordinary session navigation.' }],
         returns: 'the child session id.',
         throws: ['when the fork fails, or when a requested child-title rename fails after creation.'],
       },

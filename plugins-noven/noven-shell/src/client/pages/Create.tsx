@@ -8,8 +8,7 @@
  * takes over the main seat.
  * @module noven-shell/client/pages/Create
  */
-import { useEffect, useRef, useState } from 'react'
-import type { ReactNode } from 'react'
+import { useRef, useState } from 'react'
 import type { ShellT } from './Home.tsx'
 import type { NovenShellLocaleKey } from '../locales.ts'
 import type { CardRow, CreateSend } from '../index.tsx'
@@ -24,6 +23,7 @@ import { cardContentUrl } from '../card-api.ts'
 import { ExcerptTile } from '../cardtile.tsx'
 import { asset } from '../data.ts'
 import { CardPick, type CardKind } from './CardPick.tsx'
+import { enterConversationScene } from '../creation-transition.ts'
 
 interface Props {
   readonly t: ShellT
@@ -31,7 +31,8 @@ interface Props {
   readonly useSessions: SnapshotSelectorHook<SessionListState>
   /** Sends the composer: connects the chosen workspace's session, applies the model pick, uploads files, prompts, then reveals the conversation. */
   readonly onStartPrompt: (prompt: string, send: CreateSend) => Promise<boolean>
-  /** Creates a durable card of the kind in the chosen workspace, then opens it in the editor. */
+  /** Enters the blank IDE after ensuring a real session exists. */
+  readonly onStartHandcraft: (workspaceId: WorkspaceId | undefined, source: HTMLElement) => Promise<boolean>
   readonly onNewCard: (kind: 'world' | 'character', name: string, workspaceId?: WorkspaceId) => void
   /** Imports a card package file into the chosen workspace, then opens it in the editor. */
   readonly onImportCard: (file: File, workspaceId?: WorkspaceId) => void
@@ -55,20 +56,12 @@ export const TOOL_COMMANDS = {
   writing: 'human-writing',
 } as const
 
-export type ToolId = keyof typeof TOOL_COMMANDS
-
-export const TOOLS: readonly { id: ToolId; label: NovenShellLocaleKey; icon: (s: number) => ReactNode }[] = [
-  { id: 'organize', label: 'create.tool.organize', icon: glyph.sparkle },
-  { id: 'study', label: 'create.tool.study', icon: glyph.book },
-  { id: 'comic', label: 'create.tool.comic', icon: glyph.image },
-  { id: 'world', label: 'create.tool.world', icon: glyph.planet },
-  { id: 'writing', label: 'create.tool.writing', icon: glyph.chat },
-]
-
-/** Composer chip shortcuts: the three showcase skills. */
+/** Composer chip shortcuts for real bundled skills. */
 const CHIPS: readonly { label: NovenShellLocaleKey; command: string }[] = [
+  { label: 'create.tool.organize', command: TOOL_COMMANDS.organize },
   { label: 'create.tool.study', command: TOOL_COMMANDS.study },
   { label: 'create.tool.comic', command: TOOL_COMMANDS.comic },
+  { label: 'create.tool.writing', command: TOOL_COMMANDS.writing },
 ]
 
 /** Composer choices persist across visits — the page is a launcher, not a form to refill. */
@@ -85,35 +78,6 @@ const readModelPick = (): ModelSelection | undefined => {
       ? { provider: parsed.provider, model: parsed.model, ...(typeof parsed.reasoningEffort === 'string' ? { reasoningEffort: parsed.reasoningEffort } : {}) }
       : undefined
   } catch { return undefined }
-}
-
-interface SlotProps {
-  /** Cover image URL; absent renders the tile's inner node instead. */
-  readonly cover?: string
-  readonly inner?: ReactNode
-  readonly title: string
-  readonly sub: string
-  readonly badge?: string
-  readonly empty?: boolean
-  readonly disabled?: boolean
-  readonly hint?: string
-  readonly onClick?: () => void
-}
-
-/** One creation slot: a pure artwork tile with its caption in the page air below. */
-function Slot({ cover, inner, title, sub, badge, empty, disabled, hint, onClick }: SlotProps) {
-  return (
-    <button className="nv-slot" onClick={onClick} disabled={disabled} title={hint}>
-      <span className={`nv-slot-tile${empty ? ' nv-slot-empty' : ''}`}>
-        {cover !== undefined ? <img src={cover} alt="" /> : inner}
-        {badge !== undefined && <span className="nv-slot-badge">{badge}</span>}
-      </span>
-      <span className="nv-slot-cap">
-        <strong>{title}</strong>
-        <small>{sub}</small>
-      </span>
-    </button>
-  )
 }
 
 const TEMPLATES: readonly {
@@ -164,16 +128,18 @@ function modelMenuEntries(catalog: ModelCatalog | undefined, active: ModelSelect
   return entries
 }
 
-export function Create({ t, useWorkspaces, useSessions, onStartPrompt, onNewCard, onImportCard, loadModels, pickWorkspace, useCards, onOpenCard }: Props) {
+export function Create({ t, useWorkspaces, useSessions, onStartPrompt, onStartHandcraft, onNewCard, onImportCard, loadModels, pickWorkspace, useCards, onOpenCard }: Props) {
   const [draft, setDraft] = useState('')
   const [pick, setPick] = useState<CardKind | null>(null)
   const [files, setFiles] = useState<readonly File[]>([])
   const [leaving, setLeaving] = useState(false)
   const [sendFailed, setSendFailed] = useState(false)
+  const [handcraftFailed, setHandcraftFailed] = useState(false)
   const [wsOpen, setWsOpen] = useState(false)
   const [modelOpen, setModelOpen] = useState(false)
   const [catalog, setCatalog] = useState<ModelCatalog | undefined>()
   const fileRef = useRef<HTMLInputElement | null>(null)
+  const importRef = useRef<HTMLInputElement | null>(null)
   const [pickedWs, setPickedWs] = useState<WorkspaceId | undefined>(
     () => (localStorage.getItem(WS_KEY) ?? undefined) as WorkspaceId | undefined)
   const [modelSel, setModelSel] = useState<ModelSelection | undefined>(readModelPick)
@@ -246,7 +212,7 @@ export function Create({ t, useWorkspaces, useSessions, onStartPrompt, onNewCard
     if (leaving) return
     setSendFailed(false)
     setLeaving(true)
-    void onStartPrompt(text, { workspaceId: workspace?.workspaceId, model: modelSel, files }).then(ok => {
+    void enterConversationScene(() => onStartPrompt(text, { workspaceId: workspace?.workspaceId, model: modelSel, files })).then(ok => {
       if (ok) return
       setLeaving(false)
       setSendFailed(true)
@@ -268,34 +234,13 @@ export function Create({ t, useWorkspaces, useSessions, onStartPrompt, onNewCard
   const noWorkspace = wsPhase === 'ready' && workspaces.length === 0
 
   return (
-    <div className={`nv-page${leaving ? ' nv-leaving' : ''}`}>
-      <div className="nv-inner" style={{ maxWidth: 900 }}>
-        <div>
-          <div className="nv-h1">{t('nav.create')}</div>
-          <div className="nv-sub">{t('create.title.sub')}</div>
-        </div>
-
-        <div className="nv-slots">
-          <Slot cover={asset('cover-new-world.webp')} title={t('create.slot.world')}
-            sub={t('create.slot.world.sub')} onClick={() => setPick('world')} />
-          <Slot cover={asset('cover-new-character.webp')} title={t('create.slot.character')}
-            sub={t('create.slot.character.sub')} onClick={() => setPick('character')} />
-          <Slot empty inner={<span className="nv-slot-plus">{glyph.plus(26)}</span>}
-            title={t('create.slot.custom')} sub={t('create.slot.custom.sub')}
-            disabled hint={t('create.slot.custom.soon')} />
-          {lastDraft !== undefined && (
-            <Slot
-              cover={lastDraft.coverRef === undefined ? undefined
-                : cardContentUrl(lastDraft.workspaceRoot, lastDraft.dir, lastDraft.coverRef)}
-              inner={lastDraft.excerpt !== undefined
-                ? <ExcerptTile module={lastDraft.excerpt.module} text={lastDraft.excerpt.text} />
-                : <span className="nv-slot-plus">{glyph.file(26)}</span>}
-              title={lastDraft.name}
-              sub={fmt(t, 'create.draft.unsaved', { count: lastDraft.modules })}
-              badge={t('create.slot.draft')}
-              onClick={() => onOpenCard(lastDraft)} />
-          )}
-        </div>
+    <div className={`nv-page nv-create-page${leaving ? ' nv-leaving' : ''}`}>
+      <div className="nv-create-ritual">
+        <header className="nv-create-intro">
+          <span className="nv-create-eyebrow">{t('create.ritual.eyebrow')}</span>
+          <h1>{t('create.ritual.title')}</h1>
+          <p>{t('create.ritual.sub')}</p>
+        </header>
 
         {noWorkspace ? (
           <div className="nv-composer nv-composer-nowork">
@@ -305,7 +250,7 @@ export function Create({ t, useWorkspaces, useSessions, onStartPrompt, onNewCard
             </button>
           </div>
         ) : (
-          <div className="nv-composer">
+          <div className="nv-composer nv-create-composer" style={{ viewTransitionName: 'noven-create-composer' }}>
             {files.length > 0 && (
               <div className="nv-composer-files">
                 {files.map((f, i) => (
@@ -317,25 +262,15 @@ export function Create({ t, useWorkspaces, useSessions, onStartPrompt, onNewCard
                 ))}
               </div>
             )}
-            <textarea
-              className="nv-composer-input"
-              placeholder={t('create.composer.placeholder')}
-              value={draft}
-              rows={2}
-              onChange={e => setDraft(e.target.value)}
-              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-            />
+            <textarea className="nv-composer-input" placeholder={t('create.composer.placeholder')}
+              value={draft} rows={3} onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }} />
             <div className="nv-composer-meta">
               <button type="button" className="nv-meta-icobtn" title={t('create.attach')}
-                onClick={() => fileRef.current?.click()}>
-                {glyph.clip(15)}
-              </button>
-              <input ref={fileRef} type="file" multiple hidden
-                onChange={e => addFiles(e.target.files)} />
-              <Menu open={wsOpen} side="top" align="start" selection="fill"
-                items={wsEntries}
-                selectedId={workspace?.workspaceId}
-                onClose={() => setWsOpen(false)}
+                onClick={() => fileRef.current?.click()}>{glyph.clip(15)}</button>
+              <input ref={fileRef} type="file" multiple hidden onChange={e => addFiles(e.target.files)} />
+              <Menu open={wsOpen} side="top" align="start" selection="fill" items={wsEntries}
+                selectedId={workspace?.workspaceId} onClose={() => setWsOpen(false)}
                 onSelect={id => {
                   setWsOpen(false)
                   if (id === PICK_DIR) {
@@ -344,69 +279,81 @@ export function Create({ t, useWorkspaces, useSessions, onStartPrompt, onNewCard
                   }
                   chooseWorkspace(id as WorkspaceId)
                 }}
-                anchor={(
-                  <button type="button" className="nv-meta-chip"
-                    onClick={() => setWsOpen(v => !v)}>
-                    {glyph.folder(13)} {workspace !== undefined ? wsTitle(workspace) : t('create.workspace.auto')} <span className="nv-meta-caret">⌄</span>
-                  </button>
-                )} />
+                anchor={<button type="button" className="nv-meta-chip" onClick={() => setWsOpen(v => !v)}>
+                  {glyph.folder(13)} {workspace !== undefined ? wsTitle(workspace) : t('create.workspace.auto')} <span className="nv-meta-caret">⌄</span>
+                </button>} />
               <Menu open={modelOpen} side="top" align="start" selection="fill"
-                items={modelMenuEntries(catalog, modelSel, t)}
-                onClose={() => setModelOpen(false)}
-                onSelect={id => { onModelSelect(id) }}
-                anchor={(
-                  <button type="button" className="nv-meta-chip" onClick={openModelMenu}>
-                    {glyph.bolt(13)} {modelLabel()} <span className="nv-meta-caret">⌄</span>
-                  </button>
-                )} />
+                items={modelMenuEntries(catalog, modelSel, t)} onClose={() => setModelOpen(false)}
+                onSelect={onModelSelect}
+                anchor={<button type="button" className="nv-meta-chip" onClick={openModelMenu}>
+                  {glyph.bolt(13)} {modelLabel()} <span className="nv-meta-caret">⌄</span>
+                </button>} />
             </div>
             <div className="nv-composer-bar">
               <div className="nv-composer-chips">
                 {CHIPS.map(chip => (
                   <button key={chip.command} type="button" className="nv-composer-chip"
-                    onClick={() => setDraft(`/${chip.command} `)}>
-                    {glyph.slash(11)} {t(chip.label)}
-                  </button>
+                    onClick={() => setDraft(`/${chip.command} `)}>{glyph.slash(11)} {t(chip.label)}</button>
                 ))}
               </div>
               <button className="nv-send" onClick={send} disabled={draft.trim().length === 0 && files.length === 0}
-                aria-label={t('create.composer.send')}>
-                {glyph.send(15)}
-              </button>
+                aria-label={t('create.composer.send')}>{glyph.send(15)}</button>
             </div>
             {sendFailed && <div className="nv-composer-error">{t('create.send.failed')}</div>}
           </div>
         )}
 
-        <div className="nv-create-bottom">
-          <section>
-            <div className="nv-sec-label">{t('create.sec.templates')}</div>
-            <div className="nv-tpls">
-              {TEMPLATES.map(tpl => (
-                <button key={tpl.name} className="nv-tpl"
-                  onClick={() => tpl.creates.forEach(c => onNewCard(c.kind, t(c.name), workspace?.workspaceId))}>
-                  <img className="nv-tpl-cover" src={asset(tpl.cover)} alt="" />
-                  <span className="nv-tpl-body">
-                    <strong>{t(tpl.name)}</strong>
-                    <small>{t(tpl.sub)}</small>
-                  </span>
-                </button>
-              ))}
-            </div>
-          </section>
-          <section>
-            <div className="nv-sec-label">{t('create.sec.tools')}</div>
-            <div className="nv-tools2">
-              {TOOLS.map(tool => (
-                <button key={tool.id} className="nv-tool2"
-                  onClick={() => runSend(`/${TOOL_COMMANDS[tool.id]}`)}>
-                  <span className="nv-tool2-ic">{tool.icon(15)}</span>
-                  {t(tool.label)}
-                </button>
-              ))}
-            </div>
-          </section>
+        <div className="nv-create-paths">
+          <button type="button" className="nv-create-path" onClick={event => {
+            setHandcraftFailed(false)
+            void onStartHandcraft(workspace?.workspaceId, event.currentTarget).then(ok => { if (!ok) setHandcraftFailed(true) })
+          }}>
+            <span className="nv-create-path-icon">{glyph.file(18)}</span>
+            <span><strong>{t('create.handcraft')}</strong><small>{t('create.handcraft.sub')}</small></span>
+            <span className="nv-create-path-arrow">↗</span>
+          </button>
+          <button type="button" className="nv-create-path" onClick={() => importRef.current?.click()}>
+            <span className="nv-create-path-icon">{glyph.download(18)}</span>
+            <span><strong>{t('create.import')}</strong><small>{t('create.import.sub')}</small></span>
+            <span className="nv-create-path-arrow">↗</span>
+          </button>
+          <input ref={importRef} type="file" hidden onChange={event => {
+            const file = event.target.files?.[0]
+            if (file !== undefined) onImportCard(file, workspace?.workspaceId)
+            event.currentTarget.value = ''
+          }} />
         </div>
+        {handcraftFailed && <div className="nv-create-inline-error">{t('create.handcraft.failed')}</div>}
+
+        <section className="nv-create-startershelf">
+          <div className="nv-sec-label">{t('create.start.label')}</div>
+          <div className="nv-create-startrow">
+            <button type="button" className="nv-create-mini" onClick={() => setPick('world')}>
+              <span className="nv-create-mini-art nv-create-mini-world">{glyph.globe(22)}</span>
+              <span><strong>{t('create.slot.world')}</strong><small>{t('create.slot.world.sub')}</small></span>
+            </button>
+            <button type="button" className="nv-create-mini" onClick={() => setPick('character')}>
+              <span className="nv-create-mini-art nv-create-mini-character">{glyph.user(22)}</span>
+              <span><strong>{t('create.slot.character')}</strong><small>{t('create.slot.character.sub')}</small></span>
+            </button>
+            {TEMPLATES.map(tpl => (
+              <button key={tpl.name} className="nv-create-mini"
+                onClick={() => tpl.creates.forEach(c => onNewCard(c.kind, t(c.name), workspace?.workspaceId))}>
+                <img className="nv-create-mini-art" src={asset(tpl.cover)} alt="" />
+                <span><strong>{t(tpl.name)}</strong><small>{t(tpl.sub)}</small></span>
+              </button>
+            ))}
+            {lastDraft !== undefined && (
+              <button type="button" className="nv-create-mini" onClick={() => onOpenCard(lastDraft)}>
+                {lastDraft.coverRef !== undefined
+                  ? <img className="nv-create-mini-art" src={cardContentUrl(lastDraft.workspaceRoot, lastDraft.dir, lastDraft.coverRef)} alt="" />
+                  : <span className="nv-create-mini-art nv-create-mini-draft">{lastDraft.excerpt !== undefined
+                    ? <ExcerptTile module={lastDraft.excerpt.module} text={lastDraft.excerpt.text} /> : glyph.file(22)}</span>}
+                <span><strong>{lastDraft.name}</strong><small>{fmt(t, 'create.draft.unsaved', { count: lastDraft.modules })}</small></span>
+              </button>
+            )}
+          </div>
+        </section>
       </div>
 
       {pick !== null && (

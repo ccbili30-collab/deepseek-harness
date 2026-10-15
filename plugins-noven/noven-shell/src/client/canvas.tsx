@@ -534,6 +534,8 @@ export interface CanvasInjected {
   readonly listDir: (sessionId: SessionId, path: string) => Promise<readonly { name: string; type: string }[]>
   /** 让画布里的模块把一句话排进本会话对话队列（如地图的「直接生成底图」）。 */
   readonly ask: (text: string) => Promise<void>
+  /** Reapply the official IDE panel arrangement without creating content. */
+  readonly applyLayoutSeed: () => void
   /** 新建面板提交：宿主决定落到哪条路由。 */
   readonly submitCreate: (request: CreateRequest) => void
   /** 导入卡包文件（隐藏 input 的 onChange 直达）：analyze 后单卡直通、包/文件进对话框。 */
@@ -553,12 +555,13 @@ type CanvasProps = PropsRuntime<'sidebar.right.pane.tab'> & PropsLocale<'novenSh
 /** 文档温层选择器——tab 体通过注入 hooks.docs 拿到的 hook 类型。 */
 export type DocsHook = CanvasProps['useDocs']
 
-/** 起点页：设计稿 01 的中列空态——四张动作卡加一句引导；无项目只剩一句提示。 */
-function StartTab({ t, empty, noProject, onCreate }: {
+/** IDE 起点页：先放入第一样内容，也可重用官方布局种子；不要求作品类型。 */
+function StartTab({ t, empty, noProject, onCreate, onApplyLayout }: {
   readonly t: ShellT
   readonly empty: boolean
   readonly noProject: boolean
   readonly onCreate: (kind: CreateKind) => void
+  readonly onApplyLayout: () => void
 }) {
   if (noProject) {
     return (
@@ -588,10 +591,24 @@ function StartTab({ t, empty, noProject, onCreate }: {
             <span className="nv-start-glyph">{glyph.file(22)}</span>
             <span>{t('canvas.start.doc')}</span>
           </button>
+          <button type="button" className="nv-start-card" onClick={() => onCreate('comic')}>
+            <span className="nv-start-glyph">{glyph.image(22)}</span>
+            <span>{t('canvas.start.comic')}</span>
+          </button>
           <button type="button" className="nv-start-card" onClick={() => onCreate('import')}>
             <span className="nv-start-glyph">{glyph.download(22)}</span>
             <span>{t('canvas.start.import')}</span>
           </button>
+        </div>
+        <div className="nv-start-layouts" aria-label={t('canvas.layout.label')}>
+          <button type="button" className="nv-start-layout nv-start-layout-official" onClick={onApplyLayout}>
+            <span className="nv-start-layout-diagram" aria-hidden="true"><i /><i /><i /></span>
+            <span><strong>{t('canvas.layout.official')}</strong><small>{t('canvas.layout.official.sub')}</small></span>
+          </button>
+          <div className="nv-start-layout nv-start-layout-free">
+            <span className="nv-start-layout-diagram" aria-hidden="true"><i /><i /></span>
+            <span><strong>{t('canvas.layout.free')}</strong><small>{t('canvas.layout.free.sub')}</small></span>
+          </div>
         </div>
         <div className="nv-start-hint">{t('canvas.start.hint')}</div>
       </div>
@@ -1555,6 +1572,7 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
       {tab.kind === 'start' && (
         <StartTab t={t} noProject={project === undefined}
           empty={(tree?.cards.length ?? 0) === 0 && (tree?.docs.length ?? 0) === 0 && (tree?.works.length ?? 0) === 0}
+          onApplyLayout={props.applyLayoutSeed}
           onCreate={kind => { if (kind === 'import') importRef.current?.click(); else actions.openDialog(session, kind) }} />
       )}
       {tab.kind === 'card' && (

@@ -80,7 +80,7 @@ describe('ui-sidebar apply', () => {
     expect(leading[0]!.locale).toBe('sidebar')
     expect(leading[0]!.inject).toBe(b.slots.entries('sidebar')[0]!.inject)
     const injected = (b.slots.entries('sidebar')[0]!.inject as () => SidebarRootInjected)()
-    expect(Object.keys(injected)).toEqual(['startSession', 'toggleSidebar', 'selectPanel', 'hooks'])
+    expect(Object.keys(injected)).toEqual(['startSession', 'toggleSidebar', 'selectPanel', 'activatePanel', 'hooks'])
     expect(injected.hooks.panels.getSnapshot()).toEqual([])
     expect(b.slots.entries('main')).toEqual([])
     // Both arms delegate to the Workspace UI's shared New Session action.
@@ -93,7 +93,10 @@ describe('ui-sidebar apply', () => {
     const panelId = 'custom-panel' as MainPanelId
     injected.selectPanel(panelId)
     expect(b.layout.selectPanel).toHaveBeenCalledExactlyOnceWith(panelId)
-    expectTypeOf<Parameters<SidebarRootInjected['selectPanel']>[0]>().toEqualTypeOf<MainPanelId>()
+    injected.activatePanel?.(panelId, {} as HTMLElement)
+    expect(b.layout.selectPanel).toHaveBeenCalledTimes(2)
+    expect(b.layout.selectPanel).toHaveBeenLastCalledWith(panelId)
+    expectTypeOf<Parameters<NonNullable<SidebarRootInjected['activatePanel']>>[0]>().toEqualTypeOf<MainPanelId>()
   })
 
   it('waits for the sidebar declaration before registering', async () => {
