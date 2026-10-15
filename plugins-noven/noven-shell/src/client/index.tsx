@@ -40,6 +40,7 @@ import type { ObservableSnapshot, SnapshotStore } from '@deepseek-ai/dsh-client-
 import { Home, fmt } from './pages/Home.tsx'
 import { notifyUndo } from './ui/interact.tsx'
 import { cardCache } from './ui/retain.ts'
+import { forgetColdWhere } from './ui/cold-store.ts'
 import { Create } from './pages/Create.tsx'
 import { Me } from './pages/Me.tsx'
 import { Messages } from './pages/Messages.tsx'
@@ -76,7 +77,8 @@ import { ContentTree, type TreeInjected } from './tree.tsx'
 import type { TranscriptMsg, TranscriptState } from './stage-phone.tsx'
 import { foldConvEntries, type ConvChannel, type ConvEntry, type ConvMsg, type ConvsMap } from './conv.tsx'
 import type { CreateRequest } from './creation.tsx'
-import { novenTreeSource, treeOp, fileOp, presentNode, importAnalyze, importCommit } from './tree-api.ts'
+import { bindTreeColdCache, novenTreeSource, treeOp, fileOp, presentNode, importAnalyze, importCommit } from './tree-api.ts'
+import { readCachedTree, writeCachedTree, forgetCachedTree } from './tree-cache.ts'
 import { capturePanelGhost, installPanelGhost } from './panel-ghost.ts'
 import { en, zh } from './locales.ts'
 
@@ -1004,6 +1006,7 @@ function sidecarSource(sessions: ClientContext['sessions'], sessionId: SessionId
     seen = feed.getSnapshot().entries.length
     disposeFeed = feed.subscribe(() => {
       const entries = feed.getSnapshot().entries
+      if (feed.getSnapshot().change.kind === 'replace') { messages = []; busy = false; seen = 0 }
       fold(entries.slice(seen))
       seen = entries.length
       set({ ...snapshot, admin: { messages, busy } })
@@ -1481,24 +1484,15 @@ export function apply(ctx: ClientContext): void {
   }, 'noven-shell: project focus')
 
   /** 内容树轮询源：跟着当前项目走；未绑会话时按裸 root 聚合。 */
+  bindTreeColdCache({
+    read: root => readCachedTree(root),
+    write: (root, tree) => { writeCachedTree(root, tree) },
+  })
   const treeSource = novenTreeSource(() => {
     const focus = focusSnapshot
     if (focus === undefined) return undefined
     return focus.sessionId !== undefined ? { sessionId: focus.sessionId, scope: focus.root } : { root: focus.root, scope: focus.root }
   })
-
-  // 启动时无绑定会话：回最近有工作区的会话；会话目录后到齐也补一次。只做一次。
-  ctx.effect(() => {
-    let tried = false
-    const maybeOpen = (): void => {
-      if (tried || ctx.uiSession.adapter.current.getSnapshot().key !== undefined) return
-      const recent = recentSession()
-      if (recent !== undefined) { tried = true; ctx.uiWorkspace.openSession(recent.id) }
-    }
-    const unsubscribe = ctx.sessions.list.subscribe(maybeOpen)
-    maybeOpen()
-    return unsubscribe
-  }, 'noven-shell: reopen recent session')
 
   /** 当前项目的卡地址：绑了会话走 session，裸项目走 root。 */
   const currentCardAddr = (): CardAddr => {
@@ -2254,6 +2248,12 @@ export function apply(ctx: ClientContext): void {
       removeProject: async (root) => {
         if (isMiscRoot(root)) return
         await projectOp({ op: 'unregister', root })
+        // The project is gone: drop its persisted tree snapshot so a re-created
+        // folder with the same path never flashes the old world on reload.
+        forgetCachedTree(root)
+        // Cold card/transcript snapshots are keyed with the project root in
+        // their address — drop every entry belonging to the removed project.
+        forgetColdWhere('card', key => key.startsWith(`${root}::`))
         projects.refresh()
       },
       // 项目名的权威是注册表 title：rename 写注册表（顺带刷纹身备份），再单向

@@ -208,6 +208,24 @@ export async function importCommit(addr: CardAddr, name: string, file: string, t
 
 const POLL_MS = 2000
 
+/**
+ * Cold-layer bridge: the in-session cache forgets everything on reload, so a
+ * page reload would wait for a fresh round-trip before showing the drawer.
+ * These hooks are assigned by the shell (tree-cache.ts reads/writes
+ * localStorage); the source stays storage-agnostic for tests.
+ */
+let coldRead: ((scope: string) => unknown) | undefined
+let coldWrite: ((scope: string, tree: NovenTree) => void) | undefined
+
+/** Wire the persistent tree cache in (called once from the shell). */
+export function bindTreeColdCache(hooks: {
+  readonly read?: (scope: string) => unknown
+  readonly write?: (scope: string, tree: NovenTree) => void
+}): void {
+  coldRead = hooks.read
+  coldWrite = hooks.write
+}
+
 const api = (addr: CardAddr): string => addr.sessionId !== undefined
   ? `/api/noven-tree?session=${encodeURIComponent(addr.sessionId)}`
   : `/api/noven-tree?root=${encodeURIComponent(addr.root ?? '')}`
@@ -252,12 +270,17 @@ export function novenTreeSource(addr: () => (CardAddr & { readonly scope?: strin
     const key = target === undefined ? undefined : target.scope ?? api(target)
     if (key !== lastKey) {
       lastKey = key
-      publish(key === undefined ? undefined : byScope.get(key))
+      // Cold layer first: after a reload the in-memory map is empty, so seed
+      // the first paint from the persisted snapshot instead of showing an
+      // empty drawer until the first round-trip lands.
+      const cold = key === undefined ? undefined : byScope.get(key) ?? (coldRead?.(key) as NovenTree | undefined)
+      publish(key === undefined ? undefined : cold)
     }
     if (target === undefined || key === undefined) return
     const next = await fetchNovenTree(target, byScope.get(key)?.revision)
     if (next === undefined || next === 'unchanged') return
     byScope.set(key, next)
+    coldWrite?.(key, next)
     // 请求在飞期间可能已切走：只在仍是同一项目时发布。
     if (lastKey === key) publish(next)
   }

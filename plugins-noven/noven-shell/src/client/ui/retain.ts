@@ -14,6 +14,7 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { CardAddr, CardState } from '../card-api.ts'
+import { readColdSync, writeCold, forgetCold, type ColdNamespace } from './cold-store.ts'
 
 // ── card snapshots ─────────────────────────────────────────────────────────
 
@@ -44,8 +45,15 @@ export const cardCache = {
    */
   put(addr: CardAddr, cardId: string, state: CardState | undefined): void {
     const key = cardKey(addr, cardId)
-    if (state === undefined) cards.delete(key)
-    else cards.set(key, state)
+    if (state === undefined) {
+      cards.delete(key)
+      // The card was explicitly removed/deleted: drop its cold snapshot too so
+      // a re-created card with the same id never flashes the old document.
+      forgetCold('card', key)
+    } else {
+      cards.set(key, state)
+      writeCold('card', key, state)
+    }
     for (const listener of cardListeners.get(key) ?? []) listener(state)
   },
 }
@@ -74,8 +82,12 @@ export function useRetainedCard(
   load: (addr: CardAddr, cardId: string) => Promise<CardState | undefined>,
 ): RetainedCard {
   const key = addr === null || cardId === undefined ? undefined : cardKey(addr, cardId)
-  const seed = (): CardState | 'loading' | undefined =>
-    addr === null || cardId === undefined ? undefined : cardCache.get(addr, cardId) ?? 'loading'
+  const seed = (): CardState | 'loading' | undefined => {
+    if (addr === null || cardId === undefined || key === undefined) return undefined
+    // Cold layer first after a reload: render the persisted document on the
+    // first paint, then the background refresh silently replaces it.
+    return cardCache.get(addr, cardId) ?? readColdSync<CardState>('card', key) ?? 'loading'
+  }
   const [state, setLocal] = useState<CardState | 'loading' | undefined>(seed)
   const addrRef = useRef(addr)
   addrRef.current = addr
@@ -87,8 +99,11 @@ export function useRetainedCard(
     if (target === null || cardId === undefined) return undefined
     const next = await loadRef.current(target, cardId)
     // 取数失败（网络/会话休眠）与「卡没了」在 fetchCard 里同为 undefined——
-    // 有快照时不让一次失败把屏清空；卡真被删的路径由删除方显式 put(undefined)。
-    if (next === undefined && cardCache.get(target, cardId) !== undefined) return cardCache.get(target, cardId)
+    // 有快照时不让一次失败把屏清空（内存或冷层都行）；卡真被删的路径由删除方显式 put(undefined)。
+    if (next === undefined && (cardCache.get(target, cardId) !== undefined
+      || (key !== undefined && readColdSync<CardState>('card', key) !== undefined))) {
+      return cardCache.get(target, cardId) ?? (key === undefined ? undefined : readColdSync<CardState>('card', key))
+    }
     cardCache.put(target, cardId, next)
     return next
   }, [cardId, key])

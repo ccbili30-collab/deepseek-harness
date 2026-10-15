@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json && tsdown",
-    "test": "node tests/frame.mjs && node tests/transcript.mjs && node tests/retain.mjs"
+    "test": "node tests/frame.mjs && node tests/transcript.mjs && node tests/retain.mjs && node tests/tree-cache.mjs && node tests/cold-store.mjs"
   },
   "engines": {
     "node": ">=20"
