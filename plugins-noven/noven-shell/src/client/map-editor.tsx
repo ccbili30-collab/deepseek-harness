@@ -403,6 +403,8 @@ interface BuiltWorld {
   readonly tree: ReturnType<typeof createPackQuadtree>
   readonly layers: ReadonlySet<WorldLayer>
   readonly canvas: HTMLCanvasElement
+  /** 矢量图层缓存：维度罩/分界/岸线/河网/路网/城邦——Path2D 建一次，每帧按样式表描。 */
+  readonly vectors: WorldVectors
   /** 各政权占格数，构建时算一次——地名分级用，不随帧重算。 */
   readonly stateCells: ReadonlyMap<number, number>
 }
@@ -483,41 +485,9 @@ const reliefColor = (h: number): string =>
   h < 24 ? RELIEF_LIGHT[0] : h < 32 ? RELIEF_LIGHT[1] : h < 40 ? RELIEF_LIGHT[2] : h < 50 ? RELIEF_LIGHT[3]
     : h < 62 ? RELIEF_LIGHT[4] : h < 75 ? RELIEF_LIGHT[5] : h < 88 ? RELIEF_LIGHT[6] : RELIEF_LIGHT[7]
 
-/** 逐格铺底色 + 按维度（国家/文化）叠色罩和分界边。dimOf 返回格的维度 id，colorOf 返回该实体色。 */
-const paintDimOverlay = (c: CanvasRenderingContext2D, pack: PackGraph, n: number,
-  dimOf: (i: number) => number, colorOf: (id: number) => string | undefined): void => {
-  const cells = pack.cells
-  for (let i = 0; i < n; i++) {
-    const s = dimOf(i)
-    if (s === 0 || !pack.features[cells.f[i]]?.land) continue
-    const color = colorOf(s)
-    if (color === undefined) continue
-    const poly = getPolygon(i, pack)
-    if (poly.length < 3) continue
-    c.globalAlpha = .16
-    c.fillStyle = color
-    c.beginPath()
-    poly.forEach((p, j) => { j === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
-    c.closePath(); c.fill()
-  }
-  c.globalAlpha = 1
-  // 分界：相邻格分属不同维度时描公共边
-  c.strokeStyle = 'rgba(70,80,90,.45)'; c.lineWidth = 1.1
-  for (let i = 0; i < n; i++) {
-    const si = dimOf(i)
-    if (si === 0 || cells.h[i] < 20) continue
-    for (const j of cells.c[i]) {
-      if (j <= i || cells.h[j] < 20 || dimOf(j) === si || dimOf(j) === 0) continue
-      const shared = cells.v[i].filter(v => cells.v[j].includes(v))
-      if (shared.length < 2) continue
-      const a = pack.vertices.p[shared[0]], b = pack.vertices.p[shared[1]]
-      c.beginPath(); c.moveTo(a[0], a[1]); c.lineTo(b[0], b[1]); c.stroke()
-    }
-  }
-}
-
-/** 世界 → 位图：水体垫底，陆地按视图维度填色，岸线描边，湖泊补水色，河网，城邦点+标签。 */
-const paintWorld = (world: World, layers: ReadonlySet<WorldLayer>, view: WorldView): HTMLCanvasElement => {
+/** 世界 → 地形位图：只烤视图无关的底（水体、陆地填色、湖泊）。
+ *  维度色罩、分界、岸线、河网、路网、城邦全部走矢量层——缩放时线宽恒定、不再变糊变粗。 */
+const paintWorld = (world: World, view: WorldView): HTMLCanvasElement => {
   const { config, pack } = world
   const cv = document.createElement('canvas')
   cv.width = config.width; cv.height = config.height
@@ -526,7 +496,7 @@ const paintWorld = (world: World, layers: ReadonlySet<WorldLayer>, view: WorldVi
   const cells = pack.cells
   const n = cells.i.length
   c.fillStyle = WATER; c.fillRect(0, 0, cv.width, cv.height)
-  // 陆地底色：生物带视图和政治/文化视图用生物带浅色，地形视图用高程色带
+  // 陆地底色：地形视图用高程色带，其余视图用生物带浅色
   for (let i = 0; i < n; i++) {
     if (!pack.features[cells.f[i]]?.land) continue
     const poly = getPolygon(i, pack)
@@ -538,60 +508,110 @@ const paintWorld = (world: World, layers: ReadonlySet<WorldLayer>, view: WorldVi
     poly.forEach((p, j) => { j === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
     c.closePath(); c.fill()
   }
-  // 维度色罩+分界：政治=国界、文化=文化界；生物/地形视图不叠
-  if (view === 'political' && layers.has('states') && pack.states.length > 1) {
-    paintDimOverlay(c, pack, n, i => cells.state[i] ?? 0, s => pack.states[s]?.color)
-  } else if (view === 'cultural' && pack.cultures.length > 1) {
-    paintDimOverlay(c, pack, n, i => cells.culture[i] ?? 0, s => pack.cultures[s]?.color)
-  }
-  // 湖泊补回水色 + 陆地/岛屿描岸线
   for (const f of pack.features) {
-    if (f.i === 0 || f.removed) continue
+    if (f.i === 0 || f.removed || f.type !== 'lake') continue
     const path = featurePath(pack, f.i)
-    if (path === null) continue
-    if (f.type === 'lake') { c.fillStyle = LAKE; c.fill(path) }
-    if (f.land) { c.strokeStyle = COAST; c.lineWidth = 1.2; c.stroke(path) }
+    if (path !== null) { c.fillStyle = LAKE; c.fill(path) }
   }
-  // 河网
-  c.fillStyle = RIVER
+  return cv
+}
+
+/** 折线点列 → 未闭合 Path2D（pack 坐标）。 */
+const polylinePath = (pts: readonly (readonly number[] | XY)[]): Path2D => {
+  const p = new Path2D()
+  pts.forEach((pt, i) => { i === 0 ? p.moveTo(pt[0] ?? 0, pt[1] ?? 0) : p.lineTo(pt[0] ?? 0, pt[1] ?? 0) })
+  return p
+}
+
+/** 矢量图层：维度色罩/分界、岸线、河网、路网、城邦点——构建一次缓存 Path2D，
+ *  每帧按屏幕恒定线宽描，缩放只换样式不换几何。 */
+interface WorldVectors {
+  readonly coast: Path2D
+  readonly rivers: Path2D
+  readonly routesRoads: Path2D
+  readonly routesSea: Path2D
+  readonly routesOther: Path2D
+  /** 当前视图维度的每实体色罩路径与全部分界边；非维度视图为空。 */
+  readonly dimFills: ReadonlyMap<number, Path2D>
+  readonly dimBorder: Path2D | null
+  readonly burgs: readonly { readonly i: number, readonly x: number, readonly y: number, readonly capital: boolean, readonly port: boolean, readonly major: boolean }[]
+}
+
+const buildVectors = (world: World, view: WorldView): WorldVectors => {
+  const { pack } = world
+  const coast = new Path2D()
+  for (const f of pack.features) {
+    if (f.i === 0 || f.removed || !f.land) continue
+    const p = featurePath(pack, f.i)
+    if (p !== null) coast.addPath(p)
+  }
+  const rivers = new Path2D()
   for (const r of pack.rivers) {
     if (r.removed || r.points === undefined || r.points.length < 2) continue
-    c.fill(new Path2D(getRiverPath(r.points, r.widthFactor, r.sourceWidth)))
+    rivers.addPath(new Path2D(getRiverPath(r.points, r.widthFactor, r.sourceWidth)))
   }
-  // 路网：航线=蓝虚线，小径=细虚线，主干道=实线；压在城邦点之下
-  if (layers.has('routes')) {
-    for (const r of pack.routes) {
-      if (r.removed || r.points.length < 2) continue
-      c.beginPath()
-      r.points.forEach((p, i) => { i === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
-      if (r.group === 'searoutes') { c.strokeStyle = 'rgba(62,124,171,.45)'; c.lineWidth = 0.8; c.setLineDash([3, 2.4]) }
-      else if (r.group === 'roads') { c.strokeStyle = 'rgba(112,86,56,.55)'; c.lineWidth = 0.9; c.setLineDash([]) }
-      else { c.strokeStyle = 'rgba(112,86,56,.3)'; c.lineWidth = 0.55; c.setLineDash([1.6, 1.8]) }
-      c.stroke()
-    }
-    c.setLineDash([])
+  const routesRoads = new Path2D(), routesSea = new Path2D(), routesOther = new Path2D()
+  for (const r of pack.routes) {
+    if (r.removed || r.points.length < 2) continue
+    const target = r.group === 'searoutes' ? routesSea : r.group === 'roads' ? routesRoads : routesOther
+    target.addPath(polylinePath(r.points))
   }
-  // 城邦：都邑=双环，城镇=小点；港口描蓝
-  if (layers.has('burgs')) {
-    for (const b of pack.burgs) {
-      if (!b?.i || b.removed) continue
-      c.beginPath()
-      c.arc(b.x, b.y, b.capital ? 2.4 : 1.6, 0, Math.PI * 2)
-      c.fillStyle = '#FFFFFF'
-      c.fill()
-      c.strokeStyle = b.port ? '#3E7CAB' : '#4A4A55'
-      c.lineWidth = b.capital ? 1.4 : 0.9
-      c.stroke()
-      if (b.capital) {
-        c.beginPath()
-        c.arc(b.x, b.y, 0.9, 0, Math.PI * 2)
-        c.fillStyle = '#4A4A55'
-        c.fill()
+  // 维度色罩：维度视图才建；fills 按实体分组（各自取色），border 合并描一次
+  const dimFills = new Map<number, Path2D>()
+  let dimBorder: Path2D | null = null
+  const dimOf = view === 'political' ? (i: number) => pack.cells.state[i] ?? 0
+    : view === 'cultural' ? (i: number) => pack.cells.culture[i] ?? 0
+    : null
+  if (dimOf !== null) {
+    dimBorder = new Path2D()
+    const cells = pack.cells
+    for (let i = 0; i < cells.i.length; i++) {
+      const id = dimOf(i)
+      if (id === 0 || !pack.features[cells.f[i]]?.land) continue
+      const poly = getPolygon(i, pack)
+      if (poly.length < 3) continue
+      const fill = dimFills.get(id) ?? new Path2D()
+      poly.forEach((p, j) => { j === 0 ? fill.moveTo(p[0], p[1]) : fill.lineTo(p[0], p[1]) })
+      fill.closePath()
+      dimFills.set(id, fill)
+      for (const j of cells.c[i]) {
+        if (j <= i || cells.h[j] < 20 || dimOf(j) === id) continue
+        const shared = cells.v[i].filter(v => cells.v[j].includes(v))
+        if (shared.length < 2) continue
+        const a = pack.vertices.p[shared[0]], b = pack.vertices.p[shared[1]]
+        if (a === undefined || b === undefined) continue
+        dimBorder.moveTo(a[0], a[1]); dimBorder.lineTo(b[0], b[1])
       }
     }
   }
-  // 标签不在此烘焙——draw() 里按当前缩放做屏幕空间动态标名
-  return cv
+  const burgs = pack.burgs
+    .filter((b): b is NonNullable<typeof b> => b !== undefined && b !== null && b.i > 0 && b.removed !== true)
+    .map(b => ({ i: b.i, x: b.x, y: b.y, capital: Boolean(b.capital), port: Boolean(b.port), major: Boolean(b.capital) || Boolean(b.port) || (b.population ?? 0) >= 4 }))
+  return { coast, rivers, routesRoads, routesSea, routesOther, dimFills, dimBorder, burgs }
+}
+
+/** 样式规则表：线宽/色罩强度 = f(相对缩放 z, 视图)。散落的魔法阈值集中在这。 */
+interface MapStyle {
+  /** 维度色罩不透明度：远=平涂舆图，近=淡罩透地形 */
+  readonly dimAlpha: number
+  /** 维度分界线宽（屏幕 px） */
+  readonly borderW: number
+  readonly coastW: number
+  readonly riverAlpha: number
+  readonly routeAlpha: number
+  /** 城邦点档位：0=只画都邑，1=加港口/大镇，2=全部 */
+  readonly burgTier: number
+}
+const mapStyle = (z: number, view: WorldView): MapStyle => {
+  const dim = view === 'political' || view === 'cultural'
+  return {
+    dimAlpha: !dim ? 0 : z < 1.6 ? .5 : z < 3.5 ? .34 : z < 7 ? .22 : .15,
+    borderW: !dim ? 0 : z < 1.6 ? 2.4 : z < 3.5 ? 1.7 : 1.1,
+    coastW: z < 1.6 ? 1.6 : z < 4 ? 1.2 : 1,
+    riverAlpha: z < 1.6 ? .55 : .8,
+    routeAlpha: z < 2 ? .4 : .65,
+    burgTier: z < 1.4 ? 0 : z < 4 ? 1 : 2,
+  }
 }
 
 /** 点到折线段的最小距离²。 */
@@ -949,7 +969,10 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         const s = world.pack.cells.state[i] ?? 0
         stateCells.set(s, (stateCells.get(s) ?? 0) + 1)
       }
-      const built: BuiltWorld = { world, tree: createPackQuadtree(world.pack), layers: worldLayers, canvas: paintWorld(world, worldLayers, worldView), stateCells }
+      const built: BuiltWorld = {
+        world, tree: createPackQuadtree(world.pack), layers: worldLayers,
+        canvas: paintWorld(world, worldView), vectors: buildVectors(world, worldView), stateCells,
+      }
       builtRef.current = { key, built }
       return built
     } catch {
@@ -1288,6 +1311,63 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     c.setTransform(dpr * v.s, 0, 0, dpr * v.s, dpr * v.x, dpr * v.y)
     if (built !== null) {
       c.drawImage(built.canvas, 0, 0, built.canvas.width, built.canvas.height, 0, 0, aspect, 1)
+      // 矢量层：样式全走 mapStyle(z, view)——线宽屏幕恒定，维度罩强度随 z 渐变（远=舆图平涂）
+      {
+        const k = v.s / built.world.config.height   // 屏 px / pack px
+        const fs = Math.min(stage.clientWidth / aspect, stage.clientHeight) * .96
+        const st = mapStyle(v.s / fs, worldView)
+        const vec = built.vectors
+        c.save(); c.scale(1 / built.world.config.height, 1 / built.world.config.height)
+        if (st.dimAlpha > 0 && vec.dimFills.size > 0) {
+          const pack = built.world.pack
+          const colorOf = worldView === 'political'
+            ? (id: number) => pack.states[id]?.color
+            : (id: number) => pack.cultures[id]?.color
+          c.globalAlpha = st.dimAlpha
+          for (const [id, p] of vec.dimFills) {
+            const col = colorOf(id)
+            if (col === undefined) continue
+            c.fillStyle = col; c.fill(p)
+          }
+          c.globalAlpha = 1
+          if (vec.dimBorder !== null) {
+            c.strokeStyle = 'rgba(70,80,90,.5)'
+            c.lineWidth = st.borderW / k
+            c.stroke(vec.dimBorder)
+          }
+        }
+        c.strokeStyle = COAST; c.lineWidth = st.coastW / k
+        c.stroke(vec.coast)
+        c.globalAlpha = st.riverAlpha; c.fillStyle = RIVER
+        c.fill(vec.rivers); c.globalAlpha = 1
+        if (built.layers.has('routes')) {
+          c.globalAlpha = st.routeAlpha
+          c.strokeStyle = '#3E7CAB'; c.lineWidth = .9 / k
+          c.setLineDash([3 / k, 2.4 / k]); c.stroke(vec.routesSea)
+          c.setLineDash([])
+          c.strokeStyle = '#705638'; c.lineWidth = .9 / k; c.stroke(vec.routesRoads)
+          c.globalAlpha = st.routeAlpha * .55; c.lineWidth = .55 / k
+          c.setLineDash([1.6 / k, 1.8 / k]); c.stroke(vec.routesOther)
+          c.setLineDash([]); c.globalAlpha = 1
+        }
+        if (built.layers.has('burgs')) {
+          for (const b of vec.burgs) {
+            if (st.burgTier < 2 && !(b.capital || (st.burgTier === 1 && b.major))) continue
+            c.beginPath()
+            c.arc(b.x, b.y, (b.capital ? 3.2 : 2.2) / k, 0, Math.PI * 2)
+            c.fillStyle = '#FFFFFF'; c.fill()
+            c.strokeStyle = b.port ? '#3E7CAB' : '#4A4A55'
+            c.lineWidth = (b.capital ? 1.4 : 0.9) / k
+            c.stroke()
+            if (b.capital) {
+              c.beginPath()
+              c.arc(b.x, b.y, 1.1 / k, 0, Math.PI * 2)
+              c.fillStyle = '#4A4A55'; c.fill()
+            }
+          }
+        }
+        c.restore()
+      }
       // 选中高亮：特征描绿边，河网描绿芯，城邦画绿圈
       if (selWorld !== null) {
         const u = 1 / built.world.config.height
@@ -1658,7 +1738,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       x = Math.max(8, Math.min(x, W - cw - 8)); y = Math.max(8, y)
       wc.style.left = `${Math.round(x)}px`; wc.style.top = `${Math.round(y)}px`
     }
-  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, hoverRegion, hoverWorld, markWork, mode, objWorkPts, pal?.color, placing, resolveBuilt, resolvedPts, routing, selId, selRegion, selWorld, tool, toWork])
+  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, hoverRegion, hoverWorld, markWork, mode, objWorkPts, pal?.color, placing, resolveBuilt, resolvedPts, routing, selId, selRegion, selWorld, tool, toWork, worldView])
 
   useEffect(() => { draw() })
 
