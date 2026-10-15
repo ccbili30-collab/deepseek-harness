@@ -774,6 +774,17 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const [worldRenaming, setWorldRenaming] = useState(false)
   const worldArm = useArmedPress()
   useEffect(() => { setWorldRenaming(false); worldArm.reset() }, [selWorld, worldArm.reset])
+  /** 悬停实体（仅选择工具下维护）：驱动淡描边、光标与悬停提示。 */
+  const [hoverWorld, setHoverWorld] = useState<WorldHit | null>(null)
+  /** 悬停提示：静止 ~300ms 才出现；位置是舞台内坐标。 */
+  const [tip, setTip] = useState<{ x: number, y: number, title: string, dims: { label: string, cur: boolean }[] } | null>(null)
+  const tipTimerRef = useRef(0)
+  const tipHitRef = useRef<WorldHit | null>(null)
+  /** 实体浮条锚点（世界 px）与元素——位置在 draw() 里按相机每帧换算。 */
+  const wcardRef = useRef<HTMLDivElement | null>(null)
+  const selAnchorRef = useRef<[number, number] | null>(null)
+  /** 最近一次可撤销的世界编辑，⌘Z 用它。 */
+  const lastUndoRef = useRef<(() => void) | null>(null)
   const [worldLayers, setWorldLayers] = useState<ReadonlySet<WorldLayer>>(() => new Set<WorldLayer>(['states', 'routes', 'burgs', 'names']))
   /** 主视图：切维度改着色/命中/实体卡，图层开关（路线/城邦/地名）与正交。 */
   const [worldView, setWorldView] = useState<WorldView>('political')
@@ -786,6 +797,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   /** 连线中未收的点（归一化存储坐标）；pathTick 仅驱动条上点数展示。 */
   const pathRef = useRef<XY[]>([])
   const [, setPathTick] = useState(0)
+  /** 视图切换：悬停与提示的维度语义失效，立即清。 */
+  useEffect(() => { setHoverWorld(null); window.clearTimeout(tipTimerRef.current); setTip(null) }, [worldView])
   /** 活动工具：放置/连线/划界刷 armed 时压过选择。 */
   const tool: MapTool = brush !== null ? 'brush'
     : placing !== null ? 'place'
@@ -828,7 +841,19 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         if (brush !== null || placing !== null || routing !== null) {
           setBrush(null); setPlacing(null); setRouting(null)
           e.preventDefault(); e.stopImmediatePropagation()
+          return
         }
+        // 阶梯末级：取消选中，仍无消费则放行给壳层关页面
+        if (selWorld !== null || selId !== null) {
+          setSelWorld(null); setSelId(null); setObjForm(null)
+          e.preventDefault(); e.stopImmediatePropagation()
+        }
+        return
+      }
+      // ⌘Z：撤销最近一次世界编辑（hover 在地图上才消费）
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'z' || e.key === 'Z') && !e.shiftKey) {
+        const u = lastUndoRef.current
+        if (u !== null && hoverRef.current) { u(); e.preventDefault(); e.stopImmediatePropagation() }
         return
       }
       if (routing !== null && e.key === 'Enter') { commitRoute(); e.preventDefault(); e.stopImmediatePropagation(); return }
@@ -844,7 +869,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     window.addEventListener('keydown', onKey, true)
     return () => window.removeEventListener('keydown', onKey, true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brush, placing, routing])
+  }, [brush, placing, routing, selWorld, selId])
   const toWork = useCallback((p: XY): XY => [p[0] * aspectRef.current, p[1]], [])
   const toStore = useCallback((p: XY): XY => [clamp01(p[0] / aspectRef.current), clamp01(p[1])], [])
   const objWorkPts = useCallback((o: FaceObj | LineObj): XY[] => o.pts.map(toWork), [toWork])
@@ -930,6 +955,35 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     return null
   }, [selWorld, resolveBuilt])
 
+  /** 悬停维度区域的高亮路径；与选中同实体时跳过（选中描边已更醒目）。 */
+  const hoverRegion = useMemo(() => {
+    if (hoverWorld === null) return null
+    if (selWorld !== null && selWorld.kind === hoverWorld.kind && selWorld.id === hoverWorld.id) return null
+    const built = resolveBuilt()
+    if (built === null) return null
+    const cells = built.world.pack.cells
+    if (hoverWorld.kind === 'state') return dimRegionPath(built.world.pack, i => cells.state[i] ?? 0, hoverWorld.id)
+    if (hoverWorld.kind === 'culture') return dimRegionPath(built.world.pack, i => cells.culture[i] ?? 0, hoverWorld.id)
+    if (hoverWorld.kind === 'biome') return dimRegionPath(built.world.pack, i => cells.biome[i] ?? 0, hoverWorld.id)
+    if (hoverWorld.kind === 'feature') {
+      const fp = featurePath(built.world.pack, hoverWorld.id)
+      return fp === null ? null : { fill: fp, border: fp }
+    }
+    return null
+  }, [hoverWorld, selWorld, resolveBuilt])
+
+  /** 实体浮条锚点：维度实体用 pole，城邦用位置，其余用点击点。 */
+  useEffect(() => {
+    if (selWorld === null) { selAnchorRef.current = null; return }
+    const built = resolveBuilt()
+    const pw = built?.world.config.width ?? 0, ph = built?.world.config.height ?? 0
+    let a: [number, number] | null = null
+    if (selWorld.kind === 'state') { const p = built?.world.pack.states[selWorld.id]?.pole; if (p !== undefined) a = [p[0], p[1]] }
+    if (selWorld.kind === 'burg') { const b = built?.world.pack.burgs.find(bg => bg?.i === selWorld.id); if (b !== undefined) a = [b.x, b.y] }
+    if (a === null && selWorld.pos !== undefined) a = [selWorld.pos[0] * pw, selWorld.pos[1] * ph]
+    selAnchorRef.current = a
+  }, [selWorld, resolveBuilt])
+
   // localhost 调试钩子：浏览器自动化拿当前世界几何做确定性命中（不随包发到远端）。
   useEffect(() => {
     if (location.hostname !== '127.0.0.1' && location.hostname !== 'localhost') return
@@ -978,23 +1032,22 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
    *  （回声往返后 edits 是解码克隆且字段序不同，不能比对象引用）。 */
   const pushWorldEditUndo = useCallback((edit: WorldEntityEdit, text: string): void => {
     pushWorldEdit(edit)
-    notifyUndo({
-      text,
-      undoLabel: t('ui.undo'),
-      undo: () => {
-        const src = docRef.current.world
-        if (src?.edits === undefined) return
-        const sigOf = (x: WorldEntityEdit): string =>
-          `${x.kind}|${x.key ?? ''}|${x.name ?? ''}|${x.id ?? ''}|${JSON.stringify(x.stroke ?? null)}|${JSON.stringify(x.path ?? null)}|${x.group ?? ''}`
-        const idx = src.edits.map(sigOf).lastIndexOf(sigOf(edit))
-        if (idx < 0) return
-        const edits = [...src.edits]
-        edits.splice(idx, 1)
-        docRef.current = { ...docRef.current, world: { ...src, edits } }
-        builtRef.current = null
-        commit(); bump()
-      },
-    })
+    const undo = (): void => {
+      lastUndoRef.current = null
+      const src = docRef.current.world
+      if (src?.edits === undefined) return
+      const sigOf = (x: WorldEntityEdit): string =>
+        `${x.kind}|${x.key ?? ''}|${x.name ?? ''}|${x.id ?? ''}|${JSON.stringify(x.stroke ?? null)}|${JSON.stringify(x.path ?? null)}|${x.group ?? ''}`
+      const idx = src.edits.map(sigOf).lastIndexOf(sigOf(edit))
+      if (idx < 0) return
+      const edits = [...src.edits]
+      edits.splice(idx, 1)
+      docRef.current = { ...docRef.current, world: { ...src, edits } }
+      builtRef.current = null
+      commit(); bump()
+    }
+    lastUndoRef.current = undo
+    notifyUndo({ text, undoLabel: t('ui.undo'), undo })
   }, [commit, bump, pushWorldEdit, t])
 
   /** 连线收线：草稿折线落成 route 实体 edit；点数不够则丢弃。定义在 draw 之后——
@@ -1207,6 +1260,45 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           if (r?.points !== undefined && r.points.length > 1) {
             c.save(); c.scale(u, u)
             c.strokeStyle = ACCENT; c.lineWidth = 3 / v.s * built.world.config.height; c.lineJoin = 'round'
+            c.stroke(new Path2D(getRiverPath(r.points, r.widthFactor, r.sourceWidth)))
+            c.restore()
+          }
+        }
+      }
+      // 悬停反馈：比选中描边更淡的虚线轮廓（同实体不重复描）
+      if (hoverWorld !== null && !(selWorld !== null && selWorld.kind === hoverWorld.kind && selWorld.id === hoverWorld.id)) {
+        const uh = 1 / built.world.config.height
+        if (hoverRegion !== null) {
+          c.save(); c.scale(uh, uh)
+          c.fillStyle = 'rgba(14,159,110,.07)'; c.fill(hoverRegion.fill)
+          c.strokeStyle = 'rgba(14,159,110,.5)'
+          c.lineWidth = 1.4 / v.s * built.world.config.height
+          c.setLineDash([4 / v.s * built.world.config.height, 3 / v.s * built.world.config.height])
+          c.stroke(hoverRegion.border)
+          c.restore()
+        } else if (hoverWorld.kind === 'burg') {
+          const b = built.world.pack.burgs.find(bg => bg?.i === hoverWorld.id)
+          if (b !== undefined) {
+            c.save(); c.scale(uh, uh)
+            c.strokeStyle = 'rgba(14,159,110,.5)'; c.lineWidth = 1.4 / v.s * built.world.config.height
+            c.beginPath(); c.arc(b.x, b.y, 4.5, 0, Math.PI * 2); c.stroke()
+            c.restore()
+          }
+        } else if (hoverWorld.kind === 'route') {
+          const r = built.world.pack.routes.find(rt => rt.i === hoverWorld.id)
+          if (r !== undefined && r.points.length > 1) {
+            c.save(); c.scale(uh, uh)
+            c.strokeStyle = 'rgba(14,159,110,.5)'; c.lineWidth = 1.4 / v.s * built.world.config.height; c.lineJoin = 'round'
+            c.beginPath()
+            r.points.forEach((p, i) => { i === 0 ? c.moveTo(p[0], p[1]) : c.lineTo(p[0], p[1]) })
+            c.stroke()
+            c.restore()
+          }
+        } else if (hoverWorld.kind === 'river') {
+          const r = built.world.pack.rivers.find(rv => rv.i === hoverWorld.id)
+          if (r?.points !== undefined && r.points.length > 1) {
+            c.save(); c.scale(uh, uh)
+            c.strokeStyle = 'rgba(14,159,110,.5)'; c.lineWidth = 2 / v.s * built.world.config.height; c.lineJoin = 'round'
             c.stroke(new Path2D(getRiverPath(r.points, r.widthFactor, r.sourceWidth)))
             c.restore()
           }
@@ -1452,7 +1544,20 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       c.beginPath(); c.arc(cp[0], cp[1], 1.5 / v.s, 0, 7)
       c.fillStyle = col; c.fill()
     }
-  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, markWork, mode, objWorkPts, pal?.color, resolveBuilt, resolvedPts, routing, selId, selRegion, selWorld, tool, toWork])
+    // 实体浮条随相机：锚点世界 px → 屏 px，实体下方优先，越界翻转/夹回
+    const wc = wcardRef.current, an = selAnchorRef.current, builtForCard = builtRef.current?.built
+    if (wc !== null && an !== null && builtForCard !== undefined) {
+      const k = v.s / builtForCard.world.config.height
+      const sx = an[0] * k + v.x, sy = an[1] * k + v.y
+      const cw = wc.offsetWidth, ch = wc.offsetHeight
+      const st = stageRef.current
+      const W = st?.clientWidth ?? 0, H = st?.clientHeight ?? 0
+      let x = sx - cw / 2, y = sy + 14
+      if (y + ch > H - 8) y = sy - ch - 14
+      x = Math.max(8, Math.min(x, W - cw - 8)); y = Math.max(8, y)
+      wc.style.left = `${Math.round(x)}px`; wc.style.top = `${Math.round(y)}px`
+    }
+  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, hoverRegion, hoverWorld, markWork, mode, objWorkPts, pal?.color, resolveBuilt, resolvedPts, routing, selId, selRegion, selWorld, tool, toWork])
 
   useEffect(() => { draw() })
 
@@ -1665,6 +1770,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     cvRef.current?.setPointerCapture(e.pointerId)
     cancelAnimationFrame(viewAnimRef.current)
+    window.clearTimeout(tipTimerRef.current)
+    setTip(null)
     const p = workOfEvent(e)
     if (e.button !== 0 || spaceRef.current) {
       gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }
@@ -1793,10 +1900,57 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     gestureRef.current = { kind: 'pan', last: [e.clientX, e.clientY], path: [p], moved: false }
   }, [brush, bump, commit, draftHow, drawLayer, editPaint, hitTest, markWork, objWorkPts, placing, pushWorldEditUndo, resolveBuilt, resolvedPts, sel, snapTarget, tool, toStore, workOfEvent, worldView])
 
+  /** 悬停提示内容：实体名 + 全维度归属，当前视图维度加粗。 */
+  const tipOf = useCallback((built: BuiltWorld, hit: WorldHit): { title: string, dims: { label: string, cur: boolean }[] } => {
+    const pack = built.world.pack
+    const name = (n: string | undefined): string =>
+      n === 'Neutrals' ? t('wg.map.world.neutrals') : n === 'Wildlands' ? t('wg.map.world.wildlands') : n ?? ''
+    let title = ''
+    if (hit.kind === 'burg') title = pack.burgs.find(b => b?.i === hit.id)?.name ?? ''
+    else if (hit.kind === 'river') title = pack.rivers.find(r => r.i === hit.id)?.name ?? t('wg.map.world.kind.river')
+    else if (hit.kind === 'route') title = pack.routes.find(r => r.i === hit.id)?.name ?? ''
+    else if (hit.kind === 'state') title = name(pack.states[hit.id]?.name)
+    else if (hit.kind === 'culture') title = name(pack.cultures[hit.id]?.name)
+    else if (hit.kind === 'feature') title = pack.features[hit.id]?.name ?? ''
+    if (title === '') title = t(`wg.map.world.kind.${hit.kind === 'biome' ? 'biome' : hit.kind === 'feature' ? pack.features[hit.id]?.type ?? 'island' : hit.kind === 'route' ? `route.${pack.routes.find(r => r.i === hit.id)?.group ?? 'roads'}` : hit.kind}` as Parameters<ShellT>[0])
+    if (hit.kind === 'biome') title = t(`wg.map.world.biome.${hit.id}` as Parameters<ShellT>[0])
+    const dims = [
+      { label: name(pack.states[hit.state]?.name), cur: worldView === 'political' },
+      { label: name(pack.cultures[hit.culture]?.name), cur: worldView === 'cultural' },
+      { label: t(`wg.map.world.biome.${hit.biome}` as Parameters<ShellT>[0]), cur: worldView === 'biomes' },
+    ]
+    return { title, dims }
+  }, [t, worldView])
+
   const onPointerMove = useCallback((e: React.PointerEvent) => {
     const p = workOfEvent(e)
     cursorRef.current = p
     const g = gestureRef.current
+    // 悬停维护（仅选择工具 + 无手势）：淡描边、pointer 光标、静止 300ms 出提示
+    if (g.kind === 'none' && tool === 'select' && !busyRef.current) {
+      const built = builtRef.current?.built ?? null
+      const hit = built !== null
+        ? hitWorld(built.world, built.tree, p[0] * built.world.config.height, p[1] * built.world.config.height, worldView, built.layers)
+        : null
+      setHoverWorld(cur => cur?.kind === hit?.kind && cur?.id === hit?.id ? cur : hit)
+      window.clearTimeout(tipTimerRef.current)
+      setTip(null)
+      if (hit !== null && built !== null) {
+        tipHitRef.current = hit
+        const sx = e.clientX, sy = e.clientY
+        tipTimerRef.current = window.setTimeout(() => {
+          const st = stageRef.current
+          if (st === null || tipHitRef.current === null) return
+          const rect = st.getBoundingClientRect()
+          const info = tipOf(built, tipHitRef.current)
+          setTip({ x: sx - rect.left + 14, y: sy - rect.top + 14, ...info })
+        }, 300)
+      }
+    } else if (hoverWorld !== null) {
+      setHoverWorld(null)
+      window.clearTimeout(tipTimerRef.current)
+      setTip(null)
+    }
     if (g.kind === 'pan') {
       const last = g.last ?? [e.clientX, e.clientY]
       if (Math.abs(e.clientX - last[0]) + Math.abs(e.clientY - last[1]) > 2) g.moved = true
@@ -1849,7 +2003,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       draw(); return
     }
     draw()
-  }, [clampView, draw, drawLayer, markWork, objWorkPts, resolvedPts, snapTarget, toStore, toWork, workOfEvent])
+  }, [clampView, draw, drawLayer, hoverWorld, markWork, objWorkPts, resolvedPts, snapTarget, tipOf, toStore, tool, toWork, workOfEvent, worldView])
 
   const onPointerUp = useCallback((e: React.PointerEvent) => {
     const g = gestureRef.current
@@ -2217,7 +2371,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
         </div>
         )}
         <canvas ref={cvRef} className="nv-maped-canvas"
-          style={brushCursor ? { cursor: 'none' } : tool === 'place' || tool === 'path' ? { cursor: 'crosshair' } : undefined}
+          style={brushCursor ? { cursor: 'none' } : tool === 'place' || tool === 'path' ? { cursor: 'crosshair' } : hoverWorld !== null ? { cursor: 'pointer' } : undefined}
           onPointerDown={onPointerDown} onPointerMove={onPointerMove} onPointerUp={onPointerUp}
           onDoubleClick={e => {
             if (routing !== null) { commitRoute(); return }
@@ -2226,8 +2380,22 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
             if (rect !== undefined) zoomStep(1.6, e.clientX - rect.left, e.clientY - rect.top)
           }}
           onPointerEnter={() => { hoverRef.current = true }}
-          onPointerLeave={() => { hoverRef.current = false; cursorRef.current = null; draw() }}
+          onPointerLeave={() => {
+            hoverRef.current = false; cursorRef.current = null
+            setHoverWorld(null); window.clearTimeout(tipTimerRef.current); setTip(null)
+            draw()
+          }}
           onContextMenu={e => e.preventDefault()} />
+        {tip !== null && (
+        <div className="nv-maped-tip" style={{ left: tip.x, top: tip.y }}>
+          <div className="nv-maped-tipt">{tip.title}</div>
+          <div className="nv-maped-tipd">
+            {tip.dims.map((d, i) => (
+              <span key={i} className={d.cur ? 'cur' : ''}>{d.label}{i < tip.dims.length - 1 ? ' · ' : ''}</span>
+            ))}
+          </div>
+        </div>
+        )}
         <div className="nv-maped-nav">
           <button type="button" title={t('wg.map.nav.zoomOut')} onClick={() => zoomStep(1 / 1.4)}>−</button>
           <button type="button" className="nv-maped-navpct" title={t('wg.map.nav.fit')} onClick={flyFit}>{zoomPct}%</button>
@@ -2279,7 +2447,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           if (selState?.name !== undefined) parts.push(dimName(selState.name) ?? '')
           if (selCulture?.name !== undefined) parts.push(dimName(selCulture.name) ?? '')
           return (
-          <div className="nv-maped-wcard">
+          <div className="nv-maped-wcard" ref={wcardRef}>
             {worldRenaming ? (
               <InlineRename className="nv-maped-wname nv-maped-wnamein" value={selName}
                 onDone={next => {

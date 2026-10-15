@@ -2014,10 +2014,17 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 .nv-maped-ok { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 .nv-maped-del { background: none; color: var(--nv-danger); }
 .nv-maped-world { display: flex; align-items: center; gap: 6px; margin-left: auto; }
-.nv-maped-wcard { position: absolute; top: 10px; left: 10px; display: flex; align-items: center; gap: 8px;
+.nv-maped-wcard { position: absolute; top: 0; left: 0; z-index: 4; display: flex; align-items: center;
+  flex-wrap: wrap; gap: 4px 8px; max-width: calc(100% - 16px);
   background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 10px;
   padding: 6px 10px; box-shadow: 0 4px 16px rgba(22,24,26,.10); }
-.nv-maped-wname { font-size: 13px; font-weight: 600; color: var(--nv-primary-text); }
+.nv-maped-tip { position: absolute; z-index: 5; pointer-events: none; max-width: 230px;
+  background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 8px;
+  padding: 6px 9px; box-shadow: 0 4px 16px rgba(22,24,26,.12); }
+.nv-maped-tipt { font-size: 12px; font-weight: 600; color: var(--nv-primary-text); }
+.nv-maped-tipd { font-size: 11px; color: var(--nv-secondary-text); margin-top: 2px; }
+.nv-maped-tipd .cur { color: var(--nv-accent-deep); font-weight: 600; }
+.nv-maped-wname { font-size: 13px; font-weight: 600; color: var(--nv-primary-text); white-space: nowrap; }
 .nv-maped-wnamein { min-width: 0; width: 9em; border: 0; border-bottom: 1px solid var(--nv-accent-deep); background: transparent; padding: 0; font-family: inherit; outline: none; }
 .nv-maped-wcard button { border: none; font-size: 12px; border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 .nv-maped-note { position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
