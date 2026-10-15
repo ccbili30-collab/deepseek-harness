@@ -405,6 +405,8 @@ interface BuiltWorld {
   readonly canvas: HTMLCanvasElement
   /** 矢量图层缓存：维度罩/分界/岸线/河网/路网/城邦——Path2D 建一次，每帧按样式表描。 */
   readonly vectors: WorldVectors
+  /** 地名候选表：锚点/字号/优先级/排布角构建期算好。 */
+  readonly labels: readonly MapLabel[]
   /** 各政权占格数，构建时算一次——地名分级用，不随帧重算。 */
   readonly stateCells: ReadonlyMap<number, number>
 }
@@ -590,7 +592,157 @@ const buildVectors = (world: World, view: WorldView): WorldVectors => {
   return { coast, rivers, routesRoads, routesSea, routesOther, dimFills, dimBorder, burgs }
 }
 
-/** 样式规则表：线宽/色罩强度 = f(相对缩放 z, 视图)。散落的魔法阈值集中在这。 */
+/** 地名候选：构建期一次算好锚点/字号/优先级/缩放区间/排布角，每帧只做投影+避让。
+ *  kind 决定归属视图：state→政治 culture→文化 biome→生物 feature→地形；burg/river/route 各视图共享。 */
+interface MapLabel {
+  readonly kind: 'state' | 'culture' | 'biome' | 'feature' | 'burg' | 'river' | 'route'
+  readonly id: number
+  readonly x: number
+  readonly y: number
+  /** 屏 px 竖直偏移（城邦名抬到点上方） */
+  readonly dy: number
+  readonly size: number
+  readonly prio: number
+  /** 排布角（弧度，归一 ±90° 不倒置）；区域名沿主轴 */
+  readonly angle: number
+  readonly zMin: number
+}
+
+/** 区域主轴角：成员点协方差 → 第一主成分方向，归一 ±90°。 */
+const regionAxis = (pts: readonly XY[]): number => {
+  if (pts.length < 3) return 0
+  let cx = 0, cy = 0
+  for (const p of pts) { cx += p[0]; cy += p[1] }
+  cx /= pts.length; cy /= pts.length
+  let sxx = 0, sxy = 0, syy = 0
+  for (const p of pts) { const dx = p[0] - cx, dy = p[1] - cy; sxx += dx * dx; sxy += dx * dy; syy += dy * dy }
+  let a = .5 * Math.atan2(2 * sxy, sxx - syy)
+  if (a > Math.PI / 2) a -= Math.PI
+  if (a < -Math.PI / 2) a += Math.PI
+  return a
+}
+
+const centroidOf = (pts: readonly XY[]): XY => {
+  let x = 0, y = 0
+  for (const p of pts) { x += p[0]; y += p[1] }
+  return [x / (pts.length || 1), y / (pts.length || 1)]
+}
+
+/** 折线中点与切向角：线状名沿线排。 */
+const midSeg = (pts: readonly (readonly number[])[]): { x: number, y: number, angle: number } | null => {
+  if (pts.length < 2) return null
+  let total = 0
+  const segs: number[] = []
+  for (let i = 0; i + 1 < pts.length; i++) {
+    const d = Math.hypot(pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1])
+    segs.push(d); total += d
+  }
+  let acc = 0
+  for (let i = 0; i < segs.length; i++) {
+    if (acc + segs[i] >= total / 2) {
+      const t = (total / 2 - acc) / (segs[i] || 1)
+      const x = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t
+      const y = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t
+      let a = Math.atan2(pts[i + 1][1] - pts[i][1], pts[i + 1][0] - pts[i][0])
+      if (a > Math.PI / 2) a -= Math.PI
+      if (a < -Math.PI / 2) a += Math.PI
+      return { x, y, angle: a }
+    }
+    acc += segs[i]
+  }
+  return null
+}
+
+/** 世界 → 地名候选表：区域名（国/文化/生物区/地物）+ 城邦 + 河/路线名。 */
+const buildLabels = (world: World): readonly MapLabel[] => {
+  const { pack } = world
+  const cells = pack.cells
+  const n = cells.i.length
+  const out: MapLabel[] = []
+  // 维度区域名：按成员格取 pole/质心 + 主轴角；字号随面积
+  const dimLabels = (dimOf: (i: number) => number, kind: 'state' | 'culture', ents: readonly { readonly i: number, readonly name: string, readonly pole?: XY, readonly removed?: boolean }[]): void => {
+    const pts = new Map<number, XY[]>()
+    for (let i = 0; i < n; i++) {
+      const id = dimOf(i)
+      if (id === 0 || !pack.features[cells.f[i]]?.land) continue
+      const p = cells.p[i]
+      if (p === undefined) continue
+      const arr = pts.get(id) ?? []
+      arr.push([p[0], p[1]]); pts.set(id, arr)
+    }
+    for (const e of ents) {
+      if (!e.i || e.removed === true || !e.name) continue
+      const area = pts.get(e.i)
+      if (area === undefined || area.length === 0) continue
+      const at = e.pole ?? centroidOf(area)
+      out.push({
+        kind, id: e.i, x: at[0], y: at[1], dy: 0,
+        size: Math.min(12 + Math.sqrt(area.length) * 1.2, 30),
+        prio: 1, angle: regionAxis(area), zMin: 0,
+      })
+    }
+  }
+  dimLabels(i => cells.state[i] ?? 0, 'state', pack.states)
+  dimLabels(i => cells.culture[i] ?? 0, 'culture', pack.cultures)
+  // 生物带区：连通块 BFS，够大的片才标（生物视图的区域名）
+  {
+    const seen = new Uint8Array(n)
+    const patches: { biome: number, pts: XY[] }[] = []
+    for (let i = 0; i < n; i++) {
+      if (seen[i] === 1 || !pack.features[cells.f[i]]?.land) continue
+      seen[i] = 1
+      const biome = cells.biome[i] ?? 0
+      const q = [i], pts: XY[] = []
+      for (let h = 0; h < q.length; h++) {
+        const j = q[h]
+        const p = cells.p[j]
+        if (p !== undefined) pts.push([p[0], p[1]])
+        for (const k2 of cells.c[j] ?? []) {
+          if (seen[k2] === 1 || cells.biome[k2] !== biome || !pack.features[cells.f[k2]]?.land) continue
+          seen[k2] = 1; q.push(k2)
+        }
+      }
+      if (pts.length >= 60) patches.push({ biome, pts })
+    }
+    for (const pt of patches.sort((a, b) => b.pts.length - a.pts.length).slice(0, 12)) {
+      const at = centroidOf(pt.pts)
+      out.push({ kind: 'biome', id: pt.biome, x: at[0], y: at[1], dy: 0, size: 12, prio: 4, angle: regionAxis(pt.pts), zMin: 0 })
+    }
+  }
+  // 地物名（地形视图）：有名字的陆块/岛屿标在顶点链质心
+  for (const f of pack.features) {
+    if (f.i === 0 || f.removed || !f.land || !f.name || f.vertices === undefined || f.vertices.length < 3) continue
+    const pts = f.vertices.map(vi => pack.vertices.p[vi]).filter((p): p is XY => p !== undefined)
+    if (pts.length < 3) continue
+    const at = centroidOf(pts)
+    out.push({ kind: 'feature', id: f.i, x: at[0], y: at[1], dy: 0, size: 11, prio: 4, angle: 0, zMin: 0 })
+  }
+  // 城邦：都>港/大镇>小镇，缩放门档与城邦点 tier 对齐
+  for (const b of pack.burgs) {
+    if (!b?.i || b.removed || !b.name) continue
+    const major = Boolean(b.capital) || Boolean(b.port) || (b.population ?? 0) >= 4
+    out.push({
+      kind: 'burg', id: b.i, x: b.x, y: b.y, dy: b.capital ? -7 : -5.5,
+      size: b.capital ? 12 : major ? 10.5 : 9.5,
+      prio: b.capital ? 2 : major ? 3 : 5,
+      angle: 0, zMin: b.capital ? 0 : major ? 1.4 : 3.4,
+    })
+  }
+  // 河/路线名：沿线中点，斜排
+  for (const r of pack.rivers) {
+    if (r.removed || r.points === undefined || r.points.length < 2 || !r.name) continue
+    const m = midSeg(r.points)
+    if (m !== null) out.push({ kind: 'river', id: r.i, x: m.x, y: m.y, dy: 0, size: 9, prio: 6, angle: m.angle, zMin: 1.8 })
+  }
+  for (const r of pack.routes) {
+    if (r.removed || r.points.length < 2 || !r.name) continue
+    const m = midSeg(r.points)
+    if (m !== null) out.push({ kind: 'route', id: r.i, x: m.x, y: m.y, dy: 0, size: 9, prio: 7, angle: m.angle, zMin: 2.2 })
+  }
+  return out
+}
+
+/** 样式规则表：线宽/色罩强度/点档 = f(相对缩放 z, 视图)。散落的魔法阈值集中在这。 */
 interface MapStyle {
   /** 维度色罩不透明度：远=平涂舆图，近=淡罩透地形 */
   readonly dimAlpha: number
@@ -612,6 +764,17 @@ const mapStyle = (z: number, view: WorldView): MapStyle => {
     routeAlpha: z < 2 ? .4 : .65,
     burgTier: z < 1.4 ? 0 : z < 4 ? 1 : 2,
   }
+}
+
+/** 标签文字解析：biome 在绘制处本地化，其余取实体名。 */
+const labelText = (pack: PackGraph, l: MapLabel): string => {
+  if (l.kind === 'state') return pack.states[l.id]?.name ?? ''
+  if (l.kind === 'culture') return pack.cultures[l.id]?.name ?? ''
+  if (l.kind === 'feature') return pack.features[l.id]?.name ?? ''
+  if (l.kind === 'burg') return pack.burgs.find(b => b?.i === l.id)?.name ?? ''
+  if (l.kind === 'river') return pack.rivers.find(r => r.i === l.id)?.name ?? ''
+  if (l.kind === 'route') return pack.routes.find(r => r.i === l.id)?.name ?? ''
+  return ''
 }
 
 /** 点到折线段的最小距离²。 */
@@ -972,6 +1135,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       const built: BuiltWorld = {
         world, tree: createPackQuadtree(world.pack), layers: worldLayers,
         canvas: paintWorld(world, worldView), vectors: buildVectors(world, worldView), stateCells,
+        labels: buildLabels(world),
       }
       builtRef.current = { key, built }
       return built
@@ -1312,10 +1476,10 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     if (built !== null) {
       c.drawImage(built.canvas, 0, 0, built.canvas.width, built.canvas.height, 0, 0, aspect, 1)
       // 矢量层：样式全走 mapStyle(z, view)——线宽屏幕恒定，维度罩强度随 z 渐变（远=舆图平涂）
+      const k = v.s / built.world.config.height   // 屏 px / pack px
+      const fs = Math.min(stage.clientWidth / aspect, stage.clientHeight) * .96
+      const st = mapStyle(v.s / fs, worldView)
       {
-        const k = v.s / built.world.config.height   // 屏 px / pack px
-        const fs = Math.min(stage.clientWidth / aspect, stage.clientHeight) * .96
-        const st = mapStyle(v.s / fs, worldView)
         const vec = built.vectors
         c.save(); c.scale(1 / built.world.config.height, 1 / built.world.config.height)
         if (st.dimAlpha > 0 && vec.dimFills.size > 0) {
@@ -1452,45 +1616,62 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           }
         }
       }
-      // 地名：屏幕空间动态标——字号恒定可读，按缩放决定密度，贪心避让防重叠
+      // 地名：构建期候选表 → 视图/z 过滤 → 按优先级实测宽度避让 → 纸色衬底。
+      // 区域名跟随当前视图维度（政治=国、文化=文化、生物=生物区、地形=地物），沿区域主轴排。
       if (built.layers.has('names')) {
-        const pack = built.world.pack
-        const k = v.s / built.world.config.height // 屏幕 px / 世界 px
+        const z = fs > 0 ? v.s / fs : 1
+        const areaKind = worldView === 'political' ? 'state' : worldView === 'cultural' ? 'culture' : worldView === 'biomes' ? 'biome' : 'feature'
+        const isArea = (kind: MapLabel['kind']): boolean => kind === 'state' || kind === 'culture' || kind === 'biome' || kind === 'feature'
         const placed: { x: number; y: number; w: number; h: number }[] = []
+        const measCache = new Map<string, number>()
+        const meas = (text: string, font: string): number => {
+          const key = `${font}|${text}`
+          const hit = measCache.get(key)
+          if (hit !== undefined) return hit
+          c.font = font
+          const w = c.measureText(text).width
+          measCache.set(key, w)
+          return w
+        }
         c.save()
         c.setTransform(dpr, 0, 0, dpr, 0, 0)
-        c.textAlign = 'center'; c.textBaseline = 'alphabetic'
-        const place = (wx: number, wy: number, text: string, size: number, color: string, weight: string, force = false): void => {
-          const x = wx * k + v.x, y = wy * k + v.y
-          const w = text.length * size * .58, h = size
-          const bx = x - w / 2, by = y - h
-          if (bx < 0 || by < 0 || bx + w > W || by + h > H) return
-          if (!force && placed.some(r => bx < r.x + r.w && bx + w > r.x && by < r.y + r.h && by + h > r.y)) return
-          c.font = `${weight} ${size.toFixed(1)}px "LXGW WenKai", "Kaiti SC", serif`
+        c.textAlign = 'center'; c.textBaseline = 'middle'
+        c.lineJoin = 'round'
+        const sorted = built.labels.filter(l => {
+          if (z < l.zMin) return false
+          if (isArea(l.kind)) return l.kind === areaKind && (l.kind !== 'state' || built.layers.has('states'))
+          if (l.kind === 'burg') return built.layers.has('burgs')
+          if (l.kind === 'route') return built.layers.has('routes')
+          return true // 河名随 names 层
+        }).sort((a, b) => a.prio - b.prio || b.size - a.size)
+        for (const l of sorted) {
+          const force = selWorld !== null && selWorld.kind === (l.kind === 'feature' ? 'feature' : l.kind) && selWorld.id === l.id
+          const text = l.kind === 'biome' ? t(`wg.map.world.biome.${l.id}` as Parameters<ShellT>[0]) : labelText(built.world.pack, l)
+          if (text === '') continue
+          const x = l.x * k + v.x, y = l.y * k + v.y + l.dy
+          const weight = isArea(l.kind) ? '700' : '600'
+          const font = `${weight} ${l.size.toFixed(1)}px "LXGW WenKai", "Kaiti SC", serif`
+          const w = meas(text, font), h = l.size
+          const cos = Math.abs(Math.cos(l.angle)), sin = Math.abs(Math.sin(l.angle))
+          const bw = w * cos + h * sin + 4, bh = w * sin + h * cos + 4
+          if (x + bw / 2 < 0 || y + bh / 2 < 0 || x - bw / 2 > W || y - bh / 2 > H) continue
+          if (!force && placed.some(r => x - bw / 2 < r.x + r.w && x + bw / 2 > r.x && y - bh / 2 < r.y + r.h && y + bh / 2 > r.y)) continue
+          c.save()
+          c.translate(x, y)
+          if (l.angle !== 0) c.rotate(l.angle)
+          c.font = font
+          if (isArea(l.kind)) c.letterSpacing = `${Math.min(4, l.size / 5)}px`
+          const color = force ? ACCENT
+            : isArea(l.kind) ? 'rgba(52,58,64,.72)'
+            : l.kind === 'river' ? 'rgba(62,110,138,.85)'
+            : l.kind === 'route' ? 'rgba(112,86,56,.8)' : 'rgba(50,54,60,.9)'
+          c.strokeStyle = 'rgba(240,233,214,.9)'
+          c.lineWidth = 3
+          c.strokeText(text, 0, 0)
           c.fillStyle = color
-          c.fillText(text, x, y)
-          placed.push({ x: bx, y: by, w, h })
-        }
-        // 国名：任何缩放都画，按国土面积放大
-        if (built.layers.has('states')) {
-          for (const s of pack.states) {
-            if (!s.i || s.removed || s.pole === undefined || !s.name) continue
-            const cellsN = built.stateCells.get(s.i ?? 0) ?? 0
-            const size = Math.min(10 + Math.sqrt(cellsN) * 1.1, 26)
-            place(s.pole[0], s.pole[1], s.name, size, 'rgba(60,66,74,.3)', '700')
-          }
-        }
-        // 城名分级：都城→港口/大镇→小镇，缩放越大可标越多
-        if (built.layers.has('burgs')) {
-          for (const b of pack.burgs) {
-            if (!b?.i || b.removed || !b.name) continue
-            const major = Boolean(b.capital) || Boolean(b.port) || (b.population ?? 0) >= 4
-            const tier = b.capital ? 0.15 : major ? 0.5 : 1.2
-            if (k < tier) continue
-            const size = b.capital ? 8.5 : major ? 7.5 : 7
-            const force = selWorld?.kind === 'burg' && selWorld.id === b.i
-            place(b.x, b.y - (b.capital ? 3.4 : 2.6), b.name, size, force ? ACCENT : 'rgba(50,54,60,.85)', '600', force)
-          }
+          c.fillText(text, 0, 0)
+          c.restore()
+          placed.push({ x: x - bw / 2, y: y - bh / 2, w: bw, h: bh })
         }
         c.restore()
       }
@@ -1738,7 +1919,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
       x = Math.max(8, Math.min(x, W - cw - 8)); y = Math.max(8, y)
       wc.style.left = `${Math.round(x)}px`; wc.style.top = `${Math.round(y)}px`
     }
-  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, hoverRegion, hoverWorld, markWork, mode, objWorkPts, pal?.color, placing, resolveBuilt, resolvedPts, routing, selId, selRegion, selWorld, tool, toWork, worldView])
+  }, [brushCursor, brushPx, drawLayer, ensureDraftLayer, erasing, grid, hidden, how, hoverRegion, hoverWorld, markWork, mode, objWorkPts, pal?.color, placing, resolveBuilt, resolvedPts, routing, selId, selRegion, selWorld, t, tool, toWork, worldView])
 
   useEffect(() => { draw() })
 
