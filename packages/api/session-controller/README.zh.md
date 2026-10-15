@@ -69,6 +69,8 @@ Client 的首次 `follow`、重连首屏与 `loadOlder()` 至少请求 50 条以
 <a id="client-references"></a>
 ## Client 引用
 
+浏览器在 IndexedDB 中保存可丢弃的持久历史窗口，按普通 Session 身份或精确的直接父子代理路径隔离。保存与恢复均由 Session 所有者负责；展示插件不额外保活会话，也不修改借用的事件源。恢复窗口设置 `historyPreview: true`，不改变控制投影和远端游标，并让位于第一个经过验证的 Host 窗口，包括空窗口。Chat 标注本地副本，在同步前禁用输入框。不持久化截图、实时分片或提交回显。删除使在飞读写失效，并保存删除标记以拒绝旧标签页回写。缓存失败不改变 Host 历史的权威地位；本功能不提供离线应用启动或离线会话目录。Client 配置 `historyCacheMaxBytes` 限制单个完整 UTF-8 窗口（默认 32 MiB），`historyCacheMaxEntries` 限制保留窗口数量（默认 100）。超限窗口会移除旧副本，不会静默保留过时历史。
+
 `sessions.retain(target, { source, signal? })` 立即获取一个精确 Client generation 的引用，并启动其共享的首次历史打开。目标是已知 Session id 或持久的直接父子 subagent 地址；Host 在打开历史时校验显式地址。返回引用支持幂等的 `release()` 和 `Symbol.dispose`；其 `ready` Promise 跟随共享的 `Session.open()` 结果，并在该次尝试结算时解析为确切 binding，包括 Remote failure 以 `openState: 'error'` 表示的情况。仅当 `Session.open()` 拒绝、等待方取消或引用提前释放时，`ready` 才拒绝。取消一个等待方不会取消其他 owner 的打开。`sessions.using(target, options, operation)` 等待该次结算，持有引用直到回调结束，并传播被拒绝的就绪与回调失败。
 
 引用保活本地会话数据、作用域 Context 和历史流，不保活 Host Agent。普通 Session 不因保留引用而添加目录行。已保留且具有明确直接父子地址的 subagent 即使尚未收到父目录，也会保留兜底行并通知列表读取方；这些行不加入 Host 列表成员集合。Fork 标题设置直接发送 rename 并应用返回的标题投影，不 retain 子会话，也不打开其历史。最后一个引用释放时，generation 先退出可访问映射，再执行清理；后续获取可以为同一 id 创建新 generation。`binding(id)` 和 `scope(id)` 只借用已有 generation。`retainInfo(id)` 独立于目录成员关系观察稳定的只读来源计数，不执行历史 I/O。消费方来源键可通过声明合并扩展；导航和完成确认属于 UI 消费方，不属于本控制器。所有权与清理规则见 [Client 会话引用](../../../.agents/notes/implemented/architecture/2026-09-15-client-session-references.zh.md)。 模式未知的子代理地址允许读取历史，但仍校验直接父级。成功恢复 descriptor 后确定展示模式；失败只影响该子会话，控制请求仍要求已确认的 continuable 身份。
@@ -90,6 +92,8 @@ GUI 模型选择要求确切提供方／模型对出现在可用目录中；不�
 | 字段 | 默认值 | 含义 |
 |---|---:|---|
 | `nativeOpen` | 平台探测 | 是否能把 Session 工作区路径交给原生桌面打开器 |
+| `historyCacheMaxBytes` | `33554432` | 单个浏览器历史窗口允许保留的最大 UTF-8 序列化字节数 |
+| `historyCacheMaxEntries` | `100` | 每个 origin 最多保留的浏览器历史窗口数 |
 
 生成的[配置目录](../../../docs/config-catalog.zh.md#deepseek-aidsh-api-session-controller)是所有受支持字段及其 JSDoc 的完整来源。
 

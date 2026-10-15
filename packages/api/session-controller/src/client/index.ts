@@ -6,6 +6,8 @@ import type { ConnectionHandle } from '@deepseek-ai/dsh-client-connection/client
 import type {} from '@deepseek-ai/dsh-client-file-upload/client'
 import { typertOwnedValue } from '@deepseek-ai/dsh-typert-protocol'
 import { createSessionControlStream } from './transport.ts'
+import z from '@deepseek-ai/schemastery'
+import { BrowserHistoryCache } from './sessions/history-cache.ts'
 import { ClientSessions } from './sessions/service.ts'
 import type { SessionRemotes } from './sessions/remotes.ts'
 import type {} from '../remote-events.ts'
@@ -105,14 +107,45 @@ export const inject = [
   'remote.subagents',
 ]
 
+/** Client history-cache retention settings. */
+export interface Config {
+  /** Maximum serialized UTF-8 bytes in one cached history window. */
+  historyCacheMaxBytes?: number
+  /** Maximum cached history windows in this browser origin. */
+  historyCacheMaxEntries?: number
+}
+
+/** Validated Client cache limits; changing them does not change durable Session data. */
+export const Config: z<Partial<Config>, Config> = z.object({
+  historyCacheMaxBytes: z.natural().min(1),
+  historyCacheMaxEntries: z.natural().min(1),
+})
+
+interface SessionHistoryCacheGlobal {
+  __DSH_SESSION_HISTORY_CACHE_CONFIG__?: Config
+}
+
 /**
  * Install Client Session state and its reconnecting control stream.
  * @param ctx - Client Cordis context.
+ * @param config - browser copy retention limits.
  */
-export function apply(ctx: Context): void {
+export function apply(ctx: Context, config: Config = Config({})): void {
+  const bootstrap = (globalThis as SessionHistoryCacheGlobal).__DSH_SESSION_HISTORY_CACHE_CONFIG__
+  const maxBytes = config.historyCacheMaxBytes ?? bootstrap?.historyCacheMaxBytes
+  const maxEntries = config.historyCacheMaxEntries ?? bootstrap?.historyCacheMaxEntries
+  const resolved = Config({
+    ...(maxBytes === undefined ? {} : { historyCacheMaxBytes: maxBytes }),
+    ...(maxEntries === undefined ? {} : { historyCacheMaxEntries: maxEntries }),
+  })
   const remotes = ctx.remote as unknown as SessionRemotes
   const connection = ctx.get('connection') as ConnectionHandle
-  const sessions = new ClientSessions(ctx, remotes)
+  const historyCache = new BrowserHistoryCache(globalThis.indexedDB, {
+    maxBytes: resolved.historyCacheMaxBytes ?? 32 * 1024 * 1024,
+    maxEntries: resolved.historyCacheMaxEntries ?? 100,
+  })
+  ctx.effect(() => () => historyCache.dispose(), 'session-controller.client.history-cache')
+  const sessions = new ClientSessions(ctx, remotes, historyCache)
   ctx.remote.$on('api-session/added', (summary) => { sessions.handleSessionAdded(summary) })
   ctx.remote.$on('api-session/removed', (sessionId) => { sessions.handleSessionRemoved(sessionId) })
   ctx.remote.$on('api-session/status', (sessionId, running) => {

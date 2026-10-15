@@ -3990,6 +3990,14 @@ describe('ChatView', () => {
     expect(lv.getByText('载入历史…')).toBeTruthy()
   })
 
+  it('keeps cached rows visible with a local-copy notice while history is unavailable', () => {
+    const h = makeHarness({ nodes: [user(1, 'Cached conversation text')] }, { openState: 'error', historyPreview: true })
+    const view = render(<h.ChatView {...h.props} />)
+    expect(view.getByText('Cached conversation text')).toBeTruthy()
+    expect(view.getByRole('status').textContent).toBe('暂时无法同步，当前显示本地对话')
+    expect(view.queryByText('载入历史…')).toBeNull()
+  })
+
   it('renders command nodes as durable rows: settled text, error state, executing spinner, run-less soft-fall', () => {
     // Settled success: the bare command name is the title, the outcome text
     // the summary — neither the dispatched `/` nor its arguments reach the row

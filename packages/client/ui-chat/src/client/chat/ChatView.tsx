@@ -130,6 +130,7 @@ export function ChatView({
   }), [cwd, t])
   const running = useSession(s => s.running)
   const openState = useSession(s => s.openState)
+  const historyPreview = useSession(s => s.historyPreview === true)
   const openError = useSession(s => s.openError)
   const hasMore = useSession(s => s.hasMore)
   const loadingOlder = useSession(s => s.loadingOlder)
@@ -210,7 +211,7 @@ export function ChatView({
   const steeringId = latestSteering?.source.kind === 'user' && 'rpcId' in latestSteering.source
     ? latestSteering.source.rpcId : latestSteering?.id ?? null
   const scroll = useChatScroll({
-    ready: openState === 'open',
+    ready: openState === 'open' || historyPreview,
     order, firstSeq, lastKey, running, loadingOlder, hasMore, chatScroll, loadOlder, loadThrough,
     lastIsUser: lastKey !== null && nodeStore.get(lastKey)?.kind === 'user',
     steeringId,
@@ -231,9 +232,10 @@ export function ChatView({
       )}
       <div className={css.root} data-chat-following-tail={scroll.followingTail ? '' : undefined}>
         <div ref={scroll.listRef} className={css.scroll}>
-          <div ref={scroll.columnRef} className={css.column} data-chat-flow="">
-            {openState === 'loading' && <div className={css.hint}>{t('chat.loadingHistory')}</div>}
-            {openState === 'error' && openError !== null && (
+          <div ref={scroll.columnRef} className={css.column} data-chat-flow="" data-history-preview={historyPreview || undefined}>
+            {historyPreview && <div className={css.hint} role="status">{t(openState === 'error' ? 'chat.cachedHistoryOffline' : 'chat.cachedHistory')}</div>}
+            {!historyPreview && openState === 'loading' && <div className={css.hint}>{t('chat.loadingHistory')}</div>}
+            {!historyPreview && openState === 'error' && openError !== null && (
               <div className={css.openError}>
                 {t('chat.loadError', { message: openError.message, code: openError.code })}
               </div>

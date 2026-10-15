@@ -26,6 +26,7 @@ export function ConversationContent(props: ConversationContentProps) {
     selectWorkspace, t, useFactorySlot,
   } = props
   const session = useSession(snapshot => snapshot)
+  const historyPreview = session?.historyPreview === true
   const Views = useFactorySlot('views', ConversationSessionView)
   const WidthControls = useFactorySlot('widthControls', NoConversationWidthControls)
   const [body, setBody] = useState<HTMLDivElement | null>(null)
@@ -145,19 +146,21 @@ export function ConversationContent(props: ConversationContentProps) {
   const blocked = !inert && composerBlock !== undefined
   const inputBar = renderSlot('conversation.composer.bar', {
     variant: hero ? 'hero' : 'composer',
-    ...(inert
-      ? {
-        disabled: true,
-        placeholder: t('placeholder.workspace'),
-        workspacePickerOpen: pickerOpen,
-        onRequestWorkspace: () => { setPickerOpen(true) },
-      }
-      : blocked
+    ...(historyPreview
+      ? { disabled: true, placeholder: t('placeholder.historyPreview') }
+      : inert
+        ? {
+          disabled: true,
+          placeholder: t('placeholder.workspace'),
+          workspacePickerOpen: pickerOpen,
+          onRequestWorkspace: () => { setPickerOpen(true) },
+        }
+        : blocked
         // `blocked`, not `disabled`: the bar refuses input either way, but a
         // block keeps the model seat live because choosing a model is how the
         // user clears it.
-        ? { blocked: composerBlock, placeholder: composerBlock.reason }
-        : hero ? { placeholder: t('placeholder.hero') } : {}),
+          ? { blocked: composerBlock, placeholder: composerBlock.reason }
+          : hero ? { placeholder: t('placeholder.hero') } : {}),
   })
 
   const composerBar = (

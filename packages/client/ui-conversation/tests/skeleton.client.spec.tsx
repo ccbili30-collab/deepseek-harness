@@ -617,6 +617,13 @@ describe('ConversationRoot resident composer', () => {
     expect(b.view.getByRole('textbox')).toBeTruthy()
   })
 
+  it('disables the composer while displaying cached history before synchronization', () => {
+    const b = mount(sessionSnapshotOf({ blank: false, openState: 'loading', historyPreview: true }))
+    const box = b.view.getByRole('textbox')
+    expect(box.getAttribute('aria-disabled')).toBe('true')
+    expect(b.view.queryByText('探索未至之境')).toBeNull()
+  })
+
   it('same textarea DOM node survives the hero → active flip into the sticky scrollport', () => {
     const b = mount(sessionSnapshotOf({ blank: true }))
     const before = b.view.getByRole('textbox')

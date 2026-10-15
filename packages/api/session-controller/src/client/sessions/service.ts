@@ -20,6 +20,7 @@ import { createScope, scopeIdentityOf, scopeOf as scopeTagOf } from '../scope.ts
 import { SessionManager } from './manager.ts'
 import type { SessionRemotes } from './remotes.ts'
 import type { SessionListPhase, SessionSearchResultItem, SessionProjectionSnapshot } from './manager.ts'
+import type { HistoryCache } from './history-cache.ts'
 import type { Session } from './session.ts'
 
 /** Session list row projected from the host list RPC plus live stream increments. */
@@ -249,12 +250,14 @@ export class ClientSessions implements ISessions {
   /**
    * @param ctx - client root context (scope fibers mount under it).
    * @param remote - generated Remote namespaces shared with every Session.
+   * @param historyCache - browser copies shared with the Session manager.
    */
   constructor(
     private readonly rootCtx: Context,
     remote: SessionRemotes,
+    historyCache?: HistoryCache,
   ) {
-    this.manager = new SessionManager(remote)
+    this.manager = new SessionManager(remote, historyCache)
     this.list = createSnapshotStore<SessionListState>({
       ids: [], byId: {}, phase: 'pending', projectionsBySession: {},
     })

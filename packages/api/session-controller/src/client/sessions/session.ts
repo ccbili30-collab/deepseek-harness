@@ -28,6 +28,7 @@ import { MutableSessionEventSource } from '../contract/events.ts'
 import type {
   SessionEventLike, SessionEventLikeEntry, SessionLiveEventEntry,
 } from '../contract/events.ts'
+import type { HistoryCache } from './history-cache.ts'
 import { Notifier } from './notifier.ts'
 import { isRemoteFailure } from '@deepseek-ai/dsh-api-gateway/client'
 import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
@@ -85,6 +86,8 @@ export interface SessionOptions {
    * private store (bare object-layer construction).
    */
   projections?: ProjectionValueStore
+  /** Disposable browser history copies; never seeds control projections or the remote cursor. */
+  historyCache?: HistoryCache
 }
 
 /**
@@ -100,6 +103,12 @@ export class Session implements SessionFace {
   private openState: OpenState = 'cold'
   private openError: RemoteFailure | null = null
   private openPromise: Promise<void> | null = null
+  private historyPreview = false
+  private historyAccepted = false
+  private readonly stopCachingHistory: () => void
+  private readonly cacheWrites = new Set<Promise<void>>()
+  private cacheRead: Promise<void> | undefined
+  private disposed = false
   /** Bumped by stream replacement to invalidate an in-flight doOpen. Stale
    *  passes drop all writes once the generation moves on. */
   private openGeneration = 0
@@ -196,6 +205,16 @@ export class Session implements SessionFace {
     this.stopObservingInbox = this.projections.faceOf('inbox').subscribe(() => {
       this.observeSubmissionInbox()
     })
+    this.stopCachingHistory = this.eventSource.subscribe(() => {
+      if (!this.historyAccepted || this.historyPreview || this.removed || this.disposed) return
+      const window = this.eventSource.getSnapshot()
+      const change = window.change
+      if (change.kind === 'append' && change.entries.every(entry => entry.type === 'transient')) return
+      const write = this.options.historyCache?.write(this.sessionAddress(), window)
+      if (write === undefined) return
+      this.cacheWrites.add(write)
+      void write.finally(() => { this.cacheWrites.delete(write) })
+    })
   }
 
   /**
@@ -257,6 +276,15 @@ export class Session implements SessionFace {
     signal?: AbortSignal,
     requestId?: SessionRequestId,
   ): Promise<RemoteResult<{ accepted: true }>> {
+    if (this.historyPreview) {
+      const error = new RemoteError(
+        'gateway/internal', 'Session history is still synchronizing', { sessionId: this.sessionId },
+      )
+      if (requestId !== undefined) this.retireFailedSubmission(requestId)
+      this.promptError = { op: 'send', error }
+      this.notifier.markDirty()
+      return { ok: false, error }
+    }
     this.promptError = null
     this.lastAgentError = null
     // Synchronous, before the first await: the blank → engaging edge must be
@@ -580,6 +608,8 @@ export class Session implements SessionFace {
   /** `api-session/removed` relay: flag the snapshot while retaining the resident instance. */
   handleRemoved(): void {
     this.removed = true
+    this.historyPreview = false
+    this.eventSource.replace([], false)
     this.notifier.markDirty()
   }
 
@@ -597,6 +627,8 @@ export class Session implements SessionFace {
    * @returns when the Remote iterator has completed teardown.
    */
   async dispose(): Promise<void> {
+    this.disposed = true
+    this.stopCachingHistory()
     this.stopObservingInbox()
     // Unsettled echoes retire as failed so their owners can restore or
     // release browser resources; admitted echoes keep their observed outcome.
@@ -608,18 +640,35 @@ export class Session implements SessionFace {
     const events = this.events
     this.events = undefined
     await events?.dispose()
+    await Promise.all(this.cacheWrites)
+    await this.cacheRead
   }
 
   // ---- Private ----
+
+  private canRestoreHistory(generation: number): boolean {
+    return !this.historyAccepted && !this.disposed && !this.removed && generation === this.openGeneration
+  }
+
+  private async restoreHistory(generation: number): Promise<void> {
+    const cache = this.options.historyCache
+    if (cache === undefined || !this.canRestoreHistory(generation)) return
+    const saved = await cache.read(this.sessionAddress())
+    if (saved === undefined || saved.entries.length === 0 || !this.canRestoreHistory(generation)) return
+    this.historyPreview = true
+    this.eventSource.replace(saved.entries, saved.hasMore)
+    this.notifier.markDirty()
+  }
 
   /** @param generation - openGeneration at launch; stale passes cannot publish after replacement. */
   private async doOpen(generation: number): Promise<void> {
     this.openState = 'loading'
     this.openError = null
     this.notifier.markDirty()
+    this.cacheRead = this.restoreHistory(generation)
     const events = new SessionEventStream(this.remote, this.sessionAddress(), {
       publish: (change) => {
-        if (generation !== this.openGeneration || this.events !== events) return
+        if (generation !== this.openGeneration || this.events !== events || this.removed || this.disposed) return
         this.acceptEventChange(change)
       },
       failed: (error) => {
@@ -637,6 +686,12 @@ export class Session implements SessionFace {
       this.events = undefined
       this.openState = 'error'
       this.openError = error
+      if (error.code !== 'gateway/internal') {
+        this.historyAccepted = true
+        this.historyPreview = false
+        this.eventSource.replace([], false)
+        if (error.code === 'session/not-found') void this.options.historyCache?.remove(this.sessionId)
+      }
     } finally {
       if (generation === this.openGeneration) this.notifier.markDirty()
     }
@@ -674,6 +729,8 @@ export class Session implements SessionFace {
     // A durable gap-repair page has no assistant baseline. Clearing transient
     // attempts makes a held notification reopen follow once for an atomic
     // page/baseline pair instead of applying it to an unrelated repair cut.
+    this.historyAccepted = true
+    this.historyPreview = false
     const visible = this.assistantStream.replace(entries, assistantStream)
     this.baseSeq = SessionLogOffset(entries[0]?.event.seq ?? 0)
     this.hasMore = hasMore
@@ -901,6 +958,7 @@ export class Session implements SessionFace {
         },
       removed: this.removed,
       openState: this.openState,
+      ...(this.historyPreview ? { historyPreview: true as const } : {}),
       openError: this.openError,
       hasMore: this.hasMore,
       loadingOlder: this.loadingOlder,

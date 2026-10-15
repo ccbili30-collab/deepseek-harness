@@ -537,6 +537,18 @@ button.crumb:hover {
   overflow-y: auto;
 }
 
+/* Restoring: a saved session exists but has not re-attached after a reload.
+   The whole frame is held still and inert — no workspace picker, no clickable
+   start page — until the session lands. */
+.root[data-phase='restoring'] {
+  pointer-events: none;
+}
+
+.root[data-phase='restoring'] .scrollBody,
+.embeddedBody[data-content-phase='restoring'] .scrollBody {
+  visibility: hidden;
+}
+
 /* Settling (session replaying, hero/docked unknown): keep the composer seat
    mounted but invisible so no wrong layout flashes before the phase lands. */
 .root[data-phase='settling'] .composerSeat,

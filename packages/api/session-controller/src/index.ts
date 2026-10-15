@@ -4,10 +4,11 @@ import { hostname } from 'node:os'
 import { resolve } from 'node:path'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-fs'
-import { Context } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { errorChain, ReasoningEffortId } from '@deepseek-ai/dsh-llm'
 import type {} from '@deepseek-ai/dsh-client-file-upload'
+import type {} from '@deepseek-ai/dsh-host-webserver'
 import { canOpenNativePath, nativeFileManager, nativeFileApplications, openNativeFileApplication, openNativeAssociatedPath, revealNativePath } from '@deepseek-ai/dsh-native-command'
 import type { SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionInspection } from '@deepseek-ai/dsh-session-persistence'
@@ -79,6 +80,24 @@ declare module '@deepseek-ai/cordis' {
 export interface Config {
   /** Override platform desktop-opener detection. */
   readonly nativeOpen?: boolean
+  /** Maximum serialized UTF-8 bytes in one browser-cached history window. */
+  readonly historyCacheMaxBytes?: number
+  /** Maximum browser-cached history windows retained by the Client. */
+  readonly historyCacheMaxEntries?: number
+}
+
+/** Project browser cache limits into boot HTML without carrying Host business state. */
+export function installHistoryCacheConfig(ctx: Context, config: Config): () => void {
+  return ctx.on('webserver/index-inject', (table) => {
+    table.push({
+      kind: 'global',
+      name: '__DSH_SESSION_HISTORY_CACHE_CONFIG__',
+      value: {
+        historyCacheMaxBytes: config.historyCacheMaxBytes ?? 32 * 1024 * 1024,
+        historyCacheMaxEntries: config.historyCacheMaxEntries ?? 100,
+      },
+    })
+  })
 }
 
 /** Host integrations replaceable by direct unit tests. */
@@ -113,6 +132,8 @@ export class SessionController extends TypertRemoteService {
 
   static Config: z<Config> = z.object({
     nativeOpen: z.boolean(),
+    historyCacheMaxBytes: z.natural().min(1).default(32 * 1024 * 1024),
+    historyCacheMaxEntries: z.natural().min(1).default(100),
   })
 
   private readonly agents: ApiSessionAgentController
@@ -134,6 +155,7 @@ export class SessionController extends TypertRemoteService {
    */
   constructor(ctx: Context, config: Config, internals: SessionControllerInternals = {}) {
     super(ctx, 'sessionController', { namespace: 'session' })
+    ctx.effect(() => installHistoryCacheConfig(ctx, config), 'session-controller: history-cache config')
     installModelSelectionProjection(ctx)
     this.agents = new ApiSessionAgentController(ctx)
     this.commands = new SessionCommandController(ctx, this.agents, process.cwd())

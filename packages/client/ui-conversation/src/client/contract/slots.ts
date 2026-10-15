@@ -458,7 +458,7 @@ export type ConversationSlotProps =
 /** Inputs shared by main and embedded Conversation content occurrences. */
 export interface ConversationContentInputProps {
   variant: 'main' | 'embedded'
-  phase: 'settling' | 'hero' | 'active'
+  phase: 'restoring' | 'settling' | 'hero' | 'active'
   hero: boolean
 }
 

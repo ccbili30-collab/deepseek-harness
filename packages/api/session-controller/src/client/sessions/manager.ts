@@ -23,6 +23,7 @@ import { flattenLineage } from './lineage.ts'
 import type {} from '@deepseek-ai/dsh-session-title/client'
 import { Notifier } from './notifier.ts'
 import { ProjectionValueStore } from './projection-store.ts'
+import type { HistoryCache } from './history-cache.ts'
 import { Session } from './session.ts'
 import type { SessionRemotes } from './remotes.ts'
 import type { SessionTarget } from '../contract/sessions.ts'
@@ -122,8 +123,8 @@ export class SessionManager {
     this.listSnapshotCache = this.buildListSnapshot()
   })
 
-  /** @param remote - generated Remote namespaces used by catalog and history readers. */
-  constructor(private readonly remote: SessionRemotes) {
+  /** @param remote - generated Remote namespaces. @param historyCache - disposable browser history copies. */
+  constructor(private readonly remote: SessionRemotes, private readonly historyCache?: HistoryCache) {
     this.listSnapshotCache = this.buildListSnapshot()
   }
 
@@ -277,6 +278,7 @@ export class SessionManager {
       ? undefined
       : this.agentAvailable(address.parentSessionId)
     return new Session(sessionId, this.remote, {
+      ...(this.historyCache === undefined ? {} : { historyCache: this.historyCache }),
       ...(address === undefined ? {} : {
         address,
         ...parentAvailable === undefined ? {} : { parentAvailable },
@@ -693,7 +695,10 @@ export class SessionManager {
       ? { kind: 'status', sessionId, running: false, agentAvailable: false }
       : { kind: 'remove', sessionId })
     if (durableSubagent) this.sessions.get(sessionId)?.handleRunning(false)
-    else this.sessions.get(sessionId)?.handleRemoved()
+    else {
+      this.sessions.get(sessionId)?.handleRemoved()
+      void this.historyCache?.remove(sessionId)
+    }
     const catalog = this.projectionStores.get(sessionId)?.values().subagentCatalog
     if (!durableSubagent && (catalog === undefined || catalog.length === 0)) {
       this.projectionStores.delete(sessionId)

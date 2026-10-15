@@ -78,6 +78,8 @@ export interface SessionSnapshot {
   } | null
   readonly removed: boolean
   readonly openState: OpenState
+  /** Present only while displaying a browser copy before the first validated Host history window. */
+  readonly historyPreview?: true
   readonly openError: RemoteFailure | null
   readonly hasMore: boolean
   readonly loadingOlder: boolean
