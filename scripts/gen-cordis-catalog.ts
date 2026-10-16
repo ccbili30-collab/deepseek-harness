@@ -760,6 +760,8 @@ export const LINK_MAP: Readonly<Record<string, string>> = {
   WorkspaceArchiveValue: 'workspace.md',
   WorkspaceCreateRequest: 'workspace.md',
   WorkspaceCreateValue: 'workspace.md',
+  WorkspaceDeleteArchivedSessionRequest: 'workspace.md',
+  WorkspaceDeleteArchivedSessionValue: 'workspace.md',
   WorkspaceDeleteRequest: 'workspace.md',
   WorkspaceDeleteValue: 'workspace.md',
   WorkspaceFollowFrame: 'workspace.md',

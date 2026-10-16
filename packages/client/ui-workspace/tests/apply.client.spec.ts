@@ -15,10 +15,11 @@ import type { WorkspaceBrowserInjected, WorkspacePickerInjected } from '@deepsee
 import {
   type ArchiveSessionInjected, type ForkSessionInjected, menuOpenStateFactory, type PinSessionInjected,
   type RenameSessionInjected, type RowToastInjected, type SessionArchiveConfirmInjected, type SessionRenameDialogInjected,
-  type WorkspaceViewStoreHandle,
+  type SessionDeleteInjected, type WorkspaceViewStoreHandle,
 } from '../src/client/contract/slots.ts'
 import { WorkspaceBrowser } from '../src/client/rows/WorkspaceBrowser.tsx'
 import { ArchiveSessionMenuItem, ArchiveSessionRowButton, SessionArchiveConfirmDialog } from '../src/client/session-actions/ArchiveSession.tsx'
+import { DeleteSessionMenuItem, SessionDeleteDialog } from '../src/client/session-actions/DeleteSession.tsx'
 import { ForkSessionMenuItem } from '../src/client/session-actions/ForkSession.tsx'
 import { PinSessionMenuItem, PinSessionRowButton } from '../src/client/session-actions/PinSession.tsx'
 import { RenameSessionMenuItem, SessionRenameDialog } from '../src/client/session-actions/RenameSession.tsx'
@@ -88,6 +89,8 @@ async function bench() {
   const fork = vi.fn(async () => 'forked' as never)
   const pinSession = vi.fn(async () => undefined)
   const unpinSession = vi.fn(async () => undefined)
+  const deleteArchivedSession = vi.fn(async () => undefined)
+  const refresh = vi.fn(async () => {})
   // The Host snapshots the injected hooks derive from and a pin's order write
   // reads at completion; a test replaces them whole, so an unchanged snapshot
   // keeps its identity between reads.
@@ -105,6 +108,7 @@ async function bench() {
     insertBefore: vi.fn(async () => undefined),
     archiveSession: vi.fn(async () => undefined),
     unarchiveSession: vi.fn(async () => undefined),
+    deleteArchivedSession,
     pinSession,
     unpinSession,
     insertSessionBefore: vi.fn(async () => ({})),
@@ -119,6 +123,7 @@ async function bench() {
     binding,
     subagentAddress: vi.fn(() => undefined),
     refreshProjections: vi.fn(() => Promise.resolve()),
+    refresh,
     fork,
   } as never)
   const pickDirectory = vi.fn(() => Promise.resolve({ ok: true as const, value: '/projects/picked' }))
@@ -134,6 +139,7 @@ async function bench() {
   return {
     ctx, slots: ctx.get('slots') as SlotRegistry, locale, create, rename,
     retain, using, selectPanel, search, renameSession, binding, fork, pickDirectory, pinSession, unpinSession,
+    deleteArchivedSession, refresh,
     workspacesSubscribe, initializeDefault,
     setWorkspaces: (snapshot: WorkspaceSnapshot): void => { workspaceSnapshot = snapshot },
     setSessions: (snapshot: SessionListState): void => { sessionSnapshot = snapshot },
@@ -218,9 +224,9 @@ describe('ui-workspace apply', () => {
     await Promise.resolve()
     expect(after.slots.entries('conversation.hero.workspace')[0]!.component).toBe(WorkspacePicker)
     // The row actions follow the browser's own declaration, whenever it lands.
-    expect(after.slots.entries(MENU_ITEM)).toHaveLength(4)
+    expect(after.slots.entries(MENU_ITEM)).toHaveLength(5)
     expect(after.slots.entries(ROW_ACTION)).toHaveLength(2)
-    expect(after.slots.entries('shell.overlay')).toHaveLength(3)
+    expect(after.slots.entries('shell.overlay')).toHaveLength(4)
   })
 
   it('declares the two Session row lists and registers the shipped actions and overlay surfaces into them', async () => {
@@ -241,6 +247,7 @@ describe('ui-workspace apply', () => {
       ['rename', 200, RenameSessionMenuItem, 'workspace'],
       ['fork', 300, ForkSessionMenuItem, 'workspace'],
       ['archive', 400, ArchiveSessionMenuItem, 'workspace'],
+      ['delete', 500, DeleteSessionMenuItem, 'workspace'],
     ])
     expect(rows(ROW_ACTION)).toEqual([
       ['archive', 100, ArchiveSessionRowButton, 'workspace'],
@@ -249,6 +256,7 @@ describe('ui-workspace apply', () => {
     expect(rows('shell.overlay')).toEqual([
       ['workspace.session-rename', undefined, SessionRenameDialog, 'workspace'],
       ['workspace.session-archive', undefined, SessionArchiveConfirmDialog, 'workspace'],
+      ['workspace.session-delete', undefined, SessionDeleteDialog, 'workspace'],
       ['workspace.row-toast', undefined, RowActionToast, 'workspace'],
     ])
     // The browser and the row toast declare the same viewing-store handle,
@@ -596,9 +604,9 @@ describe('ui-workspace apply', () => {
     declare(b.slots, 'sidebar.workspaces', 'conversation.hero.workspace', 'conversation.empty.workspace', 'shell.overlay')
     const fiber = b.ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
-    expect(b.slots.entries(MENU_ITEM)).toHaveLength(4)
+    expect(b.slots.entries(MENU_ITEM)).toHaveLength(5)
     expect(b.slots.entries(ROW_ACTION)).toHaveLength(2)
-    expect(b.slots.entries('shell.overlay')).toHaveLength(3)
+    expect(b.slots.entries('shell.overlay')).toHaveLength(4)
     await fiber.dispose()
     expect(b.slots.entries('sidebar.workspaces')).toHaveLength(0)
     expect(b.slots.entries('conversation.hero.workspace')).toHaveLength(0)
@@ -608,5 +616,118 @@ describe('ui-workspace apply', () => {
     expect(b.slots.entries(MENU_ITEM)).toHaveLength(0)
     expect(b.slots.entries(ROW_ACTION)).toHaveLength(0)
     expect(b.slots.entries('shell.overlay')).toHaveLength(0)
+  })
+
+  it('confirms permanent deletions through the shared dialog, reporting counts and keeping failures requested', async () => {
+    const b = await bench()
+    declare(b.slots, 'sidebar.workspaces', 'shell.overlay')
+    await b.ctx.plugin({ inject: [...inject], apply }).await()
+    const browser = faceOf(b.slots.entries('sidebar.workspaces')[0]!) as WorkspaceBrowserInjected
+    const dialog = faceOf(entry(b.slots, 'shell.overlay', 'workspace.session-delete')) as SessionDeleteInjected
+    const menuRow = faceOf(entry(b.slots, MENU_ITEM, 'delete')) as { requestDeleteSessions: WorkspaceBrowserInjected['requestDeleteSessions'] }
+    const toast = faceOf(entry(b.slots, 'shell.overlay', 'workspace.row-toast')) as RowToastInjected
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      // An empty request settles immediately without opening the dialog.
+      await expect(browser.requestDeleteSessions([])).resolves.toEqual([])
+      expect(dialog.hooks.deleteRequest.getSnapshot()).toBeNull()
+
+      // The menu row's single deletion rides the same shared confirmation.
+      const firstOutcome = menuRow.requestDeleteSessions([sid('one')])
+      expect(dialog.hooks.deleteRequest.getSnapshot()).toEqual([sid('one')])
+      // A second request supersedes the first as a cancel: its requester
+      // learns nothing was deleted.
+      const secondOutcome = browser.requestDeleteSessions([sid('two'), sid('three')])
+      await expect(firstOutcome).resolves.toEqual([sid('one')])
+
+      // Confirming runs the deletions through the navigation service; the
+      // failure stays requested and the notice names the true counts. The
+      // first requested Session is the one the Host refuses.
+      b.deleteArchivedSession.mockRejectedValueOnce(new Error('delete refused'))
+      await dialog.deleteSessions()
+      expect(b.deleteArchivedSession).toHaveBeenCalledWith('two')
+      expect(b.deleteArchivedSession).toHaveBeenCalledWith('three')
+      expect(toast.hooks.toast.getSnapshot()).toEqual({
+        kind: 'archiveResult', operation: 'delete', succeeded: 1, failed: 1, seq: 1,
+      })
+      await expect(secondOutcome).resolves.toEqual([sid('two')])
+      dialog.settleSessionDelete()
+      expect(dialog.hooks.deleteRequest.getSnapshot()).toBeNull()
+
+      // A cancelled request deletes nothing and hands its ids back.
+      const cancelled = browser.requestDeleteSessions([sid('one')])
+      dialog.settleSessionDelete()
+      await expect(cancelled).resolves.toEqual([sid('one')])
+      expect(b.deleteArchivedSession).toHaveBeenCalledTimes(2)
+      expect(warn).toHaveBeenCalledTimes(1)
+      expect(warn).toHaveBeenCalledWith('session delete rejected:', expect.any(Error))
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
+  it('batches row-menu archive, restore, and delete over the mirrored selection', async () => {
+    const b = await bench()
+    declare(b.slots, 'sidebar.workspaces', 'shell.overlay')
+    await b.ctx.plugin({ inject: [...inject], apply }).await()
+    const browser = faceOf(b.slots.entries('sidebar.workspaces')[0]!) as WorkspaceBrowserInjected
+    const archive = faceOf(entry(b.slots, 'sidebar.workspaces.session.menu.item', 'archive')) as ArchiveSessionInjected
+    const dialog = faceOf(entry(b.slots, 'shell.overlay', 'workspace.session-delete')) as SessionDeleteInjected
+    const toast = faceOf(entry(b.slots, 'shell.overlay', 'workspace.row-toast')) as RowToastInjected
+    const unarchiveSpy = vi.spyOn(b.ctx.uiWorkspace, 'unarchiveSession').mockResolvedValue(undefined)
+    const archiveSpy = vi.spyOn(b.ctx.uiWorkspace, 'archiveSession').mockResolvedValue(undefined)
+    // Both Sessions rest archived; the browser mirrors a live selection.
+    b.setWorkspaces(workspaceState([], [sid('one'), sid('two')]))
+    browser.syncSelection(new Set([sid('one'), sid('two')]))
+
+    // A row-menu restore on one selected row addresses both.
+    await browser.unarchiveSession(sid('one'))
+    await vi.waitFor(() => {
+      expect(unarchiveSpy).toHaveBeenCalledWith('one')
+      expect(unarchiveSpy).toHaveBeenCalledWith('two')
+      expect(toast.hooks.toast.getSnapshot()).toMatchObject({ kind: 'archiveResult', operation: 'restore', succeeded: 2, failed: 0 })
+    })
+
+    // A row-menu archive names exactly its own row: the mirrored selection
+    // holds archived rows only, and archive addresses a live row.
+    b.setWorkspaces(workspaceState([], []))
+    archive.archiveSession(sid('one'))
+    await vi.waitFor(() => { expect(archiveSpy).toHaveBeenCalledWith('one') })
+    expect(archiveSpy).not.toHaveBeenCalledWith('two')
+
+    // A row-menu permanent delete on one selected row confirms both.
+    b.setWorkspaces(workspaceState([], [sid('one'), sid('two')]))
+    browser.syncSelection(new Set([sid('one'), sid('two')]))
+    const deletion = browser.requestDeleteSessions([sid('one')])
+    expect(dialog.hooks.deleteRequest.getSnapshot()).toEqual([sid('one'), sid('two')])
+    await dialog.deleteSessions()
+    dialog.settleSessionDelete()
+    await deletion
+    expect(b.deleteArchivedSession).toHaveBeenCalledWith('one')
+    expect(b.deleteArchivedSession).toHaveBeenCalledWith('two')
+  })
+
+  it('refreshes the Session list after each deletion and reports restore batches through the notice', async () => {
+    const b = await bench()
+    declare(b.slots, 'sidebar.workspaces', 'shell.overlay')
+    await b.ctx.plugin({ inject: [...inject], apply }).await()
+    const browser = faceOf(b.slots.entries('sidebar.workspaces')[0]!) as WorkspaceBrowserInjected
+    const dialog = faceOf(entry(b.slots, 'shell.overlay', 'workspace.session-delete')) as SessionDeleteInjected
+    const toast = faceOf(entry(b.slots, 'shell.overlay', 'workspace.row-toast')) as RowToastInjected
+    const deletion = browser.requestDeleteSessions([sid('one')])
+    await dialog.deleteSessions()
+    dialog.settleSessionDelete()
+    await deletion
+    // The navigation service's delete hops through the Host and pulls the
+    // Session list once per deleted Session.
+    expect(b.deleteArchivedSession).toHaveBeenCalledWith('one')
+    expect(b.refresh).toHaveBeenCalledOnce()
+
+    // The browser's restore-batch notice rides the same overlay entry (the
+    // delete's notice above already consumed the first sequence number).
+    browser.notifyArchiveResult('restore', 2, 0)
+    expect(toast.hooks.toast.getSnapshot()).toEqual({
+      kind: 'archiveResult', operation: 'restore', succeeded: 2, failed: 0, seq: 2,
+    })
   })
 })

@@ -9,7 +9,10 @@ import {
   WorkspaceMoveInvalidError,
   WorkspaceOrderInvalidError,
   WorkspaceUnknownSessionError,
+  WorkspaceSessionNotArchivedError,
+  WorkspaceSessionOpenError,
 } from '@deepseek-ai/dsh-workspace'
+import { SessionAlreadyOwnedError } from '@deepseek-ai/dsh-session-persistence'
 import { RemoteError, remoteErrorOf } from '@deepseek-ai/dsh-typert-protocol'
 import { workspaceView } from './feed.ts'
 import type {
@@ -19,6 +22,8 @@ import type {
   WorkspaceCreateValue,
   WorkspaceDeleteRequest,
   WorkspaceDeleteValue,
+  WorkspaceDeleteArchivedSessionRequest,
+  WorkspaceDeleteArchivedSessionValue,
   WorkspaceInsertBeforeRequest,
   WorkspaceInsertSessionBeforeRequest,
   WorkspaceOrderValue,
@@ -34,8 +39,9 @@ import type {
 export class WorkspaceCommands {
   private operationTail = Promise.resolve()
 
-  /** @param ctx - Host context containing the Workspace registry. */
-  constructor(private readonly ctx: Context) {}
+  /** @param ctx - Host context containing the Workspace registry.
+   * @param retentionDays - Host archive retention policy projected into every archive value. */
+  constructor(private readonly ctx: Context, private readonly retentionDays: number) {}
 
   /**
    * Create or resolve one Workspace over an existing directory.
@@ -179,7 +185,7 @@ export class WorkspaceCommands {
       }
       throw error
     }
-    return { archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds] }
+    return this.archiveValue()
   }
 
   /**
@@ -191,7 +197,38 @@ export class WorkspaceCommands {
    */
   async unarchiveSession(request: WorkspaceUnarchiveSessionRequest): Promise<WorkspaceArchiveValue> {
     await this.ctx.workspaceRegistry.unarchiveSession(request.sessionId)
-    return { archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds] }
+    return this.archiveValue()
+  }
+
+  /**
+   * Permanently delete one archived Session without touching project assets.
+   * @param request - archived Session to delete.
+   * @returns deletion receipt and the resulting archive state.
+   */
+  async deleteArchivedSession(request: WorkspaceDeleteArchivedSessionRequest): Promise<WorkspaceDeleteArchivedSessionValue> {
+    try {
+      await this.ctx.workspaceRegistry.deleteArchivedSession(request.sessionId)
+    } catch (error: unknown) {
+      if (error instanceof WorkspaceSessionNotArchivedError) {
+        throw new RemoteError('workspace/session-not-archived', error.message, { sessionId: request.sessionId }, { cause: error })
+      }
+      const deleteBusy = error instanceof WorkspaceActiveSessionError
+        || error instanceof WorkspaceSessionOpenError
+        || error instanceof SessionAlreadyOwnedError
+      if (deleteBusy) {
+        throw new RemoteError('workspace/session-delete-busy', error.message, { sessionId: request.sessionId }, { cause: error })
+      }
+      throw error
+    }
+    return { deleted: true, ...this.archiveValue() }
+  }
+
+  private archiveValue(): WorkspaceArchiveValue {
+    return {
+      archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds],
+      archivedSessionTimes: { ...this.ctx.workspaceRegistry.archivedSessionTimes },
+      archivedSessionRetentionDays: this.retentionDays,
+    }
   }
 
   /**

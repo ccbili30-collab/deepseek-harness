@@ -6,6 +6,20 @@
 
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
+  'section.pinned': '置顶',
+  'archive.retention': '归档会话将在 {n} 天后永久删除',
+  'archive.expires': '{n} 天后删除',
+  'archive.expired': '等待自动删除',
+  'archive.selection': '已选 {n} 个',
+  'archive.clearSelection': '取消选择',
+  'archive.batch': '归档会话操作',
+  'archive.restore': '恢复',
+  'delete.session': '永久删除',
+  'delete.session.title': '永久删除会话？',
+  'delete.session.desc': '将永久删除 {n} 个已归档会话及其记录。此操作不可撤销。',
+  'delete.session.pending': '正在永久删除…',
+  'toast.archiveResult': '已处理 {succeeded} 个会话，失败 {failed} 个',
+
   'defaultWorkspace.failed': '无法创建默认工作区，请通过“选择工作区”选择文件夹',
   'group.ungrouped': '未分组',
   'session.new': '新会话',
@@ -124,6 +138,20 @@ export type WorkspaceKey = keyof typeof zh
 
 /** English dictionary, checked complete against the zh key set. */
 export const en = {
+  'section.pinned': 'Pinned',
+  'archive.retention': 'Archived sessions are permanently deleted after {n} days',
+  'archive.expires': 'Deletes in {n} days',
+  'archive.expired': 'Awaiting automatic deletion',
+  'archive.selection': '{n} selected',
+  'archive.clearSelection': 'Clear selection',
+  'archive.batch': 'Archived session actions',
+  'archive.restore': 'Restore',
+  'delete.session': 'Delete permanently',
+  'delete.session.title': 'Permanently delete sessions?',
+  'delete.session.desc': 'Permanently delete {n} archived sessions and their records. This cannot be undone.',
+  'delete.session.pending': 'Deleting permanently…',
+  'toast.archiveResult': '{succeeded} sessions processed; {failed} failed',
+
   'defaultWorkspace.failed': 'Unable to create default workspace. Use Choose workspace to select a folder.',
   'group.ungrouped': 'Ungrouped',
   'session.new': 'New Session',

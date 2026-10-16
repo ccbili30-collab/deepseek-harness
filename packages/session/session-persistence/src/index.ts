@@ -165,6 +165,17 @@ export abstract class SessionPersistence extends Service {
   abstract open(id: SessionId, access: SessionAccess, options?: SessionPersistenceOpenOptions): Promise<SessionHandle>
 
   /**
+   * Delete one stored session and all physical generations.
+   *
+   * Deletion is idempotent when the session is absent. Backends must refuse
+   * while a writer owns the session rather than invalidating its write
+   * ownership.
+   * @param id - the stored session to delete.
+   * @returns resolution after the session is absent from durable storage.
+   */
+  abstract deleteSession(id: SessionId): Promise<void>
+
+  /**
    * Flush every active write handle owned by this service instance in one
    * durability barrier: each handle's routed live events drain durably and
    * its session materializes, exactly as that handle's own

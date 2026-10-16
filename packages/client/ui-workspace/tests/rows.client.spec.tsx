@@ -370,6 +370,73 @@ describe('workspace browser rows', () => {
     expect(delegated.container.querySelector('[data-state="done"]')).toBeNull()
   })
 
+  it('addresses the archived-only selection on click and carries the selected mark', () => {
+    const node: SessionNode = {
+      id: sid('stored'), title: 'Stored', blank: false, running: false,
+      runningSubagentCount: 0, completed: false, updatedAt: 0, pinned: false, archived: true,
+    }
+    const onSelect = vi.fn()
+    const onOpen = vi.fn()
+    const view = render(
+      <SessionNodeItem
+        node={node}
+        currentId={undefined}
+        now={0}
+        onOpen={onOpen}
+        selection={{ selected: false, onSelect }}
+        t={t}
+      />,
+    )
+    const row = screen.getByRole('treeitem')
+    // Unselected: the mark and the selected state are off; the click routes
+    // its modifiers to the selection owner, not the open action.
+    expect(row.getAttribute('aria-selected')).toBe('false')
+    fireEvent.click(row, { shiftKey: true })
+    expect(onSelect).toHaveBeenCalledWith({ shiftKey: true, metaKey: false, ctrlKey: false, plainToggle: false })
+    expect(onOpen).not.toHaveBeenCalled()
+
+    view.rerender(
+      <SessionNodeItem
+        node={node}
+        currentId={undefined}
+        now={0}
+        onOpen={onOpen}
+        selection={{ selected: true, onSelect }}
+        t={t}
+      />,
+    )
+    // The batch mark is the neutral `selected` class; aria-selected remains
+    // reserved for the one current session, which this row is not.
+    expect(screen.getByRole('treeitem').className).toContain('selected')
+    expect(screen.getByRole('treeitem').getAttribute('aria-selected')).toBe('false')
+    // A selected row keeps no archived not-openable description.
+    expect(screen.getByRole('treeitem').getAttribute('aria-description')).toBeNull()
+  })
+
+  it('replaces the archived time cell with the remaining retention days', () => {
+    const node: SessionNode = {
+      id: sid('stored'), title: 'Stored', blank: false, running: false,
+      runningSubagentCount: 0, completed: false, updatedAt: 0, pinned: false,
+      archived: true, archivedAt: 1_000,
+    }
+    const renderRow = (now: number, retentionDays?: number) => render(
+      <SessionNodeItem
+        node={node}
+        currentId={undefined}
+        now={now}
+        onOpen={vi.fn()}
+        {...retentionDays === undefined ? {} : { retentionDays }}
+        t={t}
+      />,
+    )
+    // 13.5 remaining days round up to 14: the row names the last whole day.
+    expect(renderRow(1_000 + 1.5 * 86_400_000, 15).container.textContent).toContain('14 天后删除')
+    // Past the retention window: awaiting the Host's automatic deletion.
+    expect(renderRow(1_000 + 16 * 86_400_000, 15).container.textContent).toContain('等待自动删除')
+    // Without the Host retention fact the relative update time stands.
+    expect(renderRow(1_000 + 1.5 * 86_400_000).container.textContent).toContain('1天')
+  })
+
   it('shows descendant activity without describing an idle parent as running', () => {
     vi.useFakeTimers()
     try {

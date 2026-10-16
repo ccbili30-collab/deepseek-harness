@@ -14,7 +14,7 @@
  * are slot entries with their own behavior, so this component threads no
  * action callbacks and hosts no action surface.
  */
-import { type CSSProperties, type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
+import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
   Button, IconArchiveCheckOutlineRegular, IconArchiveOffOutlineRegular, IconArchiveOutlineRegular,
@@ -33,14 +33,24 @@ import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { ArchivedFilter, GroupNode, SessionNode, SessionOrderBy, SessionRowState } from '../tree.ts'
 import {
-  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
-  pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY,
+  deriveFlat, deriveGroups, derivePinned, deriveSearchResults, nextArchiveSelection, orderByRecency,
+  owningGroupKey, owningParentFolder, pinCurrentBlank, reconcileManualOrder, sessionMemberIds, UNGROUPED_KEY,
 } from '../tree.ts'
-import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
+import { ProjectRowItem, SearchResultItem, SessionNodeItem, type RowSelectionProps } from './Rows.tsx'
 import { AnimatedRows } from './AnimatedRows.tsx'
 import { FLAT_SESSION_ORDER_KEY, type SessionGroupBy } from '../stores.ts'
 import { WorkspacePickFlow } from '../WorkspacePicker.tsx'
 import css from './WorkspaceBrowser.module.css'
+
+/** Batch-selection share the archived-only view threads to its rows. */
+interface ArchivedSelectionShare {
+  /** Selected archived Session ids. */
+  selection: ReadonlySet<SessionId>
+  /** Selection anchor; the Shift range's fixed end. */
+  anchor: SessionId | undefined
+  /** Install the next selection and anchor from one row click. */
+  onSelect: (next: { selection: ReadonlySet<SessionId>; anchor: SessionId | undefined }) => void
+}
 
 /**
  * Column slide length (--ds-transition-duration-slow): rail-search focus waits it out —
@@ -172,8 +182,6 @@ interface DragState {
   /** Workspace id, or {@link UNGROUPED_KEY} for the browser-local loose-session account. */
   accountKey: string
   sessionId: SessionNode['id']
-  /** Source row was pinned at drag start; drop targets share the pinned block. */
-  pinned: boolean
   /** Row the marker sits on and which half (insert above/below it). */
   over: { id: SessionNode['id']; half: 'before' | 'after' } | null
 }
@@ -188,11 +196,9 @@ function sessionDragOrder(
   const source = rows.find(row => row.id === drag.sessionId)
   const target = rows.find(row => row.id === over.id)
   if (source === undefined || target === undefined || source.blank
-    || source.pinned !== drag.pinned || target.pinned !== drag.pinned
     || source.id === target.id || !order.includes(source.id)) return
-  const section = rows.filter(row => row.pinned === drag.pinned)
-  const sourceIndex = section.findIndex(row => row.id === source.id)
-  const withoutSource = section.filter(row => row.id !== source.id)
+  const sourceIndex = rows.findIndex(row => row.id === source.id)
+  const withoutSource = rows.filter(row => row.id !== source.id)
   const insertAt = withoutSource.findIndex(row => row.id === target.id) + (over.half === 'after' ? 1 : 0)
   if (insertAt === sourceIndex) return
   const next = order.filter(id => id !== source.id)
@@ -247,6 +253,8 @@ type SessionTreeProps = Pick<
   setSessionOrder: (accountKey: string, order: readonly string[]) => void
   /** Registry-global pin and archive sets plus the archived-visibility choice. */
   rowState: SessionRowState
+  /** Archived-only view multi-selection; undefined outside that view. */
+  archivedSelection: ArchivedSelectionShare | undefined
   /** Switch the archived filter back to the default hide-archived view. */
   onLeaveArchivedOnly: () => void
   /** Open the browser-owned rename dialog for a real Workspace group. */
@@ -280,7 +288,7 @@ function EmptySessions({ rowState, onLeaveArchivedOnly, t }: Pick<SessionTreePro
 /** The scrolling session tree; unmounting drops the sessions subscription and local row limits. */
 function SessionTree({
   list, useSessionStatus, startSession, open, workspaces, ungroupedSessionIds,
-  rowState, onLeaveArchivedOnly,
+  rowState, archivedSelection, onLeaveArchivedOnly,
   workspaceReady, animationResetKey, usePanelInfo,
   onRenameRequest, onDeleteRequest, onSessionRenameRequest,
   renderSlot,
@@ -412,6 +420,24 @@ function SessionTree({
     && workspaceDrag.over.half === 'before'
 
   const rowKeys: string[] = groups.length === 0 ? ['empty'] : []
+  /** One row's selection wiring; present in every list view. */
+  const archivedRowSelection = (node: SessionNode): RowSelectionProps | undefined => {
+    const share = archivedSelection
+    if (share === undefined) return undefined
+    return {
+      selected: share.selection.has(node.id),
+      onSelect: (edit) => {
+        // The Shift run spans the rows on screen, so the range excludes rows a
+        // collapse hides until they are expanded back in.
+        const renderedIds = groups.flatMap(group =>
+          collapsedSessionRows(group.sessions, sessionLimits[group.key]).rows.map(row => row.id))
+        share.onSelect(nextArchiveSelection(
+          share.selection, renderedIds, node.id,
+          { shift: edit.shiftKey, toggle: edit.metaKey || edit.ctrlKey || edit.plainToggle }, share.anchor,
+        ))
+      },
+    }
+  }
   const renderGroup = (group: GroupNode, depth: number): ReactNode => {
     const workspaceId = group.workspaceId
     const children = childrenByParent.get(group.key) ?? []
@@ -532,16 +558,15 @@ function SessionTree({
           </div>
         )}
         {sessions.map((node) => {
-        // Session drag never leaves its browser-local account, and pinned
-        // rows reorder only within their leading pinned block.
+        // Session drag never leaves its browser-local account.
           const sameGroupDrag = drag !== null && drag.accountKey === group.key
-          const compatibleTarget = sameGroupDrag && drag.pinned === node.pinned
+          const compatibleTarget = sameGroupDrag
           const normalizeHalf = (half: 'before' | 'after'): 'before' | 'after' =>
             node.blank ? 'after' : half
           const dragProps = {
             start: () => {
               sessionDropCommitted.current = false
-              setDrag({ accountKey: group.key, sessionId: node.id, pinned: node.pinned, over: null })
+              setDrag({ accountKey: group.key, sessionId: node.id, over: null })
             },
             active: compatibleTarget,
             marker: sameGroupDrag && drag.over?.id === node.id ? drag.over.half : null,
@@ -575,6 +600,8 @@ function SessionTree({
                 ? () => { onSessionRevealed(node.id) }
                 : undefined}
               drag={dragProps}
+              selection={archivedRowSelection(node)}
+              retentionDays={rowState.archivedSessionRetentionDays}
               t={t}
             />
           )
@@ -606,6 +633,10 @@ function SessionTree({
   }
 
   const groupRows = rootGroups.map(group => renderGroup(group, 0))
+  // The registry-global Pinned section leads the list and disappears whole
+  // when no pinned row is visible; its rows render without drag wiring
+  // because the Host pin order is most-recently-pinned-first with no
+  // reorder verb.
   return (
     <div className={clsx(css.treeBody, css.wide)}>
       {workspaceDropAtListStart && <span className={css.listTopDropIndicator} aria-hidden="true" />}
@@ -628,7 +659,7 @@ function SessionTree({
 
 /** The flat "In one list" body: every session is one draggable top-level row. */
 function FlatList({
-  list, sessionIds, rowState, onLeaveArchivedOnly, useSessionStatus, open, onSessionRenameRequest,
+  list, sessionIds, rowState, archivedSelection, onLeaveArchivedOnly, useSessionStatus, open, onSessionRenameRequest,
   usePanelInfo, setSessionOrder, workspaceReady, animationResetKey,
   revealSessionId, onSessionRevealed, renderSlot, t,
 }: Pick<
@@ -644,6 +675,7 @@ function FlatList({
   | 'revealSessionId'
   | 'onSessionRevealed'
   | 'rowState'
+  | 'archivedSelection'
   | 'onLeaveArchivedOnly'
   | 't'
 > & {
@@ -670,12 +702,26 @@ function FlatList({
     if (nextOrder !== undefined) setSessionOrder(FLAT_SESSION_ORDER_KEY, nextOrder)
   }
   const now = Date.now()
+  const rowSelection = (node: SessionNode): RowSelectionProps | undefined => {
+    const share = archivedSelection
+    if (share === undefined) return undefined
+    return {
+      selected: share.selection.has(node.id),
+      onSelect: (edit) => {
+        share.onSelect(nextArchiveSelection(
+          share.selection, rows.map(row => row.id), node.id,
+          { shift: edit.shiftKey, toggle: edit.metaKey || edit.ctrlKey || edit.plainToggle }, share.anchor,
+        ))
+      },
+    }
+  }
+  const rowKeys: string[] = rows.length === 0 ? ['empty'] : rows.map(row => `session:${row.id}`)
   return (
     <div className={clsx(css.treeBody, css.wide)}>
       <AnimatedRows
         className={clsx(css.list, css.flatList)}
         label={t('section.sessions')}
-        rowKeys={rows.length === 0 ? ['empty'] : rows.map(row => `session:${row.id}`)}
+        rowKeys={rowKeys}
         ready={list.phase === 'ready' && workspaceReady && drag === null}
         resetKey={animationResetKey}
       >
@@ -683,7 +729,7 @@ function FlatList({
           <EmptySessions rowState={rowState} onLeaveArchivedOnly={onLeaveArchivedOnly} t={t} />
         )}
         {rows.map((node) => {
-          const active = drag !== null && drag.pinned === node.pinned
+          const active = drag !== null
           const normalizeHalf = (half: 'before' | 'after'): 'before' | 'after' =>
             node.blank ? 'after' : half
           return (
@@ -701,7 +747,7 @@ function FlatList({
               drag={{
                 start: () => {
                   dropCommitted.current = false
-                  setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, pinned: node.pinned, over: null })
+                  setDrag({ accountKey: FLAT_SESSION_ORDER_KEY, sessionId: node.id, over: null })
                 },
                 active,
                 marker: active && drag.over?.id === node.id ? drag.over.half : null,
@@ -719,6 +765,8 @@ function FlatList({
                   dropCommitted.current = false
                 },
               }}
+              selection={rowSelection(node)}
+              retentionDays={rowState.archivedSessionRetentionDays}
               t={t}
             />
           )
@@ -851,6 +899,7 @@ export function WorkspaceBrowser({
   deleteWorkspace,
   insertWorkspaceBefore,
   unarchiveSession,
+  syncSelection,
   createWorkspace,
   searchSessions,
   searchResultLimit,
@@ -887,6 +936,8 @@ export function WorkspaceBrowser({
   const workspacePhase = useWorkspaces(state => state.phase)
   const workspaceStreamState = useWorkspaces(state => state.state)
   const archivedSessionIds = useWorkspaces(state => state.archivedSessionIds)
+  const archivedSessionTimes = useWorkspaces(state => state.archivedSessionTimes)
+  const archivedSessionRetentionDays = useWorkspaces(state => state.archivedSessionRetentionDays)
   const pinnedSessionIds = useWorkspaces(state => state.pinnedSessionIds)
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
@@ -898,8 +949,9 @@ export function WorkspaceBrowser({
   const archivedFilter = useStore(s => s.archivedFilter ?? 'default')
   const groupExpansion = useStore(s => s.groupExpansion)
   const sessionOrderByAccount = useStore(s => s.sessionOrderByAccount)
-  // Archived sessions are not openable: the row stays visible under the
-  // filter but a click explains instead of navigating.
+  // Archived rows are not openable: in every list view their click addresses
+  // the selection (enabling restore and permanent deletion); the guard below
+  // remains the backstop for surfaces without a selection share.
   const guardedOpen = (sessionId: SessionId): void => {
     if (archivedSessionIds.includes(sessionId)) {
       notifyArchivedNotOpenable()
@@ -909,6 +961,47 @@ export function WorkspaceBrowser({
   }
   const leaveArchivedOnly = (): void => { actions.setArchivedFilter('default') }
   const workspaceReady = workspacePhase === 'ready' && workspaceStreamState !== 'loading'
+
+  // Archived multi-selection: plain clicks address one row, Cmd/Ctrl clicks
+  // toggle, Shift clicks take the rendered run from the anchor, and Escape
+  // drops the whole selection. The selection lives wherever archived rows
+  // render — the show-archived and archived-only views — survives view flips
+  // between them, and cannot outlive the archive set.
+  const [archivedSelection, setArchivedSelection] = useState<ReadonlySet<SessionId>>(() => new Set())
+  const [selectionAnchor, setSelectionAnchor] = useState<SessionId | undefined>(undefined)
+  const selectArchived = (next: { selection: ReadonlySet<SessionId>; anchor: SessionId | undefined }): void => {
+    setArchivedSelection(next.selection)
+    setSelectionAnchor(next.anchor)
+  }
+  const clearArchivedSelection = (): void => {
+    setArchivedSelection(new Set())
+    setSelectionAnchor(undefined)
+  }
+  useEffect(() => {
+    setArchivedSelection((current) => {
+      const kept = new Set([...current].filter(id => list.byId[id] !== undefined))
+      return kept.size === current.size ? current : kept
+    })
+    setSelectionAnchor(anchor => anchor !== undefined && list.byId[anchor] !== undefined ? anchor : undefined)
+  }, [list.byId])
+  // The shared menu actions batch over the live selection, so keep the
+  // injection owner's mirror current — synchronously at layout time, or a
+  // menu opened in the same gesture as the click that made the selection
+  // would read the stale mirror and act on one row instead of the batch.
+  useLayoutEffect(() => { syncSelection(archivedSelection) }, [archivedSelection, syncSelection])
+  useEffect(() => {
+    if (archivedSelection.size === 0) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      // Escape belongs first to the surface that owns the focus: text fields
+      // and portaled menus and dialogs consume it themselves.
+      if (event.target instanceof Element
+        && event.target.closest('input, textarea, [contenteditable], [role="menu"], [role="dialog"]') !== null) return
+      clearArchivedSelection()
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('keydown', onKeyDown) }
+  }, [archivedFilter, archivedSelection.size])
   const mainSessionId = Object.values(list.byId)
     .find(session => (session.retainedBy.mainView ?? 0) > 0)?.id
   const currentBlank = mainSessionId !== undefined && list.byId[mainSessionId]?.blank === true
@@ -923,8 +1016,13 @@ export function WorkspaceBrowser({
     [archivedSessionIds, pinnedSessionIds],
   )
   const rowState = useMemo<SessionRowState>(
-    () => ({ ...orderState, archivedFilter }),
-    [orderState, archivedFilter],
+    () => ({
+      ...orderState,
+      archivedFilter,
+      ...(archivedSessionTimes === undefined ? {} : { archivedSessionTimes }),
+      ...(archivedSessionRetentionDays === undefined ? {} : { archivedSessionRetentionDays }),
+    }),
+    [orderState, archivedFilter, archivedSessionTimes, archivedSessionRetentionDays],
   )
   const flatMemberIds = useMemo(() => sessionMemberIds(list), [list])
   const orderedWorkspaces = useMemo(() => workspaces.map((workspace) => {
@@ -1009,6 +1107,33 @@ export function WorkspaceBrowser({
   ])
   const saveSessionOrder = (accountKey: string, order: readonly string[]): void => {
     actions.setSessionOrder(accountKey, order, activeSessionOrders)
+  }
+  // The archived selection share: any view that renders archived rows
+  // (show-archived and archived-only) addresses their clicks to the selection.
+  const archivedSelectionShare = archivedFilter !== 'default'
+    ? { selection: archivedSelection, anchor: selectionAnchor, onSelect: selectArchived }
+    : undefined
+  // The Pinned strip leads the whole browser — above the Workspaces header,
+  // outside every scrolling list, so it never moves and never reads as one
+  // more folder group.
+  const pinnedStatuses = useSessionStatus(s => s)
+  const topPinnedNodes = useMemo(
+    () => derivePinned(list, rowState, pinnedStatuses),
+    [list, rowState, pinnedStatuses],
+  )
+  const now = Date.now()
+  const topPinnedSelection = (node: SessionNode): RowSelectionProps | undefined => {
+    const share = archivedSelectionShare
+    if (share === undefined) return undefined
+    return {
+      selected: share.selection.has(node.id),
+      onSelect: (edit) => {
+        share.onSelect(nextArchiveSelection(
+          share.selection, topPinnedNodes.map(row => row.id), node.id,
+          { shift: edit.shiftKey, toggle: edit.metaKey || edit.ctrlKey || edit.plainToggle }, share.anchor,
+        ))
+      },
+    }
   }
   // The query outlives the tree and the input (both wide-only) so collapsing
   // does not silently drop an in-progress filter.
@@ -1207,6 +1332,25 @@ export function WorkspaceBrowser({
 
   return (
     <div className={clsx(css.root, !wide && css.rail)}>
+      {wide && topPinnedNodes.length > 0 && (
+        <div className={css.pinnedSection} role="group" aria-label={t('section.pinned')}>
+          <div className={css.pinnedLabel}>{t('section.pinned')}</div>
+          {topPinnedNodes.map(node => (
+            <SessionNodeItem
+              key={node.id}
+              node={node}
+              currentId={mainSessionId}
+              now={now}
+              onOpen={guardedOpen}
+              onRenameRequest={requestSessionRename}
+              renderSlot={renderSlot}
+              selection={topPinnedSelection(node)}
+              retentionDays={rowState.archivedSessionRetentionDays}
+              t={t}
+            />
+          ))}
+        </div>
+      )}
       <div className={css.sectionHeader}>
         {wide && (
           <span className={clsx(css.sectionLabel, css.wide, searchExpanded && css.sectionLabelHidden)}>
@@ -1342,6 +1486,11 @@ export function WorkspaceBrowser({
       {/* Always-mounted seat keeps the region's flex slot while the list
           itself is wide-only. */}
       <div className={css.listArea}>
+        {wide && archivedFilter === 'only' && archivedSessionRetentionDays !== undefined && (
+          <div className={css.archiveBar}>
+            <div className={css.archiveHint}>{t('archive.retention', { n: archivedSessionRetentionDays })}</div>
+          </div>
+        )}
         {wide && (normalizedQuery !== ''
           ? (
             <SearchResults
@@ -1366,6 +1515,7 @@ export function WorkspaceBrowser({
                 list={list}
                 sessionIds={orderedFlatSessionIds}
                 rowState={rowState}
+                archivedSelection={archivedSelectionShare}
                 onLeaveArchivedOnly={leaveArchivedOnly}
                 workspaceReady={workspaceReady}
                 animationResetKey={`${groupBy}/${orderBy}/${archivedFilter}`}
@@ -1396,6 +1546,7 @@ export function WorkspaceBrowser({
                 setGroupExpanded={actions.setGroupExpanded}
                 setSessionOrder={saveSessionOrder}
                 rowState={rowState}
+                archivedSelection={archivedSelectionShare}
                 onLeaveArchivedOnly={leaveArchivedOnly}
                 startSession={startSession}
                 open={guardedOpen}

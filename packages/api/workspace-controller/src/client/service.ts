@@ -91,6 +91,11 @@ export interface IWorkspaces {
    */
   unarchiveSession(sessionId: SessionId): Promise<void>
   /**
+   * Permanently delete an archived Session; the Host refuses active Sessions.
+   * @param sessionId - archived Session to delete.
+   */
+  deleteArchivedSession(sessionId: SessionId): Promise<void>
+  /**
    * Pin a Session ahead of unpinned Sessions on Workspace grouping surfaces.
    * @param sessionId - Session to pin.
    */
@@ -163,6 +168,11 @@ export class WorkspaceController extends Service implements IWorkspaces {
   async unarchiveSession(sessionId: SessionId): Promise<void> {
     const result = await this.model.unarchiveSession(sessionId)
     if (!result.ok) throw commandError('session unarchive', result.error)
+  }
+
+  async deleteArchivedSession(sessionId: SessionId): Promise<void> {
+    const result = await this.model.deleteArchivedSession(sessionId)
+    if (!result.ok) throw commandError('session delete', result.error)
   }
 
   async pinSession(sessionId: SessionId): Promise<void> {

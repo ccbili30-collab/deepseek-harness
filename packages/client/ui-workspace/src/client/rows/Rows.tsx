@@ -196,6 +196,23 @@ interface WorkspaceRowDragProps {
   end: () => void
 }
 
+/** Multi-selection wiring: an archived row's click addresses the selection owner. */
+export interface RowSelectionProps {
+  /** This row's membership in the selection. */
+  selected: boolean
+  /**
+   * Report one click's modifier classification to the selection owner; a
+   * plain click on an archived row arrives as `plainToggle`, because an
+   * archived row cannot open — each plain click accumulates or retires it.
+   */
+  onSelect: (edit: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean; plainToggle: boolean }) => void
+}
+
+/** Days one archive row still holds, rounded up; a non-positive count has already expired. */
+function archiveRemainingDays(archivedAt: number, retentionDays: number, now: number): number {
+  return Math.ceil((archivedAt + retentionDays * 86_400_000 - now) / 86_400_000)
+}
+
 /** Pointer-position half of a row (insert line above or below). */
 function rowHalf(e: { clientY: number; currentTarget: HTMLElement }): 'before' | 'after' {
   const rect = e.currentTarget.getBoundingClientRect()
@@ -541,6 +558,11 @@ export function SearchResultItem({ result, currentId, onOpen, onUnarchive, t }: 
  * keeps that cell and renders no seat, so an ambient automation mark never
  * appears beside the row's own state dot. An archived row keeps the cell blank:
  * neither marker renders there, and its live status stays on the hover card.
+ * In every list view that renders archived rows the `selection` share takes the
+ * archived row's clicks: they address the multi-selection (the `selected`
+ * class carries the batch mark) while a live row's click still opens, while an
+ * archived row with a known archive time shows its remaining retention days
+ * instead of the relative update time.
  * @param props.node - derived session node.
  * @param props.currentId - selected session id (row highlight).
  * @param props.now - epoch ms for relative-time formatting.
@@ -551,11 +573,13 @@ export function SearchResultItem({ result, currentId, onOpen, onUnarchive, t }: 
  * its leading decoration, and its hover-card section.
  * @param props.onReveal - scroll this row into view after search navigation, then acknowledge it.
  * @param props.drag - optional row-drag target wiring; blank rows cannot start a drag.
+ * @param props.selection - archived-only view multi-selection wiring; absent rows open on click.
+ * @param props.retentionDays - Host archive retention, for the remaining-days label on archived rows.
  * @param props.t - the browser root's locale seat.
  * @returns the session row.
  */
 export function SessionNodeItem({
-  node, currentId, now, onOpen, onRenameRequest, renderSlot, onReveal, drag, t,
+  node, currentId, now, onOpen, onRenameRequest, renderSlot, onReveal, drag, selection, retentionDays, t,
 }: {
   node: SessionNode
   currentId: string | undefined
@@ -567,6 +591,10 @@ export function SessionNodeItem({
   onReveal?: (() => void) | undefined
   /** Present on reorderable-list rows so every row can remain a drop target. */
   drag?: RowDragProps | undefined
+  /** Archived-only view multi-selection wiring; absent rows open on click. */
+  selection?: RowSelectionProps | undefined
+  /** Host archive retention in days, for the remaining-days label on archived rows. */
+  retentionDays?: number | undefined
   t: RowTranslate
 } & PropsRenderSlots<
   | 'sidebar.workspaces.session.menu.item'
@@ -580,9 +608,11 @@ export function SessionNodeItem({
   const statuses = sessionStatuses(node, t)
   const primaryStatus = statuses[0]
   const showStatus = primaryStatus.state !== 'idle'
+  const remainingDays = row.archived && row.archivedAt !== undefined && retentionDays !== undefined
+    ? archiveRemainingDays(row.archivedAt, retentionDays, now)
+    : undefined
   // Archived rows hold their in-place grayed slot, so manual reorder cannot
-  // move them. Pinned rows drag within the pinned block: the browser gates
-  // their drop targets to fellow pinned rows.
+  // move them; the Pinned section's rows render without drag wiring entirely.
   const draggable = drag !== undefined && !row.blank && !row.archived
   const [menuOpen, setMenuOpen] = useState(false)
   // The menu's open state, bound into the row entries' `useMenuOpenState` hook.
@@ -601,14 +631,34 @@ export function SessionNodeItem({
       ref={rowRef}
       data-row-key={`session:${node.id}`}
       className={clsx(
-        css.sessionRow, selected && css.selected, menuOpen && css.menuOpen,
+        css.sessionRow, (selected || selection?.selected === true) && css.selected, menuOpen && css.menuOpen,
         row.archived && css.archived,
         drag?.marker === 'before' && css.dropBefore, drag?.marker === 'after' && css.dropAfter,
       )}
       role="treeitem"
+      // Selection semantics stay split: aria-selected/aria-current mark the
+      // one current session (shells paint it as the live "current item"),
+      // while the multi-selection batch is only the `selected` class — a
+      // neutral gray fill, never the current-item accent.
+      aria-current={selected ? 'page' : undefined}
       aria-selected={selected}
-      aria-description={row.archived ? t('toast.archivedNotOpenable') : undefined}
-      onClick={() => { onOpen(node.id) }}
+      aria-description={selection === undefined && row.archived ? t('toast.archivedNotOpenable') : undefined}
+      onClick={(e) => {
+        // Selection belongs to archived rows alone. A live row's every click
+        // opens the session, modifiers included; an archived row cannot open,
+        // so its every click — plain, Cmd/Ctrl, or Shift — addresses the
+        // batch selection.
+        if (selection !== undefined && row.archived) {
+          selection.onSelect({
+            shiftKey: e.shiftKey,
+            metaKey: e.metaKey,
+            ctrlKey: e.ctrlKey,
+            plainToggle: !e.shiftKey && !e.metaKey && !e.ctrlKey,
+          })
+          return
+        }
+        onOpen(node.id)
+      }}
       onPointerEnter={marquee.enter}
       onPointerLeave={marquee.leave}
       draggable={draggable}
@@ -639,8 +689,8 @@ export function SessionNodeItem({
       {/* Pending interaction and own or descendant activity outrank the
           finished-but-unviewed reminder, which returns after activity stops
           and is cleared by opening the session. Archived rows keep the slot
-          blank — the grayed row carries the archived look — and their live
-          status stays on the hover card only. */}
+          blank — the grayed, selected row styling carries the state — and
+          their live status stays on the hover card only. */}
       <span className={css.slot}>
         {!row.archived && !row.blank && (showStatus
           ? <SessionStatusDots statuses={statuses} />
@@ -662,9 +712,13 @@ export function SessionNodeItem({
       {!row.blank && (
         <span
           className={css.time}
-          aria-hidden={primaryStatus.trailingLabel === undefined ? undefined : true}
+          aria-hidden={primaryStatus.trailingLabel === undefined && remainingDays === undefined ? undefined : true}
         >
-          {primaryStatus.trailingLabel ?? timeLabel(row.updatedAt, now, t)}
+          {remainingDays !== undefined
+            ? remainingDays > 0
+              ? t('archive.expires', { n: remainingDays })
+              : t('archive.expired')
+            : primaryStatus.trailingLabel ?? timeLabel(row.updatedAt, now, t)}
         </span>
       )}
       {/* Trails the time so the marker occupies the same right-edge cell as

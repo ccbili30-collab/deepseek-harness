@@ -298,6 +298,16 @@ export type WorkspaceBrowserInjected = {
   insertWorkspaceBefore: (workspaceId: WorkspaceId, beforeWorkspaceId?: WorkspaceId) => Promise<void>
   /** Remove a Session from the registry-global archived set (the search results' restore button). */
   unarchiveSession: (sessionId: SessionId) => Promise<void>
+  /**
+   * Open the shared deletion confirmation for archived Sessions and wait for
+   * its settlement; resolves with the requested ids that were not deleted —
+   * every id on a cancel, the failures on a confirmed run.
+   */
+  requestDeleteSessions: (sessionIds: readonly SessionId[]) => Promise<readonly SessionId[]>
+  /** Report completed and failed counts of one archive batch through the shared notice. */
+  notifyArchiveResult: (operation: 'restore' | 'delete', succeeded: number, failed: number) => void
+  /** Mirror the browser's live multi-selection so shared menu actions can batch over it. */
+  syncSelection: (selection: ReadonlySet<SessionId>) => void
   /** Adopt a picked host directory as a real Workspace before targeting a Session. */
   createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
 }
@@ -321,6 +331,7 @@ export type SessionRowActionProps<Injected extends object = object> =
 export type RowToast =
   | { kind: 'archived'; sessionId: SessionId }
   | { kind: 'stoppedAndArchived'; sessionId: SessionId }
+  | { kind: 'archiveResult'; operation: 'archive' | 'restore' | 'delete'; succeeded: number; failed: number }
   | { kind: 'pinFailed' }
   | { kind: 'unpinFailed' }
   | { kind: 'archivedNotOpenable' }
@@ -517,3 +528,36 @@ export type WorkspacePickerProps =
   & Omit<WorkspacePickerInjected, 'hooks'>
   & PropsHooks<WorkspacePickerInjected['hooks']>
   & PropsLocale<'workspace'>
+
+/** Shared single and bulk permanent-deletion request: the pending ids, their settlement, and the deletion hop. */
+export interface SessionDeleteInjected {
+  hooks: {
+    /** Requested archived Session ids, until the dialog consumes or cancels them. */
+    deleteRequest: HostObservable<readonly SessionId[] | null>
+  }
+  /** Consume or cancel the pending request without deleting anything; the requesting surface keeps its selection. */
+  settleSessionDelete: () => void
+  /**
+   * Run the deletions of the requested Sessions through the Host; resolves
+   * with the identities that stayed (the failures) and settles the requesting
+   * surface with them. The shared notice reports the succeeded and failed counts.
+   */
+  deleteSessions: () => Promise<readonly SessionId[]>
+}
+
+/** Archived-only menu action invoking the shared confirmation. */
+export interface DeleteSessionMenuInjected {
+  hooks: {
+    /** Archived Session ids; the deletion row renders only for members. */
+    archived: HostObservable<ReadonlySet<SessionId>>
+  }
+  /** Open the shared confirmation; resolves with the ids that were not deleted. */
+  requestDeleteSessions: (sessionIds: readonly SessionId[]) => Promise<readonly SessionId[]>
+}
+
+/** Props of the shared deletion overlay. */
+export type SessionDeleteProps =
+  PropsRuntime<'shell.overlay'>
+  & PropsLocale<'workspace'>
+  & Omit<SessionDeleteInjected, 'hooks'>
+  & PropsHooks<SessionDeleteInjected['hooks']>

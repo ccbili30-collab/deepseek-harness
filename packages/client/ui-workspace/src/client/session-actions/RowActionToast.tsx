@@ -17,8 +17,9 @@ const LONG_TOAST_HOLD_MS = 6000
  * Render the current notice: the archived and stopped-and-archived notices
  * with their undo action — plus the show-archived action while archived rows
  * are hidden — on a 6 s hold, a refused Session creation with the Host's
- * reason on the same hold, or a plain warning for a failed pin, an archived
- * row that was clicked, or default Workspace creation.
+ * reason and a restore/delete batch outcome on the same hold, or a plain
+ * warning for a failed pin, an archived row that was clicked, or default
+ * Workspace creation.
  * @param props - the notice hook, the shared viewing store, the notice dismissal, the two archived-notice actions, and the locale seat.
  * @returns the notice on display, or null.
  */
@@ -55,6 +56,20 @@ export function RowActionToast({ useToast, useStore, dismissToast, undoArchive, 
       />
     )
   }
+  if (toast.kind === 'archiveResult') {
+    // A batch outcome names its failures, so it stays readable until the
+    // longer hold ends; a clean run reads as success, a failed one keeps the
+    // warning glyph.
+    return (
+      <Toast
+        key={`toast-${String(toast.seq)}`}
+        text={t('toast.archiveResult', { succeeded: toast.succeeded, failed: toast.failed })}
+        holdMs={LONG_TOAST_HOLD_MS}
+        onDone={dismissToast}
+        {...toast.failed === 0 ? { tone: 'success' as const } : { icon: <IconWarningOutlineRegular /> }}
+      />
+    )
+  }
   return (
     <Toast
       key={`toast-${String(toast.seq)}`}
@@ -67,7 +82,7 @@ export function RowActionToast({ useToast, useStore, dismissToast, undoArchive, 
 
 /** The copy of one plain warning, keyed by the notice kind the union closes over. */
 function plainNoticeText(
-  toast: Exclude<RowToastState, { kind: 'archived' | 'stoppedAndArchived' | 'createFailed' }>,
+  toast: Exclude<RowToastState, { kind: 'archived' | 'stoppedAndArchived' | 'createFailed' | 'archiveResult' }>,
   t: RowToastProps['t'],
 ): string {
   switch (toast.kind) {

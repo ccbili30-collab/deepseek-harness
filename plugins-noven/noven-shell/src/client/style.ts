@@ -2367,6 +2367,10 @@ table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .nv-tree-newmenu [class*='selectedFill'] [class*='itemIcon'],
 .nv-tree-row[data-current='true'] .nv-tree-glyph,
 .nv-tree-row[data-current='true'] .nv-tree-cardicon { color: var(--nv-select); }
+/* 行级 color !important 只染继承者；自带显式色的标题（如上游工作区列表
+   归档行标题的 caption 灰）要按后代点名，才跟上行本身的当前项绿。 */
+[aria-selected='true'] [class*='title'],
+[aria-current]:not([aria-current='false']) [class*='title'] { color: var(--nv-select) !important; }
 
 `
 

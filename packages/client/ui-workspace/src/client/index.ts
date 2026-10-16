@@ -7,8 +7,9 @@
  * own `single` directory-flow child hole for the composed picker package's
  * client half. WorkspaceBrowser additionally declares the two Session row
  * action lists, and this apply registers the shipped actions — pin, rename,
- * fork, archive — into them the way any client plugin would, each with its
- * own behavior, plus the rename dialog and the row-action notice into
+ * fork, archive, and the archived-only permanent deletion — into them the
+ * way any client plugin would, each with its own behavior, plus the rename
+ * dialog, the deletion confirmation, and the row-action notice into
  * `shell.overlay` (see the contract module doc). It also declares two
  * Session-row seats: the leading decoration a row renders only while its own
  * primary state is idle, and the section the row's hover card renders between
@@ -37,7 +38,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import {
   type ArchiveSessionInjected, type ForkSessionInjected, menuOpenStateFactory, workspaceMenuOpenStateFactory, type PinSessionInjected,
   type SessionArchiveConfirmInjected, type SessionArchiveConfirmRequest,
-  type RenameSessionInjected, type RowToast, type RowToastInjected, type RowToastState, type SessionRenameDialogInjected,
+  type DeleteSessionMenuInjected, type RenameSessionInjected, type RowToast, type RowToastInjected, type RowToastState,
+  type SessionDeleteInjected, type SessionRenameDialogInjected,
   type WorkspaceBrowserInjected, type WorkspacePickerInjected,
 } from './contract/slots.ts'
 import { createWorkspaceShortcutControls, installWorkspaceShortcuts } from './shortcuts.ts'
@@ -46,6 +48,7 @@ import { createWorkspaceViewStore } from './stores.ts'
 import { WorkspaceBrowser } from './rows/WorkspaceBrowser.tsx'
 import { ArchiveSessionMenuItem, ArchiveSessionRowButton, SessionArchiveConfirmDialog } from './session-actions/ArchiveSession.tsx'
 import { derive } from './session-actions/derived.ts'
+import { DeleteSessionMenuItem, SessionDeleteDialog } from './session-actions/DeleteSession.tsx'
 import { ForkSessionMenuItem } from './session-actions/ForkSession.tsx'
 import { PinSessionMenuItem, PinSessionRowButton } from './session-actions/PinSession.tsx'
 import { RenameSessionMenuItem, SessionRenameDialog } from './session-actions/RenameSession.tsx'
@@ -145,17 +148,76 @@ export function apply(ctx: Context): void {
   // Registry-global sets as Sets, rebuilt only when the Workspace snapshot changes.
   const pinnedSet = derive(workspaces.list, snapshot => new Set<SessionId>(snapshot.pinnedSessionIds))
   const archivedSet = derive(workspaces.list, snapshot => new Set<SessionId>(snapshot.archivedSessionIds))
+  // The browser mirrors its multi-selection here; shared row-menu actions
+  // batch over it — acting on one selected row addresses every selected row.
+  const liveSelection = new Set<SessionId>()
+  const syncSelection: WorkspaceBrowserInjected['syncSelection'] = (selection) => {
+    liveSelection.clear()
+    for (const id of selection) liveSelection.add(id)
+  }
+  const selectionTargets = (
+    sessionId: SessionId,
+    applicable: (id: SessionId) => boolean,
+  ): readonly SessionId[] => {
+    if (!liveSelection.has(sessionId)) return [sessionId]
+    const targets = [...liveSelection].filter(applicable)
+    return targets.length > 0 ? targets : [sessionId]
+  }
   // Plugin-private facts the row actions and their overlay surfaces share:
   // the pending rename request and the notice on display. Each business
   // writes through its own injected callback and the surface reads through
   // its bound hook.
   const renameRequest = derive(shortcutControls.state, state => state.renameTarget)
   const archiveRequest = createSnapshotStore<SessionArchiveConfirmRequest | null>(null)
+  // One pending permanent-deletion request: the ids the shared dialog is
+  // confirming and the promise the requesting surface awaits. The settlement
+  // hands back the ids that were not deleted, so a cancel keeps the caller's
+  // selection and a confirmed run keeps only its failures.
+  const deleteRequest = createSnapshotStore<readonly SessionId[] | null>(null)
+  let pendingDelete: { ids: readonly SessionId[]; settle: (remaining: readonly SessionId[]) => void } | null = null
+  const settleDeleteRequester = (remaining: readonly SessionId[]): void => {
+    const pending = pendingDelete
+    pendingDelete = null
+    pending?.settle(remaining)
+  }
+  const requestDeleteSessions: WorkspaceBrowserInjected['requestDeleteSessions'] = (sessionIds) => {
+    // A row-menu request names one row; acting from a selection addresses
+    // every selected archived Session.
+    const [requested] = sessionIds
+    const targets = sessionIds.length === 1 && requested !== undefined
+      ? selectionTargets(requested, id => archivedSet.getSnapshot().has(id))
+      : sessionIds
+    if (targets.length === 0) return Promise.resolve([])
+    return new Promise((resolve) => {
+      // A second request supersedes the first as a cancel: its requester
+      // learns nothing was deleted.
+      settleDeleteRequester(pendingDelete?.ids ?? [])
+      pendingDelete = { ids: [...targets], settle: resolve }
+      deleteRequest.set([...targets])
+    })
+  }
   const requestSessionRename = shortcutControls.rename
   const unarchiveSession = (sessionId: SessionId): void => {
-    uiWorkspace.unarchiveSession(sessionId).catch((reason: unknown) => {
-      console.warn('session unarchive rejected:', reason)
-    })
+    const targets = selectionTargets(sessionId, id => archivedSet.getSnapshot().has(id))
+    if (targets.length === 1 && targets[0] === sessionId) {
+      uiWorkspace.unarchiveSession(sessionId).catch((reason: unknown) => {
+        console.warn('session unarchive rejected:', reason)
+      })
+      return
+    }
+    let succeeded = 0
+    const failed: SessionId[] = []
+    void (async () => {
+      for (const id of targets) {
+        try {
+          await uiWorkspace.unarchiveSession(id)
+          succeeded += 1
+        } catch {
+          failed.push(id)
+        }
+      }
+      notify({ kind: 'archiveResult', operation: 'restore', succeeded, failed: failed.length })
+    })()
   }
   const renameSession: SessionRenameDialogInjected['renameSession'] = async (sessionId, title) => {
     const result = await sessions.using(
@@ -181,7 +243,9 @@ export function apply(ctx: Context): void {
     // Archive preserves the log and the account position, so a quiet Session
     // needs no confirmation; the notice offers undo and the archived filter.
     // The Host's refusal for running work is the one case that asks first:
-    // the confirmation names that work and offers to stop it.
+    // the confirmation names that work and offers to stop it. Only live rows
+    // offer archive, and the selection holds archived rows only, so the
+    // action always names exactly one Session.
     archiveSession: (sessionId) => {
       uiWorkspace.archiveSession(sessionId).then(() => {
         notify({ kind: 'archived', sessionId })
@@ -204,6 +268,42 @@ export function apply(ctx: Context): void {
     stopAndArchiveSession: async (sessionId) => {
       await uiWorkspace.archiveSession(sessionId, { stopActivity: true })
       notify({ kind: 'stoppedAndArchived', sessionId })
+    },
+  })
+  const deleteMenuInjected = (): DeleteSessionMenuInjected => ({
+    hooks: { archived: archivedSet },
+    requestDeleteSessions,
+  })
+  const deleteDialogInjected = (): SessionDeleteInjected => ({
+    hooks: { deleteRequest },
+    // Cancelling consumes the request without deleting; the requester learns
+    // its ids back, which keeps its selection standing.
+    settleSessionDelete: () => {
+      settleDeleteRequester(pendingDelete?.ids ?? [])
+      deleteRequest.set(null)
+    },
+    // The confirmed run settles the requester with the failures once every
+    // deletion settled; the shared notice carries the true counts.
+    deleteSessions: async () => {
+      const requested = deleteRequest.getSnapshot() ?? []
+      const failed: SessionId[] = []
+      let succeeded = 0
+      for (const sessionId of requested) {
+        try {
+          await uiWorkspace.deleteArchivedSession(sessionId)
+          succeeded += 1
+        } catch (reason: unknown) {
+          // A failed deletion keeps its Session: the notice carries the count
+          // and the requesting surface keeps the identity selected.
+          console.warn('session delete rejected:', reason)
+          failed.push(sessionId)
+        }
+      }
+      if (requested.length > 0) {
+        notify({ kind: 'archiveResult', operation: 'delete', succeeded, failed: failed.length })
+      }
+      settleDeleteRequester(failed)
+      return failed
     },
   })
   const forkInjected = (): ForkSessionInjected => ({
@@ -239,7 +339,12 @@ export function apply(ctx: Context): void {
     insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
       await workspaces.insertBefore(workspaceId, beforeWorkspaceId)
     },
-    unarchiveSession: async (sessionId) => { await uiWorkspace.unarchiveSession(sessionId) },
+    unarchiveSession: async (sessionId) => { unarchiveSession(sessionId) },
+    requestDeleteSessions,
+    notifyArchiveResult: (operation, succeeded, failed) => {
+      notify({ kind: 'archiveResult', operation, succeeded, failed })
+    },
+    syncSelection,
     createWorkspace: input => workspaces.create(input),
     requestSearch: shortcutControls.search,
     requestAddWorkspace: shortcutControls.add,
@@ -287,6 +392,7 @@ export function apply(ctx: Context): void {
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.menu.item', id: 'rename', order: 200, locale: NS, inject: renameInjected }, RenameSessionMenuItem)
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.menu.item', id: 'fork', order: 300, locale: NS, inject: forkInjected }, ForkSessionMenuItem)
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.menu.item', id: 'archive', order: 400, locale: NS, inject: archiveInjected }, ArchiveSessionMenuItem)
+    yield ctx.slots.register({ name: 'sidebar.workspaces.session.menu.item', id: 'delete', order: 500, locale: NS, inject: deleteMenuInjected }, DeleteSessionMenuItem)
   })
   ctx.slots.inject('sidebar.workspaces.session.row.action', function* () {
     yield ctx.slots.register({ name: 'sidebar.workspaces.session.row.action', id: 'archive', order: 100, locale: NS, inject: archiveInjected }, ArchiveSessionRowButton)
@@ -301,6 +407,9 @@ export function apply(ctx: Context): void {
     yield ctx.slots.register({
       name: 'shell.overlay', id: 'workspace.session-archive', locale: NS, inject: archiveConfirmInjected,
     }, SessionArchiveConfirmDialog)
+    yield ctx.slots.register({
+      name: 'shell.overlay', id: 'workspace.session-delete', locale: NS, inject: deleteDialogInjected,
+    }, SessionDeleteDialog)
     // The toast shares the browser's viewing store: it reads the archived
     // filter to drop the archived notice's filter action once rows are visible.
     yield ctx.slots.register({

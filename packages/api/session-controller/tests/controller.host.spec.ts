@@ -139,6 +139,20 @@ describe('SessionController facade', () => {
     await expect(iterator.next()).resolves.toEqual({ done: true, value: undefined })
   })
 
+  it('forwards a permanently deleted Session to api-session/removed', async () => {
+    const ctx = new Context()
+    await ctx.plugin(SessionStore)
+    ctx.provide('sessionPersistence', testSessionPersistence(ctx, {}) as never)
+    createSessionTestController(ctx, defaults)
+    const removed: string[] = []
+    ctx.on('api-session/removed', (sessionId) => { removed.push(String(sessionId)) })
+
+    ctx.emit('workspace/session-deleted', SessionId('permanently-deleted'))
+
+    expect(removed).toEqual(['permanently-deleted'])
+    await ctx.fiber.dispose()
+  })
+
   it.each(['success', 'domain-error', 'throw'] as const)(
     'promotes a prepared follow observation in the background: %s',
     async (outcome) => {

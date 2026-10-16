@@ -51,8 +51,9 @@ export class WorkspaceFeed {
   private archived: readonly string[]
   private pinned: readonly string[]
 
-  /** @param ctx - Host context containing the authoritative Workspace registry. */
-  constructor(private readonly ctx: Context) {
+  /** @param ctx - Host context containing the authoritative Workspace registry.
+   * @param retentionDays - Host archive retention policy projected into every baseline and archived increment. */
+  constructor(private readonly ctx: Context, private readonly retentionDays: number) {
     const baseline = ctx.workspaceRegistry.list()
     this.knownIds = new Set(baseline.map(workspace => String(workspace.id)))
     this.order = baseline.map(workspace => String(workspace.id))
@@ -73,6 +74,8 @@ export class WorkspaceFeed {
     return {
       items: this.ctx.workspaceRegistry.list().map(workspaceView),
       archivedSessionIds: [...this.ctx.workspaceRegistry.archivedSessionIds],
+      archivedSessionTimes: { ...this.ctx.workspaceRegistry.archivedSessionTimes },
+      archivedSessionRetentionDays: this.retentionDays,
       pinnedSessionIds: [...this.ctx.workspaceRegistry.pinnedSessionIds],
     }
   }
@@ -116,7 +119,7 @@ export class WorkspaceFeed {
       const nextArchived = state.archivedSessionIds.map(String)
       if (!sameStrings(this.archived, nextArchived)) {
         this.archived = nextArchived
-        this.publish({ type: 'archived', archivedSessionIds: [...state.archivedSessionIds] })
+        this.publish({ type: 'archived', archivedSessionIds: [...state.archivedSessionIds], archivedSessionTimes: { ...state.archivedSessionTimes }, archivedSessionRetentionDays: this.retentionDays })
       }
       const nextPinned = state.pinnedSessionIds.map(String)
       if (!sameStrings(this.pinned, nextPinned)) {

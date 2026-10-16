@@ -60,6 +60,10 @@ export const workspaceDomainState = z.object({
   defaultWorkspaceId: workspaceId.optional(),
   workspaceIds: z.array(workspaceId),
   archivedSessionIds: z.array(sessionId).default([]),
+  /** Archive instants in Unix milliseconds; missing legacy entries receive a startup grace period. */
+  archivedSessionTimes: z.record(z.string(), z.number().finite().nonnegative()).optional(),
+  /** Recover an interrupted permanent Session deletion before allowing restoration. */
+  pendingSessionDeletion: sessionId.optional(),
   pinnedSessionIds: z.array(sessionId).default([]),
   pendingMutation: workspacePendingMutation.optional(),
 })

@@ -8,7 +8,8 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { SessionProjectionSnapshot } from '@deepseek-ai/dsh-api-session-controller/client'
 import {
   type ArchivedFilter,
-  deriveFlat, deriveGroups, deriveSearchResults, orderByRecency, owningGroupKey, owningParentFolder,
+  deriveFlat, deriveGroups, derivePinned, deriveSearchResults, nextArchiveSelection, orderByRecency,
+  owningGroupKey, owningParentFolder,
   pinCurrentBlank, reconcileManualOrder, sessionMemberIds, visibleSessionIds, workspaceLabel, UNGROUPED_KEY,
 } from '../src/client/tree.ts'
 import { createWorkspaceViewStore } from '../src/client/stores.ts'
@@ -74,7 +75,7 @@ describe('owningGroupKey', () => {
 })
 
 describe('Session ordering', () => {
-  it.each(['workspace', 'ungrouped', 'flat'] as const)('keeps the current New Session before pins in %s', (mode) => {
+  it.each(['workspace', 'ungrouped', 'flat'] as const)('keeps the current New Session first and pinned rows out of the %s rows', (mode) => {
     const sessions = withMain(list(
       summary('pin', 30),
       summary('ordinary', 20),
@@ -91,7 +92,11 @@ describe('Session ordering', () => {
         noAttention,
         view([mode === 'workspace' ? 'alpha' : UNGROUPED_KEY], order),
       )[0]!.sessions
-    expect(rows.map(row => row.id)).toEqual([sid('blank'), sid('pin'), sid('ordinary')])
+    // The pinned row belongs to the Pinned section; the group keeps only the
+    // placeholder and the ordinary rows, while its account order keeps the pin.
+    expect(rows.map(row => row.id)).toEqual([sid('blank'), sid('ordinary')])
+    expect(derivePinned(sessions, state, noAttention).map(row => [row.id, row.pinned]))
+      .toEqual([[sid('pin'), true]])
   })
 
   it('orders known members by recency with a stable identity tie-break', () => {
@@ -102,7 +107,7 @@ describe('Session ordering', () => {
     )).toEqual([sid('tie-a'), sid('tie-b'), sid('older')])
   })
 
-  it('orders each partition strictly by Session recency, independent of pin-array order', () => {
+  it('orders pinned rows by the Host pin order regardless of recency', () => {
     const sessions = list(summary('stale-pin', 10), summary('fresh-pin', 30), summary('plain', 20))
     const state = {
       ...noRows,
@@ -112,8 +117,9 @@ describe('Session ordering', () => {
       ],
     }
     const order = orderByRecency(sessions.ids, sessions.byId)
-    expect(deriveFlat(sessions, order, state, noAttention).map(row => row.id))
-      .toEqual([sid('fresh-pin'), sid('stale-pin'), sid('plain')])
+    expect(deriveFlat(sessions, order, state, noAttention).map(row => row.id)).toEqual([sid('plain')])
+    expect(derivePinned(sessions, state, noAttention).map(row => row.id))
+      .toEqual([sid('stale-pin'), sid('fresh-pin')])
   })
 
   it('reconciles retained manual slots and appends newly known members by recency', () => {
@@ -181,7 +187,7 @@ describe('Session ordering', () => {
       .toEqual(['source', 'orphan', 'self'])
   })
 
-  it.each(['workspace', 'ungrouped', 'flat'] as const)('keeps forks of pinned sources in the ordinary %s section', (mode) => {
+  it.each(['workspace', 'ungrouped', 'flat'] as const)('keeps forks of pinned sources in the ordinary %s rows', (mode) => {
     const sessions = list(
       summary('source', 1), summary('other-pin', 2), summary('ordinary', 3),
       { ...summary('fork', 4), parentId: sid('source') },
@@ -194,7 +200,7 @@ describe('Session ordering', () => {
         sessions, mode === 'workspace' ? [workspace('alpha', order)] : [], state, noAttention,
         view([mode === 'workspace' ? 'alpha' : UNGROUPED_KEY], order),
       )[0]!.sessions
-    expect(rows.map(row => row.id)).toEqual(['source', 'other-pin', 'fork', 'ordinary'])
+    expect(rows.map(row => row.id)).toEqual(['fork', 'ordinary'])
   })
 
   it('keeps archive filtering out of complete flat membership', () => {
@@ -452,28 +458,33 @@ describe('deriveGroups', () => {
     expect(groups[0]!.sessionCount).toBe(1)
   })
 
-  it('leads expanded groups with pinned rows in the supplied order', () => {
+  it('keeps expanded groups free of pinned rows and returns them in the Pinned section', () => {
     const sessions = list(summary('a', 4), summary('b', 3), summary('c', 2), summary('d', 1))
+    const state = rowState({ pinned: ['c', 'b'] })
     const groups = deriveGroups(
       sessions, [workspace('first', ['a', 'c', 'b', 'd'])],
-      rowState({ pinned: ['c', 'b'] }),
+      state,
       noAttention, view(['first']),
     )
-    // c precedes b per the supplied order even though b updated more recently:
-    // the pinned block never re-sorts, so manual pinned-to-pinned drags hold.
+    // The group keeps only the ordinary rows and their count; the pinned
+    // members render in the Pinned section in the Host's pin order.
     expect(groups[0]!.sessions.map(node => [node.id, node.pinned])).toEqual([
-      [sid('c'), true],
-      [sid('b'), true],
       [sid('a'), false],
       [sid('d'), false],
+    ])
+    expect(groups[0]!.sessionCount).toBe(2)
+    expect(derivePinned(sessions, state, noAttention).map(node => [node.id, node.pinned])).toEqual([
+      [sid('c'), true],
+      [sid('b'), true],
     ])
   })
 
   it('keeps shown archived rows in place and never sections an archived pin', () => {
     const sessions = list(summary('top', 3), summary('mid', 2), summary('low', 1))
+    const state = rowState({ pinned: ['mid'], archived: ['mid'], archivedFilter: 'show' })
     const groups = deriveGroups(
       sessions, [workspace('first', ['top', 'mid', 'low'])],
-      rowState({ pinned: ['mid'], archived: ['mid'], archivedFilter: 'show' }),
+      state,
       noAttention, view(['first']),
     )
     expect(groups[0]!.sessions.map(node => [node.id, node.pinned, node.archived])).toEqual([
@@ -481,6 +492,8 @@ describe('deriveGroups', () => {
       [sid('mid'), false, true],
       [sid('low'), false, false],
     ])
+    // The stale pin names an archived member: no Pinned-section row either.
+    expect(derivePinned(sessions, state, noAttention)).toEqual([])
   })
 
   it('drops Workspaces without visible members under the only filter', () => {
@@ -572,14 +585,79 @@ describe('deriveFlat', () => {
     expect(visibleSessionIds(list(kept, gone), archived('gone'), 'only')).toEqual([gone.id])
   })
 
-  it('leads the flat list with pinned rows in the supplied order', () => {
+  it('keeps pinned rows out of the flat rows and returns them in the Pinned section', () => {
     const sessions = list(summary('a', 2), summary('b', 2), summary('c', 2), summary('d', 3))
-    const rows = deriveFlat(
-      sessions, [sid('b'), sid('a'), sid('c'), sid('d')], rowState({ pinned: ['c', 'b', 'a'] }), noAttention,
-    )
-    expect(rows.map(row => [row.id, row.pinned])).toEqual([
-      [sid('b'), true], [sid('a'), true], [sid('c'), true], [sid('d'), false],
+    const state = rowState({ pinned: ['c', 'b', 'a'] })
+    const rows = deriveFlat(sessions, [sid('b'), sid('a'), sid('c'), sid('d')], state, noAttention)
+    expect(rows.map(row => [row.id, row.pinned])).toEqual([[sid('d'), false]])
+    expect(derivePinned(sessions, state, noAttention).map(row => [row.id, row.pinned])).toEqual([
+      [sid('c'), true], [sid('b'), true], [sid('a'), true],
     ])
+  })
+})
+
+describe('derivePinned', () => {
+  it('waits for summaries and drops members under the archived-only filter', () => {
+    const sessions = list(summary('known', 1))
+    const pendingState = rowState({ pinned: ['known', 'pending-summary'] })
+    expect(derivePinned(sessions, pendingState, noAttention).map(row => row.id)).toEqual([sid('known')])
+    // The archived-only view has no Pinned section: archiving drops the pin.
+    expect(derivePinned(
+      sessions,
+      { ...pendingState, archivedFilter: 'only' as const },
+      noAttention,
+    )).toEqual([])
+  })
+
+  it('carries the archive instant onto archived rows of every view', () => {
+    const sessions = list(summary('kept', 2), summary('stored', 1))
+    const state = {
+      ...rowState({ archived: ['stored'], archivedFilter: 'show' as const }),
+      archivedSessionTimes: { stored: 1_000 },
+      archivedSessionRetentionDays: 15,
+    }
+    const groups = deriveGroups(sessions, [workspace('alpha', ['kept', 'stored'])], state, noAttention, view(['alpha']))
+    expect(groups[0]!.sessions.map(row => [row.id, row.archivedAt])).toEqual([
+      [sid('kept'), undefined],
+      [sid('stored'), 1_000],
+    ])
+    const rows = deriveFlat(sessions, sessions.ids, state, noAttention)
+    expect(rows.map(row => [row.id, row.archivedAt])).toEqual([
+      [sid('kept'), undefined],
+      [sid('stored'), 1_000],
+    ])
+  })
+})
+
+describe('nextArchiveSelection', () => {
+  const rendered = ['one', 'two', 'three', 'four'].map(sid)
+  const none = new Set<SessionId>()
+
+  it('a plain click selects exactly the clicked row and anchors it', () => {
+    const current = new Set([sid('two')])
+    expect(nextArchiveSelection(current, rendered, sid('three'), { shift: false, toggle: false }, sid('two')))
+      .toEqual({ selection: new Set([sid('three')]), anchor: sid('three') })
+  })
+
+  it('a Cmd/Ctrl click toggles one row and anchors it', () => {
+    expect(nextArchiveSelection(new Set([sid('two')]), rendered, sid('three'), { shift: false, toggle: true }, sid('two')))
+      .toEqual({ selection: new Set([sid('two'), sid('three')]), anchor: sid('three') })
+    expect(nextArchiveSelection(new Set([sid('two'), sid('three')]), rendered, sid('three'), { shift: false, toggle: true }, sid('two')))
+      .toEqual({ selection: new Set([sid('two')]), anchor: sid('three') })
+  })
+
+  it('a Shift click takes the rendered run from the anchor, either direction, and keeps the anchor', () => {
+    expect(nextArchiveSelection(none, rendered, sid('three'), { shift: true, toggle: false }, sid('two')))
+      .toEqual({ selection: new Set([sid('two'), sid('three')]), anchor: sid('two') })
+    expect(nextArchiveSelection(none, rendered, sid('one'), { shift: true, toggle: false }, sid('three')))
+      .toEqual({ selection: new Set([sid('one'), sid('two'), sid('three')]), anchor: sid('three') })
+  })
+
+  it('a Shift click without an anchor, or off the rendered rows, addresses the clicked row alone', () => {
+    expect(nextArchiveSelection(none, rendered, sid('three'), { shift: true, toggle: false }, undefined))
+      .toEqual({ selection: new Set([sid('three')]), anchor: sid('three') })
+    expect(nextArchiveSelection(none, rendered, sid('three'), { shift: true, toggle: false }, sid('departed')))
+      .toEqual({ selection: new Set([sid('three')]), anchor: sid('three') })
   })
 })
 

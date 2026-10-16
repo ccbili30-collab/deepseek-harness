@@ -502,6 +502,10 @@ describe('SessionObservationReader cold path', () => {
         return Promise.resolve(new SwapHandle(id, structuredClone(meta), access))
       }
 
+      deleteSession(): Promise<void> {
+        return Promise.resolve()
+      }
+
       stat(): Promise<SessionPersistenceSnapshot | undefined> {
         return Promise.resolve({
           header: structuredClone(meta),

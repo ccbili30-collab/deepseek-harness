@@ -44,6 +44,10 @@ declare module '@deepseek-ai/dsh-typert-protocol' {
       readonly sessionId: SessionId
       readonly activity: readonly SessionActivity[]
     }
+    /** Permanent deletion requires an archived Session. */
+    'workspace/session-not-archived': { readonly sessionId: SessionId }
+    /** Permanent deletion refuses open Sessions or active persistence writers. */
+    'workspace/session-delete-busy': { readonly sessionId: SessionId }
     /** The Session or its anchor is not in the Workspace's manual order. */
     'workspace/move-invalid': {
       readonly workspaceId: WorkspaceId
@@ -132,6 +136,20 @@ export interface WorkspaceUnarchiveSessionRequest {
 /** Complete archived Session set after a mutation. */
 export interface WorkspaceArchiveValue {
   readonly archivedSessionIds: readonly SessionId[]
+  /** Archive instants in Unix milliseconds; absent on older Hosts. */
+  readonly archivedSessionTimes?: Readonly<Record<string, number>>
+  /** Host retention policy in days; absent on older Hosts. */
+  readonly archivedSessionRetentionDays?: number
+}
+
+/** Archived Session requested for permanent deletion. */
+export interface WorkspaceDeleteArchivedSessionRequest {
+  readonly sessionId: SessionId
+}
+
+/** Successful permanent deletion and the resulting archive state. */
+export interface WorkspaceDeleteArchivedSessionValue extends WorkspaceArchiveValue {
+  readonly deleted: true
 }
 
 /** Session requested for pinning ahead of unpinned Sessions on grouping surfaces. */
@@ -150,7 +168,7 @@ export interface WorkspacePinValue {
 }
 
 /** Complete reconnect baseline for Workspace browser state. */
-export interface WorkspaceBaseline {
+export interface WorkspaceBaseline extends WorkspaceArchiveValue {
   readonly items: readonly WorkspaceView[]
   readonly archivedSessionIds: readonly SessionId[]
   /** Registry-global pin set, most recently pinned first. */
@@ -162,7 +180,7 @@ export type WorkspaceFollowIncrement =
   | { readonly type: 'upsert'; readonly workspace: WorkspaceView }
   | { readonly type: 'remove'; readonly workspaceId: WorkspaceId }
   | { readonly type: 'order'; readonly workspaceIds: readonly WorkspaceId[] }
-  | { readonly type: 'archived'; readonly archivedSessionIds: readonly SessionId[] }
+  | ({ readonly type: 'archived' } & WorkspaceArchiveValue)
   | { readonly type: 'pinned'; readonly pinnedSessionIds: readonly SessionId[] }
 
 /** Workspace state stream; every generation starts with exactly one baseline. */
