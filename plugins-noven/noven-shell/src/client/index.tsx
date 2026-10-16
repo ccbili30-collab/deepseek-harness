@@ -16,8 +16,6 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { IWorkspaces, WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { ModelCatalog, ModelSelection, PromptContentPart } from '@deepseek-ai/dsh-api-session-controller/types'
-import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-client-file-upload/client'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -39,9 +37,9 @@ import { defineStore } from '@deepseek-ai/dsh-client-store'
 import type { ObservableSnapshot, SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { Home, fmt } from './pages/Home.tsx'
 import { notifyUndo } from './ui/interact.tsx'
+import { openWorkspaceFolder } from './workspace-folder.ts'
 import { cardCache } from './ui/retain.ts'
 import { forgetColdWhere } from './ui/cold-store.ts'
-import { Create } from './pages/Create.tsx'
 import { Me } from './pages/Me.tsx'
 import { Messages } from './pages/Messages.tsx'
 import { CardStudio } from './pages/CardStudio.tsx'
@@ -65,12 +63,12 @@ import { FootLauncher } from './sidebar.tsx'
 import type { FootLauncherInjected, FootLauncherProps } from './sidebar.tsx'
 import { CardReceiptTail, CardToolView, CARD_READ_TOOLS, CARD_WRITE_TOOLS, type CardReceiptInjected } from './toolviews.tsx'
 import { cardSavedDefinition, savedMeta } from './card-receipt.ts'
-import { SlashChips } from './inputdock.tsx'
+import { BlankDock, type BlankDockInjected } from './inputdock.tsx'
 import { applyQuote } from './quote.tsx'
 import { applyBranches } from './branches.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
 import { showComingSoon } from './coming-soon.ts'
-import { enterIdeScene } from './creation-transition.ts'
+import { applyArrangement, type ArrangementDeps } from './arrangement.ts'
 import { injectNovenStyles } from './style.ts'
 import { CanvasHost, createCanvasStore, activeKey, fileTabKind, docKey, dirKey, statusKey, type CanvasInjected, type CanvasState, type DocEntry, type DirEntry, type ImportPack, type ProjectFocus, type SimRow, type TabFlags } from './canvas.tsx'
 import { ContentTree, type TreeInjected } from './tree.tsx'
@@ -206,28 +204,6 @@ export interface MePageInjected extends ShellFace {
   readonly moveCard: (addr: CardAddr, cardId: string, target: ProjectAddr) => Promise<void>
 }
 
-/** 创作页发送参数：目标工作区、模型选择（含推理档）、待发附件。 */
-export interface CreateSend {
-  readonly workspaceId?: WorkspaceId
-  readonly model?: ModelSelection
-  readonly files?: readonly File[]
-}
-
-/** Injected face for 创作: real session/prompt start, card creation, and the drafts catalog. */
-export interface CreatePageInjected extends ShellFace {
-  readonly hooks: { readonly cards: ObservableSnapshot<readonly CardRow[]> }
-  /** 建/复用所选工作区的会话 → 应用模型选择 → 上传附件 → 排队 prompt → 揭开对话。失败回 false 让页面解除淡出。 */
-  readonly startPrompt: (text: string, send: CreateSend) => Promise<boolean>
-  readonly newCard: (kind: 'world' | 'character', name: string, workspaceId?: WorkspaceId) => void
-  readonly importCard: (file: File, workspaceId?: WorkspaceId) => void
-  /** Connect or create the chosen workspace session, then enter the persisted IDE canvas. */
-  readonly startHandcraft: (workspaceId: WorkspaceId | undefined, source: HTMLElement) => Promise<boolean>
-  /** Host 代际的模型目录（默认路由 + 各提供商清单）。 */
-  readonly loadModels: () => Promise<ModelCatalog | undefined>
-  /** 弹宿主目录选择并把所选目录注册成 Workspace。 */
-  readonly pickWorkspace: () => Promise<WorkspaceId | undefined>
-}
-
 /** Injected face for the project page: the manifest observable plus mutation/read callbacks. */
 export interface ProjectPageInjected {
   readonly hooks: {
@@ -261,6 +237,25 @@ export interface WorkspaceLibraryInjected {
   readonly hooks: { readonly projects: ObservableSnapshot<readonly ProjectRow[]> }
   /** Register or unregister the workspace root; the row passes the direction it displayed. */
   readonly setMembership: (root: string, registered: boolean) => Promise<void>
+}
+
+/** Host directory opener supplied to the workspace menu. */
+interface WorkspaceFolderInjected {
+  readonly openFolder: (path: string) => Promise<void>
+}
+
+/** Opens the workspace root without selecting its conversation. */
+function WorkspaceFolderItem({ path, useMenuOpenState, openFolder, t }: WorkspaceMenuItemProps & InjectFace<WorkspaceFolderInjected>) {
+  const [, setMenuOpen] = useMenuOpenState()
+  if (path === undefined || path.trim() === '') return null
+  return (
+    <MenuItemButton icon={glyph.folder(16)} onSelect={() => {
+      setMenuOpen(false)
+      void openFolder(path)
+    }}>
+      {t('workspace.openFolder')}
+    </MenuItemButton>
+  )
 }
 
 /** Workspace ⋯ menu row: 移入创作库 while the root is unregistered, 移出创作库 once it is. */
@@ -1325,99 +1320,61 @@ export function apply(ctx: ClientContext): void {
     setImportPack(undefined)
   }
 
-  /** 图片附件走内联 image part；其余文件经 fileUpload 暂存拿 receipt（服务缺席时丢弃并告警）。 */
-  const fileToPart = async (sessionId: SessionId, file: File): Promise<PromptContentPart | undefined> => {
-    const imageTypes = new Set<string>(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
-    if (imageTypes.has(file.type)) {
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      let binary = ''
-      for (const b of bytes) binary += String.fromCharCode(b)
-      return { type: 'image', mediaType: file.type as ImageMediaType, data: btoa(binary), name: file.name }
+  /** 组装排布种子的写入口；发布版布局未带的新方法按可选口径跳过（旧构建只缺新种子能力，不报错）。 */
+  const arrangementDeps = (): ArrangementDeps => ({
+    seedSessionGeometry: (sessionId, seed) => { ctx.layout.seedSessionGeometry?.(sessionId, seed) },
+    seedUnitShare: share => { ctx.layout.seedUnitShare?.(share) },
+  })
+
+  /**
+   * 创作 = 打开一条空白会话：所选会话在工作区里有可复用的空白会话就复用，
+   * 没有才新建（connectWorkspace 的语义）。只落 agent 种子，不发任何消息——
+   * 用户看到的就是新会话页本身，输入框、模式、模型都是会话自己的。
+   */
+  const openCreation = (): void => {
+    const workspaces = ctx.workspaces.list.getSnapshot()
+    const current = ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined
+    const recent = recentSession()
+    const target = (current === undefined ? undefined : workspaces.items.find(w => w.sessionIds.includes(current)))
+      ?? (recent === undefined ? undefined : workspaces.items.find(w => w.path === recent.cwd))
+      ?? workspaces.items[0]
+    if (target === undefined) {
+      // 还没有任何工作区：交给上游新会话流（它会落到选目录的空态）。
+      ctx.uiWorkspace.startSession()
+      return
     }
-    const uploader = ctx.get('fileUpload')
-    if (uploader === undefined) return undefined
-    const res = await uploader.upload(sessionId, file, file.name)
-    return res.ok ? { type: 'file', receiptId: res.value.receiptId } : undefined
+    void ctx.uiWorkspace.openWorkspace(target.workspaceId, sessionId => {
+      applyArrangement(arrangementDeps(), sessionId, 'agent')
+      // agent 排布：画布停靠让出宽度。beforeOpen 在会话提交前跑，停靠在挂载后补一次也幂等。
+      window.setTimeout(() => { setCanvasParked(sessionId, true) }, 0)
+    }).catch((reason: unknown) => { console.warn('noven-shell: open creation failed:', reason) })
   }
 
-  /** 发送管线：连接所选工作区的会话 → 应用模型 → 传附件 → prompt → 揭开对话面板。 */
-  const startPromptSession = (text: string, send: CreateSend): Promise<boolean> =>
-    (async () => {
-      const sessionId = send.workspaceId !== undefined
-        ? await ctx.uiWorkspace.connectWorkspace(send.workspaceId)
-        : await createSessionIn(recentSession()?.cwd)
-      if (send.model !== undefined) {
-        const applied = await ctx.remote.session.selectModel({ sessionId, ...send.model })
-        if (!applied.ok) console.warn('noven-shell: model selection failed:', applied.error.message)
-      }
-      const parts: PromptContentPart[] = []
-      for (const file of send.files ?? []) {
-        const part = await fileToPart(sessionId, file).catch((reason: unknown) => {
-          console.warn('noven-shell: attachment upload failed:', reason)
-          return undefined
-        })
-        if (part !== undefined) parts.push(part)
-      }
-      if (text !== '') parts.push({ type: 'text', text })
-      ctx.uiWorkspace.openSession(sessionId)
-      await ctx.sessions.using(sessionId, { source: 'novenShell' }, async reference => {
-        const result = await reference.binding.session.prompt(parts, 'queue')
-        if (!result.ok) throw new Error(result.error.message)
-      })
-      return true
-    })().catch((reason: unknown) => {
-      console.warn('noven-shell: prompt session failed:', reason)
-      return false
-    })
-
-  const startHandcraft = async (workspaceId: WorkspaceId | undefined, source: HTMLElement): Promise<boolean> => {
-    const root = workspaceRootFor(workspaceId)
-    const reusable = root === undefined ? recentSession() : (() => {
-      let found: { id: SessionId; cwd: string; at: number } | undefined
-      const sessions = ctx.sessions.list.getSnapshot()
-      for (const id of sessions.ids) {
-        const row = sessions.byId[id]
-        if (row?.cwd !== root) continue
-        if (found === undefined || row.updatedAt > found.at) found = { id, cwd: row.cwd, at: row.updatedAt }
-      }
-      return found === undefined ? undefined : { id: found.id, cwd: found.cwd }
-    })()
-    const target = reusable !== undefined
-      ? { sessionId: reusable.id, root: reusable.cwd || root }
-      : await cardSessionFor(workspaceId).catch((reason: unknown) => {
-        console.warn('noven-shell: handcraft session failed:', reason)
-        return undefined
-      })
-    if (target?.sessionId === undefined) return false
-    ctx.uiWorkspace.openSession(target.sessionId)
-    enterIdeScene(source, () => {
-      ctx.layout.selectPanel(null)
-      const layout = ctx.layout as {
-        setSidebarCollapsed?: (collapsed: boolean) => void
-        setUnitSide(side: 'left' | 'right'): void
-        toggleSidebar(): void
-      }
-      if (layout.setSidebarCollapsed !== undefined) layout.setSidebarCollapsed(true)
-      else if (document.querySelector('[data-sidebar-collapsed]') === null) layout.toggleSidebar()
-      layout.setUnitSide('left')
-      try { ctx.sidebarRight.openTab(CANVAS_KIND) }
-      catch (reason: unknown) { console.warn('noven-shell: handcraft canvas failed:', reason) }
-    })
-    return true
+  /**
+   * 停靠/抬起一个会话的画布区域。停靠只保留画布轨，对话占回完整宽度；
+   * 抬起走 openTab（openContent 恒 lift park）。停靠走控制器的正口
+   * parkCanvasIn，按会话的采纳 store 路由，不经过当前绑定；工作区运行时
+   * 已有、发布版类型未带，按可选视图调用（slots.d.ts 桥记录同一成员）。
+   */
+  const parkCanvasIn = (sessionId: SessionId): void => {
+    ;(ctx.sidebarRight as { parkCanvasIn?: (id: SessionId) => void }).parkCanvasIn?.(sessionId)
+  }
+  const setCanvasParked = (sessionId: SessionId, parked: boolean): void => {
+    if (parked) {
+      parkCanvasIn(sessionId)
+      return
+    }
+    raiseCanvas()
   }
 
-  /** Host 代际模型目录（默认路由 + 提供商清单）。 */
-  const loadModels = async (): Promise<ModelCatalog | undefined> => {
-    const res = await ctx.remote.session.modelCatalog()
-    return res.ok ? res.value : undefined
-  }
-
-  /** 目录选择 + 注册成 Workspace（追随上游添加路径的唯一入口：挑宿主目录）。 */
-  const pickWorkspace = async (): Promise<WorkspaceId | undefined> => {
-    const path = await ctx.uiWorkspace.pickDirectory()
-    if (path === null) return undefined
-    const workspace = await ctx.workspaces.create({ path })
-    return workspace.workspaceId
+  /**
+   * 手作 = 同一条会话换成 IDE 排布：导航收轨、抽屉+画布展开、对话退到副窗。
+   * 会话、草稿、输入框都不换；动效就是栏位的真实移动（AppFrame 的列缓动）。
+   * @param sessionId - 当前可见的会话。
+   */
+  const enterHandcraft = (sessionId: SessionId): void => {
+    applyArrangement(arrangementDeps(), sessionId, 'ide')
+    setCanvasParked(sessionId, false)
   }
 
   // ——— 四栏外壳：导航栏（图标 + 会话列表）原样不动；抽屉上区装内容树；
@@ -1772,6 +1729,10 @@ export function apply(ctx: ClientContext): void {
       showComingSoon(target, t('nav.comingSoon'))
     }), `noven-shell: unavailable panel ${id}`)
   }
+  // 「创作」行不再是一个面板：它就是「新会话」——打开工作区的空白会话。
+  // 行没有选中态（从不 selectPanel），因此停在任何会话上都可以再点。
+  ctx.effect(() => sidebarPanels.registerActivation(CREATE_ID, () => { openCreation() }),
+    'noven-shell: creation opens a blank session')
   const NAV: readonly { id: MainPanelId; order: number; label: () => string; Icon: (p: { size: number; active: boolean }) => React.ReactNode }[] = [
     { id: CREATE_ID, order: 5, label: () => t('nav.create'), Icon: CreateIcon },
     { id: HOME_ID, order: 10, label: () => t('nav.home'), Icon: HomeIcon },
@@ -2130,15 +2091,7 @@ export function apply(ctx: ClientContext): void {
         })
       },
       applyLayoutSeed: () => {
-        const layout = ctx.layout as {
-          setSidebarCollapsed?: (collapsed: boolean) => void
-          setUnitSide(side: 'left' | 'right'): void
-          toggleSidebar(): void
-        }
-        if (layout.setSidebarCollapsed !== undefined) layout.setSidebarCollapsed(true)
-        else if (document.querySelector('[data-sidebar-collapsed]') === null) layout.toggleSidebar()
-        layout.setUnitSide('left')
-        if (rightExtras.canvasSide?.get() !== 'right') rightExtras.canvasSide?.toggle()
+        applyArrangement(arrangementDeps(), sessionId, 'ide')
       },
       submitCreate,
       importCard,
@@ -2151,34 +2104,32 @@ export function apply(ctx: ClientContext): void {
     }),
   }, CanvasHost))
 
-  // 产品默认布局：单元（抽屉 | 画布）贴会话左边，画布在单元的右半边。
-  // 只在用户从未摆过时播种——拖过的偏好不再碰。setUnitSide 是工作区
-  // 新加的 API，旧发布版上没有，可选调用。
-  ctx.effect(() => {
-    // 两个偏好键都是宿主在模块加载时读一次、改写时持久化：先写键保证下次
-    // 启动就位，再调 API 让本次会话立即生效（旧构建缺 API 时仅下次生效）。
-    if (localStorage.getItem('dsh.layout.unit-side.v1') === null) {
-      localStorage.setItem('dsh.layout.unit-side.v1', 'left')
-      ctx.layout.setUnitSide?.('left')
-    }
-    if (localStorage.getItem('dsh.rightbar.canvas-side.v1') === null) {
-      localStorage.setItem('dsh.rightbar.canvas-side.v1', 'right')
-      if (rightExtras.canvasSide?.get() !== 'right') rightExtras.canvasSide?.toggle()
-    }
-    return () => { /* 播种无清理 */ }
-  }, 'noven-shell: layout defaults')
+  // 排布不再全局播种：结构归会话（ui-layout 几何记录），agent/ide 两种种子由
+  // 各入口在 openSession 时按会话 id 落（arrangement.ts）。老的全局
+  // unit-side/canvas-side 键留在盘上不再读——agent 的抽屉轨从此在最右缘。
 
-  // 会话座挂上且画布空着时开起点页——画布是工作区本体，不该等第一次点击。
-  // mounted 在每次 surface 提交都解绑重绑（绑定对象携带新 surfaces 快照），
-  // 且 mounted 的发射先于 canvas 的重新发布——中途读 canvas 恒为 undefined，
-  // 不设每会话一次的门会把 openTab 打进无限重试。
+  // 会话座挂上：画布处女挂载（还没有任何页签）时开起点页，并按该会话的
+  // 排布记录决定默认停靠——agent 停靠让出对话宽度，IDE 保持展开。已有页签
+  // 的会话（翻页回来、刷新恢复、用户自己开过）一律不动它的画布状态：
+  // 判定只看「该会话自己的记录」+「是否处女挂载」，不读 live 几何（翻页
+  // 瞬态会误判），也不做粘滞重放（排布中途变化会把离开会话误收起，
+  // 2026-10-16 修：翻页回来画布被收起）。另一半在控制器：bind 先发布
+  // canvas 再宣布 mounted，本回调读到的才是新会话的画布，恢复展开的
+  // 画布不会被误判成处女挂载而停靠。mounted 每次 surface 提交都
+  // 解绑重绑，开页签每会话只做一次。
   ctx.effect(() => {
     const seeded = new Set<SessionId>()
     return ctx.sidebarRight.mounted.subscribe(() => {
       const sessionId = ctx.sidebarRight.mounted.getSnapshot()
       if (sessionId === undefined || seeded.has(sessionId)) return
       seeded.add(sessionId)
-      if (rightExtras.canvas?.getSnapshot() === undefined) raiseCanvas()
+      if (rightExtras.canvas?.getSnapshot() !== undefined) return
+      raiseCanvas()
+      const record = ctx.layout.sessionGeometry?.getSnapshot().byId?.[sessionId]
+      const ide = record?.sidebarCollapsed === true && record?.unitSide === 'left'
+      if (ide) return
+      // 停靠走控制器的正口（按会话的采纳 store 路由，不经过当前绑定）。
+      parkCanvasIn(sessionId)
     })
   }, 'noven-shell: seed canvas')
 
@@ -2205,23 +2156,6 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('main', function* () {
     yield ctx.slots.register({ name: 'main', key: HOME_ID, locale: NS },
       (p: PageProps) => <Home t={p.t} />)
-    yield ctx.slots.register({ name: 'main', key: CREATE_ID, locale: NS,
-      inject: (): CreatePageInjected => ({
-        ...face,
-        hooks: { cards },
-        startPrompt: startPromptSession,
-        startHandcraft,
-        newCard,
-        importCard,
-        loadModels,
-        pickWorkspace,
-      }),
-    }, (p: FacePageProps & InjectFace<CreatePageInjected>) => (
-      <Create t={p.t} useWorkspaces={p.useWorkspaces} useSessions={p.useSessions}
-        onStartPrompt={p.startPrompt} onStartHandcraft={p.startHandcraft} onNewCard={p.newCard}
-        onImportCard={p.importCard} loadModels={p.loadModels} pickWorkspace={p.pickWorkspace}
-        useCards={p.useCards} onOpenCard={row => { face.openCard(row.cardId, { sessionId: row.sessionId, root: row.workspaceRoot }) }} />
-    ))
     yield ctx.slots.register({ name: 'main', key: MESSAGES_ID, locale: NS },
       (p: PageProps) => <Messages t={p.t} />)
     yield ctx.slots.register({ name: 'main', key: ME_ID, locale: NS, store, inject: (): MePageInjected => ({
@@ -2426,6 +2360,15 @@ export function apply(ctx: ClientContext): void {
       useSidecar={p.useSidecar} run={p.run}
       useDocs={p.useDocs} ensureDoc={p.ensureDoc} saveDoc={p.saveDoc} />
   ))), 'noven-shell: 会话设置 body')
+  ctx.effect(() => ctx.slots.inject('sidebar.workspaces.workspace.menu.item', () => ctx.slots.register({
+    name: 'sidebar.workspaces.workspace.menu.item', id: 'open-folder', order: 50, locale: NS,
+    inject: (): WorkspaceFolderInjected => ({
+      openFolder: path => openWorkspaceFolder(path, {
+        open: request => ctx.remote.session.openWorkspacePath(request),
+        failed: () => { notifyUndo({ text: t('workspace.openFolder.failed') }) },
+      }),
+    }),
+  }, WorkspaceFolderItem)), 'noven-shell: workspace folder row')
   // Workspace ⋯ menu membership row: 移入 writes project.json when absent and
   // registers the root; 移出 lifts only the registry pointer — files and the
   // Workspace itself stay untouched.
@@ -2536,6 +2479,52 @@ export function apply(ctx: ClientContext): void {
   }, CardReceiptTail))
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock', id: 'noven-slash-chips', order: 10, locale: NS,
-    inject: (sessionId: Parameters<typeof ctx.remote.commands.list>[0]) => ({ hooks: { commands: commandCatalog(ctx.remote, sessionId) } }),
-  }, SlashChips))
+    inject: (sessionId: SessionId): BlankDockInjected => ({
+      hooks: {
+        commands: commandCatalog(ctx.remote, sessionId),
+        // 只在本会话就是可见会话且导航已收轨时视作 IDE：排布结构归会话。
+        ide: {
+          getSnapshot: () => {
+            const geometry = ctx.layout.sessionGeometry?.getSnapshot()
+            return geometry !== undefined && geometry.active === sessionId
+              && geometry.sidebarCollapsed && geometry.unitSide === 'left'
+          },
+          subscribe: listener => ctx.layout.sessionGeometry?.subscribe(listener) ?? (() => {}),
+        },
+        // 继续区：只列本项目的未保存草稿。getSnapshot 必须返回稳定引用
+        //（useSyncExternalStore）：按 sessions/cards 两份源快照记忆化。
+        drafts: (() => {
+          let memo: readonly { cardId: string; name: string; workspaceRoot: string; sessionId: string | undefined; modules: number }[] = []
+          let memoCards: readonly unknown[] | undefined
+          let memoRoot: string | undefined
+          return {
+            getSnapshot: () => {
+              const allCards = cards.getSnapshot()
+              const root = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
+              if (allCards === memoCards && root === memoRoot) return memo
+              memoCards = allCards
+              memoRoot = root
+              memo = root === undefined ? [] : allCards
+                .filter(row => row.hasDraft && row.workspaceRoot === root)
+                .map(row => ({
+                  cardId: row.cardId, name: row.name, workspaceRoot: row.workspaceRoot,
+                  sessionId: row.sessionId, modules: row.modules,
+                }))
+              return memo
+            },
+            subscribe(listener: () => void) {
+              const a = cards.subscribe(listener)
+              const b = ctx.sessions.list.subscribe(listener)
+              return () => { a(); b() }
+            },
+          }
+        })(),
+      },
+      openDraft: draft => {
+        // 在画布卡页打开草稿（排布会抬起画布标签）。
+        face.openCard(draft.cardId, { ...(draft.sessionId !== undefined ? { sessionId: draft.sessionId as SessionId } : {}), root: draft.workspaceRoot })
+      },
+      handcraft: () => { enterHandcraft(sessionId) },
+    }),
+  }, BlankDock))
 }

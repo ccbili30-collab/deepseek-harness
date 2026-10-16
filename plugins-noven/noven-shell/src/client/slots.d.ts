@@ -55,6 +55,35 @@ declare module '@deepseek-ai/dsh-client-ui-layout/client' {
   interface ILayout {
     /** Move the drawer+canvas unit to a side of the conversation; absent on older published builds. */
     setUnitSide?(side: 'left' | 'right'): void
+    /**
+     * Stamp a structural arrangement seed onto one session's geometry record;
+     * absent on older published builds.
+     */
+    seedSessionGeometry?(sessionId: string, seed: {
+      sidebarCollapsed?: boolean
+      narrowExpanded?: boolean
+      unitSide?: 'left' | 'right'
+      rightbarCollapsed?: boolean
+    }): void
+    /** Seed the unit width as a work-layer share, once; absent on older published builds. */
+    seedUnitShare?(share: number): void
+    /** Live structural geometry of the visible session; absent on older published builds. */
+    readonly sessionGeometry?: {
+      getSnapshot(): {
+        readonly active: string | null
+        readonly sidebarCollapsed: boolean
+        readonly narrowExpanded: boolean
+        readonly unitSide: 'left' | 'right'
+        readonly rightbarCollapsed: boolean
+        readonly canvasSide: 'left' | 'right'
+        /** Per-session structural records; judge a target session without racing the visible-session swap. */
+        readonly byId?: Readonly<Record<string, {
+          readonly sidebarCollapsed?: boolean
+          readonly unitSide?: 'left' | 'right'
+        }>>
+      }
+      subscribe(listener: () => void): () => void
+    }
   }
 }
 
@@ -62,6 +91,10 @@ declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' {
   interface SidebarRightTabDefinition {
     /** The type draws its own canvas chrome; the host's bar is skipped. */
     selfChrome?: boolean
+  }
+  interface ISidebarRight {
+    /** Park one session's canvas — the arrangement-seeding write path; absent on older published builds. */
+    parkCanvasIn?(sessionId: string): void
   }
 }
 
