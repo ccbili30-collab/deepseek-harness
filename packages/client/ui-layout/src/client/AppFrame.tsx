@@ -22,7 +22,7 @@ import type { ReactNode } from 'react'
 import type {
   InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
-import { CANVAS_MIN, CENTER_MIN, clampWidth, computeColumns, RIGHTBAR_DEFAULT, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, RIGHTBAR_RAIL, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns.ts'
+import { CANVAS_MIN, CENTER_MIN, clampWidth, computeColumns, canvasShareWidth, RIGHTBAR_DEFAULT, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, RIGHTBAR_RAIL, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns.ts'
 import { useRegionSort } from './region-sort.ts'
 import { DocumentTitle } from './DocumentTitle.tsx'
 import type { CanvasClaims } from './service.ts'
@@ -273,14 +273,15 @@ export function AppFrame({
     const openNow = canvas !== null
     const sameSession = canvasSessionRef.current === currentSessionId
     canvasSessionRef.current = currentSessionId
-    if (openNow && !wasCanvasOpen.current && sameSession && layoutInfo.unit === null) {
+    if (openNow && !wasCanvasOpen.current && sameSession && layoutInfo.unit === null && layoutInfo.unitCanvasShare === null) {
       const panelShare = layoutInfo.rightbarTrack ? normal.rightbar : 0
       const half = Math.round((viewport - cols.sidebar - panelShare) / 2)
       const target = Math.max(CANVAS_MIN, half + panelShare)
       actions.setUnit(target)
     }
     wasCanvasOpen.current = openNow
-  }, [canvas, currentSessionId, layoutInfo.unit, layoutInfo.rightbarTrack, normal.rightbar, viewport, cols.sidebar, actions])
+  }, [canvas, currentSessionId, layoutInfo.unit, layoutInfo.unitCanvasShare,
+    layoutInfo.rightbarTrack, normal.rightbar, viewport, cols.sidebar, actions])
 
   // Easing only follows a discrete USER toggle. A structural change arriving
   // with a visible-session change (or settling within the switch window right
@@ -399,11 +400,21 @@ export function AppFrame({
   // the canvas page and the panel. Its conversation-facing edge is the unit
   // seam: draggable between the conversation's protected share and a floor of
   // the drawn panel plus a usable canvas.
+  // An explicit preset ratio resolves against the rendered navigation and
+  // drawer once a canvas claims the column; committing it through setUnit both
+  // persists the concrete width and clears the request, so a later drag — or
+  // nothing at all — wins from there.
+  const presetUnit = canvas === null || rail || layoutInfo.unitCanvasShare === null
+    ? null
+    : canvasShareWidth(viewport - cols.sidebar, layoutInfo.rightbarTrack ? normal.rightbar : 0, layoutInfo.unitCanvasShare)
+  useLayoutEffect(() => {
+    if (presetUnit !== null) actions.setUnit(presetUnit)
+  }, [presetUnit, actions])
   const unitCeiling = Math.max(0, viewport - cols.sidebar - CENTER_MIN)
   const unitFloor = Math.min(normal.rightbar + CANVAS_MIN, unitCeiling)
   const rightTrackMax = canvas === null
     ? rightbarMax
-    : Math.min(unitCeiling, Math.max(unitFloor, layoutInfo.unit ?? halveUnit ?? (viewport - cols.sidebar - centerCap)))
+    : Math.min(unitCeiling, Math.max(unitFloor, presetUnit ?? layoutInfo.unit ?? halveUnit ?? (viewport - cols.sidebar - centerCap)))
   // The handles sit on the moving edges: the panel's free edge inside the
   // column, and the column's own conversation-facing edge while a canvas is up.
   const unitW = canvas === null ? cols.rightbar : rightTrackMax

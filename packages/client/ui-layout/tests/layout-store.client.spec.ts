@@ -19,6 +19,7 @@ describe('createLayoutStore', () => {
         narrowExpanded: false,
         rightbar: null,
         unit: null,
+        unitCanvasShare: null,
         rightbarCollapsed: false,
         rightbarCollapsePreview: false,
         rightbarShown: false,
@@ -416,13 +417,18 @@ describe('session geometry', () => {
     expect(store.getSnapshot().geometry.byId['s-a']).toMatchObject({ unitSide: 'left' })
   })
 
-  it('seeds the unit share once, leaving a dragged preference alone', () => {
+  it('requests an explicit ratio despite a saved width and lets the frame or drag settle it', () => {
     const { store, actions } = createLayoutStore().create()
+    actions.setUnit(700)
     actions.seedUnitShare(0.7)
-    const seeded = store.getSnapshot().layoutInfo.unit
-    expect(seeded).toBe(Math.round((1920 - 280) * 0.7))
-    actions.seedUnitShare(0.2)
-    expect(store.getSnapshot().layoutInfo.unit).toBe(seeded)
+    expect(store.getSnapshot().layoutInfo.unitCanvasShare).toBe(0.7)
+    actions.setUnit(1350)
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ unit: 1350, unitCanvasShare: null })
+    actions.setUnit(900)
+    actions.enterSession('s-other')
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ unit: 900, unitCanvasShare: null })
+    const reloaded = createLayoutStore().create()
+    expect(reloaded.getSnapshot().layoutInfo).toMatchObject({ unit: 900, unitCanvasShare: null })
   })
 
   it('persists widths and session records under the v2 key and prunes the stale tail', () => {

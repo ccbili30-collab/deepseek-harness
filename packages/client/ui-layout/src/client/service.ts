@@ -120,8 +120,9 @@ export interface ILayout {
    */
   seedSessionGeometry(sessionId: string, geometry: Partial<SessionGeometry>): void
   /**
-   * Seed the unit column width as a share of the work layer, once.
-   * @param share - fraction of the frame beside the nav column the unit takes.
+   * Request an explicit canvas/conversation share; the frame resolves it once a
+   * canvas claims the column and any later drag replaces it.
+   * @param share - canvas fraction of the space left after the nav and drawer.
    */
   seedUnitShare(share: number): void
   /**
@@ -228,7 +229,7 @@ export class LayoutController implements ILayout {
     this.panels.seedSessionGeometry(sessionId, geometry)
   }
 
-  /** Seed the unit width as a work-layer share; a drag preference wins over it. */
+  /** Request an explicit canvas share; the frame or a later drag settles it. */
   seedUnitShare(share: number): void {
     this.panels.seedUnitShare(share)
   }

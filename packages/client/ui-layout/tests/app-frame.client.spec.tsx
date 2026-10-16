@@ -514,6 +514,19 @@ describe('AppFrame right panel presentation', () => {
     }
   })
 
+  it('resolves an explicit canvas preset over a dragged width and lets a drag reclaim it', () => {
+    const { frame, instance } = mountFrame()
+    // A dragged width exists; the explicit preset must still take effect.
+    act(() => { instance.actions.setUnit(600); setClaim('left'); instance.actions.openRightbar(true, false, false) })
+    act(() => { instance.actions.seedUnitShare(0.7) })
+    // 1920 - 280 nav = 1640 work; drawer 340 reserved; 0.7 of the rest.
+    expect(workEl(frame).style.gridTemplateColumns).toMatch(/minmax\(0px, 1240px\)/)
+    expect(instance.getSnapshot().layoutInfo).toMatchObject({ unitCanvasShare: null, unit: 1240 })
+    // The user's drag settles the width again and survives a reload.
+    act(() => { instance.actions.setUnit(900) })
+    expect(workEl(frame).style.gridTemplateColumns).toMatch(/minmax\(0px, 900px\)/)
+  })
+
   it('keeps fullscreen suppression independent from resetting the instant marker', () => {
     const { frame, instance } = mountFrame()
     act(() => { instance.actions.openRightbar(true, true, false) })

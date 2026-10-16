@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clampWidth, computeColumns } from '../src/client/columns.ts'
+import { canvasShareWidth, clampWidth, computeColumns } from '../src/client/columns.ts'
 
 describe('clampWidth', () => {
   it('clamps into the range and rounds', () => {
@@ -50,5 +50,17 @@ describe('computeColumns', () => {
   it('leaves a closed right track closed when the frame widens', () => {
     expect(computeColumns(755, 0, 0).rightbar).toBe(0)
     expect(computeColumns(1920, 0, 0).rightbar).toBe(0)
+  })
+})
+
+describe('canvasShareWidth', () => {
+  it.each([
+    [1944, 220, 1427],
+    [2000, 220, 1466],
+    [1640, 340, 1240],
+    [1384, 340, 984],
+    [800, 180, 400],
+  ])('reserves the drawer before dividing work=%i drawer=%i', (work, drawer, unit) => {
+    expect(canvasShareWidth(work, drawer, 0.7)).toBe(unit)
   })
 })

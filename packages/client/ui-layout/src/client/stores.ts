@@ -16,7 +16,7 @@ import type { MainPanelId } from './service.ts'
 import type { UnitSide } from './arrangement.ts'
 import {
   CANVAS_MIN, CENTER_MIN, clampWidth, RIGHTBAR_DEFAULT, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN,
-  SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
+  SIDEBAR_AUTO_COLLAPSE, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
 } from './columns.ts'
 import { readLayoutInfo, writeLayoutInfo } from './persistence.ts'
 
@@ -82,6 +82,8 @@ type LayoutInfo = {
    * panel's own drag stays inside it through `rightbar`.
    */
   unit: number | null
+  /** Pending explicit canvas/conversation ratio; resolved against rendered columns, never persisted. */
+  unitCanvasShare: number | null
   /**
    * A width drag pushed below RIGHTBAR_MIN: the occupant stands collapsed to
    * its rail until it reports itself expanded again. The `rightbar` preference
@@ -196,6 +198,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         narrowExpanded: false,
         rightbar: null,
         unit: null,
+        unitCanvasShare: null,
         rightbarCollapsed: false,
         rightbarCollapsePreview: false,
         rightbarShown: false,
@@ -258,16 +261,12 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         d.layoutInfo.unitSide = next.unitSide
         d.layoutInfo.rightbarCollapsed = next.rightbarCollapsed
       },
-      // One-shot unit seeding as a share of the work layer: applies only while
-      // no drag has ever left a unit preference, so the user's own width wins.
+      // An explicit preset requests a ratio even over a saved width; the frame
+      // resolves it against the rendered navigation and drawer once a canvas
+      // claims the column, and any later drag (setUnit) replaces it.
       seedUnitShare: (d, share: number) => {
-        if (d.layoutInfo.unit !== null) return
         d.layoutInfo.rightbarInstant = false
-        const sidebar = d.layoutInfo.sidebarCollapsed ? SIDEBAR_COLLAPSED : d.layoutInfo.sidebar
-        const bounded = Math.min(1, Math.max(0, share))
-        d.layoutInfo.unit = clampWidth(
-          (d.layoutInfo.viewportWidth - sidebar) * bounded,
-          CANVAS_MIN, Math.max(CANVAS_MIN, d.layoutInfo.viewportWidth - CENTER_MIN))
+        d.layoutInfo.unitCanvasShare = Math.min(1, Math.max(0, share))
       },
       // Crossing the breakpoint in either direction drops the override: the
       // narrow default is auto-collapsed, the wide state is the preference.
@@ -295,6 +294,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         d.layoutInfo.rightbarCollapsePreview = false
       },
       setUnit: (d, px: number) => {
+        d.layoutInfo.unitCanvasShare = null
         d.layoutInfo.rightbarInstant = false
         d.layoutInfo.unit = clampWidth(px, CANVAS_MIN, Math.max(CANVAS_MIN, d.layoutInfo.viewportWidth - CENTER_MIN))
       },

@@ -44,6 +44,19 @@ export function clampWidth(px: number, min: number, max: number): number {
 }
 
 /**
+ * Resolve a canvas/conversation preset after reserving the navigation and drawer.
+ * @param workWidth - frame width excluding the rendered navigation column.
+ * @param drawerWidth - drawer track reserved inside the canvas unit.
+ * @param share - canvas fraction of the remaining canvas/conversation space.
+ * @returns combined drawer and canvas width, constrained by the conversation minimum.
+ */
+export function canvasShareWidth(workWidth: number, drawerWidth: number, share: number): number {
+  const ceiling = Math.max(0, workWidth - CENTER_MIN)
+  const floor = Math.min(drawerWidth + CANVAS_MIN, ceiling)
+  return clampWidth(drawerWidth + Math.max(0, workWidth - drawerWidth) * share, floor, ceiling)
+}
+
+/**
  * Solve the three column widths for one viewport frame.
  * @param viewport - available frame width in px.
  * @param sidebar - sidebar width preference in px (0 = closed).

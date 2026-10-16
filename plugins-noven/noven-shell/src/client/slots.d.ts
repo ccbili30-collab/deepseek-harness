@@ -65,7 +65,7 @@ declare module '@deepseek-ai/dsh-client-ui-layout/client' {
       unitSide?: 'left' | 'right'
       rightbarCollapsed?: boolean
     }): void
-    /** Seed the unit width as a work-layer share, once; absent on older published builds. */
+    /** Request an explicit canvas share the frame resolves once; absent on older published builds. */
     seedUnitShare?(share: number): void
     /** Live structural geometry of the visible session; absent on older published builds. */
     readonly sessionGeometry?: {
