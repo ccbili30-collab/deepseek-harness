@@ -27,6 +27,7 @@
  * The kit plans none of this; it is decided here before its planners run.
  */
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
+import type { CanvasSide } from '@deepseek-ai/dsh-client-ui-layout/client'
 import { clearSidebarLayout, readSidebarLayout, writeSidebarLayout } from './persistence.ts'
 import type {
   DockMode, DockZone, FloatRect, History, LayoutOp, LayoutState, Mint, PaneId, SplitId, TabId, TabRecord,
@@ -53,6 +54,8 @@ export interface SurfaceState {
   readonly floatView: PaneId | undefined
   /** Whether the canvas stands parked: its floats kept alive but its region released to the conversation. */
   readonly canvasParked: boolean
+  /** Which side of the drawer panel the canvas composes on — the surface's own preference. */
+  readonly canvasSide: CanvasSide
   /**
    * The drawer's zone order: which of the product navigation (`top`) and the
    * feature entries (`features`) stands first. Zone sort flips it; persisted
@@ -144,6 +147,7 @@ export function createSurface(): SurfaceState {
     minted: counter.used(),
     floatView: undefined,
     canvasParked: false,
+    canvasSide: 'right',
     zoneOrder: ['top', 'features'],
   }
 }
@@ -257,6 +261,7 @@ function advance(surface: SurfaceState, plan: SurfacePlan, seed: () => SidebarRi
     minted: counter.used(),
     floatView,
     canvasParked: topChanged ? false : surface.canvasParked,
+    canvasSide: surface.canvasSide,
     zoneOrder: surface.zoneOrder,
   }
 }
@@ -286,6 +291,8 @@ type SidebarRightActions = {
   setCanvasView: (draft: SidebarRightState, sessionId: string, paneId: PaneId | undefined) => void
   /** Park or release the canvas: its floats stay mounted while the region frees. */
   setCanvasParked: (draft: SidebarRightState, sessionId: string, parked: boolean) => void
+  /** Set which side of the drawer the canvas composes on — the member-sort gesture's commit. */
+  setCanvasSide: (draft: SidebarRightState, sessionId: string, side: CanvasSide) => void
   /** Swap the drawer's zone order — the commit step of the zone-sort gesture. */
   swapZones: (draft: SidebarRightState, sessionId: string) => void
   setMode: (draft: SidebarRightState, sessionId: string, mode: DockMode) => void
@@ -388,6 +395,9 @@ export function createSidebarRightStore(
       },
       setCanvasParked: (d, sessionId: string, parked: boolean) => {
         d.bySession = seat(d, sessionId, s => (s.canvasParked === parked ? s : { ...s, canvasParked: parked }))
+      },
+      setCanvasSide: (d, sessionId: string, side: CanvasSide) => {
+        d.bySession = seat(d, sessionId, s => (s.canvasSide === side ? s : { ...s, canvasSide: side }))
       },
       swapZones: (d, sessionId: string) => {
         d.bySession = seat(d, sessionId, s => ({ ...s, zoneOrder: [...s.zoneOrder].reverse() }))

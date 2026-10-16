@@ -10,21 +10,22 @@
  * The right column is a track, not a box: its occupant draws its panel anchored
  * to the frame's right edge at the resolved normal width, and the
  * track only decides whether the centre makes room for it. The occupant reports
- * shown/track/fullscreen/canvas through `ctx.layout`; fullscreen keeps the
- * reported track but hides the outer resize handle, and a claimed canvas widens
- * the column into a flexible region the occupant fills beside its panel.
+ * shown/track/fullscreen through `ctx.layout`; the canvas claim is not a
+ * report — the frame pulls it from the occupant's registered source at
+ * `canvasClaims`, and a claimed canvas widens the column into a flexible
+ * region the occupant fills beside its panel.
  * Everything arrives through the framework
  * shares — zero cordis or framework imports, zero self-made hooks.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type {
-  PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
+  InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import { CANVAS_MIN, CENTER_MIN, clampWidth, computeColumns, RIGHTBAR_DEFAULT, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, RIGHTBAR_RAIL, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns.ts'
-import { unitSide } from './arrangement.ts'
 import { useRegionSort } from './region-sort.ts'
 import { DocumentTitle } from './DocumentTitle.tsx'
+import type { CanvasClaims } from './service.ts'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
 
@@ -34,6 +35,7 @@ export type AppFrameProps =
   & PropsRenderSlots<'sidebar' | 'main' | 'rightbar' | 'shell.overlay' | 'shell.leading'>
   & PropsStore<ReturnType<typeof createLayoutStore>>
   & PropsLocale<'common'>
+  & InjectFace<{ readonly canvasClaims: CanvasClaims }>
 
 /**
  * After a visible-session switch, the target session's right panel reports
@@ -143,17 +145,21 @@ export function AppFrame({
   actions,
   renderSlot,
   t,
+  canvasClaims,
 }: AppFrameProps) {
   const layoutInfo = useStore(state => state.layoutInfo)
   const frameRef = useRef<HTMLDivElement | null>(null)
   // A global panel occupying the main seat has no swappable sibling: the
   // conv/unit sort only exists while the conversation faces the unit.
   const panelActive = usePanelInfo(info => info.activePanelId !== null)
-  useRegionSort(frameRef, !panelActive)
   const viewport = layoutInfo.viewportWidth
-  // Which side of the centre the panel+canvas unit stands on (arrangement.ts).
-  useSyncExternalStore(listener => unitSide.subscribe(listener), () => unitSide.getSnapshot())
-  const unitLeft = unitSide.get() === 'left'
+  // Which side of the centre the panel+canvas unit stands on — the visible
+  // session's structural preference (geometry.active's record).
+  const unitLeft = layoutInfo.unitSide === 'left'
+  const onUnitSwap = useCallback(() => {
+    actions.setUnitSide(unitLeft ? 'right' : 'left')
+  }, [actions, unitLeft])
+  useRegionSort(frameRef, !panelActive, onUnitSwap)
 
   // Session recovery lands on the target's saved geometry instantly: a change
   // of the visible session lifts the work-layer track transition for that
@@ -161,6 +167,9 @@ export function AppFrame({
   // navigation (ui-workspace page-turn.ts), not a frame animation.
   const currentSessionId = useSessions(state =>
     Object.values(state.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)?.id ?? null)
+  // Per-session structural records: read when a session switch lands to
+  // pre-sync the nav easing baseline to the incoming geometry.
+  const geometryById = useStore(state => state.geometry.byId)
   const previousSessionId = useRef<string | null>(null)
 
   // Track the frame's own box (not the window): rAF-throttled ResizeObserver.
@@ -191,7 +200,7 @@ export function AppFrame({
   }, [actions])
 
   const narrow = viewport < SIDEBAR_AUTO_COLLAPSE
-  const sidebarCollapsed = narrow ? !layoutInfo.narrowExpanded : layoutInfo.sidebar === 0
+  const sidebarCollapsed = narrow ? !layoutInfo.narrowExpanded : layoutInfo.sidebarCollapsed
   const sidebarPreference = sidebarCollapsed
     ? 0
     : layoutInfo.sidebar === 0 ? SIDEBAR_DEFAULT : layoutInfo.sidebar
@@ -199,7 +208,11 @@ export function AppFrame({
   // zero through canShow and collapses to its rail, which then reports back.
   const rightbarPreference = layoutInfo.rightbarCollapsed ? 0 : (layoutInfo.rightbar ?? RIGHTBAR_DEFAULT)
   // Which side of the panel a canvas page claims, or null while none is up.
-  const canvas = layoutInfo.rightbarCanvas
+  // Pulled, never reported: the claim is derivable from the session's surface,
+  // so a retained surface reactivating with its canvas open counts without
+  // waiting on any report. The drawn panel gates it — no panel, no track.
+  const claimedCanvas = useSyncExternalStore(canvasClaims.subscribe, () => canvasClaims.claim(currentSessionId))
+  const canvas = layoutInfo.rightbarShown ? claimedCanvas : null
   // The panel's anchored edge inside the unit column: opposite the canvas when
   // one is claimed; facing away from the conversation (its own outer edge)
   // while it fills the column alone.
@@ -269,13 +282,28 @@ export function AppFrame({
     wasCanvasOpen.current = openNow
   }, [canvas, currentSessionId, layoutInfo.unit, layoutInfo.rightbarTrack, normal.rightbar, viewport, cols.sidebar, actions])
 
-  // Easing only follows a discrete USER toggle. A work-layer change arriving
+  // Easing only follows a discrete USER toggle. A structural change arriving
   // with a visible-session change (or settling within the switch window right
   // after it) is the target session's recovered geometry: it lands instantly.
+  // The nav swap is suppressed precisely — the easing baseline is pre-synced
+  // to the incoming session's record — while the occupant's work-layer reports
+  // trickle in over a few commits and take the switch-window exemption.
   const switchedAt = useRef<number | null>(null)
   useLayoutEffect(() => {
     const viewportChanged = previousViewport.current !== viewport
     previousViewport.current = viewport
+
+    // Swap the live structural geometry to the incoming session (stamps the
+    // outgoing one first). Sync the nav baseline to the record the swap is
+    // about to load, so the swap's re-render reads as no change and no easing
+    // window opens around it — a user toggle right after mount still eases.
+    if (currentSessionId !== null && previousSessionId.current !== currentSessionId) {
+      const record = geometryById[currentSessionId]
+      previousSidebarToggle.current = narrow
+        ? !(record?.narrowExpanded ?? false)
+        : (record?.sidebarCollapsed ?? false)
+      actions.enterSession(currentSessionId)
+    }
 
     const sessionChanged = previousSessionId.current !== null && currentSessionId !== null
       && previousSessionId.current !== currentSessionId
@@ -286,13 +314,13 @@ export function AppFrame({
 
     const sidebarChanged = previousSidebarToggle.current !== sidebarToggle
     previousSidebarToggle.current = sidebarToggle
-    if (sidebarChanged && !viewportChanged) setOuterAnim(token => token + 1)
+    if (sidebarChanged && !viewportChanged && !recovering) setOuterAnim(token => token + 1)
 
     const workChanged = previousWorkToggle.current !== workToggle
     previousWorkToggle.current = workToggle
     if (workChanged && !viewportChanged && !recovering) setWorkAnim(token => token + 1)
     if (recovering) setWorkAnim(0)
-  }, [workToggle, sidebarToggle, viewport, currentSessionId])
+  }, [workToggle, sidebarToggle, viewport, currentSessionId, geometryById, narrow, actions])
 
   useEffect(() => {
     if (outerAnim === 0) return

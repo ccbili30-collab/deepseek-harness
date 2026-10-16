@@ -51,12 +51,14 @@ it('restores current layout independently by Session with a fresh undo history',
   second.actions.open('second')
   const saved = first.getSnapshot()
   const restored = createSidebarRightStore(seed).create(sessionId)
+  // The surface restores as it stood — canvas parked or open — with a fresh
+  // undo history alone replaced.
   const recovered = { bySession: {
-    [sessionId]: { ...saved.bySession[sessionId], canvasParked: true, history: { entries: [], cursor: 0 } },
+    [sessionId]: { ...saved.bySession[sessionId], history: { entries: [], cursor: 0 } },
   } }
   expect(restored.getSnapshot()).toEqual(recovered)
   const secondAgain = { bySession: {
-    second: { ...second.getSnapshot().bySession.second!, canvasParked: true, history: { entries: [], cursor: 0 } },
+    second: { ...second.getSnapshot().bySession.second!, history: { entries: [], cursor: 0 } },
   } }
   expect(createSidebarRightStore(seed).create('second').getSnapshot()).toEqual(secondAgain)
   expect(createSidebarRightStore(seed).create('new').getSnapshot()).toEqual({ bySession: {} })

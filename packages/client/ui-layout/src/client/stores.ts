@@ -1,14 +1,50 @@
 /**
- * Root-owned frame measurement, panel preferences, and presentation reports.
- * The registration supplies a fresh store and binds its actions to ctx.layout.
+ * Root-owned frame measurement, panel preferences, and per-session structural
+ * geometry. The registration supplies a fresh store and binds its actions to
+ * ctx.layout.
+ *
+ * Widths (sidebar, right panel, unit column) are the user's drag memory and
+ * stay global. Structural fields — nav collapse, the narrow-viewport override,
+ * the unit side, the drawer's rail fold — belong to the visible session:
+ * writes land in the live layoutInfo and stamp the active session's record,
+ * and `enterSession` swaps the live fields when the visible session changes so
+ * no session's structure leaks into another. The canvas's own composition side
+ * lives with its session's surface (ui-sidebar-right), not here.
  */
 import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
 import type { MainPanelId } from './service.ts'
+import type { UnitSide } from './arrangement.ts'
 import {
   CANVAS_MIN, CENTER_MIN, clampWidth, RIGHTBAR_DEFAULT, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN,
-  SIDEBAR_AUTO_COLLAPSE, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
+  SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT, SIDEBAR_MAX, SIDEBAR_MIN,
 } from './columns.ts'
 import { readLayoutInfo, writeLayoutInfo } from './persistence.ts'
+
+/** Structural geometry one session owns; width preferences stay global beside it. */
+export interface SessionGeometry {
+  /** Nav column folded to its rail. */
+  sidebarCollapsed: boolean
+  /** Narrow-viewport expansion override over the auto-collapse. */
+  narrowExpanded: boolean
+  /** Which side of the conversation the unit (drawer + canvas) occupies. */
+  unitSide: UnitSide
+  /** Drawer folded to its icon rail by a below-floor width drag. */
+  rightbarCollapsed: boolean
+}
+
+/** A persisted session record: its geometry plus the recency stamp pruning reads. */
+export interface SessionGeometryRecord extends SessionGeometry {
+  /** Last structural write or visit time; the newest records survive a save. */
+  updatedAt: number
+}
+
+/** Fresh-session geometry: expanded nav, unit at the frame's far edge. */
+export const DEFAULT_GEOMETRY: SessionGeometry = {
+  sidebarCollapsed: false,
+  narrowExpanded: false,
+  unitSide: 'right',
+  rightbarCollapsed: false,
+}
 
 /**
  * Transient layout preferences. Responsive concessions never rewrite widths;
@@ -20,10 +56,18 @@ export type LayoutState = {
     activePanelId: MainPanelId | null
   }
   layoutInfo: LayoutInfo
+  geometry: {
+    /** Session id whose structural geometry is live in layoutInfo; null before the first session lands. */
+    active: string | null
+    byId: Record<string, SessionGeometryRecord>
+  }
 }
 
 type LayoutInfo = {
+  /** Nav width preference in px; collapse is the structural flag, never a width. */
   sidebar: number
+  /** Live structural nav fold of the visible session (geometry.active). */
+  sidebarCollapsed: boolean
   /** Last positive frame measurement; window width bootstraps the first render. */
   viewportWidth: number
   narrowExpanded: boolean
@@ -65,14 +109,8 @@ type LayoutInfo = {
    */
   rightbarTrack: boolean
   /**
-   * Which side of the panel the canvas page occupies inside the right region;
-   * null when no canvas is open. A non-null value claims the flexible track
-   * between the center column and the panel's own width.
-   */
-  rightbarCanvas: 'left' | 'right' | null
-  /**
-   * Whether the shown panel stands collapsed to its icon rail. Reported by
-   * the occupant; the track then holds the rail width instead of the saved
+   * Whether the shown panel stands collapsed to its icon rail. Reported by the
+   * occupant; the track then holds the rail width instead of the saved
    * panel preference.
    */
   rightbarRail: boolean
@@ -80,6 +118,41 @@ type LayoutInfo = {
   rightbarFullscreen: boolean
   /** Suppress transitions for a fullscreen exit until another geometry action. */
   rightbarInstant: boolean
+  /** Live structural unit side of the visible session (geometry.active). */
+  unitSide: UnitSide
+}
+
+/** Live structural fields of layoutInfo that mirror the active session's record. */
+type Structural = Pick<LayoutInfo, 'sidebarCollapsed' | 'narrowExpanded' | 'unitSide' | 'rightbarCollapsed'>
+
+/**
+ * Stamp the live structural fields into the active session's record. Every
+ * structural write goes through here: a field that misses the record would
+ * leak into the next session that session-switches past it.
+ * @param d - store draft.
+ * @param patch - structural fields to change before stamping.
+ */
+function structural(d: LayoutState, patch: Partial<Structural>): void {
+  Object.assign(d.layoutInfo, patch)
+  const active = d.geometry.active
+  if (active === null) return
+  d.geometry.byId[active] = {
+    sidebarCollapsed: d.layoutInfo.sidebarCollapsed,
+    narrowExpanded: d.layoutInfo.narrowExpanded,
+    unitSide: d.layoutInfo.unitSide,
+    rightbarCollapsed: d.layoutInfo.rightbarCollapsed,
+    updatedAt: Date.now(),
+  }
+}
+
+/**
+ * Read one session's geometry, defaulting fresh sessions.
+ * @param state - live layout state.
+ * @param sessionId - session id to resolve.
+ * @returns the session's record, or the fresh-session default.
+ */
+function geometryOf(state: LayoutState, sessionId: string): SessionGeometry {
+  return state.geometry.byId[sessionId] ?? DEFAULT_GEOMETRY
 }
 
 /**
@@ -92,21 +165,25 @@ type LayoutActions = {
   setSidebar: (draft: LayoutState, px: number) => void
   toggleSidebar: (draft: LayoutState) => void
   setSidebarCollapsed: (draft: LayoutState, collapsed: boolean) => void
+  setUnitSide: (draft: LayoutState, side: UnitSide) => void
+  enterSession: (draft: LayoutState, sessionId: string) => void
+  seedSessionGeometry: (draft: LayoutState, sessionId: string, patch: Partial<SessionGeometry>) => void
+  seedUnitShare: (draft: LayoutState, share: number) => void
   setViewportWidth: (draft: LayoutState, width: number) => void
   setRightbar: (draft: LayoutState, px: number) => void
   settleRightbar: (draft: LayoutState) => void
   setUnit: (draft: LayoutState, px: number) => void
-  openRightbar: (draft: LayoutState, track: boolean, fullscreen: boolean, canvas: 'left' | 'right' | null, rail: boolean) => void
+  openRightbar: (draft: LayoutState, track: boolean, fullscreen: boolean, rail: boolean) => void
   closeRightbar: (draft: LayoutState) => void
 }
 
 /**
- * Create the layout panel store handle. For the sidebar the preference IS the
- * width, so closing it forgets its drag width — reopening restores the contract
- * default. The right panel initializes at the contract width on first opening
- * and keeps that px preference across resizes and close. Drag writes clamp to
- * the current frame's range. Narrow sidebar toggles change only the expansion
- * override; opening the right panel clears that override.
+ * Create the layout panel store handle. Widths are the user's drag memory:
+ * the sidebar keeps its width while collapsed (reopening restores it), the
+ * right panel initializes at the contract width on first opening and keeps
+ * that px preference across resizes and close. Drag writes clamp to the
+ * current frame's range. Structural writes stamp the active session's record;
+ * `enterSession` swaps structural state when the visible session changes.
  * @returns the store handle (spec + type + identity + factory in one).
  */
 export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutActions>  {
@@ -123,11 +200,13 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         rightbarCollapsePreview: false,
         rightbarShown: false,
         rightbarTrack: false,
-        rightbarCanvas: null,
         rightbarRail: false,
         rightbarFullscreen: false,
         rightbarInstant: false,
+        unitSide: DEFAULT_GEOMETRY.unitSide,
+        sidebarCollapsed: DEFAULT_GEOMETRY.sidebarCollapsed,
       },
+      geometry: { active: null, byId: {} },
     }),
     actions: {
       selectPanel: (d, panelId: MainPanelId | null) => {
@@ -146,13 +225,49 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
       // untouched, so re-widening restores the pre-squeeze layout.
       toggleSidebar: (d) => {
         d.layoutInfo.rightbarInstant = false
-        if (d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) d.layoutInfo.narrowExpanded = !d.layoutInfo.narrowExpanded
-        else d.layoutInfo.sidebar = d.layoutInfo.sidebar === 0 ? SIDEBAR_DEFAULT : 0
+        if (d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) structural(d, { narrowExpanded: !d.layoutInfo.narrowExpanded })
+        else structural(d, { sidebarCollapsed: !d.layoutInfo.sidebarCollapsed })
       },
       setSidebarCollapsed: (d, collapsed: boolean) => {
         d.layoutInfo.rightbarInstant = false
-        if (d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) d.layoutInfo.narrowExpanded = !collapsed
-        else d.layoutInfo.sidebar = collapsed ? 0 : (d.layoutInfo.sidebar === 0 ? SIDEBAR_DEFAULT : d.layoutInfo.sidebar)
+        if (d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) structural(d, { narrowExpanded: !collapsed })
+        else structural(d, { sidebarCollapsed: collapsed })
+      },
+      setUnitSide: (d, side: UnitSide) => {
+        structural(d, { unitSide: side })
+      },
+      // Entry-path seeding: stamp a named structure onto one session's record
+      // before or after it becomes visible. A session that is already live
+      // takes the patch into its layoutInfo too, so the seed lands on screen;
+      // a not-yet-visible session keeps its current geometry until
+      // `enterSession` loads the stamped record.
+      seedSessionGeometry: (d, sessionId: string, patch: Partial<SessionGeometry>) => {
+        d.geometry.byId[sessionId] = { ...geometryOf(d, sessionId), ...patch, updatedAt: Date.now() }
+        if (d.geometry.active === sessionId) Object.assign(d.layoutInfo, patch)
+      },
+      // Stamp the outgoing session's live structure, then land the incoming
+      // session's record (fresh sessions take the default structure). The
+      // frame suppresses transition easing for the switchover render.
+      enterSession: (d, sessionId: string) => {
+        if (d.geometry.active === sessionId) return
+        structural(d, {})
+        d.geometry.active = sessionId
+        const next = geometryOf(d, sessionId)
+        d.layoutInfo.sidebarCollapsed = next.sidebarCollapsed
+        d.layoutInfo.narrowExpanded = next.narrowExpanded
+        d.layoutInfo.unitSide = next.unitSide
+        d.layoutInfo.rightbarCollapsed = next.rightbarCollapsed
+      },
+      // One-shot unit seeding as a share of the work layer: applies only while
+      // no drag has ever left a unit preference, so the user's own width wins.
+      seedUnitShare: (d, share: number) => {
+        if (d.layoutInfo.unit !== null) return
+        d.layoutInfo.rightbarInstant = false
+        const sidebar = d.layoutInfo.sidebarCollapsed ? SIDEBAR_COLLAPSED : d.layoutInfo.sidebar
+        const bounded = Math.min(1, Math.max(0, share))
+        d.layoutInfo.unit = clampWidth(
+          (d.layoutInfo.viewportWidth - sidebar) * bounded,
+          CANVAS_MIN, Math.max(CANVAS_MIN, d.layoutInfo.viewportWidth - CENTER_MIN))
       },
       // Crossing the breakpoint in either direction drops the override: the
       // narrow default is auto-collapsed, the wide state is the preference.
@@ -160,7 +275,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         if (d.layoutInfo.viewportWidth === width) return
         d.layoutInfo.rightbarInstant = false
         if ((d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) !== (width < SIDEBAR_AUTO_COLLAPSE)) {
-          d.layoutInfo.narrowExpanded = false
+          structural(d, { narrowExpanded: false })
         }
         d.layoutInfo.viewportWidth = width
       },
@@ -172,39 +287,36 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         d.layoutInfo.rightbarInstant = false
         if (px < RIGHTBAR_MIN) { d.layoutInfo.rightbarCollapsePreview = true; return }
         d.layoutInfo.rightbarCollapsePreview = false
-        d.layoutInfo.rightbarCollapsed = false
+        structural(d, { rightbarCollapsed: false })
         d.layoutInfo.rightbar = clampWidth(px, RIGHTBAR_MIN, Math.max(RIGHTBAR_MIN, d.layoutInfo.viewportWidth * RIGHTBAR_MAX_RATIO))
       },
       settleRightbar: (d) => {
-        if (d.layoutInfo.rightbarCollapsePreview) d.layoutInfo.rightbarCollapsed = true
+        if (d.layoutInfo.rightbarCollapsePreview) structural(d, { rightbarCollapsed: true })
         d.layoutInfo.rightbarCollapsePreview = false
       },
       setUnit: (d, px: number) => {
         d.layoutInfo.rightbarInstant = false
         d.layoutInfo.unit = clampWidth(px, CANVAS_MIN, Math.max(CANVAS_MIN, d.layoutInfo.viewportWidth - CENTER_MIN))
       },
-      openRightbar: (d, track: boolean, fullscreen: boolean, canvas: 'left' | 'right' | null, rail: boolean) => {
+      openRightbar: (d, track: boolean, fullscreen: boolean, rail: boolean) => {
         const presentationMoved = !d.layoutInfo.rightbarShown || d.layoutInfo.rightbarTrack !== track
-          || d.layoutInfo.rightbarFullscreen !== fullscreen || d.layoutInfo.rightbarCanvas !== canvas || d.layoutInfo.rightbarRail !== rail
+          || d.layoutInfo.rightbarFullscreen !== fullscreen || d.layoutInfo.rightbarRail !== rail
         if (presentationMoved) d.layoutInfo.rightbarInstant = d.layoutInfo.rightbarFullscreen && !fullscreen
-        if (!d.layoutInfo.rightbarShown && d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) d.layoutInfo.narrowExpanded = false
-        if (!rail) d.layoutInfo.rightbarCollapsed = false
+        if (!d.layoutInfo.rightbarShown && d.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE) structural(d, { narrowExpanded: false })
+        if (!rail) structural(d, { rightbarCollapsed: false })
         d.layoutInfo.rightbarCollapsePreview = false
         d.layoutInfo.rightbar ??= clampWidth(RIGHTBAR_DEFAULT, RIGHTBAR_MIN,
           Math.max(RIGHTBAR_MIN, d.layoutInfo.viewportWidth * RIGHTBAR_MAX_RATIO))
         d.layoutInfo.rightbarShown = true
         d.layoutInfo.rightbarTrack = track
-        d.layoutInfo.rightbarCanvas = canvas
         d.layoutInfo.rightbarRail = rail
         d.layoutInfo.rightbarFullscreen = fullscreen
       },
       closeRightbar: (d) => {
         if (d.layoutInfo.rightbarShown) d.layoutInfo.rightbarInstant = d.layoutInfo.rightbarFullscreen
-        d.layoutInfo.rightbarCollapsed = false
         d.layoutInfo.rightbarCollapsePreview = false
         d.layoutInfo.rightbarShown = false
         d.layoutInfo.rightbarTrack = false
-        d.layoutInfo.rightbarCanvas = null
         d.layoutInfo.rightbarRail = false
         d.layoutInfo.rightbarFullscreen = false
       },
@@ -219,10 +331,49 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
       const saved = readLayoutInfo()
       if (saved !== undefined) {
         const fresh = instance.getSnapshot()
-        instance.store.set({ ...fresh, layoutInfo: { ...fresh.layoutInfo, ...saved } })
+        // The live structure starts on the most recently visited session's
+        // record: startup restores that session, so the first paint already
+        // carries its geometry instead of flashing the default until the
+        // session reference lands. A different restore target swaps correctly.
+        const latest = Object.values(saved.byId).reduce<SessionGeometryRecord | undefined>(
+          (newest, record) => newest === undefined || record.updatedAt > newest.updatedAt ? record : newest, undefined)
+        instance.store.set({ ...fresh,
+          layoutInfo: latest === undefined ? { ...fresh.layoutInfo, sidebar: saved.sidebar, rightbar: saved.rightbar, unit: saved.unit } : {
+            ...fresh.layoutInfo,
+            sidebar: saved.sidebar,
+            rightbar: saved.rightbar,
+            unit: saved.unit,
+            sidebarCollapsed: latest.sidebarCollapsed,
+            narrowExpanded: latest.narrowExpanded,
+            unitSide: latest.unitSide,
+            rightbarCollapsed: latest.rightbarCollapsed,
+          },
+          geometry: { ...fresh.geometry, byId: saved.byId },
+        })
       }
-      instance.subscribe(() => { writeLayoutInfo(instance.getSnapshot().layoutInfo) })
+      instance.subscribe(() => {
+        const snapshot = instance.getSnapshot()
+        writeLayoutInfo(snapshot.layoutInfo, snapshot.geometry.byId)
+      })
       return instance
     },
   }
+}
+
+/**
+ * Whether two sessions' structural geometry reads differently on the frame's
+ * stable furniture: a nav-collapse or unit-side difference is a scene change
+ * (the page turn takes the heavier lift weight); drawer-fold and canvas-side
+ * differences play out inside the work layer's own transition.
+ * @param state - live layout state.
+ * @param from - outgoing session id.
+ * @param to - incoming session id.
+ * @returns true when the resolved nav collapse or the unit side differs.
+ */
+export function navGeometryDiffers(state: LayoutState, from: string, to: string): boolean {
+  const narrow = state.layoutInfo.viewportWidth < SIDEBAR_AUTO_COLLAPSE
+  const a = geometryOf(state, from)
+  const b = geometryOf(state, to)
+  const collapsed = (g: SessionGeometry): boolean => narrow ? !g.narrowExpanded : g.sidebarCollapsed
+  return collapsed(a) !== collapsed(b) || a.unitSide !== b.unitSide
 }

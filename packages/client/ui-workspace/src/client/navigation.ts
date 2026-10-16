@@ -205,7 +205,8 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       return
     }
     const byId = this.sessions.list.getSnapshot().byId
-    const weight: PageTurnWeight = byId[current]?.cwd !== byId[targetId]?.cwd ? 'project' : 'session'
+    const weight: PageTurnWeight = byId[current]?.cwd !== byId[targetId]?.cwd
+      || this.ctx.layout.navGeometryDiffers(current, targetId) ? 'project' : 'session'
     turnPage(() => { this.replaceMain(target, this.lifetime.signal, 'reveal') }, rowDirection(current, targetId), weight)
   }
 
@@ -227,7 +228,8 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       return
     }
     const byId = this.sessions.list.getSnapshot().byId
-    const weight: PageTurnWeight = byId[current]?.cwd !== byId[sessionId]?.cwd ? 'project' : 'session'
+    const weight: PageTurnWeight = byId[current]?.cwd !== byId[sessionId]?.cwd
+      || this.ctx.layout.navGeometryDiffers(current, sessionId) ? 'project' : 'session'
     turnPage(() => {
       if (navigation.aborted) return
       this.replaceMain(sessionId, navigation, 'reveal', beforeOpen)

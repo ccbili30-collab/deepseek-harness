@@ -13,7 +13,6 @@
  */
 import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
-import { canvasSide } from './canvas.ts'
 
 /** Hold time before a still press arms the sort. */
 const HOLD_MS = 450
@@ -46,9 +45,14 @@ interface MemberSession {
  * The member-side sort gesture.
  * @param panelRef - the navigation panel element; its parent column scopes the gesture.
  * @param enabled - whether the panel seat is mounted in a state that may sort (off in fullscreen).
+ * @param onSwap - commits the swap: flips which side of the drawer the canvas composes on.
  */
-export function useMemberSort(panelRef: RefObject<HTMLDivElement | null>, enabled: boolean): void {
+export function useMemberSort(panelRef: RefObject<HTMLDivElement | null>, enabled: boolean, onSwap: () => void): void {
   const session = useRef<MemberSession | null>(null)
+  // The swap commit rides a ref: the listener wiring installs once per mount,
+  // the callback itself may change every render.
+  const swap = useRef(onSwap)
+  swap.current = onSwap
 
   useEffect(() => {
     if (!enabled) return
@@ -101,7 +105,7 @@ export function useMemberSort(panelRef: RefObject<HTMLDivElement | null>, enable
       sibling.style.transition = 'none'
       lifted.style.transform = ''
       sibling.style.transform = ''
-      canvasSide.toggle()
+      swap.current()
       requestAnimationFrame(() => {
         const dxLift = liftedVisual - lifted.getBoundingClientRect().left
         const dxSib = siblingVisual - sibling.getBoundingClientRect().left

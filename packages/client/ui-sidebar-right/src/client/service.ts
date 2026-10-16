@@ -43,7 +43,7 @@ import { pageAddress } from './contract/seed.ts'
 import type { SidebarRightTabClaim, SidebarRightTabRegistry } from './tab-registry.ts'
 import { canCloseTab, type SidebarRightState, type SurfaceState } from './stores.ts'
 import type { createSidebarRightStore } from './stores.ts'
-import { canvasSide } from './shell/canvas.ts'
+import type { CanvasClaimSource, CanvasSide } from '@deepseek-ai/dsh-client-ui-layout/client'
 import { TabDomain, type PinResource } from './tab-domain.ts'
 import { SidebarTabInventory } from './tab-inventory.ts'
 
@@ -88,6 +88,7 @@ export function createSidebarRightController(tabs: SidebarRightTabRegistry, pin:
         inventory.update(sessionId, Object.values(surface?.layout.tabs ?? {}))
         if (surface !== undefined) controller.tabDomain.sync(sessionId, surface.layout)
         controller.publishCanvas(sessionId)
+        controller.publishClaims()
       }
       const adoption: Adoption = { store, unsubscribe: store.subscribe(sync) }
       adopted.set(sessionId, adoption)
@@ -95,6 +96,7 @@ export function createSidebarRightController(tabs: SidebarRightTabRegistry, pin:
       return () => {
         adoption.unsubscribe()
         if (adopted.get(sessionId) === adoption) adopted.delete(sessionId)
+        controller.publishClaims()
       }
     },
   }
@@ -178,16 +180,13 @@ export interface ISidebarRight {
    */
   readonly mounted: ObservableSnapshot<SessionId | undefined>
   /**
-   * Which side of the panel the canvas parks on: `left` keeps the panel at
-   * the frame's right edge; `right` parks the canvas there and the panel
-   * stands off it. One persisted preference, shared across sessions.
+   * The canvas-claim source this column provides to the frame's layout seam
+   * (`ctx.layout.canvasClaims`): which side of the drawer a session's open
+   * canvas composes on, derived live from that session's surface. The frame
+   * pulls it — no report path carries it, so a retained surface reactivating
+   * with its canvas open counts immediately.
    */
-  readonly canvasSide: {
-    get(): 'left' | 'right'
-    toggle(): void
-    getSnapshot(): number
-    subscribe(listener: () => void): () => void
-  }
+  readonly canvasClaims: CanvasClaimSource
   /**
    * The surface currently on the mounted session's canvas — the topmost
    * floating pane's active tab — or `undefined` while the canvas is empty.
@@ -220,6 +219,13 @@ export interface ISidebarRight {
    * @param tabId - the tab to close.
    */
   close(tabId: TabId): void
+  /**
+   * Park one session's canvas: the float stack survives and the region frees.
+   * The arrangement-seeding path; the park control in the canvas chrome is the
+   * in-seat twin.
+   * @param sessionId - the session whose canvas parks.
+   */
+  parkCanvasIn(sessionId: SessionId): void
   /**
    * The active tab of the active pane.
    * @returns the record, or `undefined` when no seat is mounted.
@@ -266,8 +272,15 @@ export class SidebarRightController implements ISidebarRight {
   private readonly mountedSession = createSnapshotStore<SessionId | undefined>(undefined)
   /** The mounted seat's session; see {@link ISidebarRight.mounted}. */
   readonly mounted: ObservableSnapshot<SessionId | undefined> = this.mountedSession
-  /** The canvas's side preference; see {@link ISidebarRight.canvasSide}. */
-  readonly canvasSide = canvasSide
+  private readonly claimListeners = new Set<() => void>()
+  /** The frame's canvas-claim source; see {@link ISidebarRight.canvasClaims}. */
+  readonly canvasClaims: CanvasClaimSource = {
+    claim: sessionId => this.claimFor(sessionId === null ? undefined : sessionId as SessionId),
+    subscribe: (listener) => {
+      this.claimListeners.add(listener)
+      return () => { this.claimListeners.delete(listener) }
+    },
+  }
   private readonly canvasStore = createSnapshotStore<{ readonly kind: string; readonly contentId: string } | undefined>(undefined)
   /** The mounted session's canvas surface; see {@link ISidebarRight.canvas}. */
   readonly canvas: ObservableSnapshot<{ readonly kind: string; readonly contentId: string } | undefined> = this.canvasStore
@@ -326,8 +339,13 @@ export class SidebarRightController implements ISidebarRight {
    */
   bind(binding: SidebarRightBinding): () => void {
     this.binding = binding
-    this.publishMounted()
+    // The canvas observable publishes before the mount announcement: `mounted`
+    // listeners read it to tell a virgin mount (seed the canvas) from a
+    // restored one (leave its state alone), so announcing a binding whose
+    // canvas still reads the previous session's parks a restored canvas.
     this.publishCanvas(binding.sessionId)
+    this.publishMounted()
+    this.publishClaims()
     return () => {
       // A newer seat may already have taken over; only the binding that is
       // still ours may be cleared.
@@ -335,6 +353,7 @@ export class SidebarRightController implements ISidebarRight {
       this.binding = undefined
       this.publishMounted()
       this.canvasStore.set(undefined)
+      this.publishClaims()
     }
   }
 
@@ -359,6 +378,31 @@ export class SidebarRightController implements ISidebarRight {
   private publishMounted(): void {
     const next = this.binding?.sessionId
     if (this.mountedSession.getSnapshot() !== next) this.mountedSession.set(next)
+  }
+
+  /**
+   * Notify claim readers that surfaces or bindings changed and claims may
+   * have moved. Coarse by design: claims are cheap to re-read, and the exact
+   * subset that changed is not worth tracking.
+   */
+  publishClaims(): void {
+    for (const listener of this.claimListeners) listener()
+  }
+
+  /**
+   * The session's canvas claim, derived from its surface alone: a presented
+   * float (stack top holding an active tab) while the canvas is not parked.
+   * @param sessionId - the session asked about; null asks for none.
+   * @returns the canvas's composition side, or null with no open canvas.
+   */
+  private claimFor(sessionId: SessionId | undefined): CanvasSide | null {
+    if (sessionId === undefined) return null
+    const surface = this.adopted.get(sessionId)?.store.getSnapshot().bySession[sessionId]
+      ?? (this.binding?.sessionId === sessionId ? this.binding.surfaces[sessionId] : undefined)
+    if (surface === undefined || surface.canvasParked) return null
+    const topId = surface.layout.floats[surface.layout.floats.length - 1]
+    const top = topId === undefined ? undefined : surface.layout.nodes[topId]
+    return top?.kind === 'pane' && top.activeTabId !== undefined ? surface.canvasSide : null
   }
 
   /**
@@ -434,10 +478,11 @@ export class SidebarRightController implements ISidebarRight {
 
   /**
    * Park one session's canvas: the float stack survives and the region frees.
-   * Not part of `ISidebarRight`: the Tab domain's path.
-   * @param sessionId - the session the acting tab is in.
+   * The arrangement-seeding path; the park control in the canvas chrome is the
+   * in-seat twin.
+   * @param sessionId - the session whose canvas parks.
    */
-  parkIn(sessionId: SessionId): void {
+  parkCanvasIn(sessionId: SessionId): void {
     this.actionsFor(sessionId)?.setCanvasParked(sessionId, true)
   }
 

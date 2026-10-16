@@ -71,7 +71,11 @@ function transition(property = 'transform') {
 async function mountSeat(viewportWidth = 1440, canShow = true, entryCount = 0, opener = false, keepMounted = false) {
   const runtime = await SlotTestRuntime.create()
   runtimes.push(runtime)
-  const frame = { openRightbar: vi.fn(), closeRightbar: vi.fn(), toggleSidebar: vi.fn() }
+  // The frame face carries no claim seam here: claims are read straight off
+  // the controller, the way AppFrame reads them off its provided source.
+  const frame = {
+    openRightbar: vi.fn(), closeRightbar: vi.fn(), toggleSidebar: vi.fn(),
+  }
   const pin = vi.fn<(address: string, signal: AbortSignal) => void>()
   runtime.ctx.provide('layout', frame as never)
   runtime.ctx.provide('resources', { pin } as never)
@@ -318,6 +322,45 @@ describe('RightbarSeat presentation', () => {
     expect(h.layout()).toBe(retained)
   })
 
+  it('publishes the canvas before the mount announcement, so mounted listeners see the incoming session', async () => {
+    const h = await mountSeat()
+    h.open('seen.txt')
+    // A mounted listener reads the canvas observable in its callback — the
+    // virgin-mount seeding decision among them. Announcing the binding with
+    // the canvas still reading the previous session parks a restored canvas
+    // (the page-back regression).
+    const seen: (string | undefined)[] = []
+    const unsubscribe = h.controller.mounted.subscribe(() => { seen.push(h.controller.canvas.getSnapshot()?.kind) })
+    act(() => { h.runtime.panelInfo.set({ activePanelId: 'other-panel' as MainPanelId }) })
+    act(() => { h.runtime.panelInfo.set({ activePanelId: null }) })
+    unsubscribe()
+    expect(seen.at(-1)).toBe('text')
+  })
+
+  it('keeps the canvas claim across a retained surface hiding and return without any report', async () => {
+    const h = await mountSeat()
+    h.open('kept.txt')
+    expect(h.controller.canvasClaims.claim(SESSION)).toBe('right')
+    // Parking releases the region while the floats survive; any open lifts it.
+    act(() => { h.actions.setCanvasParked(SESSION, true) })
+    expect(h.controller.canvasClaims.claim(SESSION)).toBeNull()
+    act(() => { h.actions.setCanvasParked(SESSION, false) })
+    expect(h.controller.canvasClaims.claim(SESSION)).toBe('right')
+    // A global panel hides the seat. The claim is surface state, not a report,
+    // so it survives the hide and the return (the page-back regression) — the
+    // frame re-derives the canvas track from it the moment the panel is shown.
+    act(() => { h.runtime.panelInfo.set({ activePanelId: 'other-panel' as MainPanelId }) })
+    expect(h.controller.canvasClaims.claim(SESSION)).toBe('right')
+    act(() => { h.runtime.panelInfo.set({ activePanelId: null }) })
+    expect(h.controller.canvasClaims.claim(SESSION)).toBe('right')
+    expect(h.view.container.querySelector('[data-sidebar-right-canvas-host]')).not.toBeNull()
+    // The member-sort swap commits through the surface's own side field.
+    act(() => { h.actions.setCanvasSide(SESSION, 'left') })
+    expect(h.controller.canvasClaims.claim(SESSION)).toBe('left')
+    expect(h.controller.canvasClaims.claim(OTHER)).toBeNull()
+    expect(h.controller.canvasClaims.claim(null)).toBeNull()
+  })
+
   it('publishes the mounted seat so a Conversation opener acts in the commit that returns from a global panel', async () => {
     const h = await mountSeat(1440, true, 0, true)
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -393,11 +436,11 @@ describe('RightbarSeat presentation', () => {
     expect(panel.hasAttribute('data-sidebar-right-open')).toBe(false)
     // The collapsed panel draws its icon rail and keeps a narrow track.
     expect(panel.hasAttribute('data-sidebar-right-rail')).toBe(true)
-    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, null, true)
+    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, true)
     h.open()
     expect(element(h.view.container, '[data-sidebar-right-panel]')).toBe(panel)
     expect(panel.hasAttribute('data-sidebar-right-open')).toBe(true)
-    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, false)
     await h.runtime.dispose()
     expect(h.frame.closeRightbar).toHaveBeenCalled()
   })
@@ -419,7 +462,7 @@ describe('RightbarSeat presentation', () => {
     fireEvent.click(icon!)
     expect(h.layout().expanded).toBe(false)
     expect(h.layout().floats).toHaveLength(1)
-    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, 'left', true)
+    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, true)
     act(() => { h.actions.setExpanded(SESSION, true) })
     expect(element(h.view.container, '[data-top-zone]').dataset.rail).toBe('false')
   })
@@ -435,30 +478,30 @@ describe('RightbarSeat presentation', () => {
     expect(panel.style.width).toBe('100vw')
     expect(panel.dataset['sidebarRightPanel']).toBe('fullscreen')
     expect(element(h.view.container, '[data-tab-body]')).toBe(body)
-    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, true, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, true, false)
     expect(h.bodies.get(tab.id)?.sidebar).toEqual({ expanded: true, fullscreen: true })
     fireEvent.click(element(h.view.container, '[data-sidebar-right-mode]'))
     expect(panel.style.width).toBe('420px')
     expect(element(h.view.container, '[data-tab-body]')).toBe(body)
-    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, false)
     fireEvent.click(element(h.view.container, '[data-sidebar-right-toggle]'))
     expect(h.layout().expanded).toBe(false)
     // Collapse shrinks the panel to its icon rail — still a track claim, at the
     // rail width, with the canvas held for its exit slide.
-    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, 'left', true)
+    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, true)
   })
 
   it('derives narrow fullscreen without recording mode and returns to normal when widened', async () => {
     const h = await mountSeat(767, false)
     h.open()
     expect(h.layout().mode).toBe('push')
-    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(false, true, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(false, true, false)
     const stored = h.instance.getSnapshot()
     const body = element(h.view.container, '[data-tab-body]')
     h.view.update({ width: 420, viewportWidth: 768, canShow: true, collapsePreview: false })
     expect(h.instance.getSnapshot()).toBe(stored)
     expect(element(h.view.container, '[data-tab-body]')).toBe(body)
-    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, false)
   })
 
   it('closes on automatic fullscreen exit and stays closed after widening', async () => {
@@ -482,9 +525,9 @@ describe('RightbarSeat presentation', () => {
     fireEvent.click(element(h.view.container, '[data-sidebar-right-mode]'))
     const stored = h.instance.getSnapshot()
     h.view.update({ width: 420, viewportWidth: 500, canShow: false, collapsePreview: false })
-    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(false, true, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(false, true, false)
     h.view.update({ width: 420, viewportWidth: 1440, canShow: true, collapsePreview: false })
-    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, true, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, true, false)
     expect(h.instance.getSnapshot()).toBe(stored)
   })
 
@@ -520,9 +563,9 @@ describe('RightbarSeat fullscreen entry', () => {
     expect(h.frame.openRightbar).not.toHaveBeenCalled()
     expect(h.frame.closeRightbar).not.toHaveBeenCalled()
     await act(async () => { slide.finish(); await slide.animation.finished })
-    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(true, true, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(true, true, false)
     fireEvent.click(element(h.view.container, '[data-sidebar-right-mode]'))
-    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenLastCalledWith(true, false, false)
     unrelated.finish()
   })
 
@@ -536,7 +579,7 @@ describe('RightbarSeat fullscreen entry', () => {
       .mockReturnValue([unrelated.animation, ended.animation])
     h.frame.openRightbar.mockClear()
     h.open()
-    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(true, true, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(true, true, false)
     unrelated.finish()
   })
 
@@ -548,7 +591,7 @@ describe('RightbarSeat fullscreen entry', () => {
     h.open()
     expect(h.frame.openRightbar).not.toHaveBeenCalled()
     await act(async () => { slide.cancel(); await Promise.allSettled([slide.animation.finished]) })
-    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(false, true, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(false, true, false)
   })
 
   it('waits for a replacement transform after cancellation', async () => {
@@ -563,7 +606,7 @@ describe('RightbarSeat fullscreen entry', () => {
     await act(async () => { first.cancel(); await Promise.allSettled([first.animation.finished]) })
     expect(h.frame.openRightbar).not.toHaveBeenCalled()
     await act(async () => { replacement.finish(); await replacement.animation.finished })
-    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(false, true, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(false, true, false)
   })
 
   it.each(['close', 'push', 'session', 'unmount'])('ignores a late completion after %s', async (change) => {
@@ -598,7 +641,7 @@ describe('RightbarSeat fullscreen entry', () => {
     h.view.update({ width: 420, viewportWidth: 500, canShow: false, collapsePreview: false })
     expect(h.frame.openRightbar).not.toHaveBeenCalled()
     await act(async () => { slide.finish(); await slide.animation.finished })
-    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(false, true, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(false, true, false)
   })
 
   it('does not delay normal presentation behind its slide', async () => {
@@ -608,7 +651,7 @@ describe('RightbarSeat fullscreen entry', () => {
       .mockReturnValue([slide.animation])
     h.frame.openRightbar.mockClear()
     h.open()
-    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(true, false, 'left', false)
+    expect(h.frame.openRightbar).toHaveBeenCalledExactlyOnceWith(true, false, false)
     expect(animations).not.toHaveBeenCalled()
     slide.finish()
   })

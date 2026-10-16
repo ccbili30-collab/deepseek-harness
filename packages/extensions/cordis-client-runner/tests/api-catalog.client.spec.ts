@@ -8,7 +8,7 @@ describe('Client Cordis inspect catalog', () => {
         'selectPanel(panelId: MainPanelId | null): void',
         'beginNavigation(): AbortSignal',
         'toggleSidebar(): void',
-        'openRightbar(track: boolean, fullscreen: boolean, canvas: \'left\' | \'right\' | null, rail: boolean): void',
+        'openRightbar(track: boolean, fullscreen: boolean, rail: boolean): void',
         'closeRightbar(): void',
         'setUnitSide(side: UnitSide): void',
       ])

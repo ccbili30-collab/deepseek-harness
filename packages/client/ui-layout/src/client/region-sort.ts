@@ -14,7 +14,6 @@
  */
 import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
-import { unitSide } from './arrangement.ts'
 
 /** Hold time before a still press arms the sort. */
 const HOLD_MS = 450
@@ -45,10 +44,14 @@ interface SortSession {
  * The frame-side sort gesture.
  * @param frameRef - the frame element every column lives in.
  * @param enabled - false while a global panel owns the main seat: a panel has no
- * swappable sibling, so blank presses there must not arm the sort.
+ *   swappable sibling, so blank presses there must not arm the sort.
+ * @param onSwap - commits the side swap (writes the visible session's structural
+ *   preference); called once, after the visual commit reboxes both columns.
  */
-export function useRegionSort(frameRef: RefObject<HTMLDivElement | null>, enabled: boolean): void {
+export function useRegionSort(frameRef: RefObject<HTMLDivElement | null>, enabled: boolean, onSwap: () => void): void {
   const session = useRef<SortSession | null>(null)
+  const swapRef = useRef(onSwap)
+  swapRef.current = onSwap
 
   useEffect(() => {
     const frame = frameRef.current
@@ -105,7 +108,7 @@ export function useRegionSort(frameRef: RefObject<HTMLDivElement | null>, enable
       sibling.style.transition = 'none'
       lifted.style.transform = ''
       sibling.style.transform = ''
-      unitSide.toggle()
+      swapRef.current()
       requestAnimationFrame(() => {
         const dxLift = liftedVisual - lifted.getBoundingClientRect().left
         const dxSib = siblingVisual - sibling.getBoundingClientRect().left

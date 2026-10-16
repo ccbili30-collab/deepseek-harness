@@ -46,6 +46,14 @@ async function bench(collapsed = false) {
     openRightbar: vi.fn(),
     closeRightbar: vi.fn(),
     setUnitSide: vi.fn(),
+    sessionGeometry: createSnapshotStore({
+      active: null, sidebarCollapsed: false, narrowExpanded: false,
+      unitSide: 'right' as const, rightbarCollapsed: false, byId: {},
+    }),
+    seedSessionGeometry: vi.fn(),
+    seedUnitShare: vi.fn(),
+    navGeometryDiffers: vi.fn(() => false),
+    canvasClaims: { provide: () => () => {}, claim: () => null, subscribe: () => () => {} },
   } satisfies ILayout
   await runtime.mount({
     inject: ['slots'],

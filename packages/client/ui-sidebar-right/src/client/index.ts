@@ -13,7 +13,9 @@
  *
  * The frame is a base package and never injects this one. What it needs —
  * whether the panel is shown and whether it wants a track — arrives through its
- * own `ctx.layout` action face, reported by the seat that knows both facts.
+ * own `ctx.layout` action face, reported by the seat that knows both facts;
+ * the canvas claim arrives the other way, pulled by the frame from the claim
+ * source this plugin provides into `ctx.layout.canvasClaims`.
  *
  * Tab types register in two stages: the type itself into `ctx.sidebarRightTabs`,
  * its body into the keyed `sidebar.right.pane.tab` seat under the same kind. The
@@ -46,8 +48,7 @@ import { guideTabInfoFactory, tabInfoFactory } from './tab-info.ts'
 import type { TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import { defaultSeed } from './contract/seed.ts'
 
-export { canvasSide } from './shell/canvas.ts'
-export type { CanvasSide } from './shell/canvas.ts'
+export type { CanvasSide } from '@deepseek-ai/dsh-client-ui-layout/client'
 export type { SidebarRightTarget } from './focus.ts'
 export type { RightbarSeatProps, SidebarRightInjected, SidebarRightPresentation } from './shell/SidebarRight.tsx'
 export type { GuideBodyProps, GuideInjected } from './tabs/guide/GuideBody.tsx'
@@ -157,6 +158,16 @@ export function apply(ctx: ClientContext): void {
   }, 'ui-sidebar-right: service faces')
 
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-sidebar-right: dictionaries')
+  // The canvas claim travels the opposite way from the presentation report:
+  // the frame pulls it from the controller's source through its own seam, so
+  // a claim can never go stale waiting on a report — a retained surface
+  // reactivating with its canvas open counts immediately. Benches may seat a
+  // partial layout face; the no-op disposer keeps them alive.
+  ctx.effect(() => {
+    const claims = ctx.layout.canvasClaims
+    if (claims === undefined) return () => {}
+    return claims.provide(controller.canvasClaims)
+  }, 'ui-sidebar-right: canvas claims')
   ctx.effect(() => registerSidebarShortcuts(ctx.shortcuts, controller, t, () => {
     void ctx.shortcuts.closeWindow().catch((error: unknown) => { console.error('Window close failed', error) })
   }), 'ui-sidebar-right: shortcuts')
@@ -190,8 +201,8 @@ export function apply(ctx: ClientContext): void {
     }
     const layout: ILayout = ctx.layout
     const injected: Omit<SidebarRightInjected, 'keyedHooks' | 'occurrence' | 'closeTab'> = {
-      syncPresentation({ shown, track, fullscreen, canvas, rail }) {
-        if (shown || canvas !== null) layout.openRightbar(track, fullscreen, canvas, rail)
+      syncPresentation({ shown, track, fullscreen, rail }) {
+        if (shown) layout.openRightbar(track, fullscreen, rail)
         else layout.closeRightbar()
       },
       bindService: binding => controller.bind(binding),

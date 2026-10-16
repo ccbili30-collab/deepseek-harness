@@ -13,9 +13,9 @@ import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { HostObservable, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
-import type { PanelInfo } from './service.ts'
+import type { LiveSessionGeometry, MainPanelId, PanelInfo } from './service.ts'
 import { AppFrame } from './AppFrame.tsx'
-import { createLayoutStore } from './stores.ts'
+import { createLayoutStore, navGeometryDiffers } from './stores.ts'
 import { LayoutController } from './service.ts'
 import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
 import { en, zh } from './shortcut-locales.ts'
@@ -27,7 +27,9 @@ import { ThemePresenter } from './theme-presenter.ts'
 // OwnerShare contracts below are the render-side halves registrants compose
 // against; the frame components and the store factory are package-internal.
 export { LayoutController } from './service.ts'
-export type { ILayout, MainPanelId, PanelInfo } from './service.ts'
+export type { ILayout, LiveSessionGeometry, MainPanelId, PanelInfo, CanvasClaimSource, CanvasClaims } from './service.ts'
+export type { CanvasSide, UnitSide } from './arrangement.ts'
+export type { SessionGeometry, SessionGeometryRecord } from './stores.ts'
 
 /** Selector hook over root-scoped panel selection. */
 export type UsePanelInfo = SnapshotSelectorHook<PanelInfo>
@@ -169,8 +171,24 @@ export function apply(ctx: ClientContext): void {
       getSnapshot: () => instance.getSnapshot().panelInfo,
       subscribe: listener => instance.subscribe(listener),
     }
-    const layout = new LayoutController(instance.actions, id =>
-      ctx.slots.entries('main').some(entry => entry.options.key === id), panelInfo)
+    const sessionGeometry: HostObservable<LiveSessionGeometry> = {
+      getSnapshot: () => {
+        const { layoutInfo, geometry } = instance.getSnapshot()
+        return {
+          sidebarCollapsed: layoutInfo.sidebarCollapsed,
+          narrowExpanded: layoutInfo.narrowExpanded,
+          unitSide: layoutInfo.unitSide,
+          rightbarCollapsed: layoutInfo.rightbarCollapsed,
+          active: geometry.active,
+          byId: geometry.byId,
+        }
+      },
+      subscribe: listener => instance.subscribe(listener),
+    }
+    const hasMainPanel = (id: MainPanelId): boolean =>
+      ctx.slots.entries('main').some(entry => entry.options.key === id)
+    const layout = new LayoutController(instance.actions, hasMainPanel, panelInfo, sessionGeometry,
+      (from, to) => navGeometryDiffers(instance.getSnapshot(), from, to))
     const disposePanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo: layout.panelInfo } })
     const disposeService = ctx.reflect.provide('layout', layout)
     const disposeRegistration = ctx.slots.register({
@@ -184,6 +202,9 @@ export function apply(ctx: ClientContext): void {
         'shell.leading': { kind: 'single', scope: 'root' },
       },
       store,
+      // The frame pulls the canvas claim from the seam the occupant provides;
+      // pass the read face down so AppFrame stays free of service imports.
+      inject: () => ({ canvasClaims: layout.canvasClaims }),
     }, AppFrame)
     const disposeShortcut = ctx.shortcuts.register({
       id: 'sidebar.left.toggle' as ShortcutCommandId, label: () => t('toggle'), aliases: ['sidebar', 'toggle left sidebar'],

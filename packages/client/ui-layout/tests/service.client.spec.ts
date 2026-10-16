@@ -1,7 +1,7 @@
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { describe, expect, it, vi } from 'vitest'
 import { LayoutController } from '../src/client/service.ts'
-import type { MainPanelId, PanelActions } from '../src/client/service.ts'
+import type { LiveSessionGeometry, MainPanelId, PanelActions } from '../src/client/service.ts'
 
 function fakePanels(): PanelActions {
   return {
@@ -10,6 +10,10 @@ function fakePanels(): PanelActions {
     setSidebar: vi.fn(),
     toggleSidebar: vi.fn(),
     setSidebarCollapsed: vi.fn(),
+    setUnitSide: vi.fn(),
+    enterSession: vi.fn(),
+    seedSessionGeometry: vi.fn(),
+    seedUnitShare: vi.fn(),
     setViewportWidth: vi.fn(),
     setRightbar: vi.fn(),
     settleRightbar: vi.fn(),
@@ -19,27 +23,34 @@ function fakePanels(): PanelActions {
   }
 }
 
+/** The controller beside the two constructor faces the registration builds. */
+function buildService(panels: PanelActions = fakePanels(), differs: (from: string, to: string) => boolean = () => false) {
+  const geometry = createSnapshotStore<LiveSessionGeometry>({
+    sidebarCollapsed: false, narrowExpanded: false, unitSide: 'right', rightbarCollapsed: false, byId: {}, active: null,
+  })
+  const service = new LayoutController(panels, () => true, createSnapshotStore({ activePanelId: null }), geometry, differs)
+  return { service, panels, geometry }
+}
+
 describe('LayoutController', () => {
   it('forwards right column transitions to the constructor-supplied actions', () => {
-    const panels = fakePanels()
-    const service = new LayoutController(panels, () => true, createSnapshotStore({ activePanelId: null }))
+    const { service, panels } = buildService()
 
-    service.openRightbar(true, false, null, false)
-    service.openRightbar(true, true, null, false)
-    service.openRightbar(false, true, null, false)
+    service.openRightbar(true, false, false)
+    service.openRightbar(true, true, false)
+    service.openRightbar(false, true, false)
     service.closeRightbar()
 
-    expect(panels.openRightbar).toHaveBeenNthCalledWith(1, true, false, null, false)
-    expect(panels.openRightbar).toHaveBeenNthCalledWith(2, true, true, null, false)
-    expect(panels.openRightbar).toHaveBeenNthCalledWith(3, false, true, null, false)
+    expect(panels.openRightbar).toHaveBeenNthCalledWith(1, true, false, false)
+    expect(panels.openRightbar).toHaveBeenNthCalledWith(2, true, true, false)
+    expect(panels.openRightbar).toHaveBeenNthCalledWith(3, false, true, false)
     expect(panels.closeRightbar).toHaveBeenCalledTimes(1)
     // The drag width stays the frame's own business, never the caller's.
     expect(panels.setRightbar).not.toHaveBeenCalled()
   })
 
   it('can toggle the sidebar immediately after construction', () => {
-    const panels = fakePanels()
-    const service = new LayoutController(panels, () => true, createSnapshotStore({ activePanelId: null }))
+    const { service, panels } = buildService()
 
     service.toggleSidebar()
 
@@ -48,8 +59,7 @@ describe('LayoutController', () => {
   })
 
   it('sets the sidebar presentation without toggling', () => {
-    const panels = fakePanels()
-    const service = new LayoutController(panels, () => true, createSnapshotStore({ activePanelId: null }))
+    const { service, panels } = buildService()
 
     service.setSidebarCollapsed(true)
     service.setSidebarCollapsed(false)
@@ -60,8 +70,7 @@ describe('LayoutController', () => {
   })
 
   it('forwards panel selection and returning to the Conversation without changing geometry', () => {
-    const panels = fakePanels()
-    const service = new LayoutController(panels, () => true, createSnapshotStore({ activePanelId: null }))
+    const { service, panels } = buildService()
     const panelId = 'panel-a' as MainPanelId
     service.selectPanel(panelId)
     service.selectPanel(panelId)
@@ -77,8 +86,8 @@ describe('LayoutController', () => {
   it('keeps separately constructed controllers bound to their own instances', () => {
     const first = fakePanels()
     const second = fakePanels()
-    const firstService = new LayoutController(first, () => true, createSnapshotStore({ activePanelId: null }))
-    const secondService = new LayoutController(second, () => true, createSnapshotStore({ activePanelId: null }))
+    const firstService = buildService(first).service
+    const secondService = buildService(second).service
     firstService.toggleSidebar()
     expect(first.toggleSidebar).toHaveBeenCalledTimes(1)
     expect(second.toggleSidebar).not.toHaveBeenCalled()
@@ -90,7 +99,10 @@ describe('LayoutController', () => {
   it('rejects an absent main entry without changing selection or cancelling pending navigation', () => {
     const panels = fakePanels()
     const present = new Set(['panel-a'])
-    const service = new LayoutController(panels, id => present.has(id), createSnapshotStore({ activePanelId: null }))
+    const geometry = createSnapshotStore<LiveSessionGeometry>({
+      sidebarCollapsed: false, narrowExpanded: false, unitSide: 'right', rightbarCollapsed: false, byId: {}, active: null,
+    })
+    const service = new LayoutController(panels, id => present.has(id), createSnapshotStore({ activePanelId: null }), geometry, () => false)
     service.selectPanel('panel-a' as MainPanelId)
     const navigation = service.beginNavigation()
     present.delete('panel-a')
@@ -102,7 +114,7 @@ describe('LayoutController', () => {
   })
 
   it('supersedes asynchronous navigation on another request, any valid selection, and disposal', () => {
-    const service = new LayoutController(fakePanels(), () => true, createSnapshotStore({ activePanelId: null }))
+    const { service } = buildService()
     const first = service.beginNavigation()
     const second = service.beginNavigation()
     expect(first.aborted).toBe(true)
@@ -116,5 +128,50 @@ describe('LayoutController', () => {
     service.dispose()
     expect(pending.aborted).toBe(true)
     service.dispose()
+  })
+
+  it('forwards structural writes and seeds to the constructor-supplied actions', () => {
+    const { service, panels } = buildService()
+    service.setUnitSide('left')
+    service.seedSessionGeometry('s-a', { sidebarCollapsed: true })
+    service.seedUnitShare(0.7)
+    expect(panels.setUnitSide).toHaveBeenNthCalledWith(1, 'left')
+    expect(panels.seedSessionGeometry).toHaveBeenNthCalledWith(1, 's-a', { sidebarCollapsed: true })
+    expect(panels.seedUnitShare).toHaveBeenNthCalledWith(1, 0.7)
+  })
+
+  it('answers nav-geometry comparisons through the constructor-supplied reader', () => {
+    const { service } = buildService(fakePanels(), (from, to) => from !== to)
+    expect(service.navGeometryDiffers('s-a', 's-b')).toBe(true)
+    expect(service.navGeometryDiffers('s-a', 's-a')).toBe(false)
+  })
+
+  it('relays the provided canvas-claim source and resets to null on detach', () => {
+    const { service } = buildService()
+    expect(service.canvasClaims.claim('s-a')).toBeNull()
+    let side: 'left' | 'right' = 'right'
+    const listeners = new Set<() => void>()
+    const notify = (): void => { for (const listener of listeners) listener() }
+    const detach = service.canvasClaims.provide({
+      claim: sessionId => sessionId === 's-a' ? side : null,
+      subscribe: (listener) => { listeners.add(listener); return () => { listeners.delete(listener) } },
+    })
+    expect(service.canvasClaims.claim('s-a')).toBe('right')
+    expect(service.canvasClaims.claim(null)).toBeNull()
+    expect(service.canvasClaims.claim('s-b')).toBeNull()
+    const seen: ('left' | 'right' | null)[] = []
+    const unsubscribe = service.canvasClaims.subscribe(() => { seen.push(service.canvasClaims.claim('s-a')) })
+    side = 'left'
+    notify()
+    expect(seen).toEqual(['left'])
+    detach()
+    expect(seen).toEqual(['left', null])
+    expect(service.canvasClaims.claim('s-a')).toBeNull()
+    unsubscribe()
+  })
+
+  it('publishes the live session geometry through the shared observable', () => {
+    const { service, geometry } = buildService()
+    expect(service.sessionGeometry).toBe(geometry)
   })
 })

@@ -8,8 +8,9 @@ import { SidebarTabInventory } from '../src/client/tab-inventory.ts'
 const session = 'session'
 const key = `${sidebarPersistence}.${session}`
 const empty = createSurface()
-// A restored surface always starts parked — the canvas never claims the column at mount.
-const restored = { ...empty, canvasParked: true }
+// A restored surface keeps its own parked state and side; records written
+// before the fields existed fall back to the surface defaults.
+const restored = empty
 const tab = { id: 'tab2', kind: 'terminal', contentId: 'sidebar://terminal/unique', title: 'Terminal' }
 const pane = { id: 'pane1', kind: 'pane', host: 'dock', tabs: ['tab2'], activeTabId: 'tab2' }
 const layout = { ...empty.layout, nodes: { pane1: pane }, tabs: { tab2: tab } }

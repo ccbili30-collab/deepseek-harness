@@ -62,7 +62,24 @@ async function boot(shortcuts: Partial<Shortcuts> = {}) {
       return () => { dictionaries.delete(ns) }
     }),
   }
-  const layout = { openRightbar: vi.fn(), closeRightbar: vi.fn(), toggleSidebar: vi.fn() }
+  // The frame seam the claim source provides into: records what was attached.
+  const seamListeners = new Set<() => void>()
+  let providedClaims: unknown
+  const canvasClaims = {
+    provide: (source: unknown): (() => void) => {
+      providedClaims = source
+      return () => { if (providedClaims === source) providedClaims = undefined }
+    },
+    claim: (sessionId: string | null): 'left' | 'right' | null =>
+      sessionId === null || providedClaims === undefined ? null : (providedClaims as { claim(id: string | null): 'left' | 'right' | null }).claim(sessionId),
+    subscribe: (listener: () => void): (() => void) => {
+      seamListeners.add(listener)
+      return () => { seamListeners.delete(listener) }
+    },
+  }
+  const layout = {
+    openRightbar: vi.fn(), closeRightbar: vi.fn(), toggleSidebar: vi.fn(), canvasClaims,
+  }
   const resources = { pin: vi.fn<(address: string, signal: AbortSignal) => void>() }
   ctx.provide('slots', slots as never)
   ctx.provide('locale', locale as never)
@@ -84,7 +101,7 @@ async function boot(shortcuts: Partial<Shortcuts> = {}) {
     if (entry.inject === undefined) throw new Error(`expected ${entry.name} to inject`)
     return entry.inject(SESSION)
   }
-  return { ctx, registered, dictionaries, layout, resources, fiber, seat, injectedOf }
+  return { ctx, registered, dictionaries, layout, resources, fiber, seat, injectedOf, providedClaims: () => providedClaims }
 }
 
 describe('ui-sidebar-right apply', () => {
@@ -144,20 +161,18 @@ describe('ui-sidebar-right apply', () => {
   it('hands the panel seat the frame report, the service binding, the opens, the observable registry, and the Tab domain', async () => {
     const { ctx, layout, resources, seat, injectedOf } = await boot()
     const injected = injectedOf(seat('rightbar.session')) as SidebarRightInjected
-    // The frame learns the composition of expanded and presentation, nothing else.
-    injected.syncPresentation({ shown: true, track: true, fullscreen: false, canvas: null, rail: false })
-    expect(layout.openRightbar).toHaveBeenLastCalledWith(true, false, null, false)
-    injected.syncPresentation({ shown: true, track: true, fullscreen: true, canvas: null, rail: false })
-    expect(layout.openRightbar).toHaveBeenLastCalledWith(true, true, null, false)
-    injected.syncPresentation({ shown: true, track: false, fullscreen: true, canvas: null, rail: false })
-    expect(layout.openRightbar).toHaveBeenLastCalledWith(false, true, null, false)
-    // The canvas claims the column on its own: a hidden panel still keeps the region.
-    injected.syncPresentation({ shown: false, track: false, fullscreen: false, canvas: 'left', rail: false })
-    expect(layout.openRightbar).toHaveBeenLastCalledWith(false, false, 'left', false)
+    // The frame learns the composition of expanded and presentation, nothing
+    // else — the canvas claim never rides this report.
+    injected.syncPresentation({ shown: true, track: true, fullscreen: false, rail: false })
+    expect(layout.openRightbar).toHaveBeenLastCalledWith(true, false, false)
+    injected.syncPresentation({ shown: true, track: true, fullscreen: true, rail: false })
+    expect(layout.openRightbar).toHaveBeenLastCalledWith(true, true, false)
+    injected.syncPresentation({ shown: true, track: false, fullscreen: true, rail: false })
+    expect(layout.openRightbar).toHaveBeenLastCalledWith(false, true, false)
     // The collapsed panel is its icon rail: it keeps a narrow track.
-    injected.syncPresentation({ shown: true, track: true, fullscreen: false, canvas: null, rail: true })
-    expect(layout.openRightbar).toHaveBeenLastCalledWith(true, false, null, true)
-    injected.syncPresentation({ shown: false, track: false, fullscreen: false, canvas: null, rail: false })
+    injected.syncPresentation({ shown: true, track: true, fullscreen: false, rail: true })
+    expect(layout.openRightbar).toHaveBeenLastCalledWith(true, false, true)
+    injected.syncPresentation({ shown: false, track: false, fullscreen: false, rail: false })
     expect(layout.closeRightbar).toHaveBeenCalledOnce()
     // The registry, observable: what the seat dispatches a kind to.
     expect(injected.hooks.tabTypes.getSnapshot().find(type => type.kind === 'guide')?.id).toBe(GUIDE_ID)
@@ -191,6 +206,27 @@ describe('ui-sidebar-right apply', () => {
     injected.splitPane(surface.layout.activePaneId)
     release()
     expect(() => { ctx.sidebarRight.toggleExpanded() }).toThrow('no session surface is mounted')
+  })
+
+  it('provides the claim source into the frame seam and the claim derives from the surface alone', async () => {
+    const { ctx, seat, layout, providedClaims } = await boot()
+    expect(providedClaims()).toBe(ctx.sidebarRight.canvasClaims)
+    const handle = seat('rightbar.session').store as ReturnType<typeof createSidebarRightStore>
+    const instance = handle.create(SESSION)
+    instance.actions.open(SESSION)
+    // No floats: nothing claims the column.
+    expect(layout.canvasClaims.claim(SESSION)).toBeNull()
+    // Opened content floats onto the canvas and claims its surface's side.
+    instance.actions.setExpanded(SESSION, true)
+    instance.actions.openContent(SESSION, { kind: 'text', contentId: 'dsh-resource://file/session/s/a.txt', title: 'a' }, () => {})
+    expect(layout.canvasClaims.claim(SESSION)).toBe('right')
+    instance.actions.setCanvasSide(SESSION, 'left')
+    expect(layout.canvasClaims.claim(SESSION)).toBe('left')
+    // Parking frees the region while the floats stay mounted.
+    instance.actions.setCanvasParked(SESSION, true)
+    expect(layout.canvasClaims.claim(SESSION)).toBeNull()
+    expect(layout.canvasClaims.claim('s-other')).toBeNull()
+    expect(layout.canvasClaims.claim(null)).toBeNull()
   })
 
   it('adopts each session\'s store instance as the runtime mints it, so a tab\'s own actions land with no seat bound', async () => {

@@ -18,6 +18,13 @@ import { LayoutController } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { RowToast } from '../src/client/contract/slots.ts'
 import { DirectoryBrowseError, UiWorkspaceService } from '../src/client/navigation.ts'
+
+// The weight decision under test: capture turnPage calls while keeping the
+// real fallback behavior (node env has no View Transitions; update runs direct).
+vi.mock('../src/client/page-turn.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/client/page-turn.ts')>()
+  return { ...actual, turnPage: vi.fn(actual.turnPage) }
+})
 import { createWorkspaceViewStore, FLAT_SESSION_ORDER_KEY } from '../src/client/stores.ts'
 import { UNGROUPED_KEY } from '../src/client/tree.ts'
 
@@ -275,12 +282,17 @@ interface BenchOptions {
 function bench(options: BenchOptions = {}) {
   const ctx = new Context()
   contexts.push(ctx)
+  const navDiffers = vi.fn(() => false)
   const layout = new LayoutController({
     selectPanel: vi.fn(), retainMainPanels: vi.fn(),
     setSidebar: vi.fn(), toggleSidebar: vi.fn(), setSidebarCollapsed: vi.fn(), setViewportWidth: vi.fn(),
     setRightbar: vi.fn(), settleRightbar: vi.fn(),
     setUnit: vi.fn(), openRightbar: vi.fn(), closeRightbar: vi.fn(),
-  }, () => true, createSnapshotStore({ activePanelId: null }))
+    setUnitSide: vi.fn(), enterSession: vi.fn(),
+    seedSessionGeometry: vi.fn(), seedUnitShare: vi.fn(),
+  }, () => true, createSnapshotStore({ activePanelId: null }), createSnapshotStore({
+    sidebarCollapsed: false, narrowExpanded: false, unitSide: 'right', rightbarCollapsed: false, byId: {}, active: null,
+  }), navDiffers)
   const selectPanel = vi.spyOn(layout, 'selectPanel')
   ctx.provide('layout', layout)
   ctx.effect(() => () => { layout.dispose() })
@@ -299,7 +311,7 @@ function bench(options: BenchOptions = {}) {
     view.actions,
     notify,
   )
-  return { ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel, view, notify }
+  return { ctx, directoryPicker, sessions, uiWorkspace, workspaces, layout, selectPanel, view, notify, navDiffers }
 }
 
 describe('UiWorkspaceService', () => {
@@ -411,6 +423,22 @@ describe('UiWorkspaceService', () => {
     expect(b.selectPanel).toHaveBeenCalledWith(null)
     expect(b.sessions.retain).toHaveBeenCalledWith(sid('target'), { source: 'mainView' })
     expect(b.sessions.refreshProjections).not.toHaveBeenCalled()
+  })
+
+  it('pages with the heavier project weight when the sessions read different nav geometry', async () => {
+    const { turnPage } = await import('../src/client/page-turn.ts')
+    const b = bench({
+      workspaces: workspaceState([workspace('a')]),
+      sessions: sessionState([summary('current'), summary('target')]),
+    })
+    b.uiWorkspace.openSession(sid('current'))
+    vi.mocked(turnPage).mockClear()
+    b.navDiffers.mockReturnValueOnce(true)
+    b.uiWorkspace.openSession(sid('target'))
+    expect(turnPage).toHaveBeenLastCalledWith(expect.any(Function), 'down', 'project')
+    b.navDiffers.mockReturnValueOnce(false)
+    b.uiWorkspace.openSession(sid('current'))
+    expect(turnPage).toHaveBeenLastCalledWith(expect.any(Function), 'down', 'session')
   })
 
   it('keeps the current panel when retaining the target fails', () => {

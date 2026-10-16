@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createLayoutStore } from '../src/client/stores.ts'
+import { createLayoutStore, navGeometryDiffers } from '../src/client/stores.ts'
 import type { MainPanelId } from '../src/client/service.ts'
 
 beforeEach(() => { localStorage.clear(); vi.stubGlobal('innerWidth', 1920) })
@@ -14,6 +14,7 @@ describe('createLayoutStore', () => {
       panelInfo: { activePanelId: null },
       layoutInfo: {
         sidebar: 280,
+        sidebarCollapsed: false,
         viewportWidth: 1920,
         narrowExpanded: false,
         rightbar: null,
@@ -22,11 +23,12 @@ describe('createLayoutStore', () => {
         rightbarCollapsePreview: false,
         rightbarShown: false,
         rightbarTrack: false,
-        rightbarCanvas: null,
         rightbarRail: false,
         rightbarFullscreen: false,
         rightbarInstant: false,
+        unitSide: 'right',
       },
+      geometry: { active: null, byId: {} },
     })
   })
 
@@ -34,7 +36,7 @@ describe('createLayoutStore', () => {
     const write = vi.spyOn(Storage.prototype, 'setItem')
     const a = createLayoutStore().create()
     a.actions.setSidebar(400)
-    a.actions.openRightbar(true, false, null, false)
+    a.actions.openRightbar(true, false, false)
     a.actions.setRightbar(500)
     a.actions.setUnit(700)
     expect(write).toHaveBeenCalled()
@@ -55,25 +57,25 @@ describe('createLayoutStore', () => {
     expect(store.getSnapshot().layoutInfo.sidebar).toBe(420)
   })
 
-  it('toggles the wide sidebar between closed and default width', () => {
+  it('toggles the wide sidebar collapse without touching the width preference', () => {
     const { store, actions } = createLayoutStore().create()
     actions.setSidebar(400)
     actions.toggleSidebar()
-    expect(store.getSnapshot().layoutInfo.sidebar).toBe(0)
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ sidebar: 400, sidebarCollapsed: true })
     actions.toggleSidebar()
-    expect(store.getSnapshot().layoutInfo.sidebar).toBe(280)
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ sidebar: 400, sidebarCollapsed: false })
   })
 
   it('sets the sidebar collapsed state idempotently on wide and narrow frames', () => {
     const { store, actions } = createLayoutStore().create()
     actions.setSidebar(400)
     actions.setSidebarCollapsed(true)
-    expect(store.getSnapshot().layoutInfo.sidebar).toBe(0)
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ sidebar: 400, sidebarCollapsed: true })
     const collapsed = store.getSnapshot()
     actions.setSidebarCollapsed(true)
     expect(store.getSnapshot()).toBe(collapsed)
     actions.setSidebarCollapsed(false)
-    expect(store.getSnapshot().layoutInfo.sidebar).toBe(280)
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ sidebar: 400, sidebarCollapsed: false })
 
     actions.setSidebar(400)
     actions.setViewportWidth(980)
@@ -114,7 +116,7 @@ describe('main panel selection', () => {
   it('changes only panelInfo when switching panels and returning to the Conversation', () => {
     const { store, actions } = createLayoutStore().create()
     actions.setSidebar(400)
-    actions.openRightbar(true, true, null, false)
+    actions.openRightbar(true, true, false)
     actions.closeRightbar()
     const layoutInfo = store.getSnapshot().layoutInfo
     for (const activePanelId of [panelA, panelB, null]) {
@@ -153,7 +155,7 @@ describe('main panel selection', () => {
     'preserves panelInfo identity when %s changes layoutInfo', (action) => {
       const { store, actions } = createLayoutStore().create()
       actions.selectPanel(panelA)
-      if (action === 'closeRightbar') actions.openRightbar(true, true, null, false)
+      if (action === 'closeRightbar') actions.openRightbar(true, true, false)
       const previous = store.getSnapshot()
       switch (action) {
         case 'setSidebar': actions.setSidebar(400); break
@@ -161,7 +163,7 @@ describe('main panel selection', () => {
         case 'setViewportWidth': actions.setViewportWidth(980); break
         case 'setRightbar': actions.setRightbar(500); break
         case 'setUnit': actions.setUnit(500); break
-        case 'openRightbar': actions.openRightbar(true, true, null, false); break
+        case 'openRightbar': actions.openRightbar(true, true, false); break
         case 'closeRightbar': actions.closeRightbar(); break
       }
       expect(store.getSnapshot().panelInfo).toBe(previous.panelInfo)
@@ -175,23 +177,23 @@ describe('right panel', () => {
     const { store, actions } = createLayoutStore().create()
     actions.setViewportWidth(1000)
     expect(store.getSnapshot().layoutInfo.rightbar).toBeNull()
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, false, false)
     expect(store.getSnapshot().layoutInfo.rightbar).toBe(340)
     actions.setViewportWidth(2000)
-    actions.openRightbar(true, true, null, false)
+    actions.openRightbar(true, true, false)
     expect(store.getSnapshot().layoutInfo.rightbar).toBe(340)
     actions.closeRightbar()
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, false, false)
     expect(store.getSnapshot().layoutInfo.rightbar).toBe(340)
   })
 
   it('keeps track and fullscreen reports independent and clears both on close', () => {
     const { store, actions } = createLayoutStore().create()
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, false, false)
     expect(store.getSnapshot().layoutInfo).toMatchObject({ rightbarShown: true, rightbarTrack: true, rightbarFullscreen: false })
-    actions.openRightbar(true, true, null, false)
+    actions.openRightbar(true, true, false)
     expect(store.getSnapshot().layoutInfo).toMatchObject({ rightbarShown: true, rightbarTrack: true, rightbarFullscreen: true })
-    actions.openRightbar(false, true, null, false)
+    actions.openRightbar(false, true, false)
     expect(store.getSnapshot().layoutInfo).toMatchObject({ rightbarShown: true, rightbarTrack: false, rightbarFullscreen: true })
     actions.closeRightbar()
     expect(store.getSnapshot().layoutInfo).toMatchObject({ rightbarShown: false, rightbarTrack: false, rightbarFullscreen: false })
@@ -199,12 +201,12 @@ describe('right panel', () => {
 
   it('keeps dragged px preferences across resize, close, and reopen', () => {
     const { store, actions } = createLayoutStore().create()
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, false, false)
     actions.setRightbar(1100)
     actions.setViewportWidth(800)
     expect(store.getSnapshot().layoutInfo.rightbar).toBe(1100)
     actions.closeRightbar()
-    actions.openRightbar(false, true, null, false)
+    actions.openRightbar(false, true, false)
     expect(store.getSnapshot().layoutInfo.rightbar).toBe(1100)
   })
 
@@ -222,7 +224,7 @@ describe('right panel', () => {
 
   it('arms the collapse preview below the floor and folds only on settle', () => {
     const { store, actions } = createLayoutStore().create()
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, false, false)
     actions.setRightbar(400)
     actions.setRightbar(1)
     // Held below the floor: the preview is armed but the panel still stands.
@@ -231,9 +233,9 @@ describe('right panel', () => {
     expect(store.getSnapshot().layoutInfo).toMatchObject({ rightbar: 400, rightbarCollapsed: true, rightbarCollapsePreview: false })
     // A rail report keeps the request; the expanded report clears it and the
     // preserved preference returns.
-    actions.openRightbar(true, false, null, true)
+    actions.openRightbar(true, false, true)
     expect(store.getSnapshot().layoutInfo.rightbarCollapsed).toBe(true)
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, false, false)
     expect(store.getSnapshot().layoutInfo).toMatchObject({ rightbar: 400, rightbarCollapsed: false })
     // Pulling back above the floor before release disarms the preview.
     actions.setRightbar(220)
@@ -262,7 +264,7 @@ describe('right panel', () => {
   it('retains a minimum normal preference when first opened fullscreen on a phone', () => {
     const { store, actions } = createLayoutStore().create()
     actions.setViewportWidth(320)
-    actions.openRightbar(false, true, null, false)
+    actions.openRightbar(false, true, false)
     expect(store.getSnapshot().layoutInfo.rightbar).toBe(224)
   })
 
@@ -271,20 +273,20 @@ describe('right panel', () => {
     actions.setSidebar(400)
     actions.setViewportWidth(800)
     actions.toggleSidebar()
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, false, false)
     expect(store.getSnapshot().layoutInfo).toMatchObject({ sidebar: 400, narrowExpanded: false })
     actions.toggleSidebar()
-    actions.openRightbar(true, true, null, false)
+    actions.openRightbar(true, true, false)
     expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(true)
     actions.closeRightbar()
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, false, false)
     expect(store.getSnapshot().layoutInfo.narrowExpanded).toBe(false)
   })
 
   it('keeps the wide sidebar preference and never opens a closed right panel on resize', () => {
     const { store, actions } = createLayoutStore().create()
     actions.setSidebar(420)
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, false, false)
     expect(store.getSnapshot().layoutInfo.sidebar).toBe(420)
     actions.closeRightbar()
     actions.setViewportWidth(3000)
@@ -295,7 +297,7 @@ describe('right panel', () => {
 describe('right panel instant geometry', () => {
   it.each([true, false])('closes fullscreen with track=%s in one instant update and retains repeated close reports', (track) => {
     const { store, actions } = createLayoutStore().create()
-    actions.openRightbar(track, true, null, false)
+    actions.openRightbar(track, true, false)
     actions.closeRightbar()
     expect(store.getSnapshot().layoutInfo).toMatchObject({
       rightbarShown: false, rightbarTrack: false, rightbarFullscreen: false, rightbarInstant: true,
@@ -307,25 +309,25 @@ describe('right panel instant geometry', () => {
 
   it('restores the normal track instantly, retaining the marker on an identical report', () => {
     const { store, actions } = createLayoutStore().create()
-    actions.openRightbar(true, true, null, false)
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, true, false)
+    actions.openRightbar(true, false, false)
     expect(store.getSnapshot().layoutInfo).toMatchObject({
       rightbarShown: true, rightbarTrack: true, rightbarFullscreen: false, rightbarInstant: true,
     })
     const restored = store.getSnapshot()
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, false, false)
     expect(store.getSnapshot()).toBe(restored)
-    actions.openRightbar(false, false, null, false)
+    actions.openRightbar(false, false, false)
     expect(store.getSnapshot().layoutInfo.rightbarInstant).toBe(false)
   })
 
   it('allows a normal close to animate, including after restoring from fullscreen', () => {
     const { store, actions } = createLayoutStore().create()
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, false, false)
     actions.closeRightbar()
     expect(store.getSnapshot().layoutInfo.rightbarInstant).toBe(false)
-    actions.openRightbar(true, true, null, false)
-    actions.openRightbar(true, false, null, false)
+    actions.openRightbar(true, true, false)
+    actions.openRightbar(true, false, false)
     expect(store.getSnapshot().layoutInfo.rightbarInstant).toBe(true)
     actions.closeRightbar()
     expect(store.getSnapshot().layoutInfo).toMatchObject({ rightbarTrack: false, rightbarInstant: false })
@@ -333,7 +335,7 @@ describe('right panel instant geometry', () => {
 
   it.each(['setSidebar', 'toggleSidebar', 'setRightbar', 'setUnit', 'setViewportWidth'] as const)('clears instant geometry on %s', (action) => {
     const { store, actions } = createLayoutStore().create()
-    actions.openRightbar(true, true, null, false)
+    actions.openRightbar(true, true, false)
     actions.closeRightbar()
     expect(store.getSnapshot().layoutInfo.rightbarInstant).toBe(true)
     if (action === 'toggleSidebar') actions.toggleSidebar()
@@ -345,7 +347,7 @@ describe('right panel instant geometry', () => {
 
   it('does not let an unchanged frame measurement reset the fullscreen-exit marker', () => {
     const { store, actions } = createLayoutStore().create()
-    actions.openRightbar(true, true, null, false)
+    actions.openRightbar(true, true, false)
     actions.closeRightbar()
     const closed = store.getSnapshot()
     actions.setViewportWidth(closed.layoutInfo.viewportWidth)
@@ -354,9 +356,129 @@ describe('right panel instant geometry', () => {
 
   it.each([true, false])('clears the exit marker on a fresh opening with fullscreen=%s', (fullscreen) => {
     const { store, actions } = createLayoutStore().create()
-    actions.openRightbar(true, true, null, false)
+    actions.openRightbar(true, true, false)
     actions.closeRightbar()
-    actions.openRightbar(true, fullscreen, null, false)
+    actions.openRightbar(true, fullscreen, false)
     expect(store.getSnapshot().layoutInfo).toMatchObject({ rightbarShown: true, rightbarFullscreen: fullscreen, rightbarInstant: false })
+  })
+})
+
+describe('session geometry', () => {
+  it('stamps structural writes into the active session record', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.enterSession('s-a')
+    actions.setUnitSide('left')
+    actions.setSidebarCollapsed(true)
+    const record = store.getSnapshot().geometry.byId['s-a']
+    expect(record).toMatchObject({ unitSide: 'left', sidebarCollapsed: true })
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ unitSide: 'left', sidebarCollapsed: true })
+  })
+
+  it('swaps live structure on enterSession and stamps the outgoing session', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.enterSession('s-a')
+    actions.setUnitSide('left')
+    actions.setSidebarCollapsed(true)
+    actions.enterSession('s-b')
+    // The outgoing session keeps its structure; the fresh session lands on defaults.
+    expect(store.getSnapshot().geometry.byId['s-a']).toMatchObject({ unitSide: 'left', sidebarCollapsed: true })
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ unitSide: 'right', sidebarCollapsed: false })
+    actions.setUnitSide('left')
+    actions.enterSession('s-a')
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ unitSide: 'left', sidebarCollapsed: true })
+    expect(store.getSnapshot().geometry.byId['s-b']).toMatchObject({ unitSide: 'left' })
+  })
+
+  it('re-entering the live session changes nothing', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.enterSession('s-a')
+    const before = store.getSnapshot()
+    actions.enterSession('s-a')
+    expect(store.getSnapshot()).toBe(before)
+  })
+
+  it('seeds an inactive session record without touching the live structure', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.enterSession('s-a')
+    actions.seedSessionGeometry('s-b', { sidebarCollapsed: true, unitSide: 'left' })
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ sidebarCollapsed: false, unitSide: 'right' })
+    expect(store.getSnapshot().geometry.byId['s-b']).toMatchObject({ sidebarCollapsed: true, unitSide: 'left' })
+    // The seeded session takes its structure when it becomes visible.
+    actions.enterSession('s-b')
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ sidebarCollapsed: true, unitSide: 'left' })
+  })
+
+  it('seeds the live session on screen as well', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.enterSession('s-a')
+    actions.seedSessionGeometry('s-a', { unitSide: 'left' })
+    expect(store.getSnapshot().layoutInfo.unitSide).toBe('left')
+    expect(store.getSnapshot().geometry.byId['s-a']).toMatchObject({ unitSide: 'left' })
+  })
+
+  it('seeds the unit share once, leaving a dragged preference alone', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.seedUnitShare(0.7)
+    const seeded = store.getSnapshot().layoutInfo.unit
+    expect(seeded).toBe(Math.round((1920 - 280) * 0.7))
+    actions.seedUnitShare(0.2)
+    expect(store.getSnapshot().layoutInfo.unit).toBe(seeded)
+  })
+
+  it('persists widths and session records under the v2 key and prunes the stale tail', () => {
+    vi.useFakeTimers()
+    try {
+      const a = createLayoutStore().create()
+      a.actions.setSidebar(400)
+      for (let index = 0; index < 60; index += 1) {
+        vi.setSystemTime(index)
+        a.actions.enterSession(`s-old-${index}`)
+      }
+      // The most recent visit wins the pruning: its record survives beside the
+      // 49 next-newest stale tails.
+      vi.setSystemTime(10_000)
+      a.actions.enterSession('s-keep')
+      a.actions.setUnitSide('left')
+      const b = createLayoutStore().create()
+      expect(b.store.getSnapshot().layoutInfo.sidebar).toBe(400)
+      expect(Object.keys(b.store.getSnapshot().geometry.byId)).toHaveLength(50)
+      expect(b.store.getSnapshot().geometry.byId['s-keep']).toBeDefined()
+      expect(b.store.getSnapshot().geometry.byId['s-old-0']).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reads legacy v1 widths without session records', () => {
+    localStorage.setItem('dsh.layout.v1', JSON.stringify({ sidebar: 0, rightbar: 500, unit: 700 }))
+    const { store } = createLayoutStore().create()
+    expect(store.getSnapshot().layoutInfo).toMatchObject({ sidebar: 280, rightbar: 500, unit: 700 })
+    expect(store.getSnapshot().geometry.byId).toEqual({})
+  })
+})
+
+describe('navGeometryDiffers', () => {
+  it('flags nav-fold and unit-side differences between two sessions', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.enterSession('s-a')
+    actions.setSidebarCollapsed(true)
+    actions.enterSession('s-b')
+    const state = () => store.getSnapshot()
+    expect(navGeometryDiffers(state(), 's-a', 's-b')).toBe(true)
+    expect(navGeometryDiffers(state(), 's-b', 's-a')).toBe(true)
+    expect(navGeometryDiffers(state(), 's-b', 's-c')).toBe(false)
+    expect(navGeometryDiffers(state(), 's-c', 's-d')).toBe(false)
+  })
+
+  it('compares the narrow-resolved fold on narrow frames', () => {
+    const { store, actions } = createLayoutStore().create()
+    actions.setViewportWidth(980)
+    actions.enterSession('s-a')
+    actions.setSidebarCollapsed(false)
+    actions.enterSession('s-b')
+    const state = () => store.getSnapshot()
+    expect(navGeometryDiffers(state(), 's-a', 's-b')).toBe(true)
+    actions.setSidebarCollapsed(false)
+    expect(navGeometryDiffers(state(), 's-a', 's-b')).toBe(false)
   })
 })

@@ -28,6 +28,9 @@ const surface = z.object({
   // stack-top presentation.
   floatView: paneId.optional(),
   canvasParked: z.boolean().optional(),
+  // The canvas's composition side; absent on records written before the side
+  // moved into the surface.
+  canvasSide: z.enum(['left', 'right']).optional(),
   // The drawer's zone order; absent on records written before zones sorted.
   zoneOrder: z.array(z.enum(['top', 'features'])).length(2).optional(),
 })
@@ -95,10 +98,11 @@ export function readSidebarLayoutRecord(scope: string): SidebarLayoutRecord | un
         minted: parsed.minted,
         history: EMPTY_HISTORY,
         floatView: parsed.floatView as PaneId | undefined,
-        // The canvas never claims the column at mount: its floats restore as
-        // the visit stack, but every surface starts parked — an explicit open
-        // lifts it.
-        canvasParked: true,
+        // The canvas restores as it stood: an open canvas reclaims its region,
+        // a parked one keeps its floats docked. The claim is pulled from the
+        // surface, so nothing here waits on a report.
+        canvasParked: parsed.canvasParked ?? false,
+        canvasSide: parsed.canvasSide ?? 'right',
         zoneOrder: parsed.zoneOrder ?? ['top', 'features'],
       },
     }
@@ -133,6 +137,7 @@ export function writeSidebarLayout(scope: string, surface: SurfaceState, owner: 
         minted: surface.minted,
         floatView: surface.floatView,
         canvasParked: surface.canvasParked,
+        canvasSide: surface.canvasSide,
         zoneOrder: [...surface.zoneOrder],
       },
     },

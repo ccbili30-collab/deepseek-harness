@@ -38,7 +38,7 @@ export interface SidebarRightNavigator {
   /** Close a tab of one session. */
   closeIn(sessionId: SessionId, tabId: TabId): void
   /** Park one session's canvas region; its floats stay mounted. */
-  parkIn(sessionId: SessionId): void
+  parkCanvasIn(sessionId: SessionId): void
 }
 
 /** `ctx.resources.pin`: hold an address's content open for as long as `signal` lives. */
@@ -203,7 +203,7 @@ export class TabDomain {
           navigator.openTabIn(sessionId, kind, { ...place(options), params: options.params })
         },
         close: () => { navigator.closeIn(sessionId, tabId) },
-        park: () => { navigator.parkIn(sessionId) },
+        park: () => { navigator.parkCanvasIn(sessionId) },
       },
     }
     this.session(sessionId).set(tabId, held)

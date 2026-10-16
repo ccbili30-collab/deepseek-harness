@@ -29,7 +29,7 @@
  * actions — is read through the slot-owned useTabInfo hook. The Tab domain
  * follows each session's store commits, including sessions off screen.
  */
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import type { CSSProperties, ReactNode, RefObject } from 'react'
 import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/client'
 import { IconPanelLeftOutlineRegular, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
@@ -50,7 +50,6 @@ import type { createSidebarRightStore, SurfaceState } from '../stores.ts'
 import type { TabOccurrence } from '../tab-domain.ts'
 import type { SidebarRightTabNavigation } from '../contract/slots.ts'
 import type { TabHookContext } from '../tab-info.ts'
-import { canvasSide } from './canvas.ts'
 import { useMemberSort } from './member-sort.ts'
 import { useZoneSort } from './zone-sort.ts'
 import css from './SidebarRight.module.css'
@@ -70,12 +69,6 @@ export interface SidebarRightPresentation {
   readonly track: boolean
   /** Whether the panel fills the viewport, independently of its retained track. */
   readonly fullscreen: boolean
-  /**
-   * Which side of the panel the canvas page occupies inside the right region;
-   * null when no canvas is open. A claimed canvas widens the right track to
-   * hold the canvas next to the panel rather than overlaying the conversation.
-   */
-  readonly canvas: 'left' | 'right' | null
   /** Whether the shown panel stands collapsed to its icon rail (its track then holds the rail width). */
   readonly rail: boolean
 }
@@ -455,8 +448,7 @@ function CanvasExit({ side, drawerW, sessionId }: { side: 'left' | 'right'; draw
 
 function CanvasHost(panel: PanelProps & { width: number; toggleSidebar: () => void; held: boolean }): ReactNode {
   const { surface, width, fullscreen, t, held } = panel
-  useSyncExternalStore(listener => canvasSide.subscribe(listener), () => canvasSide.getSnapshot())
-  const side = canvasSide.get()
+  const side = surface.canvasSide
   const types = panel.useTabTypes(value => value)
 
   const panes = surface.layout.floats
@@ -732,7 +724,7 @@ function SidebarPanel(panel: PanelProps & { width: number; canvas: 'left' | 'rig
       data-canvas-side={canvas ?? undefined}
       /* The drawer's anchored edge stands opposite the canvas's and exists even
          with no canvas up — chrome glyphs key off it, not off canvas-side. */
-      data-drawer-side={canvasSide.get() === 'left' ? 'right' : 'left'}
+      data-drawer-side={surface.canvasSide === 'left' ? 'right' : 'left'}
     >
       {expanded || fullscreen ? nav(false) : collapsing ? nav(true) : <FeatureRail {...panel} />}
       {/* A held-below-floor drag blurs the navigation under the rail's mark:
@@ -776,10 +768,16 @@ export function RightbarSeat({
   const rail = shown && !expanded && !fullscreen
   const panelRef = useRef<HTMLDivElement | null>(null)
   const track = shown && !autoFullscreen
-  useMemberSort(panelRef, shown && !fullscreen)
-  useSyncExternalStore(listener => canvasSide.subscribe(listener), () => canvasSide.getSnapshot())
+  const surfaceCanvasSide = surface?.canvasSide
+  const swapCanvasSide = useCallback(() => {
+    if (surfaceCanvasSide === undefined) return
+    actions.setCanvasSide(sessionId, surfaceCanvasSide === 'left' ? 'right' : 'left')
+  }, [actions, sessionId, surfaceCanvasSide])
+  useMemberSort(panelRef, shown && !fullscreen, swapCanvasSide)
   // The canvas claim mirrors what CanvasHost draws: a presented float while
   // the surface is unparked. Parked keeps the floats but frees the region.
+  // Render-local only — the frame pulls the claim from the surface through
+  // ctx.layout.canvasClaims; nothing reports it.
   const topFloatId = surface === undefined ? undefined : surface.layout.floats[surface.layout.floats.length - 1]
   const topFloat = topFloatId === undefined || surface === undefined ? undefined : surface.layout.nodes[topFloatId]
   const canvasOpen = active && topFloat?.kind === 'pane' && topFloat.activeTabId !== undefined && surface?.canvasParked !== true
@@ -795,11 +793,11 @@ export function RightbarSeat({
     const timer = window.setTimeout(() =>{  setCanvasHeld(false) }, CANVAS_EXIT_MS)
     return () =>{  window.clearTimeout(timer) }
   }, [canvasOpen, canvasHeld])
-  const canvas = canvasOpen ? canvasSide.get() : null
+  const canvas = canvasOpen && surface !== undefined ? surface.canvasSide : null
   // What the panel and the exit shell draw: the claim's side while it lives,
   // held through the fold — without it a canvas-side='right' drawer would
   // teleport to the outer edge the instant the claim drops.
-  const canvasVisual = canvas ?? (canvasHeld ? canvasSide.get() : null)
+  const canvasVisual = canvas ?? (canvasHeld ? surfaceCanvasSide ?? null : null)
 
   useEffect(() => {
     if (active && surface === undefined) actions.open(sessionId)
@@ -827,7 +825,7 @@ export function RightbarSeat({
           && animation.playState !== 'finished' && animation.playState !== 'idle')
         : []
       if (entering.length === 0) {
-        syncPresentation({ shown, track, fullscreen, canvas, rail })
+        syncPresentation({ shown, track, fullscreen, rail })
         return
       }
       // Cancellation can replace the transition or remove it for reduced motion.
@@ -835,11 +833,11 @@ export function RightbarSeat({
     }
     reportWhenCovered()
     return () => { disposed = true }
-  }, [sessionId, shown, track, fullscreen, canvas, rail, syncPresentation, active])
+  }, [sessionId, shown, track, fullscreen, rail, syncPresentation, active])
   // Leaving is part of that report: a seat that unmounts with its session must
   // hand the track back rather than leave one sized for a surface nobody draws.
   useLayoutEffect(() => active
-    ? () => { syncPresentation({ shown: false, track: false, fullscreen: false, canvas: null, rail: false }) }
+    ? () => { syncPresentation({ shown: false, track: false, fullscreen: false, rail: false }) }
     : undefined, [syncPresentation, active])
 
   // Republished on every committed change: the service's readers answer from the
