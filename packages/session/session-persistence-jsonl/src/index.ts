@@ -14,7 +14,7 @@ import {
   sessionFormatCatalog,
 } from '@deepseek-ai/dsh-session-format-catalog'
 import { readdirSync, type Dirent } from 'node:fs'
-import { open, mkdir, readdir, realpath, link, rm, stat, truncate } from 'node:fs/promises'
+import { open, mkdir, readdir, realpath, link, rm, stat, unlink, truncate } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { performance } from 'node:perf_hooks'
 import { scheduler } from 'node:timers/promises'
@@ -22,7 +22,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import {
   SessionPersistence, SessionPersistenceRevision, SessionFormatUnsupportedError,
   SessionPersistenceCorruptionError,
-  SessionAlreadyExistsError, SessionPersistenceNotFoundError,
+  SessionAlreadyExistsError, SessionAlreadyOwnedError, SessionPersistenceNotFoundError,
   assertStoredId, materializeCreateHeader, sessionFormatVersionRefusal, validateStoredEvents,
   type SessionAccess, type SessionHandle,
   type SessionHandleReadResult,
@@ -419,10 +419,37 @@ class JsonlSessionPersistence extends SessionPersistence {
   }
 
   /**
-   * Flush every active write handle in one durability barrier; see the seam
-   * contract.
-   * @returns resolution once every write handle active at the call has flushed.
+   * Remove every log generation of an unowned Session. The lock inode remains
+   * in place to preserve cross-process exclusion. Project assets are untouched.
+   * @param id - Session to remove; an absent Session succeeds without a write.
+   * @throws {SessionAlreadyOwnedError} while any local handle or another
+   *   process's writer owns the Session.
    */
+  async deleteSession(id: SessionId): Promise<void> {
+    if ([...this.tracker.openHandles].some(handle => handle.id === id)) throw new SessionAlreadyOwnedError(id)
+    this.tracker.claimWrite(id)
+    let lease: SessionWriteLease | undefined
+    try {
+      await this.ensureRootEncoding()
+      const selected = await this.findLog(id)
+      if (selected === undefined) return
+      const dir = dirname(selected.currentPath)
+      lease = await this.acquireLease(id, undefined, dir)
+      this.coldLogMemo.delete(id)
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        if (parseGenerationLogFilename(entry.name, this.compression) === undefined) continue
+        await unlink(join(dir, entry.name))
+      }
+      // Never unlink session.lock: a waiting POSIX locker may hold its inode.
+      /* v8 ignore next -- POSIX deletes fsync the directory entry removal; Windows namespace operations are write-through */
+      if (process.platform !== 'win32') await this.syncDirPosix(dir)
+    } finally {
+      try { await lease?.release() }
+      finally { this.tracker.releaseClaim(id) }
+    }
+  }
+
+  /** Flush every active write handle. @returns completion after all writers flush. */
   flush(): Promise<void> {
     return this.tracker.flushAll()
   }

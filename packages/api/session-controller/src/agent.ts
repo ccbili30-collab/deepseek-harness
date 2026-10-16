@@ -140,11 +140,14 @@ export async function inspectApiSession(
 export class ApiSessionAgentController {
   private readonly resumes = new Map<SessionId, Promise<Agent>>()
   private readonly creations = new Map<SessionId, Promise<Agent>>()
+  /** Disposers of ordinary Sessions this controller resident-resumed or created. */
+  private readonly residentDisposers = new Map<SessionId, () => Promise<void>>()
   private readonly selections = new WeakMap<Agent, InstalledSelection>()
   private readonly imageAdmissionChains = new WeakMap<Agent, Promise<void>>()
 
   /** @param ctx - Host context carrying Agent, model, persistence, and Typert services. */
   constructor(private readonly ctx: Context) {
+    ctx.on('session/disposed', (session) => { this.residentDisposers.delete(session.id) })
     ctx.typert.lookups.configure('agent', async (sessionId: SessionId) => {
       const found = await this.resolveAgent(sessionId)
       if ('error' in found) throw found.error
@@ -169,6 +172,20 @@ export class ApiSessionAgentController {
    */
   async resolveAgent(sessionId: SessionId): Promise<ApiSessionAgentResult> {
     return this.resolve(sessionId)
+  }
+
+  /**
+   * Dispose one resident ordinary Session so permanent deletion can proceed.
+   * The registry asks only after the activity waterfall confirmed the Session
+   * runs nothing; a Session without a held disposer (already gone, or owned
+   * by another composition) resolves unchanged and the caller's residency
+   * re-check decides.
+   * @param sessionId - idle resident Session to dispose.
+   */
+  async releaseResident(sessionId: SessionId): Promise<void> {
+    const dispose = this.residentDisposers.get(sessionId)
+    if (dispose === undefined) return
+    await dispose()
   }
 
   /**
@@ -435,11 +452,13 @@ export class ApiSessionAgentController {
     if (published !== undefined && hasApiSessionSubagentOwner(this.ctx, published, live)) {
       throw new ApiSessionSubagentOwnership(sessionId)
     }
-    return (await this.ctx.agents.resume({
+    const resumed = await this.ctx.agents.resume({
       resumeSessionId: sessionId,
       agentOptions: this.agentOptions(),
       setup: composition.setup,
-    })).agent
+    })
+    this.residentDisposers.set(sessionId, () => resumed.dispose())
+    return resumed.agent
   }
 
   private async createOrAdopt(
@@ -468,11 +487,13 @@ export class ApiSessionAgentController {
         const storedPreset = this.presetForObservation(observation)
         this.assertPresetUnchanged(sessionId, presetId, storedPreset)
         const composition = await this.composeAgent(storedPreset)
-        return (await this.ctx.agents.resume({
+        const resumed = await this.ctx.agents.resume({
           resumeSessionId: sessionId,
           agentOptions: this.agentOptions(),
           setup: composition.setup,
-        })).agent
+        })
+        this.residentDisposers.set(sessionId, () => resumed.dispose())
+        return resumed.agent
       } catch (error: unknown) {
         if (!(error instanceof SessionQueryError)
           || error.code !== 'SESSION_QUERY_SESSION_NOT_FOUND') throw error
@@ -485,7 +506,7 @@ export class ApiSessionAgentController {
       throw new Error(`failed to ensure project directory "${cwd}": ${String(error)}`, { cause: error })
     }
     const composition = await this.composeAgent(presetId)
-    return (await this.ctx.agents.create({
+    const created = await this.ctx.agents.create({
       sessionId,
       agentOptions: this.agentOptions(),
       meta: {
@@ -494,7 +515,9 @@ export class ApiSessionAgentController {
         ...(composition.agentPreset === undefined ? {} : { agentPreset: composition.agentPreset }),
       },
       setup: composition.setup,
-    })).agent
+    })
+    this.residentDisposers.set(sessionId, () => created.dispose())
+    return created.agent
   }
 
   private agentOptions(): AgentOptions {

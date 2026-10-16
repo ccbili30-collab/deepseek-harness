@@ -128,10 +128,13 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     open: vi.fn(),
     searchSessions: vi.fn(async () => ({ items: [], hasMore: false })),
     searchResultLimit: 20,
+    syncSelection: () => {},
     notifyArchivedNotOpenable: vi.fn(),
     renameWorkspace: vi.fn(async () => {}),
     deleteWorkspace: vi.fn(async () => {}),
     unarchiveSession: vi.fn(async () => {}),
+    requestDeleteSessions: vi.fn(async () => []),
+    notifyArchiveResult: vi.fn(),
     insertWorkspaceBefore: vi.fn(async () => {}),
     createWorkspace: vi.fn(async () => workspace('created', [])),
     useDirectoryFlow: bindSnapshotSelector({ getSnapshot: () => true, subscribe: () => () => {} }),
@@ -1097,7 +1100,7 @@ describe('WorkspaceBrowser', () => {
   })
 
   it.each(['workspace', 'flat', 'ungrouped'] as const)(
-    'keeps complete %s order through archived filters and both drag partitions',
+    'keeps complete %s order through archived filters with pinned rows in the Pinned section',
     async (mode) => {
       const account = mode === 'flat' ? FLAT_SESSION_ORDER_KEY : mode === 'ungrouped' ? UNGROUPED_KEY : 'alpha'
       const saved = ['a', 'p', 'kept-archive', 'b', 'q', 'c']
@@ -1140,14 +1143,16 @@ describe('WorkspaceBrowser', () => {
       expect(b.store.getSnapshot().sessionOrderByAccount[account])
         .toEqual(['b', 'a', 'p', 'kept-archive', 'q', 'c', 'missing-archive'])
       await waitFor(() => { expect(names()).toEqual(['p', 'q', 'b', 'a', 'c']) })
+      // Pinned-section rows carry no drag wiring: a pinned source writes
+      // nothing, and its account slot keeps the unpin restore position.
       dragBefore('q', 'p')
       expect(b.store.getSnapshot().sessionOrderByAccount[account])
-        .toEqual(['b', 'a', 'q', 'p', 'kept-archive', 'c', 'missing-archive'])
-      await waitFor(() => { expect(names()).toEqual(['q', 'p', 'b', 'a', 'c']) })
+        .toEqual(['b', 'a', 'p', 'kept-archive', 'q', 'c', 'missing-archive'])
+      await waitFor(() => { expect(names()).toEqual(['p', 'q', 'b', 'a', 'c']) })
       b.view.unmount()
 
       const restored = mount({ useSessions: b.props.useSessions, useWorkspaces: b.props.useWorkspaces })
-      expect(names()).toEqual(['q', 'p', 'b', 'a', 'c'])
+      expect(names()).toEqual(['p', 'q', 'b', 'a', 'c'])
       act(() => { restored.store.actions.setArchivedFilter('only') })
       await waitFor(() => { expect(names()).toEqual(['kept-archive', 'missing-archive']) })
     },
@@ -1168,7 +1173,7 @@ describe('WorkspaceBrowser', () => {
       .toEqual(['c', 'a', 'b'])
   })
 
-  it.each(['show', 'only'] as const)('does not open an archived row in the %s filter; it raises the not-openable notice instead', (filter) => {
+  it.each(['show', 'only'] as const)('selects an archived row in the %s filter instead of opening it', (filter) => {
     const open = vi.fn()
     const notifyArchivedNotOpenable = vi.fn()
     const b = mount({
@@ -1181,9 +1186,15 @@ describe('WorkspaceBrowser', () => {
     fireEvent.click(screen.getByText('alpha'))
     fireEvent.click(screen.getByText('gone'))
     expect(open).not.toHaveBeenCalled()
-    expect(notifyArchivedNotOpenable).toHaveBeenCalledOnce()
-    expect(screen.getByText('gone').closest('[role="treeitem"]')?.getAttribute('aria-description'))
-      .toBe('已归档对话暂时无法查看，请取消归档后查看')
+    // Every list view that renders archived rows addresses their clicks to
+    // the multi-selection: the click selects the row and raises no notice.
+    expect(notifyArchivedNotOpenable).not.toHaveBeenCalled()
+    const row = screen.getByText('gone').closest('[role="treeitem"]')
+    // The batch selection rides the neutral `selected` class; aria-selected
+    // stays reserved for the one current session.
+    expect(row?.className).toContain('selected')
+    expect(row?.getAttribute('aria-description')).toBeNull()
+    // The selected state rides the row itself; menu actions batch over it.
   })
 
   it('does not open an archived search result or clear its query; it raises the not-openable notice instead', async () => {
@@ -1227,6 +1238,114 @@ describe('WorkspaceBrowser', () => {
     expect(unarchive).toHaveLength(1)
     fireEvent.click(unarchive[0]!)
     expect(unarchiveSession).toHaveBeenCalledWith(sid('gone'))
+  })
+
+  /** The archived-only fixture: one Workspace with three archived rows, expanded. */
+  function mountArchivedOnly(overrides: Partial<WorkspaceBrowserProps> = {}) {
+    const b = mount({
+      useSessions: hook(sessionState([
+        summary('arch-a', 3), summary('arch-b', 2), summary('arch-c', 1),
+      ])),
+      useWorkspaces: hook(workspaceState(
+        [workspace('alpha', ['arch-a', 'arch-b', 'arch-c'])],
+        [sid('arch-a'), sid('arch-b'), sid('arch-c')],
+      )),
+      ...overrides,
+    })
+    act(() => { b.store.actions.setArchivedFilter('only') })
+    fireEvent.click(screen.getByText('alpha'))
+    const rowOf = (id: string) => screen.getByText(id).closest('[role="treeitem"]') as HTMLElement
+    return { ...b, rowOf }
+  }
+
+  const selectedTitles = () => screen.getAllByRole('treeitem')
+    .filter(row => row.className.includes('selected'))
+    .map(row => row.querySelector('[class*="title"]')?.textContent)
+
+  it('selects archived rows with plain, Cmd, and Shift clicks; Escape clears the selection', () => {
+    const b = mountArchivedOnly()
+
+    // A plain click addresses exactly one row and anchors it.
+    fireEvent.click(b.rowOf('arch-b'))
+    expect(selectedTitles()).toEqual(['arch-b'])
+
+    // A Cmd/Ctrl click toggles a second row in.
+    fireEvent.click(b.rowOf('arch-c'), { metaKey: true })
+    expect(selectedTitles()).toEqual(['arch-b', 'arch-c'])
+
+    // A Shift click takes the rendered run from the anchor, replacing it.
+    fireEvent.click(b.rowOf('arch-a'), { shiftKey: true })
+    expect(selectedTitles()).toEqual(['arch-a', 'arch-b', 'arch-c'])
+
+    // Escape in a text field belongs to the field: the selection stands.
+    fireEvent.click(screen.getByRole('button', { name: '搜索会话' }))
+    fireEvent.keyDown(screen.getByPlaceholderText('搜索会话名称'), { key: 'Escape' })
+    expect(selectedTitles()).toEqual(['arch-a', 'arch-b', 'arch-c'])
+
+    // Escape anywhere else drops the selection; a Ctrl click toggles one back
+    // in, and toggling the last selected row off empties it again.
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(selectedTitles()).toEqual([])
+    fireEvent.click(b.rowOf('arch-a'), { ctrlKey: true })
+    expect(selectedTitles()).toEqual(['arch-a'])
+    fireEvent.click(b.rowOf('arch-a'), { ctrlKey: true })
+    expect(selectedTitles()).toEqual([])
+  })
+
+  it('keeps the selection while its Sessions stay listed and prunes deleted ones', () => {
+    const b = mountArchivedOnly()
+    fireEvent.click(b.rowOf('arch-b'))
+    fireEvent.click(b.rowOf('arch-c'), { metaKey: true })
+    // arch-b left the archive set elsewhere: selection is a list fact, not an
+    // archive fact, so both rows stay selected for the next menu action.
+    rerender(b, {
+      useWorkspaces: hook(workspaceState(
+        [workspace('alpha', ['arch-a', 'arch-b', 'arch-c'])],
+        [sid('arch-a'), sid('arch-c')],
+      )),
+    })
+    const selected = selectedTitles
+    // The archived-only view stops rendering the restored row, so only the
+    // still-archived selected row shows; arch-b rejoins the archive set and
+    // its retained selection reappears with it.
+    expect(selected()).toEqual(['arch-c'])
+    rerender(b, {
+      useWorkspaces: hook(workspaceState(
+        [workspace('alpha', ['arch-a', 'arch-b', 'arch-c'])],
+        [sid('arch-a'), sid('arch-b'), sid('arch-c')],
+      )),
+    })
+    expect(selected()).toEqual(['arch-b', 'arch-c'])
+    // A Session that leaves the list entirely (deleted) leaves the selection.
+    rerender(b, {
+      useWorkspaces: hook(workspaceState(
+        [workspace('alpha', ['arch-a', 'arch-c'])],
+        [sid('arch-a'), sid('arch-c')],
+      )),
+      useSessions: hook(sessionState([summary('arch-a', 3), summary('arch-c', 1)])),
+    })
+    expect(selected()).toEqual(['arch-c'])
+  })
+
+
+  it('shows the retention hint and each archived row\'s remaining days', () => {
+    const now = Date.now()
+    const b = mount({
+      useSessions: hook(sessionState([summary('fresh', 3), summary('due', 2), summary('unknown', 1)])),
+      useWorkspaces: hook({
+        ...workspaceState(
+          [workspace('alpha', ['fresh', 'due', 'unknown'])],
+          [sid('fresh'), sid('due'), sid('unknown')],
+        ),
+        archivedSessionTimes: { fresh: now - 86_400_000, due: now - 20 * 86_400_000 },
+        archivedSessionRetentionDays: 15,
+      }),
+    })
+    act(() => { b.store.actions.setArchivedFilter('only') })
+    fireEvent.click(screen.getByText('alpha'))
+    expect(screen.getByText('归档会话将在 15 天后永久删除')).toBeTruthy()
+    expect(screen.getByText('14 天后删除')).toBeTruthy()
+    expect(screen.getByText('等待自动删除')).toBeTruthy()
   })
 
   it('renders a fork child as a top-level row without a session twist', () => {
@@ -1970,153 +2089,84 @@ describe('WorkspaceBrowser', () => {
     expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(['two', 'one', 'three'])
   })
 
-  it('drags a pinned row by moving its position in the complete Session sequence', () => {
+  it('renders the Pinned section above the groups in Host pin order and hides it without pins', () => {
     const sessions = sessionState([
       summary('one', 4), summary('two', 3), summary('three', 2), summary('four', 1),
     ])
-    createWorkspaceViewStore().create().actions.setSessionOrder('alpha', ['three', 'one', 'four', 'two'], {})
-    const b = mount({
-      useSessions: hook(sessions),
-      useWorkspaces: hook(workspaceState(
-        [workspace('alpha', ['one', 'two', 'three', 'four'])], [], [sid('one'), sid('two')],
-      )),
-    })
+    const pinned = hook(workspaceState(
+      [workspace('alpha', ['one', 'two', 'three', 'four'])], [], [sid('two'), sid('one')],
+    ))
+    const b = mount({ useSessions: hook(sessions), useWorkspaces: pinned })
     fireEvent.click(screen.getByText('alpha'))
-    expect(screen.getAllByRole('treeitem').slice(1).map(row => row.textContent)).toEqual([
-      expect.stringContaining('one'), expect.stringContaining('two'),
-      expect.stringContaining('three'), expect.stringContaining('four'),
-    ])
-    const one = screen.getByText('one').closest('[role="treeitem"]') as HTMLElement
-    const two = screen.getByText('two').closest('[role="treeitem"]') as HTMLElement
-    one.getBoundingClientRect = () => ({
-      top: 100, bottom: 134, left: 0, right: 200, width: 200, height: 34, x: 0, y: 100, toJSON: () => ({}),
-    })
-    fireEvent.dragStart(two, { dataTransfer: dragData() })
-    fireDrag(one, 'dragOver', 105)
-    fireDrag(one, 'drop', 105)
-    expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(['three', 'two', 'one', 'four'])
-    expect(screen.getAllByRole('treeitem').slice(1).map(row => row.textContent)).toEqual([
-      expect.stringContaining('two'), expect.stringContaining('one'),
-      expect.stringContaining('three'), expect.stringContaining('four'),
-    ])
+    // The section leads the list with its label; the pinned rows lead it in
+    // Host order and never repeat inside their group.
+    const section = screen.getByRole('group', { name: '置顶' })
+    const sectionRows = [...section.querySelectorAll('[role="treeitem"]')].map(row => row.textContent)
+    expect(sectionRows).toEqual([expect.stringContaining('two'), expect.stringContaining('one')])
+    const alphaSection = screen.getByText('alpha').closest<HTMLElement>('[class*="groupSection"]')!
+    const following = [...alphaSection.querySelectorAll<HTMLElement>('[role="treeitem"]')]
+      .filter(row => row.getAttribute('aria-expanded') === null)
+      .map(row => row.querySelector('[class*="title"]')?.textContent)
+    expect(following).toEqual(['three', 'four'])
+    expect(screen.getAllByRole('treeitem').map(row => row.querySelector('[class*="title"]')?.textContent))
+      .toEqual(['two', 'one', 'alpha', 'three', 'four'])
 
-    // Dropping the trailing pinned row after the leading one restates the
-    // current block: a no-op that writes nothing.
-    const oneAgain = screen.getByText('one').closest('[role="treeitem"]') as HTMLElement
-    const twoAgain = screen.getByText('two').closest('[role="treeitem"]') as HTMLElement
-    twoAgain.getBoundingClientRect = () => ({
-      top: 100, bottom: 134, left: 0, right: 200, width: 200, height: 34, x: 0, y: 100, toJSON: () => ({}),
-    })
-    fireEvent.dragStart(oneAgain, { dataTransfer: dragData() })
-    fireDrag(twoAgain, 'drop', 130)
-    expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(['three', 'two', 'one', 'four'])
+    // With no pinned rows the whole section disappears; the rows return to
+    // their group (manual mode without a saved order: recency).
+    rerender(b, { useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two', 'three', 'four'])])) })
+    expect(screen.queryByRole('group', { name: '置顶' })).toBeNull()
+    expect(screen.getAllByRole('treeitem').map(row => row.querySelector('[class*="title"]')?.textContent))
+      .toEqual(['alpha', 'one', 'two', 'three', 'four'])
   })
 
-  it('keeps pinned and unpinned rows in separate drag domains', () => {
-    const sessions = sessionState([summary('one', 2), summary('two', 1)])
+  it('returns an unpinned row to its group while its account slot survives', () => {
+    const sessions = sessionState([summary('one', 4), summary('two', 3), summary('three', 2)])
+    createWorkspaceViewStore().create().actions.setSessionOrder('alpha', ['three', 'one', 'two'], {})
     const b = mount({
       useSessions: hook(sessions),
-      useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two'])], [], [sid('one')])),
-    })
-    fireEvent.click(screen.getByText('alpha'))
-    const one = screen.getByText('one').closest('[role="treeitem"]') as HTMLElement
-    const two = screen.getByText('two').closest('[role="treeitem"]') as HTMLElement
-    for (const row of [one, two]) {
-      row.getBoundingClientRect = () => ({
-        top: 100, bottom: 134, left: 0, right: 200, width: 200, height: 34, x: 0, y: 100, toJSON: () => ({}),
-      })
-    }
-    const before = b.store.getSnapshot().sessionOrderByAccount.alpha
-
-    // A pinned source ignores unpinned targets…
-    fireEvent.dragStart(one, { dataTransfer: dragData() })
-    fireDrag(two, 'dragOver', 105)
-    fireDrag(two, 'drop', 105)
-    fireEvent.dragEnd(one)
-    expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(before)
-
-    // …and an unpinned source ignores pinned targets.
-    fireEvent.dragStart(two, { dataTransfer: dragData() })
-    fireDrag(one, 'dragOver', 105)
-    fireDrag(one, 'drop', 105)
-    fireEvent.dragEnd(two)
-    expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(before)
-  })
-
-  it('ignores a pinned drop whose pin state moved in flight', () => {
-    const sessions = sessionState([summary('one', 3), summary('two', 2), summary('three', 1)])
-    const b = mount({
-      useSessions: hook(sessions),
-      useWorkspaces: hook(workspaceState(
-        [workspace('alpha', ['one', 'two', 'three'])], [], [sid('one'), sid('two')],
-      )),
-    })
-    fireEvent.click(screen.getByText('alpha'))
-    const before = b.store.getSnapshot().sessionOrderByAccount.alpha
-    const markTarget = (): HTMLElement => {
-      const two = screen.getByText('two').closest('[role="treeitem"]') as HTMLElement
-      two.getBoundingClientRect = () => ({
-        top: 100, bottom: 134, left: 0, right: 200, width: 200, height: 34, x: 0, y: 100, toJSON: () => ({}),
-      })
-      return two
-    }
-
-    // The target unpins in flight: its id left the pinned block.
-    let one = screen.getByText('one').closest('[role="treeitem"]') as HTMLElement
-    fireEvent.dragStart(one, { dataTransfer: dragData() })
-    fireDrag(markTarget(), 'dragOver', 105)
-    rerender(b, {
       useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two', 'three'])], [], [sid('one')])),
     })
-    fireEvent.dragEnd(screen.getByText('one').closest('[role="treeitem"]') as HTMLElement)
-    expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(before)
+    fireEvent.click(screen.getByText('alpha'))
+    expect(screen.getByRole('group', { name: '置顶' })).toBeTruthy()
 
-    // The source unpins in flight.
-    rerender(b, {
-      useWorkspaces: hook(workspaceState(
-        [workspace('alpha', ['one', 'two', 'three'])], [], [sid('one'), sid('two')],
-      )),
-    })
-    one = screen.getByText('one').closest('[role="treeitem"]') as HTMLElement
-    fireEvent.dragStart(one, { dataTransfer: dragData() })
-    fireDrag(markTarget(), 'dragOver', 105)
-    rerender(b, {
-      useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two', 'three'])], [], [sid('two')])),
-    })
-    fireEvent.dragEnd(screen.getByText('one').closest('[role="treeitem"]') as HTMLElement)
-    expect(b.store.getSnapshot().sessionOrderByAccount.alpha).toEqual(before)
+    // Unpin: the row leaves the Pinned section and reappears in its group at
+    // its saved position.
+    rerender(b, { useWorkspaces: hook(workspaceState([workspace('alpha', ['one', 'two', 'three'])])) })
+    expect(screen.queryByRole('group', { name: '置顶' })).toBeNull()
+    const alphaSection = screen.getByText('alpha').closest<HTMLElement>('[class*="groupSection"]')!
+    const groupRows = [...alphaSection.querySelectorAll<HTMLElement>('[role="treeitem"]')]
+      .filter(row => row.getAttribute('aria-expanded') === null)
+      .map(row => row.querySelector('[class*="title"]')?.textContent)
+    expect(groupRows).toEqual(['three', 'one', 'two'])
   })
 
-  it('drags pinned rows within the flat pinned block and keeps cross-block targets inert', () => {
-    const sessions = sessionState([summary('one', 3), summary('two', 2), summary('three', 1)])
+  it('renders the flat Pinned section without drag wiring while ordinary rows keep theirs', () => {
+    const sessions = sessionState([
+      summary('one', 4), summary('two', 3), summary('three', 2), summary('four', 1),
+    ])
     const b = mount({
       useSessions: hook(sessions),
       useWorkspaces: hook(workspaceState([], [], [sid('one'), sid('two')])),
     })
     fireEvent.click(screen.getByRole('button', { name: '视图选项' }))
     fireEvent.click(screen.getByRole('menuitem', { name: '单列表' }))
-    expect(b.store.getSnapshot().sessionOrderByAccount[FLAT_SESSION_ORDER_KEY]).toBeUndefined()
-    const one = screen.getByText('one').closest('[role="treeitem"]') as HTMLElement
-    const two = screen.getByText('two').closest('[role="treeitem"]') as HTMLElement
-    for (const row of [one, two]) {
+    const section = screen.getByRole('group', { name: '置顶' })
+    const pinnedRow = screen.getByText('one').closest('[role="treeitem"]') as HTMLElement
+    expect(section.contains(pinnedRow)).toBe(true)
+    expect(pinnedRow.draggable).toBe(false)
+
+    const three = screen.getByText('three').closest('[role="treeitem"]') as HTMLElement
+    const four = screen.getByText('four').closest('[role="treeitem"]') as HTMLElement
+    for (const row of [three, four]) {
       row.getBoundingClientRect = () => ({
         top: 100, bottom: 134, left: 0, right: 200, width: 200, height: 34, x: 0, y: 100, toJSON: () => ({}),
       })
     }
-    fireEvent.dragStart(two, { dataTransfer: dragData() })
-    fireDrag(one, 'dragOver', 105)
-    fireDrag(one, 'drop', 105)
-    expect(b.store.getSnapshot().sessionOrderByAccount[FLAT_SESSION_ORDER_KEY])
-      .toEqual(['two', 'one', 'three'])
-
-    // An unpinned source ignores pinned targets.
-    const three = screen.getByText('three').closest('[role="treeitem"]') as HTMLElement
     fireEvent.dragStart(three, { dataTransfer: dragData() })
-    fireDrag(one, 'dragOver', 105)
-    fireDrag(one, 'drop', 105)
-    fireEvent.dragEnd(three)
+    fireDrag(four, 'dragOver', 125)
+    fireDrag(four, 'drop', 125)
     expect(b.store.getSnapshot().sessionOrderByAccount[FLAT_SESSION_ORDER_KEY])
-      .toEqual(['two', 'one', 'three'])
+      .toEqual(['one', 'two', 'four', 'three'])
   })
 
   it('persists Ungrouped drag order in both modes', async () => {

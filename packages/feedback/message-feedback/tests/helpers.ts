@@ -134,6 +134,11 @@ class TestPersistence extends SessionPersistence {
     return this.handle(stored, access)
   }
 
+  deleteSession(id: SessionId): Promise<void> {
+    this.durable.delete(id)
+    return Promise.resolve()
+  }
+
   async stat(id: SessionId): Promise<SessionPersistenceSnapshot | undefined> {
     this.statCalls += 1
     await this.onStat?.()

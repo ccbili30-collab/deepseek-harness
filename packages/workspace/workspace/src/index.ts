@@ -9,7 +9,7 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, stat } from 'node:fs/promises'
 import { Context, Service } from '@deepseek-ai/cordis'
 import type { SessionHeader, SessionId } from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-session-persistence'
+import { SessionAlreadyOwnedError } from '@deepseek-ai/dsh-session-persistence'
 import type { DomainGlobal, KvTable } from '@deepseek-ai/dsh-storage-domain'
 import { WorkspaceEntity } from './entity.ts'
 import type { WorkspaceEntityHost } from './entity.ts'
@@ -93,6 +93,23 @@ export class WorkspaceOrderInvalidError extends Error {
   }
 }
 
+/** Permanent deletion requires the Session to remain archived at its queue slot. */
+export class WorkspaceSessionNotArchivedError extends Error {
+  /** @param sessionId - Session that is not in the archive set. */
+  constructor(readonly sessionId: SessionId) {
+    super(`cannot delete session '${sessionId}': the session is not archived`)
+    this.name = 'WorkspaceSessionNotArchivedError'
+  }
+}
+
+/** Permanent deletion named a Session the local Session store still holds open. */
+export class WorkspaceSessionOpenError extends Error {
+  /** @param sessionId - Session that is still open in this process. */
+  constructor(readonly sessionId: SessionId) {
+    super(`cannot delete session '${sessionId}': the session is still open`)
+    this.name = 'WorkspaceSessionOpenError'
+  }
+}
 
 /** The session an archive request is about to write into the archive set. */
 export interface SessionActivityRequest {
@@ -145,6 +162,22 @@ declare module '@deepseek-ai/cordis' {
      * @mode parallel
      */
     'workspace/session-stop'(request: SessionActivityRequest): Promise<void> | void
+    /**
+     * Dispose the idle resident Session named by the request so permanent
+     * deletion can proceed. The activity waterfall has already confirmed the
+     * Session runs nothing; providers that hold resident Sessions dispose
+     * them here, and a Session still live after the dispatch refuses the
+     * deletion. A listener failure is logged and reads as no release.
+     * @param request - the idle resident Session about to be permanently deleted.
+     * @mode parallel
+     */
+    'workspace/session-release'(request: SessionActivityRequest): Promise<void> | void
+    /**
+     * A Session's durable log and workspace references have been permanently removed.
+     * @param sessionId - permanently removed Session identity.
+     * @mode parallel
+     */
+    'workspace/session-deleted'(sessionId: SessionId): void
   }
 }
 
@@ -215,6 +248,16 @@ export class WorkspaceRegistry extends Service {
     this.validateStoredState(this.requireState())
     this.rebuildEntities()
     this.reportFilteredCandidates()
+    await this.initializeArchiveTimes()
+    const pendingDeletion = this.requireState().pendingSessionDeletion
+    if (pendingDeletion !== undefined) {
+      try {
+        await this.finishSessionDeletion(pendingDeletion)
+      } catch (error: unknown) {
+        // Reads stay available; the durable marker retries before the next mutation.
+        this.ctx.logger.warn(`workspace: interrupted Session '${pendingDeletion}' deletion could not complete: ${String(error)}`)
+      }
+    }
   }
 
   /**
@@ -378,6 +421,7 @@ export class WorkspaceRegistry extends Service {
       await this.setState({
         ...state,
         archivedSessionIds: [...state.archivedSessionIds, sessionId],
+        archivedSessionTimes: { ...state.archivedSessionTimes, [sessionId]: Date.now() },
         pinnedSessionIds: state.pinnedSessionIds.filter(id => id !== sessionId),
       })
       if (options.stopActivity === true) await this.stopSessionActivity(sessionId)
@@ -403,8 +447,123 @@ export class WorkspaceRegistry extends Service {
       await this.setState({
         ...state,
         archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
+        archivedSessionTimes: Object.fromEntries(Object.entries(state.archivedSessionTimes ?? {}).filter(([id]) => id !== sessionId)),
       })
     })
+  }
+
+  /** Archive instants in Unix milliseconds; legacy archives receive a full startup grace period. */
+  get archivedSessionTimes(): Readonly<Record<string, number>> {
+    return this.requireState().archivedSessionTimes ?? {}
+  }
+
+  /**
+   * Permanently delete an archived Session without deleting project files or independent forks.
+   * Admission and restoration share the registry queue. A durable marker keeps
+   * interrupted deletions from being restored before their cleanup finishes.
+   * @param sessionId - archived Session to delete.
+   * @returns completion after persistence and registry cleanup.
+   * @throws {WorkspaceSessionNotArchivedError} when the Session is not archived.
+   * @throws {WorkspaceSessionOpenError} when the local Session store still holds the Session open.
+   */
+  deleteArchivedSession(sessionId: SessionId): Promise<void> {
+    return this.enqueueOperation(async () => {
+      const state = this.requireState()
+      if (!state.archivedSessionIds.includes(sessionId)) throw new WorkspaceSessionNotArchivedError(sessionId)
+      const activity = await this.ctx.waterfall('workspace/session-activity', { sessionId }, () => Promise.resolve([]))
+      if (activity.length > 0) throw new WorkspaceActiveSessionError(sessionId, activity)
+      if (this.ctx.get('sessions')?.get(sessionId) !== undefined) {
+        // A resident-but-idle Session leaves the live set on request; one that
+        // cannot be released still refuses the deletion.
+        await this.ctx.parallel('workspace/session-release', { sessionId })
+        if (this.ctx.get('sessions')?.get(sessionId) !== undefined) {
+          throw new WorkspaceSessionOpenError(sessionId)
+        }
+      }
+      // The persistence provider refuses live writers before the marker is cleared.
+      await this.setState({ ...state, pendingSessionDeletion: sessionId })
+      await this.finishSessionDeletion(sessionId)
+    })
+  }
+
+  /**
+   * Delete expired archives, retaining refused or busy Sessions for a later attempt.
+   * @param cutoff - latest archive instant eligible for deletion, in Unix milliseconds.
+   * @returns identities successfully deleted during this attempt.
+   */
+  async deleteExpiredArchivedSessions(cutoff: number): Promise<readonly SessionId[]> {
+    const expired = this.archivedSessionIds.filter(id => this.archiveInstant(this.requireState(), id) <= cutoff)
+    const deleted: SessionId[] = []
+    for (const id of expired) {
+      try {
+        // Recheck eligibility in the same queue slot that admits deletion.
+        const removed = await this.enqueueOperation(async () => {
+          const state = this.requireState()
+          if (!state.archivedSessionIds.includes(id) || this.archiveInstant(state, id) > cutoff) return false
+          const activity = await this.ctx.waterfall('workspace/session-activity', { sessionId: id }, () => Promise.resolve([]))
+          if (activity.length > 0) return false
+          if (this.ctx.get('sessions')?.get(id) !== undefined) {
+            await this.ctx.parallel('workspace/session-release', { sessionId: id })
+            if (this.ctx.get('sessions')?.get(id) !== undefined) return false
+          }
+          await this.setState({ ...state, pendingSessionDeletion: id })
+          await this.finishSessionDeletion(id)
+          return true
+        })
+        if (removed) deleted.push(id)
+      } catch (error: unknown) {
+        this.ctx.logger.warn(`workspace: expired Session '${id}' deletion failed: ${String(error)}`)
+      }
+    }
+    return deleted
+  }
+
+  private async initializeArchiveTimes(): Promise<void> {
+    const state = this.requireState()
+    const times = { ...state.archivedSessionTimes }
+    const now = Date.now()
+    let changed = false
+    for (const id of state.archivedSessionIds) {
+      if (times[id] !== undefined) continue
+      times[id] = now
+      changed = true
+    }
+    if (changed) await this.setState({ ...state, archivedSessionTimes: times })
+  }
+
+  /**
+   * Archive instant used by retention decisions. Startup stamping covers every
+   * archived id, so a missing entry is a mid-upgrade durable anomaly that
+   * defers expiry to a later sweep rather than deleting blind.
+   */
+  private archiveInstant(state: WorkspaceDomainState, id: SessionId): number {
+    /* v8 ignore next -- startup stamping makes the fallback unreachable in-process; it guards a mid-upgrade durable state */
+    return state.archivedSessionTimes?.[id] ?? Infinity
+  }
+
+  private async finishSessionDeletion(sessionId: SessionId): Promise<void> {
+    try {
+      await this.ctx.sessionPersistence.deleteSession(sessionId)
+    } catch (error: unknown) {
+      if (error instanceof SessionAlreadyOwnedError) {
+        const { pendingSessionDeletion: _pending, ...unchanged } = this.requireState()
+        await this.setState(unchanged)
+      }
+      throw error
+    }
+    this.headers.delete(sessionId)
+    this.sessionPaths.delete(sessionId)
+    this.invalidSessionPaths.delete(sessionId)
+    for (const entity of this.entities.values()) await entity.detachSession(sessionId)
+    const state = this.requireState()
+    const { pendingSessionDeletion: _pending, ...settled } = state
+    await this.setState({
+      ...settled,
+      archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
+      archivedSessionTimes: Object.fromEntries(Object.entries(state.archivedSessionTimes ?? {}).filter(([id]) => id !== sessionId)),
+      pinnedSessionIds: state.pinnedSessionIds.filter(id => id !== sessionId),
+    })
+    this.ctx.emit('workspace/session-deleted', sessionId)
   }
 
   /**
@@ -728,6 +887,7 @@ export class WorkspaceRegistry extends Service {
         initialized: false,
         workspaceIds,
         archivedSessionIds: state.archivedSessionIds,
+        ...state.archivedSessionTimes === undefined ? {} : { archivedSessionTimes: state.archivedSessionTimes },
         pinnedSessionIds: state.pinnedSessionIds,
       })
     }
@@ -735,6 +895,7 @@ export class WorkspaceRegistry extends Service {
       initialized: true,
       workspaceIds,
       archivedSessionIds: state.archivedSessionIds,
+      ...state.archivedSessionTimes === undefined ? {} : { archivedSessionTimes: state.archivedSessionTimes },
       pinnedSessionIds: state.pinnedSessionIds,
     })
   }
@@ -888,6 +1049,8 @@ export class WorkspaceRegistry extends Service {
       // A committed delete may leave only its marker cleanup pending. Retry
       // recovery before another create/delete can overwrite that pending operation record.
       await this.recoverPendingMutation()
+      const pending = this.requireState().pendingSessionDeletion
+      if (pending !== undefined) await this.finishSessionDeletion(pending)
       return await operation()
     })
     this.operationTail = result.then(() => {}, () => {})

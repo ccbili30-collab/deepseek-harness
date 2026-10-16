@@ -2044,6 +2044,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         throws: ['{SessionPersistenceNotFoundError} when the session does not exist.', '{SessionAlreadyOwnedError} for `write` when ownership is taken.'],
       },
       {
+        signature: 'abstract deleteSession(id: SessionId): Promise<void>',
+        description: 'Delete one stored session and all physical generations.\n\nDeletion is idempotent when the session is absent. Backends must refuse while a writer owns the session rather than invalidating its write ownership.',
+        parameters: [{ name: 'id', description: 'the stored session to delete.' }],
+        returns: 'resolution after the session is absent from durable storage.',
+      },
+      {
         signature: 'abstract flush(): Promise<void>',
         description: 'Flush every active write handle owned by this service instance in one durability barrier: each handle\'s routed live events drain durably and its session materializes, exactly as that handle\'s own `SessionHandle.flush` would. Read handles buffer nothing and are untouched. A handle closed concurrently counts as flushed — close itself drains durably.',
         parameters: [],
@@ -3547,6 +3553,12 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         returns: 'the complete resulting archive set.',
       },
       {
+        signature: '@Remote(\'deleteArchivedSession\') deleteArchivedSession(request: WorkspaceDeleteArchivedSessionRequest): Promise<WorkspaceDeleteArchivedSessionValue>',
+        description: 'Permanently remove one archived Session; non-archived or busy Sessions are refused.',
+        parameters: [{ name: 'request', description: 'archived Session identity.' }],
+        returns: 'deletion confirmation and the complete resulting archive state.',
+      },
+      {
         signature: '@Remote(\'pinSession\') pinSession(request: WorkspacePinSessionRequest): Promise<WorkspacePinValue>',
         description: 'Surface one known unarchived Session ahead of unpinned Sessions.',
         parameters: [{ name: 'request', description: 'Session identity to pin.' }],
@@ -3656,6 +3668,19 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
         description: 'Unarchive one session durably by dropping it from the registry-global archive set; the accounting slot was never touched, so the session returns to its recorded position. Unarchiving runs no session-existence check because removing an id cannot introduce an unknown one, so an entry whose session is gone still resolves. An id that is not archived resolves without writing.',
         parameters: [{ name: 'sessionId', description: 'The session to unarchive.' }],
         returns: 'resolution after durability.',
+      },
+      {
+        signature: 'deleteArchivedSession(sessionId: SessionId): Promise<void>',
+        description: 'Permanently delete an archived Session without deleting project files or independent forks. Admission and restoration share the registry queue. A durable marker keeps interrupted deletions from being restored before their cleanup finishes.',
+        parameters: [{ name: 'sessionId', description: 'archived Session to delete.' }],
+        returns: 'completion after persistence and registry cleanup.',
+        throws: ['{WorkspaceSessionNotArchivedError} when the Session is not archived.', '{WorkspaceSessionOpenError} when the local Session store still holds the Session open.'],
+      },
+      {
+        signature: 'async deleteExpiredArchivedSessions(cutoff: number): Promise<readonly SessionId[]>',
+        description: 'Delete expired archives, retaining refused or busy Sessions for a later attempt.',
+        parameters: [{ name: 'cutoff', description: 'latest archive instant eligible for deletion, in Unix milliseconds.' }],
+        returns: 'identities successfully deleted during this attempt.',
       },
       {
         signature: 'pinSession(sessionId: SessionId): Promise<void>',
@@ -4320,6 +4345,22 @@ export const EVENT_API: readonly EventApiEntry[] = [
     summary: 'Ask the composed providers what still runs for a session before it is archived.',
     description: 'Ask the composed providers what still runs for a session before it is archived. A listener prepends its own SessionActivity entries to the result of `next()`; the registry\'s innermost callback returns an empty list, so a composition without providers archives freely. Any non-empty result refuses the archive without a write.',
     parameters: [{ name: 'request', description: 'the session about to be archived.' }, { name: 'next', description: 'delegate to the remaining providers.' }],
+  },
+  {
+    name: 'workspace/session-deleted',
+    mode: 'parallel',
+    signature: '\'workspace/session-deleted\'(sessionId: SessionId): void',
+    summary: 'A Session\'s durable log and workspace references have been permanently removed.',
+    description: 'A Session\'s durable log and workspace references have been permanently removed.',
+    parameters: [{ name: 'sessionId', description: 'permanently removed Session identity.' }],
+  },
+  {
+    name: 'workspace/session-release',
+    mode: 'parallel',
+    signature: '\'workspace/session-release\'(request: SessionActivityRequest): Promise<void> | void',
+    summary: 'Dispose the idle resident Session named by the request so permanent deletion can proceed.',
+    description: 'Dispose the idle resident Session named by the request so permanent deletion can proceed. The activity waterfall has already confirmed the Session runs nothing; providers that hold resident Sessions dispose them here, and a Session still live after the dispatch refuses the deletion. A listener failure is logged and reads as no release.',
+    parameters: [{ name: 'request', description: 'the idle resident Session about to be permanently deleted.' }],
   },
   {
     name: 'workspace/session-stop',
@@ -7907,11 +7948,11 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WorkspaceArchiveValue',
-    declaration: 'export interface WorkspaceArchiveValue {\n    readonly archivedSessionIds: readonly SessionId[];\n}',
+    declaration: 'export interface WorkspaceArchiveValue {\n    readonly archivedSessionIds: readonly SessionId[];\n    readonly archivedSessionTimes?: Readonly<Record<string, number>>;\n    readonly archivedSessionRetentionDays?: number;\n}',
   },
   {
     name: 'WorkspaceBaseline',
-    declaration: 'export interface WorkspaceBaseline {\n    readonly items: readonly WorkspaceView[];\n    readonly archivedSessionIds: readonly SessionId[];\n    readonly pinnedSessionIds: readonly SessionId[];\n}',
+    declaration: 'export interface WorkspaceBaseline extends WorkspaceArchiveValue {\n    readonly items: readonly WorkspaceView[];\n    readonly archivedSessionIds: readonly SessionId[];\n    readonly pinnedSessionIds: readonly SessionId[];\n}',
   },
   {
     name: 'WorkspaceByteRange',
@@ -7936,6 +7977,14 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'WorkspaceCreateValue',
     declaration: 'export interface WorkspaceCreateValue {\n    readonly workspace: WorkspaceView;\n    readonly created: boolean;\n}',
+  },
+  {
+    name: 'WorkspaceDeleteArchivedSessionRequest',
+    declaration: 'export interface WorkspaceDeleteArchivedSessionRequest {\n    readonly sessionId: SessionId;\n}',
+  },
+  {
+    name: 'WorkspaceDeleteArchivedSessionValue',
+    declaration: 'export interface WorkspaceDeleteArchivedSessionValue extends WorkspaceArchiveValue {\n    readonly deleted: true;\n}',
   },
   {
     name: 'WorkspaceDeleteRequest',
@@ -7995,7 +8044,7 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   },
   {
     name: 'WorkspaceFollowIncrement',
-    declaration: 'export type WorkspaceFollowIncrement = {\n    readonly type: \'upsert\';\n    readonly workspace: WorkspaceView;\n} | {\n    readonly type: \'remove\';\n    readonly workspaceId: WorkspaceId;\n} | {\n    readonly type: \'order\';\n    readonly workspaceIds: readonly WorkspaceId[];\n} | {\n    readonly type: \'archived\';\n    readonly archivedSessionIds: readonly SessionId[];\n} | {\n    readonly type: \'pinned\';\n    readonly pinnedSessionIds: readonly SessionId[];\n};',
+    declaration: 'export type WorkspaceFollowIncrement = {\n    readonly type: \'upsert\';\n    readonly workspace: WorkspaceView;\n} | {\n    readonly type: \'remove\';\n    readonly workspaceId: WorkspaceId;\n} | {\n    readonly type: \'order\';\n    readonly workspaceIds: readonly WorkspaceId[];\n} | ({\n    readonly type: \'archived\';\n} & WorkspaceArchiveValue) | {\n    readonly type: \'pinned\';\n    readonly pinnedSessionIds: readonly SessionId[];\n};',
   },
   {
     name: 'WorkspaceInsertBeforeRequest',

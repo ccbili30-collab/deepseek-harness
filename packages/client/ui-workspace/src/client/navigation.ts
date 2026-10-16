@@ -73,6 +73,11 @@ export interface UiWorkspace {
    */
   unarchiveSession(sessionId: SessionId): Promise<void>
   /**
+   * Permanently delete an archived Session.
+   * @param sessionId - archived Session to delete.
+   */
+  deleteArchivedSession(sessionId: SessionId): Promise<void>
+  /**
    * Pin a Session on the Host, then lead it in its accounts' saved orders
    * (its Workspace group or Ungrouped, and the flat list). The order write
    * reads the memberships current at completion, so reorders that landed
@@ -267,6 +272,17 @@ class UiWorkspaceService extends Service implements UiWorkspace {
 
   async unarchiveSession(sessionId: SessionId): Promise<void> {
     await this.workspaces.unarchiveSession(sessionId)
+  }
+
+  async deleteArchivedSession(sessionId: SessionId): Promise<void> {
+    await this.workspaces.deleteArchivedSession(sessionId)
+    if (this.mainReference?.sessionId === sessionId) this.clearMain()
+    // The Host removed the durable Session; pull the list so its summary and
+    // projections drop too. The deletion stands, so a refresh failure is a
+    // console diagnostic, not a failed delete.
+    await this.sessions.refresh().catch((reason: unknown) => {
+      console.warn('session list refresh after delete failed:', reason)
+    })
   }
 
   async pinSession(sessionId: SessionId): Promise<void> {

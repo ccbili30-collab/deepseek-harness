@@ -391,6 +391,13 @@ Host service backing the generated `ctx.remote.workspace` namespace.
 @Remote('unarchiveSession') unarchiveSession(request: WorkspaceUnarchiveSessionRequest): Promise<WorkspaceArchiveValue>
 
 /**
+ * Permanently remove one archived Session; non-archived or busy Sessions are refused.
+ * @param request - archived Session identity.
+ * @returns deletion confirmation and the complete resulting archive state.
+ */
+@Remote('deleteArchivedSession') deleteArchivedSession(request: WorkspaceDeleteArchivedSessionRequest): Promise<WorkspaceDeleteArchivedSessionValue>
+
+/**
  * Surface one known unarchived Session ahead of unpinned Sessions.
  * @param request - Session identity to pin.
  * @returns the complete resulting pin set, most recently pinned first.
@@ -573,6 +580,24 @@ archiveSession(sessionId: SessionId, options: ArchiveSessionOptions = {}): Promi
 unarchiveSession(sessionId: SessionId): Promise<void>
 
 /**
+ * Permanently delete an archived Session without deleting project files or independent forks.
+ * Admission and restoration share the registry queue. A durable marker keeps
+ * interrupted deletions from being restored before their cleanup finishes.
+ * @param sessionId - archived Session to delete.
+ * @returns completion after persistence and registry cleanup.
+ * @throws {WorkspaceSessionNotArchivedError} when the Session is not archived.
+ * @throws {WorkspaceSessionOpenError} when the local Session store still holds the Session open.
+ */
+deleteArchivedSession(sessionId: SessionId): Promise<void>
+
+/**
+ * Delete expired archives, retaining refused or busy Sessions for a later attempt.
+ * @param cutoff - latest archive instant eligible for deletion, in Unix milliseconds.
+ * @returns identities successfully deleted during this attempt.
+ */
+async deleteExpiredArchivedSessions(cutoff: number): Promise<readonly SessionId[]>
+
+/**
  * Pin one session durably, prepending it to the registry-global pin set.
  * The session must exist (live or in session persistence) and must not be
  * archived. An already pinned id resolves without writing or reordering.
@@ -627,6 +652,46 @@ Ask the composed providers what still runs for a session before it is archived. 
  * @mode waterfall
  */
 'workspace/session-activity'( request: SessionActivityRequest, next: () => Promise<readonly SessionActivity[]>, ): Promise<readonly SessionActivity[]>
+```
+
+Source: [`packages/workspace/workspace/src/index.ts`](../../packages/workspace/workspace/src/index.ts)
+
+<a id="workspacesession-deleted--parallel"></a>
+
+#### `workspace/session-deleted` — parallel
+
+A Session's durable log and workspace references have been permanently removed.
+
+```ts cordis-catalog
+/**
+ * A Session's durable log and workspace references have been permanently removed.
+ * @param sessionId - permanently removed Session identity.
+ * @mode parallel
+ */
+'workspace/session-deleted'(sessionId: SessionId): void
+```
+
+Types: [SessionId](core.zh.md)
+
+Source: [`packages/workspace/workspace/src/index.ts`](../../packages/workspace/workspace/src/index.ts)
+
+<a id="workspacesession-release--parallel"></a>
+
+#### `workspace/session-release` — parallel
+
+Dispose the idle resident Session named by the request so permanent deletion can proceed. The activity waterfall has already confirmed the Session runs nothing; providers that hold resident Sessions dispose them here, and a Session still live after the dispatch refuses the deletion. A listener failure is logged and reads as no release.
+
+```ts cordis-catalog
+/**
+ * Dispose the idle resident Session named by the request so permanent
+ * deletion can proceed. The activity waterfall has already confirmed the
+ * Session runs nothing; providers that hold resident Sessions dispose
+ * them here, and a Session still live after the dispatch refuses the
+ * deletion. A listener failure is logged and reads as no release.
+ * @param request - the idle resident Session about to be permanently deleted.
+ * @mode parallel
+ */
+'workspace/session-release'(request: SessionActivityRequest): Promise<void> | void
 ```
 
 Source: [`packages/workspace/workspace/src/index.ts`](../../packages/workspace/workspace/src/index.ts)

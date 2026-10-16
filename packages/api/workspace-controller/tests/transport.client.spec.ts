@@ -177,7 +177,12 @@ describe('Workspace state stream', () => {
     expect(upsertView).toHaveBeenCalledWith(view)
     expect(removeView).toHaveBeenCalledWith(view.workspaceId)
     expect(replaceOrder).toHaveBeenCalledWith([view.workspaceId])
-    expect(replaceArchived).toHaveBeenCalledWith(['session-one'])
+    // The archived increment hands its frame over whole: an older Host's
+    // frame carries the id list alone, a newer one its archive metadata too.
+    expect(replaceArchived).toHaveBeenCalledWith(
+      ['session-one'],
+      { type: 'archived', archivedSessionIds: [sid('session-one')] },
+    )
     expect(replacePinned).toHaveBeenCalledWith(['session-two'])
     await stream.dispose()
     expect(streamStates(mock)).toEqual(['cancelled'])
@@ -339,6 +344,7 @@ describe('WorkspaceController', () => {
     })
     await expect(controller.archiveSession(sid('session'))).resolves.toBeUndefined()
     await expect(controller.unarchiveSession(sid('session'))).resolves.toBeUndefined()
+    await expect(controller.deleteArchivedSession(sid('session'))).resolves.toBeUndefined()
     await expect(controller.pinSession(sid('session'))).resolves.toBeUndefined()
     await expect(controller.unpinSession(sid('session'))).resolves.toBeUndefined()
     await expect(controller.delete(wid('one'))).resolves.toBeUndefined()
@@ -350,6 +356,7 @@ describe('WorkspaceController', () => {
     await expect(controller.archiveSession(sid('session'), { stopActivity: true })).resolves.toBeUndefined()
     expect(mock.log.requests('workspace/archiveSession')).toEqual([{ sessionId: 'session' }, { sessionId: 'session', stopActivity: true }])
     expect(mock.log.requests('workspace/unarchiveSession')).toEqual([{ sessionId: 'session' }])
+    expect(mock.log.requests('workspace/deleteArchivedSession')).toEqual([{ sessionId: 'session' }])
     expect(mock.log.requests('workspace/pinSession')).toEqual([{ sessionId: 'session' }])
     expect(mock.log.requests('workspace/unpinSession')).toEqual([{ sessionId: 'session' }])
     expect(mock.log.requests('workspace/delete')).toEqual([{ workspaceId: 'one' }])
@@ -392,6 +399,11 @@ describe('WorkspaceController', () => {
     mock.remote.workspace.unarchiveSession.mockResolvedValueOnce(err(missingSession))
     await expect(controller.unarchiveSession(sid('session')))
       .rejects.toThrow('workspace session unarchive failed: session/not-found: missing session')
+    mock.remote.workspace.deleteArchivedSession.mockResolvedValueOnce(err(new RemoteError(
+      'workspace/session-not-archived', 'live session', { sessionId: sid('session') },
+    )))
+    await expect(controller.deleteArchivedSession(sid('session')))
+      .rejects.toThrow('workspace session delete failed: workspace/session-not-archived: live session')
     mock.remote.workspace.pinSession.mockResolvedValueOnce(err(missingSession))
     await expect(controller.pinSession(sid('session')))
       .rejects.toThrow('workspace session pin failed: session/not-found: missing session')

@@ -145,6 +145,7 @@ class FakeSessions implements ISessions {
   readonly fork = vi.fn<ISessions['fork']>(async () => sid('forked'))
   readonly retained: RetainedSession[] = []
   readonly refreshProjections = vi.fn<ISessions['refreshProjections']>(() => Promise.resolve())
+  readonly refresh = vi.fn<ISessions['refresh']>(() => Promise.resolve())
   readonly retain = vi.fn<ISessions['retain']>((target) => {
     const release = vi.fn<() => void>()
     const sessionId = typeof target === 'string' ? target : target.childSessionId
@@ -163,7 +164,6 @@ class FakeSessions implements ISessions {
   declare readonly using: ISessions['using']
   declare readonly retainInfo: ISessions['retainInfo']
   declare readonly searchResultLimit: ISessions['searchResultLimit']
-  declare readonly refresh: ISessions['refresh']
   declare readonly search: ISessions['search']
   declare readonly scope: ISessions['scope']
   declare readonly scopeOf: ISessions['scopeOf']
@@ -182,6 +182,16 @@ class FakeWorkspaces implements IWorkspaces {
   readonly list: MutableSource<WorkspaceSnapshot>
   readonly archiveCalls: SessionId[] = []
   readonly unarchiveCalls: SessionId[] = []
+  readonly deleteCalls: SessionId[] = []
+  onDelete: IWorkspaces['deleteArchivedSession'] = async (sessionId) => {
+    this.list.update(state => ({
+      ...state,
+      archivedSessionIds: state.archivedSessionIds.filter(id => id !== sessionId),
+      items: state.items.map(item => item.sessionIds.includes(sessionId)
+        ? { ...item, sessionIds: item.sessionIds.filter(id => id !== sessionId) }
+        : item),
+    }))
+  }
   onArchive: IWorkspaces['archiveSession'] = async (sessionId) => {
     this.list.update(state => ({
       ...state,
@@ -222,6 +232,11 @@ class FakeWorkspaces implements IWorkspaces {
   unarchiveSession(sessionId: SessionId): Promise<void> {
     this.unarchiveCalls.push(sessionId)
     return this.onUnarchive(sessionId)
+  }
+
+  deleteArchivedSession(sessionId: SessionId): Promise<void> {
+    this.deleteCalls.push(sessionId)
+    return this.onDelete(sessionId)
   }
 
   pinSession(sessionId: SessionId): Promise<void> {
@@ -1107,6 +1122,40 @@ describe('UiWorkspaceService', () => {
     b.workspaces.onUnarchive = () => Promise.reject(new Error('unarchive rejected'))
     await expect(b.uiWorkspace.unarchiveSession(idle)).rejects.toThrow('unarchive rejected')
     expect(b.workspaces.unarchiveCalls).toEqual([idle, idle])
+  })
+
+  it('deletes an archived Session, refreshes the Session list once, and preserves failures', async () => {
+    const stored = sid('stored')
+    const b = bench()
+
+    await b.uiWorkspace.deleteArchivedSession(stored)
+    expect(b.workspaces.deleteCalls).toEqual([stored])
+    expect(b.sessions.refresh).toHaveBeenCalledOnce()
+    // An archived Session is never the current selection, so nothing is cleared.
+    expect(b.sessions.retained).toEqual([])
+
+    b.workspaces.onDelete = () => Promise.reject(new Error('delete rejected'))
+    await expect(b.uiWorkspace.deleteArchivedSession(stored)).rejects.toThrow('delete rejected')
+    expect(b.sessions.refresh).toHaveBeenCalledOnce()
+  })
+
+  it('clears a current Session a delete removes and survives a failed list refresh', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      const current = sid('current')
+      const b = bench()
+      b.uiWorkspace.openSession(current)
+      b.sessions.refresh.mockRejectedValueOnce(new Error('refresh failed'))
+
+      await b.uiWorkspace.deleteArchivedSession(current)
+
+      expect(b.workspaces.deleteCalls).toEqual([current])
+      expect(b.sessions.retained[0]!.release).toHaveBeenCalledOnce()
+      expect(b.sessions.refresh).toHaveBeenCalledOnce()
+      expect(warn).toHaveBeenCalledWith('session list refresh after delete failed:', expect.any(Error))
+    } finally {
+      warn.mockRestore()
+    }
   })
 
   it('passes directory operations to the Host and preserves structured browse failures', async () => {

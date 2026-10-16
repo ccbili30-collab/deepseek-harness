@@ -7,6 +7,8 @@ import type {
   WorkspaceArchiveValue,
   WorkspaceCreateRequest,
   WorkspaceCreateValue,
+  WorkspaceDeleteArchivedSessionRequest,
+  WorkspaceDeleteArchivedSessionValue,
   WorkspaceDeleteRequest,
   WorkspaceDeleteValue,
   WorkspaceFollowFrame,
@@ -94,6 +96,15 @@ class FakeWorkspaceRemote implements WorkspaceRemote {
     request: WorkspaceUnarchiveSessionRequest,
   ) => Promise<RemoteResult<WorkspaceArchiveValue>> = request =>
     Promise.resolve(remoteOk({ archivedSessionIds: [request.sessionId] }))
+  onDeleteArchivedSession: (
+    _request: WorkspaceDeleteArchivedSessionRequest,
+  ) => Promise<RemoteResult<WorkspaceDeleteArchivedSessionValue>> = () =>
+    Promise.resolve(remoteOk({
+      deleted: true,
+      archivedSessionIds: [],
+      archivedSessionTimes: {},
+      archivedSessionRetentionDays: 15,
+    }))
   onPinSession: (
     request: WorkspacePinSessionRequest,
   ) => Promise<RemoteResult<WorkspacePinValue>> = request =>
@@ -136,6 +147,11 @@ class FakeWorkspaceRemote implements WorkspaceRemote {
   unarchiveSession(request: WorkspaceUnarchiveSessionRequest): Promise<RemoteResult<WorkspaceArchiveValue>> {
     this.record('unarchiveSession', request)
     return this.onUnarchiveSession(request)
+  }
+
+  deleteArchivedSession(request: WorkspaceDeleteArchivedSessionRequest): Promise<RemoteResult<WorkspaceDeleteArchivedSessionValue>> {
+    this.record('deleteArchivedSession', request)
+    return this.onDeleteArchivedSession(request)
   }
 
   pinSession(request: WorkspacePinSessionRequest): Promise<RemoteResult<WorkspacePinValue>> {
@@ -437,6 +453,51 @@ describe('ClientWorkspaceModel', () => {
     gate.resolve(remoteOk({ archivedSessionIds: [] }))
     await expect(pending).resolves.toMatchObject({ ok: true })
     expect(model.getSnapshot().archivedSessionIds).toEqual(['second'])
+  })
+
+  it('deletes an archived Session, installing the returned archive state and dropping it from Workspaces', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    baseline(model, [workspace('alpha', [sid('kept'), sid('stored')])], [sid('stored')], [sid('stored')])
+    remote.onDeleteArchivedSession = () => Promise.resolve(remoteOk({
+      deleted: true,
+      archivedSessionIds: [],
+      archivedSessionTimes: {},
+      archivedSessionRetentionDays: 15,
+    }))
+
+    await expect(model.deleteArchivedSession(sid('stored'))).resolves.toMatchObject({ ok: true })
+    const snapshot = model.getSnapshot()
+    expect(snapshot.archivedSessionIds).toEqual([])
+    expect(snapshot.archivedSessionRetentionDays).toBe(15)
+    // The Workspace row keeps its members minus the deleted Session, and the
+    // pin the archive had already dropped leaves the local set too.
+    expect(snapshot.items[0]!.sessionIds).toEqual([sid('kept')])
+    expect(snapshot.pinnedSessionIds).toEqual([])
+    expect(remote.calls).toContainEqual({ method: 'deleteArchivedSession', request: { sessionId: 'stored' } })
+
+    remote.onDeleteArchivedSession = () => Promise.resolve(workspaceError(
+      new RemoteError('workspace/session-not-archived', 'live session', { sessionId: sid('live') }),
+    ))
+    await expect(model.deleteArchivedSession(sid('live'))).resolves.toMatchObject({ ok: false })
+    expect(model.getSnapshot().items[0]!.sessionIds).toEqual([sid('kept')])
+  })
+
+  it('keeps a pushed archive set when a delete reply lands later', async () => {
+    const remote = new FakeWorkspaceRemote()
+    const model = modelFor(remote)
+    baseline(model, [workspace('alpha', [sid('first'), sid('second')])], [sid('first')])
+    const gate = deferred<RemoteResult<WorkspaceDeleteArchivedSessionValue>>()
+    remote.onDeleteArchivedSession = () => gate.promise
+
+    const pending = model.deleteArchivedSession(sid('first'))
+    model.replaceArchived([sid('first'), sid('second')])
+    gate.resolve(remoteOk({ deleted: true, archivedSessionIds: [sid('second')] }))
+    await expect(pending).resolves.toMatchObject({ ok: true })
+    // The superseded echo installs nothing: the pushed set and the row the
+    // later stream owns stay as they are.
+    expect(model.getSnapshot().archivedSessionIds).toEqual(['first', 'second'])
+    expect(model.getSnapshot().items[0]!.sessionIds).toEqual([sid('first'), sid('second')])
   })
 
   it('applies pin mutation echoes and leaves failed results unchanged', async () => {

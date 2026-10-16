@@ -113,6 +113,11 @@ class TracePersistence extends SessionPersistence {
     return Promise.resolve(new TraceHandle(id, structuredClone(entry.meta), access))
   }
 
+  deleteSession(id: SessionIdType): Promise<void> {
+    TracePersistence.entries.delete(id)
+    return Promise.resolve()
+  }
+
   stat(id: SessionIdType): Promise<SessionPersistenceSnapshot | undefined> {
     const entry = TracePersistence.entries.get(id)
     if (entry === undefined) return Promise.resolve(undefined)

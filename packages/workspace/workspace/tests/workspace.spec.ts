@@ -10,7 +10,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import type { DomainChanged } from '@deepseek-ai/dsh-storage-domain'
 import SessionStore, { SESSION_FORMAT_VERSION, SessionId } from '@deepseek-ai/dsh-session'
 import type { SessionHeader } from '@deepseek-ai/dsh-session'
-import { SessionPersistenceRevision } from '@deepseek-ai/dsh-session-persistence'
+import { SessionAlreadyOwnedError, SessionPersistenceRevision } from '@deepseek-ai/dsh-session-persistence'
 import type { SessionPersistenceSnapshot } from '@deepseek-ai/dsh-session-persistence'
 import { MemoryMediaPool, MemoryStorageBackend } from '../../../storage/storage-domain/tests/helpers/memory-backend.ts'
 import WorkspaceRegistry, {
@@ -38,6 +38,8 @@ interface HarnessOptions {
   liveSessions?: SessionHeader[]
   sessionStore?: boolean
   backend?: StorageBackend
+  /** Permanent-deletion behavior the fake persistence provider runs. */
+  persistenceDelete?: (id: SessionId) => Promise<void>
 }
 
 /** Boot the real storage/domain/registry composition over controllable header-only peers. */
@@ -55,8 +57,10 @@ async function harness(options: HarnessOptions = {}) {
     listed.map(header => ({ header, revision: SessionPersistenceRevision(`rev-${header.id}`) })))
   const open = vi.fn(() => { throw new Error('event bodies must not be opened') })
   const stat = vi.fn(() => { throw new Error('per-session stat must not be needed') })
-  ctx.provide('sessionPersistence', { list, open, stat } as never)
+  const deleteSession = vi.fn(options.persistenceDelete ?? (async (): Promise<void> => {}))
+  ctx.provide('sessionPersistence', { list, open, stat, deleteSession } as never)
 
+  let removable: ((id: SessionId) => void) | undefined
   if (options.sessionStore === true) {
     await ctx.plugin(SessionStore)
   } else if (options.liveSessions !== undefined) {
@@ -65,6 +69,7 @@ async function harness(options: HarnessOptions = {}) {
       get: (id: SessionId) => live.get(id),
       list: () => [...live.values()],
     } as never)
+    removable = (id: SessionId) => { live.delete(id) }
   }
 
   const changes: DomainChanged[] = []
@@ -82,7 +87,9 @@ async function harness(options: HarnessOptions = {}) {
     list,
     open,
     stat,
+    deleteSession,
     setSessions: (headers: SessionHeader[]) => { listed = headers },
+    removeLiveSession: (id: SessionId) => { removable?.(id) },
   }
 }
 
@@ -1055,6 +1062,231 @@ describe('registry-global session archive', () => {
     )
     const upgraded = await harness({ pool: legacy })
     expect(upgraded.registry.archivedSessionIds).toEqual([])
+  })
+})
+
+describe('archived Session retention and permanent deletion', () => {
+  it('stamps archive instants, clears them on unarchive, and restarts the clock on rearchive', async () => {
+    const dir = await makeDir('retention-stamps')
+    const result = await harness({ sessions: [header('s1', dir, 100)] })
+    // A registry that never archived exposes an empty instant map.
+    expect(result.registry.archivedSessionTimes).toEqual({})
+
+    const before = Date.now()
+    await result.registry.archiveSession(SessionId('s1'))
+    const after = Date.now()
+    const stamped = result.registry.archivedSessionTimes['s1']
+    expect(stamped).toBeGreaterThanOrEqual(before)
+    expect(stamped).toBeLessThanOrEqual(after)
+    expect(storedState(result.pool).archivedSessionTimes).toEqual({ s1: stamped })
+
+    await result.registry.unarchiveSession(SessionId('s1'))
+    expect(result.registry.archivedSessionTimes).toEqual({})
+    expect(storedState(result.pool).archivedSessionTimes).toEqual({})
+
+    const restartBefore = Date.now()
+    await result.registry.archiveSession(SessionId('s1'))
+    expect(result.registry.archivedSessionTimes['s1']).toBeGreaterThanOrEqual(restartBefore)
+  })
+
+  it('grants legacy archive entries a full retention grace period at startup, durably', async () => {
+    const dir = await makeDir('retention-legacy')
+    const pool = storedPool(
+      [],
+      { initialized: true, workspaceIds: [], archivedSessionIds: ['legacy'] },
+    )
+    const before = Date.now()
+    const result = await harness({ pool, sessions: [header('legacy', dir, 100)] })
+    const grace = result.registry.archivedSessionTimes['legacy']
+    expect(grace).toBeGreaterThanOrEqual(before)
+    expect(storedState(result.pool).archivedSessionTimes).toEqual({ legacy: grace })
+  })
+
+  it('deletes an archived Session permanently: provider erasure, membership detach, and event', async () => {
+    const dir = await makeDir('retention-delete')
+    const result = await harness({ sessions: [header('doomed', dir, 100), header('kept', dir, 200)] })
+    const workspace = result.registry.list()[0]!
+    await result.registry.archiveSession(SessionId('doomed'))
+    expect(workspace.sessionIds).toContain('doomed')
+
+    const deleted: SessionId[] = []
+    result.ctx.on('workspace/session-deleted', (sessionId) => { deleted.push(sessionId) })
+    await result.registry.deleteArchivedSession(SessionId('doomed'))
+
+    expect(result.deleteSession).toHaveBeenCalledWith(SessionId('doomed'))
+    expect(result.registry.archivedSessionIds).toEqual([])
+    expect(result.registry.archivedSessionTimes).toEqual({})
+    expect(workspace.sessionIds).not.toContain('doomed')
+    expect(storedRecord(result.pool, workspace.id).sessionIds).not.toContain('doomed')
+    expect(deleted).toEqual(['doomed'])
+    expect(storedState(result.pool).pendingSessionDeletion).toBeUndefined()
+  })
+
+  it('refuses permanent deletion of unarchived, active, or open Sessions without writing', async () => {
+    const dir = await makeDir('retention-refusals')
+    const result = await harness({
+      sessions: [header('plain', dir, 100), header('busy', dir, 200), header('held', dir, 300)],
+      liveSessions: [header('held', dir, 300)],
+    })
+    result.ctx.on('workspace/session-activity', async ({ sessionId }, next) =>
+      sessionId === 'busy' ? [{ kind: 'probe' }, ...(await next())] : next())
+
+    await expect(result.registry.deleteArchivedSession(SessionId('plain')))
+      .rejects.toMatchObject({ name: 'WorkspaceSessionNotArchivedError' })
+    // The activity provider reports 'busy' running, so only a stop-activity
+    // archive admits it; the deletion itself still refuses that activity.
+    await result.registry.archiveSession(SessionId('busy'), { stopActivity: true })
+    await expect(result.registry.deleteArchivedSession(SessionId('busy')))
+      .rejects.toMatchObject({ name: 'WorkspaceActiveSessionError' })
+    await result.registry.archiveSession(SessionId('held'))
+    await expect(result.registry.deleteArchivedSession(SessionId('held')))
+      .rejects.toMatchObject({ name: 'WorkspaceSessionOpenError' })
+
+    expect(result.deleteSession).not.toHaveBeenCalled()
+    expect(result.registry.archivedSessionIds).toEqual(['busy', 'held'])
+    expect(storedState(result.pool).pendingSessionDeletion).toBeUndefined()
+  })
+
+  it('clears the deletion marker when the provider reports the Session busy, keeping it archived for retry', async () => {
+    const dir = await makeDir('retention-busy')
+    const result = await harness({ sessions: [header('held', dir, 100)] })
+    await result.registry.archiveSession(SessionId('held'))
+    result.deleteSession.mockRejectedValueOnce(new SessionAlreadyOwnedError(SessionId('held')))
+
+    await expect(result.registry.deleteArchivedSession(SessionId('held')))
+      .rejects.toBeInstanceOf(SessionAlreadyOwnedError)
+    expect(result.registry.archivedSessionIds).toEqual(['held'])
+    expect(storedState(result.pool).pendingSessionDeletion).toBeUndefined()
+
+    await result.registry.deleteArchivedSession(SessionId('held'))
+    expect(result.registry.archivedSessionIds).toEqual([])
+  })
+
+  it('retains a failed deletion marker, recovers it before the next mutation, and finishes erasure', async () => {
+    const dir = await makeDir('retention-retry')
+    const result = await harness({ sessions: [header('doomed', dir, 100)] })
+    await result.registry.archiveSession(SessionId('doomed'))
+    result.deleteSession.mockRejectedValueOnce(new Error('disk hiccup'))
+
+    await expect(result.registry.deleteArchivedSession(SessionId('doomed'))).rejects.toThrow(/disk hiccup/)
+    expect(storedState(result.pool).pendingSessionDeletion).toBe('doomed')
+    // Still archived: the interrupted deletion wins over restoration.
+    expect(result.registry.archivedSessionIds).toEqual(['doomed'])
+
+    await result.registry.unarchiveSession(SessionId('doomed'))
+    expect(result.deleteSession).toHaveBeenCalledTimes(2)
+    expect(result.registry.archivedSessionIds).toEqual([])
+    expect(storedState(result.pool).pendingSessionDeletion).toBeUndefined()
+  })
+
+  it('recovers an interrupted deletion at startup', async () => {
+    const dir = await makeDir('retention-restart')
+    const pool = storedPool(
+      [],
+      {
+        initialized: true,
+        workspaceIds: [],
+        archivedSessionIds: ['doomed'],
+        archivedSessionTimes: { doomed: 1 },
+        pendingSessionDeletion: 'doomed',
+      },
+    )
+    const result = await harness({ pool, sessions: [header('doomed', dir, 100)] })
+
+    expect(result.deleteSession).toHaveBeenCalledWith(SessionId('doomed'))
+    expect(result.registry.archivedSessionIds).toEqual([])
+    expect(storedState(result.pool).pendingSessionDeletion).toBeUndefined()
+  })
+
+  it('keeps the deletion marker and stays readable when startup recovery fails', async () => {
+    const dir = await makeDir('retention-restart-fail')
+    const pool = storedPool(
+      [],
+      {
+        initialized: true,
+        workspaceIds: [],
+        archivedSessionIds: ['doomed'],
+        archivedSessionTimes: { doomed: 1 },
+        pendingSessionDeletion: 'doomed',
+      },
+    )
+    const result = await harness({
+      pool,
+      sessions: [header('doomed', dir, 100)],
+      persistenceDelete: () => Promise.reject(new Error('storage offline')),
+    })
+
+    // Reads stay available: the failed marker only blocks later mutations.
+    expect(result.registry.archivedSessionIds).toEqual(['doomed'])
+    expect(result.deleteSession).toHaveBeenCalledTimes(1)
+    await expect(result.registry.unarchiveSession(SessionId('doomed'))).rejects.toThrow(/storage offline/)
+    expect(result.deleteSession).toHaveBeenCalledTimes(2)
+    expect(storedState(result.pool).pendingSessionDeletion).toBe('doomed')
+  })
+
+  it('releases an idle resident Session on request and refuses one its provider keeps', async () => {
+    const dir = await makeDir('retention-release')
+    const result = await harness({
+      sessions: [header('held', dir, 300), header('stuck', dir, 400)],
+      liveSessions: [header('held', dir, 300), header('stuck', dir, 400)],
+    })
+    result.ctx.on('workspace/session-release', ({ sessionId }) => {
+      if (sessionId === 'held') result.removeLiveSession(sessionId)
+    })
+    await result.registry.archiveSession(SessionId('held'))
+    await result.registry.archiveSession(SessionId('stuck'))
+
+    // 'held' leaves the live set on request, so its deletion completes.
+    await result.registry.deleteArchivedSession(SessionId('held'))
+    expect(result.registry.archivedSessionIds).toEqual(['stuck'])
+    expect(result.deleteSession).toHaveBeenCalledWith(SessionId('held'))
+
+    // 'stuck' stays resident: the deletion refuses with the open error.
+    await expect(result.registry.deleteArchivedSession(SessionId('stuck')))
+      .rejects.toMatchObject({ name: 'WorkspaceSessionOpenError' })
+    expect(result.deleteSession).toHaveBeenCalledTimes(1)
+  })
+
+  it('expires archives at the cutoff while keeping busy, live, re-archived, and failed Sessions', async () => {
+    const dir = await makeDir('retention-sweep')
+    const pool = storedPool(
+      [],
+      {
+        initialized: true,
+        workspaceIds: [],
+        archivedSessionIds: ['edge', 'racer', 'busy', 'held', 'fresh', 'old'],
+        // Synthetic instants against a synthetic cutoff: everything but
+        // 'fresh' predates it.
+        archivedSessionTimes: { edge: 1_000, racer: 500, busy: 500, held: 500, old: 1_500, fresh: 3_000 },
+      },
+    )
+    const result = await harness({
+      pool,
+      sessions: [header('fresh', dir, 100), header('held', dir, 300), header('busy', dir, 400), header('racer', dir, 50)],
+      liveSessions: [header('held', dir, 300)],
+    })
+    result.ctx.on('workspace/session-activity', async ({ sessionId }, next) =>
+      sessionId === 'busy' ? [{ kind: 'probe' }, ...(await next())] : next())
+
+    const cutoff = 2_000
+    // A queued unarchive-then-rearchive wins its registry slots before the
+    // sweep's recheck: racer is archived again, now with a fresh instant.
+    const restore = (async () => {
+      await result.registry.unarchiveSession(SessionId('racer'))
+      await result.registry.archiveSession(SessionId('racer'))
+    })()
+    // The last expired candidate's erasure fails; the sweep retains it for a
+    // later attempt with its durable marker still committed.
+    result.deleteSession.mockImplementation(async (id: SessionId) => {
+      if (id === 'old') throw new Error('sweep hiccup')
+    })
+    const deleted = await result.registry.deleteExpiredArchivedSessions(cutoff)
+    await restore
+
+    expect(deleted).toEqual(['edge'])
+    expect(result.registry.archivedSessionIds).toEqual(['busy', 'held', 'fresh', 'old', 'racer'])
+    expect(result.deleteSession.mock.calls.map(call => call[0])).toEqual(['edge', 'old'])
+    expect(storedState(result.pool).pendingSessionDeletion).toBe('old')
   })
 })
 

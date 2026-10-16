@@ -610,5 +610,55 @@ export function runPersistenceContract(name: string, make: () => Promise<Contrac
         await dispose()
       }
     })
+
+    it('deleteSession erases the stored session, is idempotent when absent, and frees the id for recreation', async () => {
+      const { persistence, dispose, reopen } = await make()
+      try {
+        await expect(persistence.deleteSession(SessionId('never-stored'))).resolves.toBeUndefined()
+
+        const m = meta('delete-me', '/work')
+        const writer = await persistence.create(m)
+        await writer.append(oneTurnLog())
+        await writer.close()
+        await persistence.deleteSession(m.id)
+        await expect(persistence.deleteSession(m.id)).resolves.toBeUndefined()
+
+        expect(await persistence.stat(m.id)).toBeUndefined()
+        expect((await persistence.list()).map(snapshot => snapshot.header.id)).not.toContain(m.id)
+        await expect(persistence.open(m.id, 'read')).rejects.toBeInstanceOf(SessionPersistenceNotFoundError)
+        await expect(persistence.open(m.id, 'write')).rejects.toBeInstanceOf(SessionPersistenceNotFoundError)
+
+        if (reopen !== undefined) {
+          const other = await reopen()
+          try {
+            expect(await other.persistence.stat(m.id)).toBeUndefined()
+          } finally {
+            await other.dispose()
+          }
+        }
+
+        const recreated = await persistence.create(m)
+        await recreated.append(oneTurnLog())
+        expect((await recreated.read()).events).toHaveLength(oneTurnLog().length)
+        await recreated.close()
+      } finally {
+        await dispose()
+      }
+    })
+
+    it('deleteSession refuses while a write handle is open and succeeds after close', async () => {
+      const { persistence, dispose } = await make()
+      try {
+        const m = meta('busy-delete', '/work')
+        const writer = await persistence.create(m)
+        await writer.append(oneTurnLog())
+        await expect(persistence.deleteSession(m.id)).rejects.toBeInstanceOf(SessionAlreadyOwnedError)
+        await writer.close()
+        await persistence.deleteSession(m.id)
+        expect(await persistence.stat(m.id)).toBeUndefined()
+      } finally {
+        await dispose()
+      }
+    })
   })
 }

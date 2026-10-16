@@ -21,11 +21,12 @@ import { en as commonEn } from '@deepseek-ai/dsh-client-locale/src/locales/en.ts
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import type {
   MenuOpenState, RowToast, RowToastState, SessionArchiveConfirmInjected, SessionArchiveConfirmRequest,
-  SessionRenameDialogInjected, SessionRenameTarget,
+  SessionDeleteInjected, SessionRenameDialogInjected, SessionRenameTarget,
 } from '../src/client/contract/slots.ts'
 import {
   ArchiveSessionMenuItem, ArchiveSessionRowButton, SessionArchiveConfirmDialog,
 } from '../src/client/session-actions/ArchiveSession.tsx'
+import { DeleteSessionMenuItem, SessionDeleteDialog } from '../src/client/session-actions/DeleteSession.tsx'
 import { ForkSessionMenuItem } from '../src/client/session-actions/ForkSession.tsx'
 import { PinSessionMenuItem, PinSessionRowButton } from '../src/client/session-actions/PinSession.tsx'
 import { RenameSessionMenuItem, SessionRenameDialog } from '../src/client/session-actions/RenameSession.tsx'
@@ -228,6 +229,78 @@ describe('fork and rename rows', () => {
     expect(requestSessionRename).toHaveBeenCalledWith(sid('one'), 'Session title')
     expect(setMenuOpen).toHaveBeenCalledWith(false)
     expect(callOrder(setMenuOpen)).toBeLessThan(callOrder(requestSessionRename))
+  })
+})
+
+describe('delete row and dialog', () => {
+  /** The archived membership hook and shared request callback of the delete row. */
+  const deleteShare = (archived: readonly string[] = []) => ({
+    useArchived: hook(idSet(...archived)),
+    requestDeleteSessions: vi.fn(async () => [] as SessionId[]),
+  })
+
+  it('offers the permanent deletion only on an archived Session, closing the menu first', () => {
+    const { state, setMenuOpen } = openMenu()
+    const live = deleteShare()
+    const liveRow = render(<DeleteSessionMenuItem {...menuRow(state)} {...live} />)
+    expect(liveRow.container.childElementCount).toBe(0)
+    expect(screen.queryByRole('menuitem')).toBeNull()
+
+    const archived = deleteShare(['one'])
+    render(<DeleteSessionMenuItem {...menuRow(state)} {...archived} />)
+    const row = screen.getByRole('menuitem', { name: '永久删除' })
+    expect(row.className).toMatch(/danger/)
+    fireEvent.click(row)
+    expect(archived.requestDeleteSessions).toHaveBeenCalledWith([sid('one')])
+    expect(setMenuOpen).toHaveBeenCalledWith(false)
+    expect(callOrder(setMenuOpen)).toBeLessThan(callOrder(archived.requestDeleteSessions))
+  })
+
+  /** The dialog over a test-owned request source; settling clears the request the way apply does. */
+  function deleteDialog(deleteSessions: SessionDeleteInjected['deleteSessions'], translate = t) {
+    const request = createSnapshotStore<readonly SessionId[] | null>(null)
+    const settleSessionDelete = vi.fn(() => { request.set(null) })
+    render(
+      <SessionDeleteDialog
+        {...overlay}
+        t={translate}
+        useDeleteRequest={bindSnapshotSelector(request)}
+        settleSessionDelete={settleSessionDelete}
+        deleteSessions={deleteSessions}
+      />,
+    )
+    const ask = (ids: readonly string[]): void => {
+      act(() => { request.set(ids.map(sid)) })
+    }
+    return { ask, settleSessionDelete }
+  }
+
+  it('renders nothing until a deletion is requested, then names the count', () => {
+    deleteDialog(vi.fn(async () => []))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(document.body.textContent).toBe('')
+  })
+
+  it('cancel settles without deleting; confirm runs the deletions and closes once they settle', async () => {
+    const pending = Promise.withResolvers<readonly SessionId[]>()
+    const deleteSessions = vi.fn(() => pending.promise)
+    const { ask, settleSessionDelete } = deleteDialog(deleteSessions)
+    ask(['one', 'two'])
+    expect(screen.getByRole('dialog', { name: '永久删除会话？' }).textContent).toContain('将永久删除 2 个已归档会话')
+    fireEvent.click(screen.getByRole('button', { name: '取消' }))
+    expect(settleSessionDelete).toHaveBeenCalledOnce()
+    expect(deleteSessions).not.toHaveBeenCalled()
+
+    ask(['one'])
+    fireEvent.click(screen.getByRole('button', { name: '永久删除' }))
+    expect(deleteSessions).toHaveBeenCalledOnce()
+    // While the deletions run, closing is blocked and the status shows.
+    expect(screen.getByRole('status').textContent).toBe('正在永久删除…')
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    pending.resolve([sid('one')])
+    await act(async () => { await pending.promise })
+    expect(screen.queryByRole('dialog')).toBeNull()
   })
 })
 
@@ -558,6 +631,28 @@ describe('RowActionToast', () => {
     const { notify } = toastSurface({})
     notify({ kind: 'archived', sessionId: sid('one') })
     expect(screen.getByRole('alert').textContent).toBe('会话已归档，可撤销或筛选已归档会话')
+  })
+
+  it.each([
+    [{ kind: 'archiveResult' as const, operation: 'restore' as const, succeeded: 2, failed: 0 }, '已处理 2 个会话，失败 0 个'],
+    [{ kind: 'archiveResult' as const, operation: 'delete' as const, succeeded: 1, failed: 1 }, '已处理 1 个会话，失败 1 个'],
+  ])('reports an archive batch outcome with its true counts (%s)', (notice, text) => {
+    vi.useFakeTimers()
+    try {
+      const { dismissToast, notify } = toastSurface()
+      notify(notice)
+      const alert = screen.getByRole('alert')
+      expect(alert.textContent).toBe(text)
+      expect(alert.querySelector('button')).toBeNull()
+      // A batch outcome stays readable as long as the archived notice.
+      act(() => { vi.advanceTimersByTime(4000) })
+      expect(dismissToast).not.toHaveBeenCalled()
+      act(() => { vi.advanceTimersByTime(3000) })
+      expect(dismissToast).toHaveBeenCalledOnce()
+      expect(screen.queryByRole('alert')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it.each(['show', 'only'] as const)('omits the filter action while the %s filter already shows archived rows', (archivedFilter) => {

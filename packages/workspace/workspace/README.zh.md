@@ -101,6 +101,12 @@ ctx.workspaceRegistry.list() // shows the project, newest first
 
 归档准入是本包声明并派发的两个宿主事件之上的能力接缝：`workspace/session-activity`（waterfall）向已组合的提供方询问某会话还有什么在跑，`workspace/session-stop`（parallel）请它们停止这些工作。`archiveSession(sessionId)` 只询问一次活动 waterfall，对非空答案以 `WorkspaceActiveSessionError` 拒绝，其 `activity` 按族列出各项——键由各提供方自己合并进本包留空的 `SessionActivityKindMap`；`archiveSession(sessionId, { stopActivity: true })` 跳过活动检查，先写入归档，再派发停止事件，因此持久化的归档集合已经拦住停止所引发的每一次唤醒；提供方抛错只记日志，归档保留。调用在每个提供方的停止请求都已发出后返回，被停止的工作自行收敛。两种询问都在存在性检查之后进行，对已归档 id 从不发生。随附的提供方是 Agent 注册表（运行中的回合）、任务注册表接缝（所属任务）、Subagent runtime（运行中的子孙）与 Schedule 插件（活跃提醒）；没有提供方的组合可自由归档。
 
+驻留但空闲的会话本身不阻塞永久删除：`deleteArchivedSession` 先派发 `workspace/session-release`（parallel），由会话所有者处置其驻留 Agent，仅当会话此后仍存活时才以 `WorkspaceSessionOpenError` 拒绝。随附的 Session Controller 为普通会话提供该监听；Subagent 子会话保留自己的所有者并拒绝。
+
+每次归档写入都会把该会话的归档时刻记入 `archivedSessionTimes` 映射；取消归档删除该时刻，重新归档重新计时，因此保留期始终从最近一次归档起算。启动时对早于该映射的遗留条目盖上完整宽限期（启动时刻），且该宽限期跨重启持久。
+
+`deleteArchivedSession(sessionId)` 通过持久化提供方永久移除一个已归档会话：id 未归档时以 `WorkspaceSessionNotArchivedError` 拒绝，活动 waterfall 仍报告工作时以 `WorkspaceActiveSessionError` 拒绝，本地会话仓库仍持有该会话时以 `WorkspaceSessionOpenError` 拒绝；提供方的擦除在任何进程持有写者期间以 `SessionAlreadyOwnedError` 拒绝。成功后注册表删除归档条目、其时刻、置顶残留与 Workspace 成员席位，并发出 `workspace/session-deleted`。删除只触碰会话日志——绝不触碰项目文件或独立分叉。持久的 `pendingSessionDeletion` 标记位于准入与完成之间：启动与后续每次注册表变更都会先完成被中断的删除，因此被中断的擦除总是优先于恢复条目；提供方所有权拒绝会清除标记并保留归档以待重试，启动恢复失败时注册表保持可读并在下次变更前重试。`deleteExpiredArchivedSessions(cutoff)` 对时刻不晚于截止值的每个归档执行同一准入，并在各会话自己的队列席位上复查资格，被拒绝、忙碌或失败的会话留给下一轮清理。
+
 ### 源码地图
 
 | 文件 | 职责 |
@@ -114,7 +120,7 @@ ctx.workspaceRegistry.list() // shows the project, newest first
 
 ### 持久形态
 
-注册表打开 `workspace` 领域（版本 2）：一张以 `WorkspaceId` 为键的 `workspaces` 表，加上一个持有 `workspaceIds`（权威显示顺序）、`archivedSessionIds`、`pinnedSessionIds`、可选的首次使用身份 `defaultWorkspaceId` 与可选 `pendingMutation` 标记的全局状态。归档与置顶集合存储会话 id 字符串，默认值为空，不包含逐项对象或时间戳；置顶数组把最近置顶的 id 放在前面。归档在同一次全局状态写入中清除置顶，但不改变 Workspace 成员关系。取消归档不做会话存在性探测，因为从集合中移除 id 不可能引入未知 id，而归档会在加入前校验会话。
+注册表打开 `workspace` 领域（版本 2）：一张以 `WorkspaceId` 为键的 `workspaces` 表，加上一个持有 `workspaceIds`（权威显示顺序）、`archivedSessionIds` 及其可选的 `archivedSessionTimes` 时刻映射、`pinnedSessionIds`、可选的首次使用身份 `defaultWorkspaceId`、可选的 `pendingSessionDeletion` 中断擦除标记与可选 `pendingMutation` 标记的全局状态。归档与置顶集合存储会话 id 字符串，默认值为空；置顶数组把最近置顶的 id 放在前面。归档在同一次全局状态写入中清除置顶，但不改变 Workspace 成员关系。取消归档不做会话存在性探测，因为从集合中移除 id 不可能引入未知 id，而归档会在加入前校验会话。
 
 ### 生命周期
 
@@ -173,6 +179,7 @@ ctx.workspaceRegistry.list() // shows the project, newest first
 - **只有带记录目录的会话才能加入**——只有记录中带有可解析为项目路径的目录的会话才属于项目；没有目录的会话保持 Ungrouped，来自其他目录的会话无法移入。
 - **外部变更延迟可见**——如果另一进程删除或损坏目录，项目只能在下次刷新或重启后反映出来。
 - **归档与取消归档执行不同的会话校验**——恢复只是从归档集合中移除 id，因此会话已不存在的条目仍能取消归档，也不会留下未知引用；对未归档 id 执行恢复不写盘即完成，而 `archiveSession` 会拒绝既非实时也未持久化的会话。
+- **永久删除等待所有权**——打开或运行中的会话会被保留，并在其关闭后由下一轮清理重试，因此长寿的写者只会推迟其归档的擦除，不会使之丢失。
 - **活动检查与归档写入不是一个原子步骤**——在提供方作答与持久化写入之间开始的回合会在隐藏状态下运行，`agent/pre-step` 先于该写入的每个模型步连同其工具调用照常执行；API Session Controller 的门禁把写入之后提出的第一步以 `blocked` 收口，因此暴露面以该写入的时延为界，实际上是一个模型步。
 - **重新添加目录从空开始**——移除后再次添加同一目录会创建空会话列表的新项目；旧会话不会自动回来。
 

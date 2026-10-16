@@ -14,6 +14,8 @@ import type {
   WorkspaceCreateValue,
   WorkspaceDeleteRequest,
   WorkspaceDeleteValue,
+  WorkspaceDeleteArchivedSessionRequest,
+  WorkspaceDeleteArchivedSessionValue,
   WorkspaceFollowFrame,
   WorkspaceInsertBeforeRequest,
   WorkspaceInsertSessionBeforeRequest,
@@ -35,10 +37,18 @@ export interface Config {
   documentsDirectory?: string
   /** Maximum duration of the operating system's Documents lookup. */
   documentsLookupTimeoutMs?: number
+  /** Days archived Sessions remain recoverable before permanent deletion. */
+  archivedSessionRetentionDays?: number
+  /** Host interval between expired archive cleanup attempts, in milliseconds. */
+  archivedSessionCleanupIntervalMs?: number
 }
 
 /** Directory policy after schema defaults have been applied. */
-type ResolvedConfig = Config & { documentsLookupTimeoutMs: number }
+type ResolvedConfig = Config & {
+  documentsLookupTimeoutMs: number
+  archivedSessionRetentionDays: number
+  archivedSessionCleanupIntervalMs: number
+}
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -53,6 +63,8 @@ export class WorkspaceController extends TypertRemoteService {
 
   static Config: z<Config, ResolvedConfig> = z.object({
     documentsDirectory: z.string(),
+    archivedSessionRetentionDays: z.natural().min(1).default(15),
+    archivedSessionCleanupIntervalMs: z.natural().min(1).max(2_147_483_647).default(3_600_000),
     documentsLookupTimeoutMs: z.natural().min(1).default(10_000),
   })
 
@@ -68,13 +80,40 @@ export class WorkspaceController extends TypertRemoteService {
     super(ctx, 'workspaceController', { namespace: 'workspace' })
     this.config = WorkspaceController.Config(config)
     if (this.config.documentsDirectory !== undefined) validateDocumentsDirectory(this.config.documentsDirectory)
-    this.commands = new WorkspaceCommands(ctx)
-    this.feed = new WorkspaceFeed(ctx)
+    this.commands = new WorkspaceCommands(ctx, this.config.archivedSessionRetentionDays)
+    this.feed = new WorkspaceFeed(ctx, this.config.archivedSessionRetentionDays)
     // This package is the Loader entry for both Remote owners it hosts: the
     // directory-picking seam is abstract and never an entry itself. The child
     // stays pending until a picking backend is composed, so a host without one
     // registers no picking namespace instead of answering an unservable verb.
     ctx.plugin(DirectoryPickerController)
+    ctx.effect(() => {
+      let stopped = false
+      let running = false
+      let settled: Promise<void> = Promise.resolve()
+      const sweep = (): void => {
+        // One in-flight attempt absorbs later ticks instead of queueing them.
+        /* v8 ignore next -- overlapping or post-stop ticks need multi-hour timers */
+        if (stopped || running) return
+        running = true
+        settled = (async () => {
+          const cutoff = Date.now() - this.config.archivedSessionRetentionDays * 86_400_000
+          await ctx.workspaceRegistry.deleteExpiredArchivedSessions(cutoff)
+        })().then(() => undefined, (error: unknown) => {
+          ctx.logger.warn(`workspace: archive cleanup failed: ${String(error)}`)
+        }).then(() => { running = false })
+      }
+      // No work runs until all consumers have had a chance to install deletion listeners.
+      const initial = setTimeout(sweep, 0)
+      const timer = setInterval(sweep, this.config.archivedSessionCleanupIntervalMs)
+      timer.unref()
+      return async () => {
+        stopped = true
+        clearTimeout(initial)
+        clearInterval(timer)
+        await settled
+      }
+    }, 'workspace-controller: archive retention')
   }
 
   /**
@@ -164,6 +203,16 @@ export class WorkspaceController extends TypertRemoteService {
   @Remote('unarchiveSession')
   unarchiveSession(request: WorkspaceUnarchiveSessionRequest): Promise<WorkspaceArchiveValue> {
     return this.commands.unarchiveSession(request)
+  }
+
+  /**
+   * Permanently remove one archived Session; non-archived or busy Sessions are refused.
+   * @param request - archived Session identity.
+   * @returns deletion confirmation and the complete resulting archive state.
+   */
+  @Remote('deleteArchivedSession')
+  deleteArchivedSession(request: WorkspaceDeleteArchivedSessionRequest): Promise<WorkspaceDeleteArchivedSessionValue> {
+    return this.commands.deleteArchivedSession(request)
   }
 
   /**

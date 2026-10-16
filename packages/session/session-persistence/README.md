@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package lets applications persist and resume session event logs through a backend-independent API. Readers can create, open, inspect, list, append to, read, flush, and close stored sessions while preserving contiguous append-only history. A completed flush is the durability barrier; readers never receive torn tails or invalid records, and only one writer per session is allowed within a backend instance. Use the shipped [JSONL backend](../session-persistence-jsonl/README.md) for one compressed log per session, or implement another backend with the same observable guarantees.
+This package lets applications persist and resume session event logs through a backend-independent API. Readers can create, open, inspect, list, append to, read, flush, close, and delete stored sessions while preserving contiguous append-only history. A completed flush is the durability barrier; readers never receive torn tails or invalid records, and only one writer per session is allowed within a backend instance. Use the shipped [JSONL backend](../session-persistence-jsonl/README.md) for one compressed log per session, or implement another backend with the same observable guarantees.
 
 ## Table of Contents
 
@@ -33,7 +33,7 @@ The seam ships the [JSONL](../session-persistence-jsonl/README.md) backend: one 
 
 ### What the service provides
 
-With a backend mounted, five service methods address stored sessions:
+With a backend mounted, six service methods address stored sessions:
 
 ```text
 const handle = await ctx.sessionPersistence.create(header)     // store a new session, take write ownership
@@ -42,6 +42,7 @@ const reader = await ctx.sessionPersistence.open(id, 'read')   // observe withou
 const snap = await ctx.sessionPersistence.stat(id)             // header + revision (+ eventCount / sizeBytes) without a log read
 const all = await ctx.sessionPersistence.list()                // one snapshot per visible stored session
 await ctx.sessionPersistence.flush()                           // backend-wide durability barrier over every active write handle
+await ctx.sessionPersistence.deleteSession(id)                // erase one stored session; idempotent when absent
 ```
 
 Service-level `flush()` drains every active write handle's routed events and materializes its session, exactly as each handle's own `flush` would; failures aggregate per session as an `AggregateError` without abandoning the sweep, and a handle closed mid-sweep counts as flushed because close itself drains durably.
@@ -50,7 +51,7 @@ Every log read and write flows through the returned `SessionHandle`; there are n
 
 ### Ownership and visibility
 
-`create` and `open(id, 'write')` take in-process single-writer ownership: a second write open while an owner is active rejects with `SessionAlreadyOwnedError`, `create` on an occupied id rejects with `SessionAlreadyExistsError`, and a mutation on a `read` handle rejects with `SessionReadOnlyError` — one handle type, runtime refusal. Any operation on a closed handle rejects with `SessionHandleClosedError`, and `SessionOwnershipLostError` marks a write handle whose ownership is permanently gone (close it and reopen). A created session is observable in this process from the moment `create` resolves, while the backend may defer physical materialization until the first `append` or `flush`; other processes see only materialized sessions, and a session that never materialized before a crash never existed.
+`create` and `open(id, 'write')` take in-process single-writer ownership: a second write open while an owner is active rejects with `SessionAlreadyOwnedError`, `create` on an occupied id rejects with `SessionAlreadyExistsError`, and a mutation on a `read` handle rejects with `SessionReadOnlyError` — one handle type, runtime refusal. Any operation on a closed handle rejects with `SessionHandleClosedError`, and `SessionOwnershipLostError` marks a write handle whose ownership is permanently gone (close it and reopen). A created session is observable in this process from the moment `create` resolves, while the backend may defer physical materialization until the first `append` or `flush`; other processes see only materialized sessions, and a session that never materialized before a crash never existed. `deleteSession(id)` erases one stored session and every physical generation: it is idempotent when the session is absent, and it refuses `SessionAlreadyOwnedError` while a writer owns the session instead of invalidating that ownership.
 
 ### The live write path and shutdown drain
 

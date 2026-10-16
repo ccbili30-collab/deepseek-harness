@@ -524,6 +524,60 @@
   font-size: 13px;
 }
 
+/* Archived-only view strip: the retention hint and, once rows are selected,
+   the batch actions. It sits above the scrolling list, so it never scrolls
+   out from under a selection. */
+.archiveBar {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0 0 4px;
+  padding: 0 4px 0 8px;
+}
+
+.archiveHint {
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
+.archiveActions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.archiveCount {
+  flex: none;
+  margin-right: auto;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-secondary);
+}
+
+/* The registry-global Pinned strip: an always-visible region above the
+   scrolling Workspace list, closed by the Workspace divider; the whole strip
+   hides while no pinned row is visible. */
+.pinnedSection {
+  flex: none;
+  margin-bottom: 4px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--dsw-alias-border-l);
+}
+
+.pinnedSection > * + * {
+  margin-top: 2px;
+}
+
+.pinnedLabel {
+  padding: 0 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+}
+
 .emptyState {
   display: flex;
   flex-direction: column;
