@@ -1188,6 +1188,18 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
   border: 0; border-radius: 10px; background: none; color: var(--nv-primary-text);
   font-size: 13px; font-weight: 600; cursor: pointer; overflow: hidden; }
 .nv-tree-railbtn:hover { background: var(--nv-hover); }
+/* 开关态（Studio/挂窗/底栏）沿用"绿=状态"语义；新建组分隔线是工具组的开头。 */
+.nv-tree-railbtn[data-active='true'] { color: var(--nv-select); }
+/* 组间线要真的看得见（用户拍板：上新建下工具，两线之间隔一条线）——中性中灰，
+   亮暗两主题都立得住；--nv-divider 太浅形同虚设。 */
+.nv-tree-rail-sep { width:  22px; height: 1.5px; margin: 7px 0 5px; border-radius: 1px;
+  background: rgba(128, 132, 136, 0.55); }
+/* 抽屉轨只留一条组间线：上游 railTop 底的发丝线切在工具组内部（挂窗/底栏与
+   功能图标之间），撤掉它，让工具组从开关到功能图标连成一段；轨上放得下，
+   高度上限从 50% 放宽。功能图标整体灰度（用户拍板：工具换单色）——连按钮
+   一起过滤，连 emoji 底色也一并压灰，选中底色随 §8 落回灰底。 */
+div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !important; max-height: 62% !important; }
+[data-sidebar-right-expand-rail] ~ nav button { filter: grayscale(1); }
 /* 项目头一行（设计稿 01）：右 padding 给叠进来的收起钮留座。 */
 .nv-tree-head { display: flex; align-items: center; gap: 2px; padding: 6px 42px 6px 12px; }
 .nv-tree-head > span { flex: 1; min-width: 0; display: block; }

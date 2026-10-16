@@ -74,9 +74,9 @@ export interface TreeInjected {
   readonly openDoc: (path: string, title: string) => void
   readonly openWork: (path: string, title: string) => void
   readonly openFiles: () => void
-  readonly openCreate: (kind: CreateKind, dir?: string) => void
+  readonly openCreate: (kind: CreateKind, dir?: string, opts?: { expandColumn?: boolean }) => void
   /** 项目名点击：画布全屏打开当前项目的创作库页（返回由面板栈还原）。 */
-  readonly openProject: () => void
+  readonly openProject: (opts?: { expandColumn?: boolean }) => void
   /** 改作品清单里的展示名（账本轴，与文件名无关）。 */
   readonly renameWork: (workId: string, title: string) => void
   /** 把登记作品移出清单（文件留在盘上）；`title` 用于回执。 */
@@ -797,6 +797,12 @@ type TreeProps = PropsRuntime<'sidebar.right.pane.top'> & PropsLocale<'novenShel
  * @param props - 抽屉上区座标准 props（`rail` 报折叠态）+ 注入面。
  * @returns 抽屉导航。
  */
+/** One-shot intent the rail's search button passes to the expanded instance. */
+let focusSearchPending = false
+
+/** 轨上直点的画布抬起参数：保持轨态，不展开列。 */
+const RAIL = { expandColumn: false } as const
+
 export function ContentTree(props: TreeProps) {
   const { t, useTree, useProject } = props
   const tree = useTree(v => v)
@@ -806,6 +812,20 @@ export function ContentTree(props: TreeProps) {
   const [menuOpen, setMenuOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+
+  /* 轨上点搜索 → 展开抽屉并聚焦输入框。rail 态与展开态经不同容器渲染，
+     是两个组件实例——useState 旗随 rail 实例销毁，意图用模块级一次旗
+     传递；展开实例挂载后消费它，rAF 再落一次抢回上游的面板焦点编排。 */
+  useEffect(() => {
+    if (props.rail || !focusSearchPending) return
+    const input = searchRef.current
+    if (input === null) return
+    focusSearchPending = false
+    const land = (): void => { input.focus(); input.select() }
+    land()
+    const id = requestAnimationFrame(land)
+    return () => cancelAnimationFrame(id)
+  }, [props.rail])
 
   // ⌘K 聚焦树内搜索（设计稿 01 搜索框的 ⌘K 角标是真的快捷键）。抽屉收成
   // rail 时输入框不存在，让出按键不拦截上游的会话搜索。
@@ -1038,13 +1058,70 @@ export function ContentTree(props: TreeProps) {
     </div>
   )
 
+  /* 新建/工具菜单：底排与折叠轨弹同一份——轨是展开态一级入口的图标态。 */
+  const createMenuItems = [
+    { id: 'group', label: t('create.group.title'), icon: glyph.folder(14) },
+    { id: 'card', label: t('create.card.title'), icon: glyph.layers(14) },
+    { id: 'studio', label: t('create.studio.title'), icon: glyph.phone(14) },
+    { id: 'doc', label: t('create.doc.title'), icon: glyph.file(14) },
+    { id: 'comic', label: t('create.comic.title'), icon: glyph.image(14) },
+    { id: 'import', label: t('canvas.start.import'), icon: glyph.upload(14) },
+  ]
+  const createMenuSelect = (id: string): void => {
+    setMenuOpen(false)
+    // Studio 是开关不是新建对象：翻转组存续态，其余 kinds 走新建面板。
+    if (id === 'studio') { props.toggleStudio(); return }
+    props.openCreate(id as CreateKind)
+  }
+  const toolMenuItems = [
+    ...featureTabs.map(box => ({ id: box.kind, label: box.title(), icon: box.icon === undefined ? undefined : <box.icon size={14} /> })),
+    ...(props.toggleDock === undefined ? [] : [{ type: 'separator' as const, id: 'tool-sep-dock' }, { id: 'dock', label: t('tree.tool.dock'), icon: glyph.floatWin(14) }]),
+    ...(props.toggleBottomPanel === undefined ? [] : [{ id: 'bottom', label: t('tree.tool.bottom'), icon: glyph.panelBottom(14) }]),
+  ]
+  const toolMenuSelect = (id: string): void => {
+    setToolsOpen(false)
+    if (id === 'dock') { props.toggleDock?.(); return }
+    if (id === 'bottom') { props.toggleBottomPanel?.(); return }
+    props.openFeatureTab(id)
+  }
+
   if (props.rail) {
+    // 折叠轨契约（设计理念 §14）：轨图标与展开态一级入口同源、平铺直点
+    // （同导航轨，不弹菜单）——新建组六个直建，分隔线后是工具组（挂窗/
+    // 底栏两个开关，下半区的功能图标接着续）。唯一例外搜索：需要列宽，
+    // 展开抽屉后聚焦输入框。方向归移动轨的锚定边，这里不管。
     return (
       <div className="nv-tree nv-tree-rail">
-        <button type="button" className="nv-tree-railbtn" title={title}
-          onClick={props.expandDrawer}>{title.slice(0, 2)}</button>
-        <button type="button" className="nv-tree-railbtn" title={t('tree.new')}
-          onClick={props.expandDrawer}>＋</button>
+        <button type="button" className="nv-tree-railbtn" title={title} aria-label={title}
+          onClick={() => props.openProject({ expandColumn: false })}>{glyph.book(15)}</button>
+        <button type="button" className="nv-tree-railbtn" title={t('tree.search')} aria-label={t('tree.search')}
+          onClick={() => {
+            focusSearchPending = true
+            props.expandDrawer()
+          }}>{glyph.search(15)}</button>
+        {[
+          { key: 'group', label: t('create.group.title'), icon: glyph.folder(15), run: () => props.openCreate('group', undefined, RAIL) },
+          { key: 'card', label: t('create.card.title'), icon: glyph.layers(15), run: () => props.openCreate('card', undefined, RAIL) },
+          { key: 'studio', label: t('create.studio.title'), icon: glyph.phone(15), run: props.toggleStudio, on: studioOn },
+          { key: 'doc', label: t('create.doc.title'), icon: glyph.file(15), run: () => props.openCreate('doc', undefined, RAIL) },
+          { key: 'comic', label: t('create.comic.title'), icon: glyph.image(15), run: () => props.openCreate('comic', undefined, RAIL) },
+          { key: 'import', label: t('canvas.start.import'), icon: glyph.upload(15), run: () => props.openCreate('import', undefined, RAIL) },
+        ].map(item => (
+          <button key={item.key} type="button" className="nv-tree-railbtn" title={item.label} aria-label={item.label}
+            data-active={item.on === true || undefined}
+            onClick={item.run}>{item.icon}</button>
+        ))}
+        <span className="nv-tree-rail-sep" aria-hidden="true" />
+        {props.toggleDock !== undefined && (
+          <button type="button" className="nv-tree-railbtn" title={t('tree.tool.dock')} aria-label={t('tree.tool.dock')}
+            data-active={dockOpen || undefined}
+            onClick={props.toggleDock}>{glyph.floatWin(15)}</button>
+        )}
+        {props.toggleBottomPanel !== undefined && (
+          <button type="button" className="nv-tree-railbtn" title={t('tree.tool.bottom')} aria-label={t('tree.tool.bottom')}
+            data-active={bottomOpen || undefined}
+            onClick={props.toggleBottomPanel}>{glyph.panelBottom(15)}</button>
+        )}
       </div>
     )
   }
@@ -1054,7 +1131,7 @@ export function ContentTree(props: TreeProps) {
       <div className="nv-tree-head">
         {/* 项目名不再是切换器——单击开创作库的项目页；切换项目在库里做。 */}
         <button type="button" className="nv-tree-project" title={t('tree.library.open')}
-          onClick={props.openProject}>
+          onClick={() => props.openProject()}>
           <span className="nv-tree-projectname">{title}</span>
           <span className="nv-tree-caret">›</span>
         </button>
@@ -1215,21 +1292,9 @@ export function ContentTree(props: TreeProps) {
       <div className="nv-tree-foot">
         <Menu open={menuOpen} side="top" align="start" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => setMenuOpen(false)}
-          onSelect={id => {
-            setMenuOpen(false)
-            // Studio 是开关不是新建对象：翻转组存续态，其余 kinds 走新建面板。
-            if (id === 'studio') { props.toggleStudio(); return }
-            props.openCreate(id as CreateKind)
-          }}
+          onSelect={createMenuSelect}
           selectedIds={studioOn ? ['studio'] : []}
-          items={[
-            { id: 'group', label: t('create.group.title'), icon: glyph.folder(14) },
-            { id: 'card', label: t('create.card.title'), icon: glyph.layers(14) },
-            { id: 'studio', label: t('create.studio.title'), icon: glyph.phone(14) },
-            { id: 'doc', label: t('create.doc.title'), icon: glyph.file(14) },
-            { id: 'comic', label: t('create.comic.title'), icon: glyph.image(14) },
-            { id: 'import', label: t('canvas.start.import'), icon: glyph.upload(14) },
-          ]}
+          items={createMenuItems}
           anchor={(
             <button type="button" className="nv-tree-new nv-tree-foothalf" onClick={() => setMenuOpen(v => !v)}>
               <span>＋</span>
@@ -1238,18 +1303,9 @@ export function ContentTree(props: TreeProps) {
           )} />
         <Menu open={toolsOpen} side="top" align="start" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => setToolsOpen(false)}
-          onSelect={id => {
-            setToolsOpen(false)
-            if (id === 'dock') { props.toggleDock?.(); return }
-            if (id === 'bottom') { props.toggleBottomPanel?.(); return }
-            props.openFeatureTab(id)
-          }}
+          onSelect={toolMenuSelect}
           selectedIds={[...(dockOpen ? ['dock'] : []), ...(bottomOpen ? ['bottom'] : [])]}
-          items={[
-            ...featureTabs.map(box => ({ id: box.kind, label: box.title(), icon: box.icon === undefined ? undefined : <box.icon size={14} /> })),
-            ...(props.toggleDock === undefined ? [] : [{ type: 'separator' as const, id: 'tool-sep-dock' }, { id: 'dock', label: t('tree.tool.dock'), icon: glyph.floatWin(14) }]),
-            ...(props.toggleBottomPanel === undefined ? [] : [{ id: 'bottom', label: t('tree.tool.bottom'), icon: glyph.panelBottom(14) }]),
-          ]}
+          items={toolMenuItems}
           anchor={(
             <button type="button" className="nv-tree-new nv-tree-foothalf" onClick={() => setToolsOpen(v => !v)}>
               <span className="nv-tree-toolicon">{glyph.wrench(13)}</span>
