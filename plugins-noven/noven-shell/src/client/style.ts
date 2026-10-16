@@ -221,6 +221,70 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 .nv-role span { font-size: 12px; color: var(--nv-secondary-text); }
 .nv-fork-row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; padding: 12px 0; }
 
+::view-transition-group(noven-create-composer) { animation-duration: 420ms; animation-timing-function: cubic-bezier(.2,.72,.12,1); }
+::view-transition-old(noven-create-composer) { animation: nv-create-composer-out 420ms cubic-bezier(.2,.72,.12,1) both; }
+::view-transition-new(noven-create-composer) { animation: nv-create-composer-in 420ms cubic-bezier(.2,.72,.12,1) both; }
+@keyframes nv-create-composer-out { to { opacity: .18; filter: blur(2px); } }
+@keyframes nv-create-composer-in { from { opacity: .35; filter: blur(2px); } to { opacity: 1; filter: none; } }
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-group(noven-create-composer), ::view-transition-old(noven-create-composer), ::view-transition-new(noven-create-composer) { animation: none; }
+}
+
+/* Creation ritual: one quiet thought field, then two explicit working paths. */
+.nv-create-page { overflow: hidden; background:
+  radial-gradient(circle at 50% 15%, rgba(52,211,153,.075), transparent 36%), var(--nv-surface); }
+.nv-create-ritual { width: min(920px, calc(100% - 64px)); height: 100%; margin: 0 auto; padding: clamp(40px, 8vh, 88px) 0 42px;
+  box-sizing: border-box; display: flex; flex-direction: column; align-items: stretch; gap: 18px; overflow-y: auto; scrollbar-width: none; }
+.nv-create-ritual::-webkit-scrollbar { display: none; }
+.nv-create-intro { text-align: center; margin: 0 auto 8px; max-width: 720px; }
+.nv-create-eyebrow { display: block; margin-bottom: 16px; font-size: 10px; font-weight: 700; letter-spacing: .2em; color: var(--nv-accent-deep); }
+.nv-create-intro h1 { margin: 0; font-size: clamp(30px, 4vw, 46px); line-height: 1.15; letter-spacing: -.045em; font-weight: 650; }
+.nv-create-intro p { margin: 14px 0 0; color: var(--nv-secondary-text); font-size: 14px; line-height: 1.7; }
+.nv-create-composer { width: min(780px, 100%); margin: 0 auto; padding: 16px 17px 11px; border-radius: 20px;
+  border-color: rgba(14,159,110,.17); box-shadow: 0 18px 54px rgba(28,64,51,.09), 0 2px 8px rgba(28,64,51,.04); }
+.nv-create-composer .nv-composer-input { min-height: 72px; font-size: 15px; line-height: 24px; }
+.nv-create-composer .nv-composer-chips { flex-wrap: wrap; }
+.nv-create-paths { width: min(780px, 100%); margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.nv-create-path { min-width: 0; display: grid; grid-template-columns: 34px minmax(0,1fr) 18px; align-items: center; gap: 11px;
+  padding: 13px 14px; border: .5px solid var(--nv-divider); border-radius: 14px; background: rgba(255,255,255,.72); color: var(--nv-primary-text);
+  text-align: left; cursor: pointer; transition: transform 220ms var(--nv-ease-out), border-color 220ms ease, background 220ms ease, box-shadow 220ms ease; }
+.nv-create-path:hover { transform: translateY(-2px); border-color: rgba(14,159,110,.28); background: var(--nv-surface); box-shadow: 0 10px 28px rgba(28,64,51,.07); }
+.nv-create-path-icon { width: 34px; height: 34px; border-radius: 11px; display: grid; place-items: center; color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
+.nv-create-path > span:nth-child(2) { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.nv-create-path strong { font-size: 13px; font-weight: 650; }
+.nv-create-path small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11.5px; color: var(--nv-secondary-text); }
+.nv-create-path-arrow { color: var(--nv-secondary-text); font-size: 14px; transition: transform 220ms var(--nv-ease-out); }
+.nv-create-path:hover .nv-create-path-arrow { transform: translate(2px,-2px); color: var(--nv-accent-deep); }
+.nv-create-inline-error { width: min(780px,100%); margin: -8px auto 0; font-size: 11.5px; color: var(--nv-danger); }
+.nv-create-startershelf { width: 100%; margin-top: clamp(12px, 4vh, 34px); }
+.nv-create-startershelf .nv-sec-label { padding-left: 1px; }
+.nv-create-startrow { display: flex; gap: 12px; overflow-x: auto; padding: 0 1px 12px; scrollbar-width: none; scroll-snap-type: x proximity; }
+.nv-create-startrow::-webkit-scrollbar { display: none; }
+.nv-create-mini { flex: 0 0 168px; display: grid; grid-template-columns: 48px minmax(0,1fr); align-items: center; gap: 10px; padding: 9px;
+  border: .5px solid transparent; border-radius: 13px; background: transparent; color: var(--nv-primary-text); text-align: left; cursor: pointer; scroll-snap-align: start;
+  transition: background 180ms ease, border-color 180ms ease, transform 180ms var(--nv-ease-out); }
+.nv-create-mini:hover { background: rgba(255,255,255,.82); border-color: var(--nv-divider); transform: translateY(-1px); }
+.nv-create-mini-art { width: 48px; height: 48px; border-radius: 11px; object-fit: cover; display: grid; place-items: center; overflow: hidden; color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
+.nv-create-mini-art > * { max-width: 100%; max-height: 100%; }
+.nv-create-mini-character { background: rgba(111,199,176,.15); }
+.nv-create-mini-draft { background: var(--nv-canvas); color: var(--nv-secondary-text); }
+.nv-create-mini > span:last-child { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.nv-create-mini strong, .nv-create-mini small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nv-create-mini strong { font-size: 12.5px; font-weight: 620; }
+.nv-create-mini small { font-size: 11px; color: var(--nv-secondary-text); }
+.nv-ide-sheet { position: fixed; z-index: 1200; pointer-events: none; box-sizing: border-box; border: .5px solid rgba(14,159,110,.25);
+  background: linear-gradient(145deg, rgba(240,253,248,.96), rgba(255,255,255,.98)); box-shadow: 0 24px 70px rgba(28,64,51,.18); transform-origin: top left; }
+html[data-noven-scene='ide'] [data-shell-overlay] { pointer-events: none; }
+@media (max-width: 760px) {
+  .nv-create-ritual { width: min(100% - 32px, 920px); padding-top: 36px; }
+  .nv-create-paths { grid-template-columns: 1fr; }
+  .nv-create-intro h1 { font-size: 31px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nv-create-path, .nv-create-mini { transition: none; }
+  .nv-ide-sheet { display: none; }
+}
+
 /* Creation slot shelf: pure artwork tiles, captions live in the page air below. */
 .nv-slots { display: flex; gap: 18px; }
 .nv-slot { display: flex; flex-direction: column; gap: 10px; width: 170px; padding: 0; border: 0; background: none; text-align: left; cursor: pointer;
@@ -273,8 +337,34 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 .nv-slot:disabled .nv-slot-cap strong { color: var(--nv-secondary-text); }
 
 /* Composer card — mirrors the conversation composer's card form. */
+.nv-composer { display: flex; flex-direction: column; gap: 10px; background: var(--nv-surface); border: 0.5px solid var(--nv-divider); border-radius: 16px; padding: 12px 14px 8px; box-shadow: 0 6px 24px rgba(0,0,0,.05); }
+.nv-composer-input { width: 100%; box-sizing: border-box; border: 0; outline: none; resize: none; background: none; font-family: inherit; font-size: 13.5px; line-height: 22px; color: var(--nv-primary-text); min-height: 44px; }
+.nv-composer-input::placeholder { color: var(--nv-secondary-text); }
+.nv-composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.nv-composer-chips { display: flex; gap: 8px; }
+.nv-composer-chip { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 999px; padding: 5px 12px; font-size: 12px; background: var(--nv-canvas); color: var(--nv-secondary-text); cursor: pointer; }
+.nv-composer-chip:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-send { width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--nv-accent); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
+.nv-send:disabled { opacity: .45; cursor: default; }
+.nv-composer-meta { display: flex; align-items: center; gap: 8px; }
+.nv-meta-chip { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 999px; padding: 4px 10px; font-size: 11.5px; background: var(--nv-canvas); color: var(--nv-secondary-text); cursor: pointer; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nv-meta-chip:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-meta-caret { font-size: 10px; opacity: .7; }
+.nv-meta-icobtn { width: 26px; height: 26px; border: 0; border-radius: 8px; background: none; color: var(--nv-secondary-text); display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.nv-meta-icobtn:hover { background: var(--nv-canvas); color: var(--nv-primary-text); }
+.nv-composer-files { display: flex; flex-wrap: wrap; gap: 6px; }
+.nv-composer-file { display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; padding: 3px 6px 3px 9px; font-size: 11.5px; background: var(--nv-canvas); color: var(--nv-primary-text); }
+.nv-composer-filex { border: 0; background: none; color: var(--nv-secondary-text); font-size: 13px; cursor: pointer; padding: 0 2px; line-height: 1; }
+.nv-composer-filex:hover { color: var(--nv-danger); }
+.nv-composer-error { font-size: 11.5px; color: var(--nv-danger); padding: 0 2px; }
+.nv-composer-nowork { align-items: center; padding: 18px 14px; }
+.nv-composer-wsbtn { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 10px; padding: 9px 16px; font-size: 13px; background: var(--nv-accent-soft); color: var(--nv-accent-deep); cursor: pointer; }
+.nv-modelrow { display: inline-flex; align-items: center; gap: 8px; width: 100%; justify-content: space-between; }
+.nv-page.nv-leaving .nv-slots, .nv-page.nv-leaving .nv-create-bottom, .nv-page.nv-leaving .nv-h1, .nv-page.nv-leaving .nv-sub { opacity: 0; transform: translateY(6px); transition: opacity var(--nv-dur-scene) var(--nv-ease-out), transform var(--nv-dur-scene) var(--nv-ease-out); }
+.nv-page.nv-leaving .nv-composer { opacity: 0; transition: opacity var(--nv-dur-scene) var(--nv-ease-out) .1s; }
 
 /* Bottom pair: quiet section labels over template tiles and the tools list. */
+.nv-create-bottom { display: grid; grid-template-columns: 1.35fr 1fr; gap: 48px; margin-top: 6px; }
 .nv-sec-label { font-size: 12px; font-weight: 600; color: var(--nv-secondary-text); margin-bottom: 10px; }
 .nv-tpls { display: flex; gap: 14px; }
 .nv-tpl { display: flex; flex-direction: column; gap: 7px; width: 132px; padding: 0; border: 0; background: none; text-align: left; cursor: pointer; }
@@ -428,6 +518,7 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 .nv-receipt .nv-link { margin-left: auto; }
 .nv-side-input { display: flex; align-items: center; gap: 8px; border: 0.5px solid var(--nv-divider); border-radius: 999px; padding: 6px 6px 6px 14px; }
 .nv-side-input input { flex: 1; border: 0; outline: none; background: none; font-size: 12.5px; font-family: inherit; }
+.nv-side-input .nv-send { width: 30px; height: 30px; }
 
 /* ===== 卡类编辑器（文档 / 分栏 双布局） ===== */
 .nv-ed-bodywrap { flex: 1; min-height: 0; display: flex; overflow: hidden; }
@@ -800,97 +891,7 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
    原生标题组（旧标语+预览版徽标）随 mark 一并隐藏。 */
 [class*="headline"] > [class*="titleGroup"] { display: none; }
 
-/* IDE 排布（导航收轨 + unitSide left）：中列就是副对话。
-   - hero 态不再垂直居中：品牌/引导变小上置，输入卡自然贴到底部；
-   - 输入卡宽度收窄、内边距压紧，符合副窗体量；
-   - active 态沿用上游 sticky 贴底，这里只收宽度。 */
-[data-unit-side='left'] [data-center-col] [data-conversation-region='chat'] {
-  background: transparent;
-}
-[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] [data-conversation-scroll] {
-  justify-content: flex-start;
-  padding-top: clamp(36px, 8vh, 84px);
-}
-[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] [data-composer-seat] {
-  position: sticky;
-  bottom: 0;
-  margin-top: auto;
-}
-[data-unit-side='left'] [data-center-col] [class*='composerHero'] {
-  padding-bottom: 14px;
-  gap: 6px;
-}
-[data-unit-side='left'] [data-center-col] [class*='headline'] {
-  transform: scale(.72);
-  transform-origin: center top;
-  margin-bottom: 2px;
-}
-[data-unit-side='left'] [data-center-col] [class*='heroWorkspaceRow'] {
-  margin-top: 2px;
-}
-[data-unit-side='left'] [data-center-col] [data-composer-card] {
-  border-radius: 14px;
-}
-[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-create-guide {
-  gap: 10px;
-}
-[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-guide-label {
-  display: none;
-}
-[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-guide-continue {
-  display: none;
-}
-[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-guide-ideas {
-  grid-template-columns: 1fr 1fr;
-}
-/* 副对话里手作入口没有意义（已经在 IDE）——BlankDock 自身按 ide 隐藏，这里兜底。 */
-[data-unit-side='left'] [data-center-col] .nv-handcraft-chip { display: none; }
-
-/* ——— 创作空白页引导（挂在真实输入框上方的 conversation.input.dock）——— */
-.nv-create-guide { display: flex; flex-direction: column; gap: 14px; width: min(calc(100% - 8px), 760px);
-  margin: 0 auto; padding: 0 4px; animation: nv-guide-in var(--nv-dur-ui) var(--nv-ease-out) both; }
-@keyframes nv-guide-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.nv-create-guide-drafting { display: none; }
-.nv-guide-block { display: flex; flex-direction: column; gap: 8px; }
-.nv-guide-label { font-size: 12px; color: var(--nv-secondary-text); letter-spacing: .02em; padding: 0 2px; }
-.nv-guide-drafts { display: flex; flex-wrap: wrap; gap: 8px; }
-.nv-guide-draft { display: inline-flex; align-items: center; gap: 9px; max-width: 100%;
-  padding: 8px 12px 8px 9px; border: 0.5px solid var(--nv-divider); border-radius: 12px;
-  background: var(--nv-surface); color: var(--nv-primary-text); cursor: pointer; text-align: left;
-  transition: border-color var(--nv-dur-micro) var(--nv-ease-out), box-shadow var(--nv-dur-micro) var(--nv-ease-out); }
-.nv-guide-draft:hover { border-color: rgba(14,159,110,.28); box-shadow: 0 6px 18px rgba(28,64,51,.06); }
-.nv-guide-draft-icon { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 9px;
-  background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-guide-draft-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.nv-guide-draft-body strong { font-size: 12.5px; font-weight: 620; max-width: 240px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nv-guide-draft-body small { font-size: 11px; color: var(--nv-secondary-text); }
-.nv-guide-draft-go { color: var(--nv-secondary-text); font-size: 13px; }
-.nv-guide-ideas { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.nv-guide-idea { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 10px 12px;
-  border: 0.5px solid var(--nv-divider); border-radius: 12px; background: var(--nv-surface);
-  color: var(--nv-primary-text); font-size: 13px; line-height: 1.45; text-align: left; cursor: pointer;
-  transition: border-color var(--nv-dur-micro) var(--nv-ease-out), transform var(--nv-dur-micro) var(--nv-ease-out); }
-.nv-guide-idea:hover { border-color: rgba(14,159,110,.28); transform: translateY(-1px); }
-.nv-guide-idea-icon { flex: none; width: 26px; height: 26px; display: grid; place-items: center;
-  border-radius: 9px; background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-guide-actions { display: flex; align-items: center; gap: 10px; }
-.nv-guide-actions .nv-slash-chips { flex: 1 1 auto; flex-wrap: wrap; }
-.nv-guide-actions:has(.nv-handcraft-chip-alone) { justify-content: flex-end; }
-.nv-handcraft-chip-alone { margin-left: auto; }
-.nv-handcraft-arrow { font-size: 12px; opacity: .7; }
-@media (max-width: 900px) {
-  .nv-create-guide { width: 100%; }
-  .nv-guide-ideas { grid-template-columns: 1fr; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .nv-create-guide, .nv-guide-idea, .nv-guide-draft { animation: none; transition: none; }
-}
-.nv-slash-chips { display: flex; flex: none; align-items: center; gap: 8px; padding: 0 4px; }
-.nv-handcraft-chip { display: inline-flex; align-items: center; gap: 5px; flex: none; height: 26px; margin-left: auto; padding: 0 11px; border-radius: 999px;
-  border: 0; background: none; font-size: 12.5px; white-space: nowrap; color: var(--nv-secondary-text); cursor: pointer;
-  transition: color var(--nv-dur-micro) var(--nv-ease-out), background var(--nv-dur-micro) var(--nv-ease-out); }
-.nv-handcraft-chip:hover { color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
+.nv-slash-chips { display: flex; flex: none; gap: 8px; padding: 0 4px; }
 @keyframes nv-chip-in { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
 .nv-slash-chip { display: inline-flex; align-items: center; flex: none; height: 26px; padding: 0 12px; border-radius: 999px; border: 0.5px solid var(--nv-divider); background: var(--nv-surface); font-size: 12.5px; white-space: nowrap; color: var(--nv-primary-text); cursor: pointer; animation: nv-chip-in var(--nv-dur-ui) var(--nv-ease-out) both; }
 .nv-slash-chip:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
@@ -2339,6 +2340,7 @@ table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .nv-work-ver-on,
 .nv-tlp-calview-on,
 .nv-tree-eye-on,
+.nv-modelrow-on,
 .nv-create-starter-on .nv-create-starter-icon {
   color: var(--nv-select) !important;
 }
@@ -2358,6 +2360,7 @@ table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .nv-work-ver-on:not(:hover),
 .nv-tlp-calview-on:not(:hover),
 .nv-tree-eye-on:not(:hover),
+.nv-modelrow-on:not(:hover) {
   background: none;
 }
 /* 自带色的行内图标跟文字一起转绿（菜单 itemIcon、树行 glyph）。 */
@@ -2365,6 +2368,98 @@ table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 12.5px;
 .nv-tree-row[data-current='true'] .nv-tree-glyph,
 .nv-tree-row[data-current='true'] .nv-tree-cardicon { color: var(--nv-select); }
 
+
+/* IDE 排布（导航收轨 + unitSide left）：中列就是副对话。
+   - hero 态不再垂直居中：品牌/引导变小上置，输入卡自然贴到底部；
+   - 输入卡宽度收窄、内边距压紧，符合副窗体量；
+   - active 态沿用上游 sticky 贴底，这里只收宽度。 */
+[data-unit-side='left'] [data-center-col] [data-conversation-region='chat'] {
+  background: transparent;
+}
+[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] [data-conversation-scroll] {
+  justify-content: flex-start;
+  padding-top: clamp(36px, 8vh, 84px);
+}
+[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] [data-composer-seat] {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+}
+[data-unit-side='left'] [data-center-col] [class*='composerHero'] {
+  padding-bottom: 14px;
+  gap: 6px;
+}
+[data-unit-side='left'] [data-center-col] [class*='headline'] {
+  transform: scale(.72);
+  transform-origin: center top;
+  margin-bottom: 2px;
+}
+[data-unit-side='left'] [data-center-col] [class*='heroWorkspaceRow'] {
+  margin-top: 2px;
+}
+[data-unit-side='left'] [data-center-col] [data-composer-card] {
+  border-radius: 14px;
+}
+[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-create-guide {
+  gap: 10px;
+}
+[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-guide-label {
+  display: none;
+}
+[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-guide-continue {
+  display: none;
+}
+[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-guide-ideas {
+  grid-template-columns: 1fr 1fr;
+}
+/* 副对话里手作入口没有意义（已经在 IDE）——BlankDock 自身按 ide 隐藏，这里兜底。 */
+[data-unit-side='left'] [data-center-col] .nv-handcraft-chip { display: none; }
+
+/* ——— 创作空白页引导（挂在真实输入框上方的 conversation.input.dock）——— */
+.nv-create-guide { display: flex; flex-direction: column; gap: 14px; width: min(calc(100% - 8px), 760px);
+  margin: 0 auto; padding: 0 4px; animation: nv-guide-in var(--nv-dur-ui) var(--nv-ease-out) both; }
+@keyframes nv-guide-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.nv-create-guide-drafting { display: none; }
+.nv-guide-block { display: flex; flex-direction: column; gap: 8px; }
+.nv-guide-label { font-size: 12px; color: var(--nv-secondary-text); letter-spacing: .02em; padding: 0 2px; }
+.nv-guide-drafts { display: flex; flex-wrap: wrap; gap: 8px; }
+.nv-guide-draft { display: inline-flex; align-items: center; gap: 9px; max-width: 100%;
+  padding: 8px 12px 8px 9px; border: 0.5px solid var(--nv-divider); border-radius: 12px;
+  background: var(--nv-surface); color: var(--nv-primary-text); cursor: pointer; text-align: left;
+  transition: border-color var(--nv-dur-micro) var(--nv-ease-out), box-shadow var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-guide-draft:hover { border-color: rgba(14,159,110,.28); box-shadow: 0 6px 18px rgba(28,64,51,.06); }
+.nv-guide-draft-icon { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 9px;
+  background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-guide-draft-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.nv-guide-draft-body strong { font-size: 12.5px; font-weight: 620; max-width: 240px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nv-guide-draft-body small { font-size: 11px; color: var(--nv-secondary-text); }
+.nv-guide-draft-go { color: var(--nv-secondary-text); font-size: 13px; }
+.nv-guide-ideas { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.nv-guide-idea { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 10px 12px;
+  border: 0.5px solid var(--nv-divider); border-radius: 12px; background: var(--nv-surface);
+  color: var(--nv-primary-text); font-size: 13px; line-height: 1.45; text-align: left; cursor: pointer;
+  transition: border-color var(--nv-dur-micro) var(--nv-ease-out), transform var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-guide-idea:hover { border-color: rgba(14,159,110,.28); transform: translateY(-1px); }
+.nv-guide-idea-icon { flex: none; width: 26px; height: 26px; display: grid; place-items: center;
+  border-radius: 9px; background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-guide-actions { display: flex; align-items: center; gap: 10px; }
+.nv-guide-actions .nv-slash-chips { flex: 1 1 auto; flex-wrap: wrap; }
+.nv-guide-actions:has(.nv-handcraft-chip-alone) { justify-content: flex-end; }
+.nv-handcraft-chip-alone { margin-left: auto; }
+.nv-handcraft-arrow { font-size: 12px; opacity: .7; }
+@media (max-width: 900px) {
+  .nv-create-guide { width: 100%; }
+  .nv-guide-ideas { grid-template-columns: 1fr; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .nv-create-guide, .nv-guide-idea, .nv-guide-draft { animation: none; transition: none; }
+}
+.nv-slash-chips { display: flex; flex: none; align-items: center; gap: 8px; padding: 0 4px; }
+.nv-handcraft-chip { display: inline-flex; align-items: center; gap: 5px; flex: none; height: 26px; margin-left: auto; padding: 0 11px; border-radius: 999px;
+  border: 0; background: none; font-size: 12.5px; white-space: nowrap; color: var(--nv-secondary-text); cursor: pointer;
+  transition: color var(--nv-dur-micro) var(--nv-ease-out), background var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-handcraft-chip:hover { color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
 `
 
 /** Inject the Noven stylesheet once per document. */
