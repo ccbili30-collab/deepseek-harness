@@ -70,7 +70,7 @@ import { applyBranches } from './branches.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
 import { showComingSoon } from './coming-soon.ts'
 import { applyArrangement, type ArrangementDeps } from './arrangement.ts'
-import { enterHandcraftScene } from './creation-transition.ts'
+import { enterCreateScene, enterHandcraftScene } from './creation-transition.ts'
 import { injectNovenStyles } from './style.ts'
 import { CanvasHost, createCanvasStore, activeKey, fileTabKind, docKey, dirKey, statusKey, type CanvasInjected, type CanvasState, type DocEntry, type DirEntry, type ImportPack, type ProjectFocus, type SimRow, type TabFlags } from './canvas.tsx'
 import { ContentTree, type TreeInjected } from './tree.tsx'
@@ -1372,7 +1372,8 @@ export function apply(ctx: ClientContext): void {
     const sessionId = target?.sessionId
     if (sessionId === undefined) return false
     return enterHandcraftScene(source, async () => {
-      ctx.uiWorkspace.openSession(sessionId)
+      // 场景内的提交：转场归外层手作场景所有。
+      ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { transition?: 'none' }) => void)(sessionId, { transition: 'none' })
       applyArrangement(arrangementDeps(), sessionId, 'ide')
       setCanvasParked(sessionId, false)
       return true
@@ -1393,9 +1394,22 @@ export function apply(ctx: ClientContext): void {
     ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { panel?: 'preserve' }) => void)(sessionId, { panel: 'preserve' })
   }
 
-  /** 投稿落点：揭开指定会话的对话面（面板回到 Conversation）。 */
+  /**
+   * 投稿落点：揭开指定会话的对话面（面板回到 Conversation）。
+   * 「直接对话」的落点永远按入口意图重种 agent 排布：宿主空白可能曾被手作
+   * 入口复用并盖上 IDE 章，发送时该空白转正；若继承它的历史几何，ping 会落
+   * 进手作布局——排布属于入口，不属于被复用的空白。
+   */
   const revealSession = (sessionId: SessionId): void => {
-    ctx.uiWorkspace.openSession(sessionId)
+    applyArrangement(arrangementDeps(), sessionId, 'agent')
+    // 发布版 openSession 类型未带 options（源码已带 preserve/transition），按惯例局部窄化；
+    // transition:'none' 表示本次提交归外层场景转场所有，不再起导航转场。
+    ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { panel?: 'preserve', transition?: 'none' }) => void)(
+      sessionId, { transition: 'none' },
+    )
+    // 画布的抬起/停靠归会话 surface、不进几何种子：手作把复用空白的画布抬起来过，
+    // 直接对话必须把它收回停靠，否则对话被挤成窄条、整页是导航展开+画布大开的缝合态。
+    setCanvasParked(sessionId, true)
   }
 
   /**
@@ -1777,6 +1791,84 @@ export function apply(ctx: ClientContext): void {
       showComingSoon(target, t('nav.comingSoon'))
     }), `noven-shell: unavailable panel ${id}`)
   }
+  /**
+   * The creation page is the one New Session surface: the nav row, the shell's
+   * new-session action (sidebar brand button and its shortcut), and the empty
+   * main view after archiving all land here. It enters with its own scene, not
+   * the Session page turn. The in-flight latch is synchronous: the scene's
+   * panel commit lands inside an async update, so a second route (list update,
+   * blank routing) firing before it would start a competing transition.
+   */
+  let openingCreateSurface = false
+  const onCreateSurface = (): void => {
+    if (openingCreateSurface) return
+    if (ctx.layout.panelInfo.getSnapshot().activePanelId === CREATE_ID) return
+    openingCreateSurface = true
+    void enterCreateScene(() => {
+      // Select a reusable blank host inside the same commit: the page's first
+      // render then already has hostBlank, so the composer mounts with the
+      // title instead of arriving a beat later through the async ensure.
+      const seam = ctx.uiWorkspace as {
+        reusableBlank?: () => SessionId | undefined
+        openSession?: (target: SessionId, options?: { panel?: 'preserve', transition?: 'none' }) => void
+      }
+      const blank = seam.reusableBlank?.()
+      if (blank !== undefined) seam.openSession?.(blank, { panel: 'preserve', transition: 'none' })
+      ctx.layout.selectPanel(CREATE_ID)
+    }).finally(() => { openingCreateSurface = false })
+  }
+  ctx.effect(() => sidebarPanels.registerActivation(CREATE_ID, () => { onCreateSurface() }),
+    'noven-shell: create surface activation')
+  ctx.effect(() => {
+    const surface = ctx.uiWorkspace as { registerNewSessionSurface?: (open: () => void) => () => void }
+    const dispose = surface.registerNewSessionSurface?.(() => { onCreateSurface() })
+    return () => { dispose?.() }
+  }, 'noven-shell: new session surface')
+  // Archiving the Session on stage with no live row left clears the selection;
+  // the viewer lands on the creation page instead of an empty main view.
+  // A running creation scene owns navigation: the transient empty selection
+  // inside its commit must not be mistaken for that landing.
+  const inCreateScene = (): boolean => document.documentElement.hasAttribute('data-create-scene')
+  ctx.effect(() => {
+    let previous: SessionId | undefined
+    const reconcile = (): void => {
+      const list = ctx.sessions.list.getSnapshot()
+      const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)?.id
+      const archived = new Set<string>(
+        (ctx.get('workspaces') as IWorkspaces | undefined)?.list.getSnapshot().archivedSessionIds ?? [],
+      )
+      if (!inCreateScene() && current === undefined && previous !== undefined && archived.has(previous)
+        && ctx.layout.panelInfo.getSnapshot().activePanelId === null) {
+        onCreateSurface()
+      }
+      previous = current
+    }
+    const stopSessions = ctx.sessions.list.subscribe(reconcile)
+    const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
+    const stopWorkspaces = workspaces?.list.subscribe(reconcile)
+    reconcile()
+    return () => { stopSessions(); stopWorkspaces?.() }
+  }, 'noven-shell: archive fallback surface')
+  // A restored blank Session would show the retired empty-session page: on the
+  // first main selection after startup, route it to the creation page. This is
+  // deliberately one-shot — later blank main views belong to their surface
+  // (handcraft's IDE hosts one), and a standing watch would hijack them.
+  ctx.effect(() => {
+    let done = false
+    const finish = (): void => { done = true }
+    const check = (): void => {
+      if (done || inCreateScene()) return
+      const list = ctx.sessions.list.getSnapshot()
+      const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
+      if (current === undefined) return
+      finish()
+      if (current.blank === true && ctx.layout.panelInfo.getSnapshot().activePanelId === null) onCreateSurface()
+    }
+    const stop = ctx.sessions.list.subscribe(check)
+    const timer = window.setTimeout(finish, 5000)
+    check()
+    return () => { stop(); window.clearTimeout(timer) }
+  }, 'noven-shell: restored blank surface')
   const NAV: readonly { id: MainPanelId; order: number; label: () => string; Icon: (p: { size: number; active: boolean }) => React.ReactNode }[] = [
     { id: CREATE_ID, order: 5, label: () => t('nav.create'), Icon: CreateIcon },
     { id: HOME_ID, order: 10, label: () => t('nav.home'), Icon: HomeIcon },

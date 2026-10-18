@@ -447,6 +447,78 @@ describe('UiWorkspaceService', () => {
     expect(b.sessions.retain).toHaveBeenCalledWith(sid('target'), { source: 'mainView' })
   })
 
+  it('routes the New Session action to a registered surface and restores the default after disposal', () => {
+    const b = bench({ workspaces: workspaceState([workspace('a')]), sessions: sessionState() })
+    const open = vi.fn()
+    const dispose = b.uiWorkspace.registerNewSessionSurface(open)
+    b.uiWorkspace.startSession()
+    expect(open).toHaveBeenCalledTimes(1)
+    dispose()
+    b.uiWorkspace.startSession()
+    expect(open).toHaveBeenCalledTimes(1)
+  })
+
+  it('routes a blank Session open to the registered new-session surface', () => {
+    const b = bench({
+      workspaces: workspaceState([workspace('a', [sid('host')])]),
+      sessions: sessionState([summary('host', { cwd: '/w/a', blank: true })]),
+    })
+    const open = vi.fn()
+    b.uiWorkspace.registerNewSessionSurface(open)
+    b.uiWorkspace.openSession(sid('host'))
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(b.sessions.retain).not.toHaveBeenCalled()
+  })
+
+  it('finds the reusable blank without a Host round-trip', () => {
+    const b = bench({
+      workspaces: workspaceState([workspace('a', [sid('host'), sid('real')])]),
+      sessions: sessionState([
+        summary('host', { cwd: '/w/a', blank: true }),
+        summary('real', { cwd: '/w/a' }),
+      ]),
+    })
+    b.sessions.create.mockClear()
+    expect(b.uiWorkspace.reusableBlank(wid('a'))).toBe(sid('host'))
+    expect(b.sessions.create).not.toHaveBeenCalled()
+  })
+
+  it('archives the current Session onto the next live row instead of an empty main view', async () => {
+    const b = bench({
+      workspaces: workspaceState([workspace('a', [sid('one'), sid('two')])]),
+      sessions: sessionState([summary('one', { cwd: '/w/a' }), summary('two', { cwd: '/w/a' })]),
+    })
+    b.uiWorkspace.openSession(sid('one'))
+    await b.uiWorkspace.archiveSession(sid('one'))
+    expect(b.sessions.retain).toHaveBeenLastCalledWith(sid('two'), { source: 'mainView' })
+  })
+
+  it('clears the main view when the archived Session has no live sibling', async () => {
+    const b = bench({
+      workspaces: workspaceState([workspace('a', [sid('only')])]),
+      sessions: sessionState([summary('only', { cwd: '/w/a' })]),
+    })
+    b.uiWorkspace.openSession(sid('only'))
+    const before = b.sessions.retain.mock.calls.length
+    await b.uiWorkspace.archiveSession(sid('only'))
+    expect(b.sessions.retain.mock.calls.length).toBe(before)
+    expect(b.sessions.retained.at(-1)?.release).toHaveBeenCalled()
+  })
+
+  it('skips blank host Sessions when landing after an archive', async () => {
+    const b = bench({
+      workspaces: workspaceState([workspace('a', [sid('only'), sid('host')])]),
+      sessions: sessionState([
+        summary('only', { cwd: '/w/a' }),
+        summary('host', { cwd: '/w/a', blank: true, updatedAt: 99 }),
+      ]),
+    })
+    b.uiWorkspace.openSession(sid('only'))
+    const before = b.sessions.retain.mock.calls.length
+    await b.uiWorkspace.archiveSession(sid('only'))
+    expect(b.sessions.retain.mock.calls.length).toBe(before)
+  })
+
   it('pages with the heavier project weight when the sessions read different nav geometry', async () => {
     const { turnPage } = await import('../src/client/page-turn.ts')
     const b = bench({

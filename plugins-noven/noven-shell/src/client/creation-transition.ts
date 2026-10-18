@@ -15,6 +15,9 @@ const COMPOSER_TRANSITION = 'noven-create-composer'
 const PAGE_TRANSITION = 'noven-create-page'
 const SEED_TRANSITION = 'noven-handcraft-seed'
 
+/** Root attribute marking which creation-surface scene is running. */
+const SCENE_ATTRIBUTE = 'data-create-scene'
+
 /** Ritual furniture that exits with its own name in the conversation scene. */
 const EXIT_REGIONS = [
   { selector: '.nv-create-intro', name: 'noven-create-intro' },
@@ -76,6 +79,10 @@ export async function enterConversationScene(commit: () => Promise<boolean>): Pr
     if (page !== null) page.style.viewTransitionName = ''
     for (const el of exits) el.style.viewTransitionName = ''
   }
+  // The sheet drops (shared old(noven-create-page) keyframes); the desk
+  // underneath returns to focus in this scene too.
+  const root = document.documentElement
+  root.setAttribute(SCENE_ATTRIBUTE, 'conversation')
   const transition = documentWithTransition.startViewTransition(async () => {
     try {
       result = await commit()
@@ -91,6 +98,7 @@ export async function enterConversationScene(commit: () => Promise<boolean>): Pr
     if (target !== null) target.style.viewTransitionName = COMPOSER_TRANSITION
   })
   await transition.finished.catch(() => undefined)
+  if (root.getAttribute(SCENE_ATTRIBUTE) === 'conversation') root.removeAttribute(SCENE_ATTRIBUTE)
   clearNames()
   return result
 }
@@ -120,6 +128,10 @@ export async function enterHandcraftScene(source: HTMLElement, commit: () => Pro
   source.style.viewTransitionName = SEED_TRANSITION
   const regions: HTMLElement[] = []
   let result = false
+  // The sheet drops (shared old(noven-create-page) keyframes); the incoming
+  // IDE is the desk returning to focus beneath it.
+  const root = document.documentElement
+  root.setAttribute(SCENE_ATTRIBUTE, 'handcraft')
   const transition = documentWithTransition.startViewTransition(async () => {
     try {
       result = await commit()
@@ -143,8 +155,40 @@ export async function enterHandcraftScene(source: HTMLElement, commit: () => Pro
     }
   })
   await transition.finished.catch(() => undefined)
+  if (root.getAttribute(SCENE_ATTRIBUTE) === 'handcraft') root.removeAttribute(SCENE_ATTRIBUTE)
   for (const el of regions) el.style.viewTransitionName = ''
   if (page !== null) page.style.viewTransitionName = ''
   source.style.viewTransitionName = ''
   return result
+}
+
+/**
+ * Reveal the creation page from wherever the viewer stands: the sheet rises
+ * from below while the desk underneath recedes and dims. The page carries its
+ * view-transition-name in CSS, so no naming step is needed on either side.
+ * The panel commit runs inside the update, per the capture rule above.
+ * @param commit - the synchronous panel commit (selectPanel(CREATE_ID)).
+ * @returns settlement of the scene (immediately without the API or under reduced motion).
+ */
+export function enterCreateScene(commit: () => void): Promise<void> {
+  const documentWithTransition = document as ViewTransitionDocument
+  if (documentWithTransition.startViewTransition === undefined || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    commit()
+    return Promise.resolve()
+  }
+  const root = document.documentElement
+  root.setAttribute(SCENE_ATTRIBUTE, 'enter')
+  const transition = documentWithTransition.startViewTransition(async () => {
+    commit()
+    // Rendering inside a pending update is suppressed; tick until React has
+    // actually mounted the page, or the new capture still shows the old view
+    // and the page's own group never exists.
+    for (let frame = 0; frame < 90 && document.querySelector('.nv-create-page') === null; frame += 1) {
+      await nextTick()
+    }
+  })
+  void transition.finished.catch(() => undefined).finally(() => {
+    if (root.getAttribute(SCENE_ATTRIBUTE) === 'enter') root.removeAttribute(SCENE_ATTRIBUTE)
+  })
+  return transition.finished.catch(() => undefined)
 }

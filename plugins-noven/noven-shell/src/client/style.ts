@@ -136,11 +136,13 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 .nv-nav-soon-glyph { display: inline-flex; }
 .nv-page { height: 100%; min-height: 0; overflow-y: auto; background: var(--nv-surface); color: var(--nv-primary-text); font-size: 13px;
   animation: nv-page-in var(--nv-dur-scene) var(--nv-ease-out); }
-/* Focus-in, not slide-in: the page resolves from a soft blur rather than
-   flashing in from nothing. */
+/* Resolves in with opacity only. A full-page filter blur() entrance is the
+   most expensive frame cost in every scene that mounts a page beside a View
+   Transition (measured: p95 50ms → 33ms on long Sessions); the fade carries
+   the same "resolve, don't flash" intent without a repaint of the whole page. */
 @keyframes nv-page-in {
-  from { opacity: 0.45; filter: blur(4px); }
-  to { opacity: 1; filter: blur(0); }
+  from { opacity: 0.55; }
+  to { opacity: 1; }
 }
 /* Outgoing-page clone: covers the swap frame, then lifts away so the old
    page exits instead of vanishing. Inner animations freeze so the ghost
@@ -232,15 +234,48 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 ::view-transition-old(noven-create-paths) { animation: nv-create-paths-out 260ms var(--nv-ease-in) 40ms both; }
 @keyframes nv-create-intro-out { to { opacity: 0; transform: translateY(-16px); } }
 @keyframes nv-create-paths-out { to { opacity: 0; transform: translateY(12px); } }
+/* Paper & desk: the creation page is a sheet that rises from below and covers
+   the desk; leaving replays the same path downward. The desk (the Session work
+   layer) never travels — it only recedes and dims under the sheet, then
+   returns to focus. Both legs are one gesture played forwards and backwards:
+   same axis, same curve, same durations. */
+::view-transition-old(noven-create-page) { animation: nv-sheet-drop 400ms cubic-bezier(.2,.72,.12,1) both; }
+html[data-create-scene='enter']::view-transition-new(noven-create-page) { animation: nv-sheet-rise 400ms cubic-bezier(.2,.72,.12,1) both; }
+html[data-create-scene='enter']::view-transition-old(noven-work) { animation: nv-desk-recede 380ms var(--nv-ease-out) both; }
+html[data-create-scene='conversation']::view-transition-new(noven-work) { animation: nv-desk-focus 380ms var(--nv-ease-out) both; }
+html[data-create-scene='handcraft']::view-transition-new(noven-work) { animation: nv-desk-focus 380ms var(--nv-ease-out) both; }
+/* The UA blends captured groups with plus-lighter; a plain crossfade is both
+   what these scenes mean and the cheaper compositing path over full-screen
+   snapshots. */
+html[data-create-scene]::view-transition-group(noven-work),
+html[data-create-scene]::view-transition-group(noven-create-page),
+html[data-create-scene]::view-transition-old(noven-work),
+html[data-create-scene]::view-transition-old(noven-create-page),
+html[data-create-scene]::view-transition-new(noven-work),
+html[data-create-scene]::view-transition-new(noven-create-page),
+html[data-panel-handoff]::view-transition-group(noven-work),
+html[data-panel-handoff]::view-transition-old(noven-work),
+html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: normal; }
+@keyframes nv-sheet-rise { from { opacity: 0; transform: translateY(28px) scale(.98); } }
+@keyframes nv-sheet-drop { to { opacity: 0; transform: translateY(28px) scale(.98); } }
+@keyframes nv-desk-recede { to { opacity: .85; transform: scale(.985); } }
+@keyframes nv-desk-focus { from { opacity: .85; transform: scale(.985); } }
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(noven-create-composer), ::view-transition-old(noven-create-composer), ::view-transition-new(noven-create-composer),
-  ::view-transition-old(noven-create-intro), ::view-transition-old(noven-create-paths) { animation: none; }
+  ::view-transition-old(noven-create-intro), ::view-transition-old(noven-create-paths),
+  ::view-transition-old(noven-create-page), ::view-transition-new(noven-create-page),
+  ::view-transition-old(noven-work), ::view-transition-new(noven-work) { animation: none; }
 }
 
 /* Creation ritual: one quiet thought field, then two explicit working paths.
    The page centers its column inside the center column (the session page's
    reference frame), so the hero→session morph never slides sideways. */
 .nv-create-page { overflow: hidden; box-sizing: border-box;
+  /* The page's own View Transition name lives here, not on one scene: every
+     transition the page takes part in — entering, leaving for any Session,
+     morphing into the conversation, dissolving into the IDE — captures it as
+     the same named group, and its entrance/exit keyframes below are canonical. */
+  view-transition-name: noven-create-page;
   /* The mint bloom is part of the composition: anchored on the title's line
      (30% ≈ the lifted stack's head), strong enough to read (.075 was lost to
      white), fading out before the path cards so the fold stays clean. */
@@ -281,16 +316,15 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 .nv-create-path:hover .nv-create-path-arrow { transform: translate(2px,-2px); color: var(--nv-accent-deep); }
 .nv-create-inline-error { width: min(780px,100%); margin: -8px auto 0; font-size: 11.5px; color: var(--nv-danger); }
 /* Handcraft scene (creation-transition.ts): the clicked card lifts as the
-   seed while the ritual page dissolves beneath it; the IDE then lands region
-   by region — drawer, canvas, conversation. One View Transition carries the
-   whole commit, so the Session's default page turn never runs underneath. */
-::view-transition-old(noven-create-page) { animation: nv-ide-ritual-out 300ms var(--nv-ease-in) 70ms both; }
+   seed while the ritual page drops away as the shared sheet (the general
+   old(noven-create-page) rule); the IDE then lands region by region — drawer,
+   canvas, conversation. One View Transition carries the whole commit, so the
+   Session's default page turn never runs underneath. */
 ::view-transition-old(noven-handcraft-seed) { animation: nv-ide-seed-lift 340ms var(--nv-ease-out) both; }
 ::view-transition-group(noven-handcraft-seed) { z-index: 3; }
 ::view-transition-new(noven-ide-drawer) { animation: nv-ide-drawer-in var(--nv-dur-scene) var(--nv-ease-out) 90ms both; }
 ::view-transition-new(noven-ide-canvas) { animation: nv-ide-canvas-in var(--nv-dur-scene) var(--nv-ease-out) 150ms both; }
 ::view-transition-new(noven-ide-chat) { animation: nv-ide-chat-in var(--nv-dur-scene) var(--nv-ease-out) 210ms both; }
-@keyframes nv-ide-ritual-out { to { opacity: 0; transform: translateY(12px) scale(.99); } }
 @keyframes nv-ide-seed-lift {
   30% { opacity: 1; transform: translateY(-18px) scale(1.05); filter: drop-shadow(0 16px 30px rgba(28,64,51,.2)); }
   to { opacity: 0; transform: translateY(-34px) scale(1.08); filter: drop-shadow(0 24px 44px rgba(28,64,51,0)); }
