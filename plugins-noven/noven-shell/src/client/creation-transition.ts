@@ -79,6 +79,10 @@ export async function enterConversationScene(commit: () => Promise<boolean>): Pr
     if (page !== null) page.style.viewTransitionName = ''
     for (const el of exits) el.style.viewTransitionName = ''
   }
+  // The sheet drops (shared old(noven-create-page) keyframes); the desk
+  // underneath returns to focus in this scene too.
+  const root = document.documentElement
+  root.setAttribute(SCENE_ATTRIBUTE, 'conversation')
   const transition = documentWithTransition.startViewTransition(async () => {
     try {
       result = await commit()
@@ -94,6 +98,7 @@ export async function enterConversationScene(commit: () => Promise<boolean>): Pr
     if (target !== null) target.style.viewTransitionName = COMPOSER_TRANSITION
   })
   await transition.finished.catch(() => undefined)
+  if (root.getAttribute(SCENE_ATTRIBUTE) === 'conversation') root.removeAttribute(SCENE_ATTRIBUTE)
   clearNames()
   return result
 }
@@ -123,6 +128,10 @@ export async function enterHandcraftScene(source: HTMLElement, commit: () => Pro
   source.style.viewTransitionName = SEED_TRANSITION
   const regions: HTMLElement[] = []
   let result = false
+  // The sheet drops (shared old(noven-create-page) keyframes); the incoming
+  // IDE is the desk returning to focus beneath it.
+  const root = document.documentElement
+  root.setAttribute(SCENE_ATTRIBUTE, 'handcraft')
   const transition = documentWithTransition.startViewTransition(async () => {
     try {
       result = await commit()
@@ -146,6 +155,7 @@ export async function enterHandcraftScene(source: HTMLElement, commit: () => Pro
     }
   })
   await transition.finished.catch(() => undefined)
+  if (root.getAttribute(SCENE_ATTRIBUTE) === 'handcraft') root.removeAttribute(SCENE_ATTRIBUTE)
   for (const el of regions) el.style.viewTransitionName = ''
   if (page !== null) page.style.viewTransitionName = ''
   source.style.viewTransitionName = ''
@@ -153,9 +163,9 @@ export async function enterHandcraftScene(source: HTMLElement, commit: () => Pro
 }
 
 /**
- * Reveal the creation page from wherever the viewer stands: the work layer
- * sinks and dims while the ritual page blooms up from below. The page carries
- * its view-transition-name in CSS, so no naming step is needed on either side.
+ * Reveal the creation page from wherever the viewer stands: the sheet rises
+ * from below while the desk underneath recedes and dims. The page carries its
+ * view-transition-name in CSS, so no naming step is needed on either side.
  * The panel commit runs inside the update, per the capture rule above.
  * @param commit - the synchronous panel commit (selectPanel(CREATE_ID)).
  * @returns settlement of the scene (immediately without the API or under reduced motion).

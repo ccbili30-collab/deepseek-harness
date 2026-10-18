@@ -232,19 +232,25 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 ::view-transition-old(noven-create-paths) { animation: nv-create-paths-out 260ms var(--nv-ease-in) 40ms both; }
 @keyframes nv-create-intro-out { to { opacity: 0; transform: translateY(-16px); } }
 @keyframes nv-create-paths-out { to { opacity: 0; transform: translateY(12px); } }
-/* Entry/exit scene: arriving on the creation page sinks the work layer and
-   blooms the page up; leaving it plays the page's own dissolve (the shared
-   old(noven-create-page) keyframes), never the Session page turn. The
-   pseudo-elements hang off the root element, so the attribute selector sits
-   directly on it (same shape as the page-turn rules in AppFrame). */
-html[data-create-scene='enter']::view-transition-old(noven-work) { animation: nv-create-stage-out 340ms var(--nv-ease-in) both; }
-html[data-create-scene='enter']::view-transition-new(noven-create-page) { animation: nv-create-page-in 380ms var(--nv-ease-out) both; }
-@keyframes nv-create-stage-out { to { opacity: 0; transform: translateY(28px) scale(.988); } }
-@keyframes nv-create-page-in { from { opacity: 0; transform: translateY(18px) scale(.985); } }
+/* Paper & desk: the creation page is a sheet that rises from below and covers
+   the desk; leaving replays the same path downward. The desk (the Session work
+   layer) never travels — it only recedes and dims under the sheet, then
+   returns to focus. Both legs are one gesture played forwards and backwards:
+   same axis, same curve, same durations. */
+::view-transition-old(noven-create-page) { animation: nv-sheet-drop 400ms cubic-bezier(.2,.72,.12,1) both; }
+html[data-create-scene='enter']::view-transition-new(noven-create-page) { animation: nv-sheet-rise 400ms cubic-bezier(.2,.72,.12,1) both; }
+html[data-create-scene='enter']::view-transition-old(noven-work) { animation: nv-desk-recede 380ms var(--nv-ease-out) both; }
+html[data-create-scene='conversation']::view-transition-new(noven-work) { animation: nv-desk-focus 380ms var(--nv-ease-out) both; }
+html[data-create-scene='handcraft']::view-transition-new(noven-work) { animation: nv-desk-focus 380ms var(--nv-ease-out) both; }
+@keyframes nv-sheet-rise { from { opacity: 0; transform: translateY(28px) scale(.98); } }
+@keyframes nv-sheet-drop { to { opacity: 0; transform: translateY(28px) scale(.98); } }
+@keyframes nv-desk-recede { to { opacity: .85; transform: scale(.985); } }
+@keyframes nv-desk-focus { from { opacity: .85; transform: scale(.985); } }
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(noven-create-composer), ::view-transition-old(noven-create-composer), ::view-transition-new(noven-create-composer),
   ::view-transition-old(noven-create-intro), ::view-transition-old(noven-create-paths),
-  ::view-transition-old(noven-work), ::view-transition-new(noven-create-page) { animation: none; }
+  ::view-transition-old(noven-create-page), ::view-transition-new(noven-create-page),
+  ::view-transition-old(noven-work), ::view-transition-new(noven-work) { animation: none; }
 }
 
 /* Creation ritual: one quiet thought field, then two explicit working paths.
@@ -296,16 +302,15 @@ html[data-create-scene='enter']::view-transition-new(noven-create-page) { animat
 .nv-create-path:hover .nv-create-path-arrow { transform: translate(2px,-2px); color: var(--nv-accent-deep); }
 .nv-create-inline-error { width: min(780px,100%); margin: -8px auto 0; font-size: 11.5px; color: var(--nv-danger); }
 /* Handcraft scene (creation-transition.ts): the clicked card lifts as the
-   seed while the ritual page dissolves beneath it; the IDE then lands region
-   by region — drawer, canvas, conversation. One View Transition carries the
-   whole commit, so the Session's default page turn never runs underneath. */
-::view-transition-old(noven-create-page) { animation: nv-ide-ritual-out 300ms var(--nv-ease-in) 70ms both; }
+   seed while the ritual page drops away as the shared sheet (the general
+   old(noven-create-page) rule); the IDE then lands region by region — drawer,
+   canvas, conversation. One View Transition carries the whole commit, so the
+   Session's default page turn never runs underneath. */
 ::view-transition-old(noven-handcraft-seed) { animation: nv-ide-seed-lift 340ms var(--nv-ease-out) both; }
 ::view-transition-group(noven-handcraft-seed) { z-index: 3; }
 ::view-transition-new(noven-ide-drawer) { animation: nv-ide-drawer-in var(--nv-dur-scene) var(--nv-ease-out) 90ms both; }
 ::view-transition-new(noven-ide-canvas) { animation: nv-ide-canvas-in var(--nv-dur-scene) var(--nv-ease-out) 150ms both; }
 ::view-transition-new(noven-ide-chat) { animation: nv-ide-chat-in var(--nv-dur-scene) var(--nv-ease-out) 210ms both; }
-@keyframes nv-ide-ritual-out { to { opacity: 0; transform: translateY(12px) scale(.99); } }
 @keyframes nv-ide-seed-lift {
   30% { opacity: 1; transform: translateY(-18px) scale(1.05); filter: drop-shadow(0 16px 30px rgba(28,64,51,.2)); }
   to { opacity: 0; transform: translateY(-34px) scale(1.08); filter: drop-shadow(0 24px 44px rgba(28,64,51,0)); }

@@ -42,6 +42,18 @@
   transition: none;
 }
 
+/* A scene owns the frame while it runs: its geometry (a surface's panel or
+   canvas closing behind a sheet, a Session's layout returning) must land with
+   the capture, not ease underneath the named animations — an eased column
+   would slide the centred content sideways while the sheet is only supposed
+   to rise or drop. */
+:global(html[data-create-scene]) .frame[data-animating],
+:global(html[data-create-scene]) .work[data-animating],
+:global(html[data-panel-handoff]) .frame[data-animating],
+:global(html[data-panel-handoff]) .work[data-animating] {
+  transition: none;
+}
+
 /* The Windows caption row remains outside every conversation and file panel. */
 :global([data-windows-titlebar]) .frame {
   --dsh-windows-content-radius: 16px;
@@ -350,13 +362,13 @@
 @keyframes noven-page-out-down { to { transform: translateY(100%); filter: brightness(0.92); } }
 @keyframes noven-page-in-down { from { transform: translateY(-100%); } }
 
-/* Panel→Session hand-off: the panel's page exits through its own keyframes
-   (host-owned); the returning work layer rises into place — the mirror of the
-   creation page's entrance, so arriving at and leaving the page read as one
-   gesture. */
-@keyframes noven-work-rise { from { opacity: 0; transform: translateY(18px) scale(0.988); } }
+/* Panel→Session hand-off: the panel's page is a sheet dropping away (host-
+   owned keyframes on its named page); the work layer underneath never
+   travels — it returns from receded-dim to focus, the exact reverse of the
+   recede it played when the sheet covered it. */
+@keyframes noven-work-focus { from { opacity: 0.85; transform: scale(0.985); } }
 :global(html[data-panel-handoff]::view-transition-new(noven-work)) {
-  animation-name: noven-work-rise;
+  animation-name: noven-work-focus;
   animation-duration: 380ms;
   animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
 }

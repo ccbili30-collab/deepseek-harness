@@ -1816,6 +1816,9 @@ export function apply(ctx: ClientContext): void {
   }, 'noven-shell: new session surface')
   // Archiving the Session on stage with no live row left clears the selection;
   // the viewer lands on the creation page instead of an empty main view.
+  // A running creation scene owns navigation: the transient empty selection
+  // inside its commit must not be mistaken for that landing.
+  const inCreateScene = (): boolean => document.documentElement.hasAttribute('data-create-scene')
   ctx.effect(() => {
     let previous: SessionId | undefined
     const reconcile = (): void => {
@@ -1824,7 +1827,7 @@ export function apply(ctx: ClientContext): void {
       const archived = new Set<string>(
         (ctx.get('workspaces') as IWorkspaces | undefined)?.list.getSnapshot().archivedSessionIds ?? [],
       )
-      if (current === undefined && previous !== undefined && archived.has(previous)
+      if (!inCreateScene() && current === undefined && previous !== undefined && archived.has(previous)
         && ctx.layout.panelInfo.getSnapshot().activePanelId === null) {
         onCreateSurface()
       }
@@ -1836,22 +1839,26 @@ export function apply(ctx: ClientContext): void {
     reconcile()
     return () => { stopSessions(); stopWorkspaces?.() }
   }, 'noven-shell: archive fallback surface')
-  // A blank Session has no page of its own: it is the creation page's
-  // composer host, so whenever the main view would show it (its tree row, a
-  // restore, any other route) the creation page takes the stage instead.
+  // A restored blank Session would show the retired empty-session page: on the
+  // first main selection after startup, route it to the creation page. This is
+  // deliberately one-shot — later blank main views belong to their surface
+  // (handcraft's IDE hosts one), and a standing watch would hijack them.
   ctx.effect(() => {
-    const reconcile = (): void => {
+    let done = false
+    const finish = (): void => { done = true }
+    const check = (): void => {
+      if (done || inCreateScene()) return
       const list = ctx.sessions.list.getSnapshot()
       const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
-      if (current?.blank !== true) return
-      if (ctx.layout.panelInfo.getSnapshot().activePanelId !== null) return
-      onCreateSurface()
+      if (current === undefined) return
+      finish()
+      if (current.blank === true && ctx.layout.panelInfo.getSnapshot().activePanelId === null) onCreateSurface()
     }
-    const stopSessions = ctx.sessions.list.subscribe(reconcile)
-    const stopPanel = ctx.layout.panelInfo.subscribe(reconcile)
-    reconcile()
-    return () => { stopSessions(); stopPanel() }
-  }, 'noven-shell: blank surface routing')
+    const stop = ctx.sessions.list.subscribe(check)
+    const timer = window.setTimeout(finish, 5000)
+    check()
+    return () => { stop(); window.clearTimeout(timer) }
+  }, 'noven-shell: restored blank surface')
   const NAV: readonly { id: MainPanelId; order: number; label: () => string; Icon: (p: { size: number; active: boolean }) => React.ReactNode }[] = [
     { id: CREATE_ID, order: 5, label: () => t('nav.create'), Icon: CreateIcon },
     { id: HOME_ID, order: 10, label: () => t('nav.home'), Icon: HomeIcon },
