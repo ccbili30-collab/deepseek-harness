@@ -1407,6 +1407,9 @@ export function apply(ctx: ClientContext): void {
     ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { panel?: 'preserve', transition?: 'none' }) => void)(
       sessionId, { transition: 'none' },
     )
+    // 画布的抬起/停靠归会话 surface、不进几何种子：手作把复用空白的画布抬起来过，
+    // 直接对话必须把它收回停靠，否则对话被挤成窄条、整页是导航展开+画布大开的缝合态。
+    setCanvasParked(sessionId, true)
   }
 
   /**
