@@ -1483,6 +1483,11 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   opacity: 0; transform: translateX(16px); pointer-events: none;
   transition: opacity 160ms ease, transform 160ms ease; }
 .nv-doc-panel-open { opacity: 1; transform: none; pointer-events: auto; }
+/* 边缘拖拽把手：左缘改宽、下缘改高、右下角同时改 */
+.nv-doc-resize { position: absolute; z-index: 2; }
+.nv-doc-resize-l { left: 0; top: 0; bottom: 14px; width: 7px; cursor: ew-resize; }
+.nv-doc-resize-b { left: 14px; right: 0; bottom: 0; height: 7px; cursor: ns-resize; }
+.nv-doc-resize-c { left: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
 .nv-doc-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 10px;
   cursor: grab; touch-action: none; user-select: none; }
 .nv-doc-panel-head:active { cursor: grabbing; }

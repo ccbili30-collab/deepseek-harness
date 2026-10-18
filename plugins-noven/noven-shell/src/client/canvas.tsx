@@ -35,6 +35,9 @@ import { useSessionSettings } from './session-settings.tsx'
 const RICH_TEXT_PATH = /\.(md|markdown)$/i
 /** 文稿缩放记忆（全局，跨页签/重启保留）。 */
 const DOC_ZOOM_KEY = 'noven.doc.zoom'
+/** 大纲浮窗尺寸记忆（全局）。 */
+const PANEL_W_KEY = 'noven.doc.panel.w'
+const PANEL_H_KEY = 'noven.doc.panel.h'
 
 /** 文件行的标签种类：可编辑文本走文稿编辑器，其余（HTML/图片/二进制）走画框预览。 */
 export const fileTabKind = (path: string): 'doc' | 'work' =>
@@ -746,6 +749,18 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   const [panelOffset, setPanelOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 })
   const dragRef = useRef<{ px: number, py: number, ox: number, oy: number } | null>(null)
   const justDragged = useRef(false)
+  const [panelW, setPanelW] = useState<number>(() => {
+    const raw = Number(window.localStorage.getItem(PANEL_W_KEY))
+    return Number.isFinite(raw) && raw >= 220 && raw <= 600 ? raw : 300
+  })
+  const [panelH, setPanelH] = useState<number | undefined>(() => {
+    const raw = Number(window.localStorage.getItem(PANEL_H_KEY))
+    return Number.isFinite(raw) && raw >= 200 ? raw : undefined
+  })
+  useEffect(() => { window.localStorage.setItem(PANEL_W_KEY, String(panelW)) }, [panelW])
+  useEffect(() => {
+    if (panelH !== undefined) window.localStorage.setItem(PANEL_H_KEY, String(panelH))
+  }, [panelH])
   const closeTimer = useRef<number | undefined>(undefined)
   const [zoom, setZoom] = useState<number>(() => {
     try {
@@ -819,6 +834,33 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   const jumpToHeading = (id: string): void => {
     const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(id)}"]`)
     element?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }
+  // 面板改尺寸：左缘改宽、下缘改高、右下角同时改；窗口级监听，尺寸持久化。
+  const startPanelResize = (axis: 'x' | 'y' | 'xy') => (event: React.PointerEvent<HTMLSpanElement>): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    const panelElement = event.currentTarget.closest('.nv-doc-panel')
+    const host = event.currentTarget.closest('.nv-ed')?.getBoundingClientRect()
+    const start = {
+      px: event.clientX, py: event.clientY,
+      w: panelW,
+      h: panelElement?.getBoundingClientRect().height ?? 400,
+    }
+    const move = (moveEvent: PointerEvent): void => {
+      if (axis !== 'y') setPanelW(Math.min(600, Math.max(220, start.w + (start.px - moveEvent.clientX))))
+      if (axis !== 'x') {
+        const maxH = Math.max(200, (host?.height ?? 700) - 108)
+        setPanelH(Math.min(maxH, Math.max(200, start.h + (moveEvent.clientY - start.py))))
+      }
+    }
+    const up = (): void => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      justDragged.current = true
+      if (closeTimer.current !== undefined) { window.clearTimeout(closeTimer.current); closeTimer.current = undefined }
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
   }
   // 面板拖动：窗口级监听（指针移出面板也能跟手）；松手后不自动收起（用户刚拖过它）。
   const startPanelDrag = (event: React.PointerEvent<HTMLDivElement>): void => {
@@ -919,8 +961,15 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
           </div>
           {/* 唤出：大纲面板 */}
           <div className={`nv-doc-panel${panelOpen ? ' nv-doc-panel-open' : ''}`}
-            style={panelOpen ? { transform: `translate(${String(panelOffset.x)}px, ${String(panelOffset.y)}px)` } : undefined}
+            style={{
+              width: panelW,
+              ...(panelH === undefined ? {} : { height: panelH, bottom: 'auto' as const }),
+              ...(panelOpen ? { transform: `translate(${String(panelOffset.x)}px, ${String(panelOffset.y)}px)` } : {}),
+            }}
             onPointerEnter={openPanel} onPointerLeave={scheduleClose}>
+            <span className="nv-doc-resize nv-doc-resize-l" onPointerDown={startPanelResize('x')} />
+            <span className="nv-doc-resize nv-doc-resize-b" onPointerDown={startPanelResize('y')} />
+            <span className="nv-doc-resize nv-doc-resize-c" onPointerDown={startPanelResize('xy')} />
             <div className="nv-doc-panel-head" onPointerDown={startPanelDrag}>
               <span className="nv-doc-panel-title">{t('canvas.outline')}</span>
               <button type="button" className={`nv-doc-panel-pin${pinned ? ' nv-doc-panel-pin-on' : ''}`}
