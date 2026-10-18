@@ -1491,7 +1491,12 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-doc-outline-item[data-level='2'] { padding-left: 20px; }
 .nv-doc-outline-item[data-level='3'] { padding-left: 32px; }
 .nv-doc-bn { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--nv-surface); font-family: inherit; }
-.nv-doc-bn .bn-container { min-height: 100%; }
+.nv-doc-bn .bn-container { min-height: 100%; width: 100%; }
+.nv-doc-bn .bn-container .bn-editor { width: 100%; max-width: none; }
+/* 标题字号收敛：满幅纸上 3em 的 H1 会一行只容五六字 */
+.nv-doc-bn .bn-block-content[data-content-type='heading'][data-level='1'] { font-size: 2em !important; }
+.nv-doc-bn .bn-block-content[data-content-type='heading'][data-level='2'] { font-size: 1.5em !important; }
+.nv-doc-bn .bn-block-content[data-content-type='heading'][data-level='3'] { font-size: 1.25em !important; }
 /* 选区高亮 = 薄荷绿（半透明，白底上不吞字）；块内所有行内元素共用 */
 .nv-doc-bn ::selection { background: rgba(52, 211, 153, .30); color: inherit; }
 .nv-doc-bn ::-moz-selection { background: rgba(52, 211, 153, .30); color: inherit; }

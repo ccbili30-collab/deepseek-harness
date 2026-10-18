@@ -737,6 +737,7 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   const [renaming, setRenaming] = useState(false)
   const [outline, setOutline] = useState<readonly OutlineItem[]>([])
   const [activeHeading, setActiveHeading] = useState<string | undefined>(undefined)
+  const [liveCount, setLiveCount] = useState<number | undefined>(undefined)
   const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const entry = useDocs(s => s[docKey(sessionId, path)])
   useEffect(() => { ensureDoc(sessionId, path) }, [sessionId, path, ensureDoc])
@@ -797,7 +798,7 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
         ) : (
           <h1 className="nv-ed-title">{name}</h1>
         )}
-        <div className="nv-ed-meta">{metaOf([t('tree.docs'), fmt(t, 'editor.wordcount', { count: wordCount(base) })])}</div>
+        <div className="nv-ed-meta">{metaOf([t('tree.docs'), fmt(t, 'editor.wordcount', { count: liveCount ?? wordCount(base) })])}</div>
         <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => { arm.reset(); setMenuOpen(false) }}
           onSelect={id => {
@@ -819,7 +820,7 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
       </header>
       {RICH_TEXT_PATH.test(path)
         ? <BlockNoteDocEditor markdown={base} onChange={text => { void saveText(text) }}
-            onOutline={setOutline} onActive={setActiveHeading} />
+            onOutline={setOutline} onActive={setActiveHeading} onWordCount={setLiveCount} />
         : <BlockEditor blocks={docBlocks(base)} labels={mdLabels} t={t} onSaveBlock={saveBlock} onAdd={addBlock} />}
       </div>
       {RICH_TEXT_PATH.test(path) && (

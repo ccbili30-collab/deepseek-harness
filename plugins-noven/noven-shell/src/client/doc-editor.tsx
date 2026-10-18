@@ -8,6 +8,7 @@ import type { Block } from '@blocknote/core'
 import { zh } from '@blocknote/core/locales'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
+import { wordCount } from './editor.tsx'
 import { BLOCKNOTE_CSS } from './doc-blocknote-css.ts'
 
 /** 标题树的一项：块 id、层级与文字。 */
@@ -27,6 +28,16 @@ function inlineText(content: unknown): string {
     if (!isRecord(item)) continue
     if (typeof item['text'] === 'string') text += item['text']
     else if (item['content'] !== undefined) text += inlineText(item['content'])
+  }
+  return text
+}
+
+/** 文档全部块的平面文字（含递归子块），供实时字数统计。 */
+function plainTextOf(blocks: readonly Block[]): string {
+  let text = ''
+  for (const block of blocks) {
+    text += `${inlineText(block.content)}\n`
+    text += plainTextOf(block.children)
   }
   return text
 }
@@ -62,9 +73,11 @@ function useBlockNoteStyles(): void {
  * @param outlineLabel - 标题树的标题文案（locale 归调用方）。
  * @param onChange - 防抖后的 markdown 快照。
  */
-export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive }: {
+export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, onWordCount }: {
   readonly markdown: string
   readonly onChange: (markdown: string) => void
+  /** 每次内容变化后的实时字数（页签头显示，不依赖存盘）。 */
+  readonly onWordCount: (count: number) => void
   /** 标题树数据交给页签层渲染（树在页签右上角，不占编辑器列）。 */
   readonly onOutline: (items: readonly OutlineItem[]) => void
   /** 滚动时当前所在标题；undefined = 视口在第一个标题之上。 */
@@ -86,7 +99,8 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive }: 
     const items = outlineOf(editor.document)
     itemsRef.current = items
     onOutline(items)
-  }, [editor, markdown, onOutline])
+    onWordCount(wordCount(plainTextOf(editor.document)))
+  }, [editor, markdown, onOutline, onWordCount])
   useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
   const trackActive = useCallback(() => {
     const view = scroller.current
@@ -110,6 +124,7 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive }: 
           const items = outlineOf(editor.document)
           itemsRef.current = items
           onOutline(items)
+          onWordCount(wordCount(plainTextOf(editor.document)))
           if (timer.current !== undefined) window.clearTimeout(timer.current)
           timer.current = window.setTimeout(() => {
             timer.current = undefined
