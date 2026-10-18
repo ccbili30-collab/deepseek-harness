@@ -998,7 +998,7 @@ export function ContentTree(props: TreeProps) {
   }), [props.openDoc, embedTargets, props.renameFile, props.deleteFile, props.present])
   /** 无项目态：中部圆钮替代底部新建条（建出内容后新建回到底部长条）。 */
   const noProject = filtered === undefined
-  const title = project?.title ?? (project === undefined ? t('tree.noProject') : project.root.split('/').filter(Boolean).pop() ?? project.root)
+  const title = project?.title ?? (project === undefined ? t('tree.archive') : project.root.split('/').filter(Boolean).pop() ?? project.root)
 
   const collapsedSet = useMemo(() => new Set(prefs.collapsed), [prefs])
   const toggleGroup = (key: string): void => {
@@ -1178,9 +1178,11 @@ export function ContentTree(props: TreeProps) {
       </div>
       <div className="nv-tree-scroll">
         {noProject && (
-          <div className="nv-tree-orbwrap">
-            <button type="button" className="nv-tree-orb" onClick={() => props.openCreate('world')}>
-              <span className="nv-tree-orbplus">＋</span>
+          // 空抽屉只说一件事：这里能新建。文案与案头同一口径——"没有项目"
+          // 只在案头解释一次，抽屉不再复读。
+          <div className="nv-tree-newrowwrap">
+            <button type="button" className="nv-tree-newrow" onClick={() => props.openCreate('world')}>
+              <span className="nv-tree-newrowplus" aria-hidden="true">＋</span>
               <span>{t('tree.new')}</span>
             </button>
           </div>

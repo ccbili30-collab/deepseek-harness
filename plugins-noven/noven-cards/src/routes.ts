@@ -414,15 +414,23 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
         if (kind !== 'WORLD' && kind !== 'CHARACTER') return bad('invalid kind')
         if (name.length === 0) return bad('missing name')
         if (!['blank', 'interview'].includes(starter) && !starter.startsWith('template:')) return bad('invalid starter')
-        if (starter.startsWith('template:')) return new Response('模板库尚未实现（P0.7 预留）', { status: 501, headers: JSON_HEADERS })
-        const document = emptyCardDocument(kind, name)
-        if (kind === 'WORLD') {
+        const template = starter.startsWith('template:') ? starter.slice('template:'.length) : undefined
+        const prepared = template === undefined
+          ? { document: emptyCardDocument(kind, name) }
+          : templateCardDocument(kind, name, template)
+        if (prepared === undefined) return bad('invalid template')
+        const { document } = prepared
+        if (kind === 'WORLD' && template === undefined) {
           // 契约 C7：世界卡的 blank/interview 起手带一个「设定总览」模块——
           // widget.type='overview' 标它是卡的聚合页（重命名不失效）；角色卡保持空卡（Q4）。
           document.modules.push({ id: mintId(), name: '设定总览', tags: [], children: [], layout: 'VERTICAL', characterIds: [], blocks: [], widget: { type: 'overview' } })
         }
         const saved: SavedCard = await store.saveNew(document, 'HUMAN')
-        return new Response(JSON.stringify({ ok: true, cardId: saved.cardId, revision: saved.revision, starter, ...(starter === 'interview' ? { interview: true } : {}) }), { headers: JSON_HEADERS })
+        return new Response(JSON.stringify({
+          ok: true, cardId: saved.cardId, revision: saved.revision, starter,
+          ...(starter === 'interview' ? { interview: true } : {}),
+          ...(prepared.focusModuleId === undefined ? {} : { focusModuleId: prepared.focusModuleId }),
+        }), { headers: JSON_HEADERS })
       }
       case 'apply': {
         const command = body.command
@@ -535,6 +543,36 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
     }
     return new Response(error instanceof Error ? error.message : 'card op failed', { status: 500, headers: JSON_HEADERS })
   }
+}
+
+/** 预制卡骨架：`template:world` / `template:character` 落一组命名模块，用户进门即有结构可填。
+ *  单模块模板（timeline/map/collection）落一张含该模块的卡，并把模块 id 回给客户端直开模块页。 */
+function templateCardDocument(kind: 'WORLD' | 'CHARACTER', name: string, template: string): { document: ContentDocument, focusModuleId?: string } | undefined {
+  const skeletons: Readonly<Record<string, readonly { name: string, widget?: string }[]>> = {
+    world: [{ name: '世界规则' }, { name: '地理与势力' }, { name: '历史与传说' }],
+    character: [{ name: '外貌与气质' }, { name: '性格与动机' }, { name: '背景故事' }, { name: '人际关系' }],
+    timeline: [{ name: '时间线', widget: 'timeline' }],
+    map: [{ name: '地图', widget: 'map' }],
+    collection: [{ name: '集合', widget: 'collection' }],
+  }
+  const modules = skeletons[template]
+  if (modules === undefined) return undefined
+  const templateKind: 'WORLD' | 'CHARACTER' = template === 'character' ? 'CHARACTER' : 'WORLD'
+  if (templateKind !== kind) return undefined
+  const document = emptyCardDocument(kind, name)
+  if (kind === 'WORLD') {
+    document.modules.push({ id: mintId(), name: '设定总览', tags: [], children: [], layout: 'VERTICAL', characterIds: [], blocks: [], widget: { type: 'overview' } })
+  }
+  let focusModuleId: string | undefined
+  for (const module of modules) {
+    const id = mintId()
+    document.modules.push({
+      id, name: module.name, tags: [], children: [], layout: 'VERTICAL', characterIds: [], blocks: [],
+      ...(module.widget === undefined ? {} : { widget: { type: module.widget } }),
+    })
+    if (module.widget !== undefined) focusModuleId = id
+  }
+  return { document, ...(focusModuleId === undefined ? {} : { focusModuleId }) }
 }
 
 /** Register the card HTTP route against the connection's fetch registry. */

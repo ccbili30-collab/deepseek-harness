@@ -155,6 +155,8 @@ export interface CardOpResult {
   readonly name?: string
   /** Create op with starter 'interview': the client should send the preset prompt. */
   readonly interview?: boolean
+  /** 单模块模板（时间线/地图/集合）：落卡后直接打开这个模块页。 */
+  readonly focusModuleId?: string
 }
 
 /** Apply one card op; throws CardConflict on a stale version so callers can refetch. */

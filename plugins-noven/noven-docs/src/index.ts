@@ -9,9 +9,10 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool } from '@deepseek-ai/dsh-tools'
+import { registerDocsRoutes } from './routes.ts'
 
 export const name = 'noven-docs'
-export const inject = ['tools']
+export const inject = ['tools', 'connection']
 
 const DOCS_DIR = fileURLToPath(new URL('../docs/', import.meta.url))
 
@@ -45,8 +46,9 @@ export const TOPICS: readonly Topic[] = [
   { slug: 'troubleshooting', file: 'troubleshooting.md', summary: '排查与自愈：卡不存在、版本冲突、挂载异常时的诊断顺序' },
 ]
 
-/** Register the help tool. */
+/** Register the help tool and the manual's HTTP face. */
 export function apply(ctx: Context): void {
+  registerDocsRoutes(ctx)
   ctx.tools.register(defineTool({
     name: 'help',
     description: '查阅本软件的内置手册。用户问「怎么用/这是什么功能」，或你不确定某个功能怎么工作时，先查这里再回答——别凭印象。不传 topic 返回目录，传 topic 返回对应文档全文，内容可以直接转述给用户。',
