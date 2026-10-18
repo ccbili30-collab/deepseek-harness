@@ -209,3 +209,46 @@ export function PlainTextDocEditor({ text, onChange }: {
       }} />
   )
 }
+
+/**
+ * 卡内模块的正文编辑器：与文稿同一套 BlockNote，读写 markdown。
+ * 卡系统按模块保存（write_markdown 整模块替换），所以这里只负责"文本 ↔ 块"；
+ * 图片块以 `card-image:<resourceId>#<blockId>` 语法随行，保存时由卡系统还原成图片块。
+ * @param markdown - 模块当前正文（图片行含 card-image 语法）。
+ * @param onSave - 防抖后的整模块 markdown 快照。
+ */
+export function CardMarkdownEditor({ markdown, onSave }: {
+  readonly markdown: string
+  readonly onSave: (markdown: string) => void
+}) {
+  useBlockNoteStyles()
+  const editor = useCreateBlockNote({ dictionary: zh })
+  const loaded = useRef(false)
+  const last = useRef(markdown)
+  const timer = useRef<number | undefined>(undefined)
+  useLayoutEffect(() => {
+    if (loaded.current) return
+    loaded.current = true
+    const blocks = editor.tryParseMarkdownToBlocks(markdown)
+    if (blocks.length > 0) editor.replaceBlocks(editor.document, blocks)
+  }, [editor, markdown])
+  useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
+  return (
+    <div className="nv-card-bn">
+      <BlockNoteView
+        editor={editor}
+        theme="light"
+        onChange={() => {
+          if (timer.current !== undefined) window.clearTimeout(timer.current)
+          timer.current = window.setTimeout(() => {
+            timer.current = undefined
+            const text = editor.blocksToMarkdownLossy()
+            if (text === last.current) return
+            last.current = text
+            onSave(text)
+          }, 800)
+        }}
+      />
+    </div>
+  )
+}

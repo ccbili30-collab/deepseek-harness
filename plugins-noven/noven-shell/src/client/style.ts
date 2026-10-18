@@ -1506,6 +1506,10 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-doc-panel-item[data-level='3'] { padding-left: 36px; }
 .nv-doc-bn { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--nv-surface); font-family: inherit; }
 .nv-doc-bn .bn-container { min-height: 100%; width: 100%; }
+/* 卡内模块正文（BlockNote）：盒内富文本，无页签级大纲 */
+.nv-card-bn { font-family: inherit; }
+.nv-card-bn .bn-container { width: 100%; }
+.nv-card-bn .bn-editor { padding: 6px 2px 12px; max-width: none; margin: 0; font-family: inherit; font-size: 14px; }
 /* 纯文本编辑面（代码/配置）：等宽、原样进出 */
 .nv-doc-plain { flex: 1; min-height: 0; border: 0; resize: none; padding: 16px 28px 80px; box-sizing: border-box;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.7;
