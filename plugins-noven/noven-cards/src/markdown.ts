@@ -7,7 +7,16 @@
 
 import { mintId, flattenModules, type ContentBlock, type ContentDocument } from './model.ts'
 
-const IMAGE_LINE = /^!\[([^\]]*)\]\(card-image:([^)#\s]+?)(?:#([^\)\s]+))?\)$/
+const IMAGE_LINE = /^!\[([^\]]*)\]\(card-image:([^)#\s]+?)(?:#([^\)\s]+))?(?:\s+"([^"]*)")?\)$/
+const WIDTH_TITLE = /^w=(\d{1,3})%$/
+
+/** @param title - 图片行 title @returns 宽度百分比（10–100）；非宽度 title 返回 undefined */
+function widthOfTitle(title: string | undefined): number | undefined {
+  if (title === undefined) return undefined
+  const match = WIDTH_TITLE.exec(title.trim())
+  if (match === null) return undefined
+  return Math.min(100, Math.max(10, Math.round(Number(match[1]))))
+}
 
 /**
  * 把一段 Markdown 正文解析成块序列。
@@ -43,18 +52,20 @@ export async function parseModuleMarkdown(
       buffer.push(line)
       continue
     }
-    const [, caption, resourceId, blockIdHint] = match
+    const [, caption, resourceId, blockIdHint, title] = match
     if (!resourceIds.has(resourceId)) throw new Error(`图片必须引用本卡资源：${resourceId}`)
     await flush()
     const reused = blockIdHint !== undefined
       ? knownImageBlocks.get(`${resourceId}#${blockIdHint}`)
       : undefined
     const captionRef = caption.length > 0 ? await writeText(caption) : undefined
+    const width = widthOfTitle(title)
     blocks.push({
       kind: 'image',
       id: reused ?? blockIdHint ?? mintId(),
       resourceId,
       ...(captionRef !== undefined ? { caption: captionRef } : {}),
+      ...(width !== undefined ? { width } : {}),
     })
   }
   await flush()

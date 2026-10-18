@@ -65,6 +65,9 @@ for (const rel of TOOL_SOURCES) {
   for (const m of text.matchAll(/name: '([a-z_]+)'/g)) tools.add(m[1])
   for (const m of text.matchAll(/registerEditTool\(tools, '([a-z_]+)'/g)) tools.add(m[1])
 }
+// 卡编辑器命令（write_markdown/adopt_image 等）：文档里以命令名出现，同属真实 API 词汇。
+const editorSrc = readFileSync(join(PLUGINS, 'noven-cards/src/editor.ts'), 'utf8')
+for (const m of editorSrc.matchAll(/kind: '([a-z_]+)'/g)) tools.add(m[1])
 // 命令与技能（name 是常量引用，源码里刮不到字面量）
 const COMMANDS = new Set(['/draw-comic', '/study'])
 const SKILLS = new Set(['noven-draw-comic', 'noven-study'])

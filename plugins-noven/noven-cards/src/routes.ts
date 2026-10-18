@@ -119,7 +119,7 @@ async function hydrateModules(store: CardStore, cardId: string, modules: readonl
   const walk = async (module: ContentModule): Promise<HydratedModule> => {
     const blocks = await Promise.all(module.blocks.map(async (block): Promise<HydratedBlock> => block.kind === 'text'
       ? { kind: 'text', id: block.id, text: await text(block.content), ref: block.content }
-      : { kind: 'image', id: block.id, resourceId: block.resourceId, ...(block.caption !== undefined ? { caption: await text(block.caption) } : {}) }))
+      : { kind: 'image', id: block.id, resourceId: block.resourceId, ...(block.caption !== undefined ? { caption: await text(block.caption) } : {}), ...(block.width === undefined ? {} : { width: block.width }) }))
     const decode = module.widget === undefined ? undefined : WIDGET_DECODERS[module.widget.type]
     return {
       id: module.id,

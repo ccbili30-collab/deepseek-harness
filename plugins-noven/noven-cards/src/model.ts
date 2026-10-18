@@ -15,7 +15,14 @@ export type ContentRef = string
 export type CardKind = 'WORLD' | 'CHARACTER'
 
 export interface TextBlock { readonly kind: 'text', readonly id: string, content: ContentRef }
-export interface ImageBlock { readonly kind: 'image', readonly id: string, resourceId: string, caption?: ContentRef }
+export interface ImageBlock {
+  readonly kind: 'image'
+  readonly id: string
+  resourceId: string
+  caption?: ContentRef
+  /** 展示宽度（百分比 10–100）；与 markdown 的 `"w=45%"` title 同义。 */
+  width?: number
+}
 export type ContentBlock = TextBlock | ImageBlock
 
 export type ModuleLayout = 'VERTICAL' | 'HORIZONTAL'

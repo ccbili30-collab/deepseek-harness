@@ -15,6 +15,8 @@ export interface CardBlockView {
   /** Resource id and decoded caption for image blocks. */
   readonly resourceId?: string
   readonly caption?: string
+  /** 图片展示宽度（百分比 10–100）；由 markdown 图片行的 "w=…%" title 携带。 */
+  readonly width?: number
 }
 
 export interface CardModuleDoc {

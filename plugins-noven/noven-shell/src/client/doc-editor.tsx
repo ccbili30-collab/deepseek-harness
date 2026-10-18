@@ -9,6 +9,7 @@ import { zh } from '@blocknote/core/locales'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import { wordCount } from './editor.tsx'
+import { applyImageWidths, extractImageWidths, percentToPx, pxToPercent } from './doc-image-width.ts'
 import { BLOCKNOTE_CSS } from './doc-blocknote-css.ts'
 
 /** 右缘刻度：标题在全文中的相对位置（0..1，按可滚动高度归一）。 */
@@ -36,6 +37,24 @@ function inlineText(content: unknown): string {
     else if (item['content'] !== undefined) text += inlineText(item['content'])
   }
   return text
+}
+
+/** 文档顺序里的图片块（含递归子块）——宽度桥按此顺序与 markdown 图片行对齐。 */
+function imageBlocksOf(blocks: readonly Block[]): Block[] {
+  const out: Block[] = []
+  for (const block of blocks) {
+    if (block.type === 'image') out.push(block)
+    out.push(...imageBlocksOf(block.children))
+  }
+  return out
+}
+
+/** 图片块当前的预览宽度（px）；非图片 / 未设置返回 undefined。 */
+function previewWidthOf(block: Block): number | undefined {
+  const props: unknown = block.props
+  if (!isRecord(props)) return undefined
+  const width = props['previewWidth']
+  return typeof width === 'number' && width > 0 ? width : undefined
 }
 
 /** 文档全部块的平面文字（含递归子块），供实时字数统计。 */
@@ -103,6 +122,8 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
   const loaded = useRef(false)
   const last = useRef(markdown)
   const timer = useRef<number | undefined>(undefined)
+  /** 首帧的程序化载入不算用户编辑：ready 之前不存盘，避免"打开即改写"（AI 内容尤其）。 */
+  const ready = useRef(false)
   useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
   // Ctrl/Cmd + 滚轮缩放；普通滚轮照常滚动。
   useEffect(() => {
@@ -150,8 +171,19 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
   useLayoutEffect(() => {
     if (loaded.current) return
     loaded.current = true
-    const blocks = editor.tryParseMarkdownToBlocks(markdown)
+    // 宽度约定：title 里的 w= 先剥离，块落地后按正文宽度还原成 previewWidth。
+    const extracted = extractImageWidths(markdown)
+    const blocks = editor.tryParseMarkdownToBlocks(extracted.markdown)
     if (blocks.length > 0) editor.replaceBlocks(editor.document, blocks)
+    window.setTimeout(() => {
+      const contentWidth = Math.max(120, (scroller.current?.clientWidth ?? 860) - 96)
+      imageBlocksOf(editor.document).forEach((block, index) => {
+        const width = extracted.widths[index]
+        if (width === undefined) return
+        editor.updateBlock(block.id, { type: 'image', props: { previewWidth: percentToPx(width, contentWidth) } })
+      })
+      ready.current = true
+    }, 120)
     const items = outlineOf(editor.document)
     itemsRef.current = items
     onOutline(items)
@@ -173,7 +205,13 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
           if (timer.current !== undefined) window.clearTimeout(timer.current)
           timer.current = window.setTimeout(() => {
             timer.current = undefined
-            const text = editor.blocksToMarkdownLossy()
+            if (!ready.current) return
+            const contentWidth = Math.max(120, (scroller.current?.clientWidth ?? 860) - 96)
+            const widths = imageBlocksOf(editor.document).map(block => {
+              const width = previewWidthOf(block)
+              return width === undefined ? undefined : pxToPercent(width, contentWidth)
+            })
+            const text = applyImageWidths(editor.blocksToMarkdownLossy(), widths)
             if (text === last.current) return
             last.current = text
             onChange(text)
@@ -226,15 +264,27 @@ export function CardMarkdownEditor({ markdown, onSave }: {
   const loaded = useRef(false)
   const last = useRef(markdown)
   const timer = useRef<number | undefined>(undefined)
+  const box = useRef<HTMLDivElement | null>(null)
+  const ready = useRef(false)
   useLayoutEffect(() => {
     if (loaded.current) return
     loaded.current = true
-    const blocks = editor.tryParseMarkdownToBlocks(markdown)
+    const extracted = extractImageWidths(markdown)
+    const blocks = editor.tryParseMarkdownToBlocks(extracted.markdown)
     if (blocks.length > 0) editor.replaceBlocks(editor.document, blocks)
+    window.setTimeout(() => {
+      const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
+      imageBlocksOf(editor.document).forEach((block, index) => {
+        const width = extracted.widths[index]
+        if (width === undefined) return
+        editor.updateBlock(block.id, { type: 'image', props: { previewWidth: percentToPx(width, contentWidth) } })
+      })
+      ready.current = true
+    }, 120)
   }, [editor, markdown])
   useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
   return (
-    <div className="nv-card-bn">
+    <div className="nv-card-bn" ref={box}>
       <BlockNoteView
         editor={editor}
         theme="light"
@@ -242,7 +292,13 @@ export function CardMarkdownEditor({ markdown, onSave }: {
           if (timer.current !== undefined) window.clearTimeout(timer.current)
           timer.current = window.setTimeout(() => {
             timer.current = undefined
-            const text = editor.blocksToMarkdownLossy()
+            if (!ready.current) return
+            const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
+            const widths = imageBlocksOf(editor.document).map(block => {
+              const width = previewWidthOf(block)
+              return width === undefined ? undefined : pxToPercent(width, contentWidth)
+            })
+            const text = applyImageWidths(editor.blocksToMarkdownLossy(), widths)
             if (text === last.current) return
             last.current = text
             onSave(text)

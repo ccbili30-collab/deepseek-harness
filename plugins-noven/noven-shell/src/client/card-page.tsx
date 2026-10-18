@@ -134,7 +134,7 @@ function moduleGlyph(module: CardModuleDoc, size: number): ReturnType<typeof gly
 function moduleMarkdown(blocks: readonly CardBlockView[]): string {
   return blocks.map(block => block.kind === 'text'
     ? block.text ?? ''
-    : `![${block.caption ?? ''}](card-image:${block.resourceId ?? ''}#${block.id})`).join('\n\n')
+    : `![${block.caption ?? ''}](card-image:${block.resourceId ?? ''}#${block.id}${block.width === undefined ? '' : ` "w=${String(Math.round(block.width))}%"`})`).join('\n\n')
 }
 
 /** 一个模块盒：标题（点击即改名）+ 正文（模块内富文本 / 预制模块渲染器）。
