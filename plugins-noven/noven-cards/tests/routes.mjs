@@ -98,6 +98,9 @@ try {
   const presetPayload = await (await cardRoute.fetch(new Request(`http://t/api/noven-cards?root=${encodeURIComponent(root)}&card=${presetCard.cardId}`))).json()
   check(presetPayload.card.document.modules.some(m => m.name === '势力名录' && m.widget?.type === 'collection'), '预设世界带势力名录集合模块')
   check(presetPayload.card.document.resources.length === 1, '世界预设带地图底图资源')
+  const refs = await (await cardRoute.fetch(new Request(`http://t/api/noven-cards?root=${encodeURIComponent(root)}&refs=1`))).json()
+  check(Array.isArray(refs.targets) && refs.targets.some(t => t.cardId === presetCard.cardId), '反查索引列出目标卡')
+  check((refs.backlinks?.[presetCard.cardId]?.length ?? 0) >= 10, `反查索引记录同卡引用（${refs.backlinks?.[presetCard.cardId]?.length ?? 0}）`)
 
   // 5. /api/noven-tree：聚合 + since 304
   const tree1 = await (await treeRoute.fetch(new Request(`http://t/api/noven-tree?root=${encodeURIComponent(root)}`))).json()

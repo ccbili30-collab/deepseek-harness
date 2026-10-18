@@ -6,12 +6,13 @@
  * @module noven-shell/client/card-page
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { MarkdownDelegateProvider, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardAddr, CardBlockView, CardDocView, CardModuleDoc, CardOpResult, CardState } from './card-api.ts'
 import { CardConflict, cardContentUrl, fetchCard } from './card-api.ts'
 import { findModule } from './pages/CardEditor.tsx'
 import { BlockEditor, type EditableBlock, type EditorSaveResult, type MdLabels } from './editor.tsx'
-import { CollectionWidget, MiniRelation, MiniTimeline, RelationWidget, TimelineWidget, coll, mapData, rel, tl, type WidgetSend } from './widgets.tsx'
+import { CollectionWidget, MiniRelation, MiniTimeline, RelationWidget, TimelineWidget, coll, mapData, rel, tl, type RefBacklink, type RefTarget, type WidgetSend } from './widgets.tsx'
 import { MapEditor } from './map-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
@@ -130,7 +131,7 @@ function moduleGlyph(module: CardModuleDoc, size: number): ReturnType<typeof gly
 
 /** 一个模块盒：标题（点击即改名）+ 正文（块级点编 / 预制模块渲染器）。
     子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
-function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBlock, addBlock, renameModule, removeModule, send, onOpenModule, ask, readFile, onOpenFile }: {
+function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBlock, addBlock, renameModule, removeModule, send, onOpenModule, ask, readFile, onOpenFile, refTargets }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   readonly mdLabels: MdLabels
@@ -148,6 +149,8 @@ function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBl
   readonly send: WidgetSend
   /** 打开另一个模块的页签。 */
   readonly onOpenModule: (moduleId: string) => void
+  /** 引用选择器的目标卡（项目引用索引）。 */
+  readonly refTargets?: readonly RefTarget[]
   /** 模块向本会话排一句话（AI 任务入口）。 */
   readonly ask: (text: string) => Promise<void>
   /** 读项目内文件文本（html 模块的活引用渲染）。 */
@@ -191,7 +194,7 @@ function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBl
       {widget === 'timeline' && <TimelineWidget module={module} t={t} send={send} />}
       {widget === 'relation' && <RelationWidget module={module} t={t} send={send} />}
       {widget === 'map' && <MapEditor module={module} t={t} send={send} ask={ask} imageUrl={imageUrl} imageResources={imageResources} />}
-      {widget === 'collection' && <CollectionWidget module={module} t={t} send={send} imageUrl={imageUrl} />}
+      {widget === 'collection' && <CollectionWidget module={module} t={t} send={send} imageUrl={imageUrl} refTargets={refTargets} />}
       {widget !== undefined && widget !== 'document' && widget !== 'html'
         && widget !== 'timeline' && widget !== 'relation' && widget !== 'map' && widget !== 'collection' && (
         <div className="nv-modbox-widget">
@@ -338,7 +341,7 @@ function OverviewTile({ module, t, imageUrl, onOpen }: {
  * 总览页：这张卡其余各页的成果橱窗——每页一块，只读摘要 + 迷你图 + 跳转；
  * 总览模块自己写的文字块作为页首导语（仍可直接编辑）。
  */
-function OverviewPage({ target, overviewModule, isCharacter, t, mdLabels, imageUrl, imageResources, saveBlock, addBlock, roles, rolesOpen, onToggleRoles, onOpenRole, onOpenModule, onAdd }: {
+function OverviewPage({ target, overviewModule, isCharacter, t, mdLabels, imageUrl, imageResources, saveBlock, addBlock, roles, rolesOpen, onToggleRoles, onOpenRole, onOpenModule, onAdd, backlinks, onOpenRefCard }: {
   readonly target: Omit<CardDocView, 'characters'> | CardDocView
   readonly overviewModule: CardModuleDoc | undefined
   readonly isCharacter: boolean
@@ -354,8 +357,14 @@ function OverviewPage({ target, overviewModule, isCharacter, t, mdLabels, imageU
   readonly onOpenRole: (id: string) => void
   readonly onOpenModule: (moduleId: string) => void
   readonly onAdd: () => void
+  /** 反查索引：谁通过引用字段指向了这张卡。 */
+  readonly backlinks?: readonly RefBacklink[]
+  /** 点被引用行：打开来源卡。 */
+  readonly onOpenRefCard?: (cardId: string) => void
 }) {
-  const tiles = target.modules.filter(m => !isOverviewModule(m))
+  const flattenLeaves = (modules: readonly CardModuleDoc[]): CardModuleDoc[] => modules.flatMap(module =>
+    module.children.length === 0 ? [module] : flattenLeaves(module.children))
+  const tiles = flattenLeaves(target.modules.filter(m => !isOverviewModule(m)))
   const introBlocks: EditableBlock[] = (overviewModule?.blocks ?? []).map(b => b.kind === 'text'
     ? { id: b.id, kind: 'text' as const, text: b.text ?? '', ref: b.ref }
     : { id: b.id, kind: 'image' as const, imageUrl: b.resourceId === undefined ? undefined : imageUrl(b.resourceId), caption: b.caption })
@@ -393,6 +402,18 @@ function OverviewPage({ target, overviewModule, isCharacter, t, mdLabels, imageU
           ))}
         </section>
       )}
+      {backlinks !== undefined && backlinks.length > 0 && (
+        <section className="nv-ov-refs">
+          <h3 className="nv-ov-refshead">{fmt(t, 'ov.refs', { count: backlinks.length })}</h3>
+          {backlinks.map((entry, index) => (
+            <button key={`${entry.fromCardId}:${entry.moduleId}:${entry.fieldId}:${String(index)}`} type="button"
+              className="nv-ov-refrow" onClick={() => onOpenRefCard?.(entry.fromCardId)}>
+              <span className="nv-ov-refname">{entry.fromCardName}</span>
+              <span className="nv-ov-refmeta">{entry.moduleName} · {entry.fieldName} · {entry.itemName}</span>
+            </button>
+          ))}
+        </section>
+      )}
     </div>
   )
 }
@@ -402,7 +423,7 @@ function OverviewPage({ target, overviewModule, isCharacter, t, mdLabels, imageU
  * @param props - 卡地址、读写注入、开其它页签的回调。
  * @returns 头栏 + 总览或单个模块页 + 模块库。
  */
-export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t, loadCard, op, ask, readFile, onOpenFile, onOpenCard }: {
+export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t, owner, loadCard, op, ask, readFile, onOpenFile, onOpenCard }: {
   readonly addr: CardAddr
   readonly cardId: string
   readonly pageModuleId?: string
@@ -410,6 +431,8 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
   readonly autoLibrary?: boolean
   /** 滚动留存键（会话 × 页签）；不给则不记滚动。 */
   readonly scrollKey?: string
+  /** 页签归属会话——无 root 时用它解析项目做引用索引。 */
+  readonly owner?: SessionId
   readonly t: ShellT
   readonly loadCard: (addr: CardAddr, cardId: string) => Promise<CardState | undefined>
   readonly op: (addr: CardAddr, op: import('./card-api.ts').CardOp) => Promise<CardOpResult>
@@ -437,6 +460,19 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
   const [rolesOpen, setRolesOpen] = useState(false)
   /** 预览态：展示的是提案合并后的文档，编辑通道锁死（先接受或拒绝）。 */
   const [preview, setPreview] = useState<CardState | undefined>(undefined)
+  const [refIndex, setRefIndex] = useState<{ readonly targets: readonly RefTarget[], readonly backlinks: Record<string, readonly RefBacklink[]> } | undefined>(undefined)
+  useEffect(() => {
+    const root = addr.root
+    if (root === undefined && owner === undefined) return
+    // 会话优先：会话能解析出项目，而页签的 addr.root 可能是空的。
+    const refsUrl = owner !== undefined
+      ? `api/noven-cards?refs=1&session=${encodeURIComponent(owner)}`
+      : `api/noven-cards?refs=1&root=${encodeURIComponent(root ?? '')}`
+    void fetch(new URL(refsUrl, document.baseURI).href)
+      .then(response => response.ok ? response.json() as Promise<{ targets: readonly RefTarget[], backlinks: Record<string, readonly RefBacklink[]> }> : Promise.reject(new Error(String(response.status))))
+      .then(setRefIndex)
+      .catch(() => { /* 索引缺席只是没有选择器与反查，不阻塞卡页 */ })
+  }, [addr.root, owner])
 
   const mdLabels = useMemo<MdLabels>(() => ({
     code: {
@@ -703,14 +739,16 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                 card={{ name: doc.name, kind: doc.kind }}
                 imageUrl={imageUrl} imageResources={imageResources}
                 saveBlock={saveBlock} addBlock={addBlock} renameModule={renameModule} removeModule={removeModule} send={send}
-                onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} readFile={readFile} onOpenFile={onOpenFile} />
+                onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} readFile={readFile} onOpenFile={onOpenFile}
+                refTargets={refIndex?.targets} />
             ) : (
               <OverviewPage target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id}
                 t={t} mdLabels={mdLabels} imageUrl={imageUrl} imageResources={imageResources}
                 saveBlock={saveBlock} addBlock={addBlock}
                 roles={doc.characters} rolesOpen={rolesOpen}
                 onToggleRoles={() => setRolesOpen(v => !v)} onOpenRole={setRoleId}
-                onOpenModule={id => onOpenCard?.(cardId, id)} onAdd={() => setLibrary(true)} />
+                onOpenModule={id => onOpenCard?.(cardId, id)} onAdd={() => setLibrary(true)}
+                backlinks={refIndex?.backlinks[cardId]} onOpenRefCard={id => onOpenCard?.(id)} />
             )}
           </div>
         ) : (
@@ -725,7 +763,8 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
               saveBlock={saveBlock} addBlock={addBlock}
               roles={doc.characters} rolesOpen={rolesOpen}
               onToggleRoles={() => setRolesOpen(v => !v)} onOpenRole={setRoleId}
-              onOpenModule={id => onOpenCard?.(cardId, id)} onAdd={() => setLibrary(true)} />
+              onOpenModule={id => onOpenCard?.(cardId, id)} onAdd={() => setLibrary(true)}
+              backlinks={refIndex?.backlinks[cardId]} onOpenRefCard={id => onOpenCard?.(id)} />
           </>
         )}
       </div>

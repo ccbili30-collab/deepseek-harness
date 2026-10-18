@@ -15,6 +15,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { emptyCardDocument, findTarget, mintId, type ContentDocument, type ContentModule } from './model.ts'
 import { CardStore, DraftConflict, EditConflict, type CardDraft, type SavedCard } from './store.ts'
 import { buildPresetDocument, loadPreset } from './presets.ts'
+import { buildReferenceIndex } from './refs.ts'
 import { applyAndCommit, type EditorCommand } from './editor.ts'
 import { decodeCollection, decodeMap, decodeRelation, decodeTimeline } from './formats.ts'
 import { buildExportPackage, importExchange, importForeignFile } from './exchange.ts'
@@ -379,6 +380,10 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
   const store = new CardStore(resolved.root)
 
   if (request.method === 'GET' || request.method === 'HEAD') {
+    if (url.searchParams.get('refs') === '1') {
+      const index = await buildReferenceIndex(store)
+      return new Response(request.method === 'HEAD' ? null : JSON.stringify(index), { headers: JSON_HEADERS })
+    }
     const cardId = url.searchParams.get('card')
     if (cardId === null || cardId === '') {
       const rows = await cardList(store)

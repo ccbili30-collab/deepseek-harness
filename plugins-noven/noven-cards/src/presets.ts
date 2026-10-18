@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { emptyCardDocument, mintId, type ContentBlock, type ContentDocument, type ContentModule } from './model.ts'
 import {
   encodeCollection, encodeMap, encodeRelation, encodeTimeline,
-  type CollectionFieldType, type CollectionValue, type TimelineCalendar, type TimelineData, type TimelineEra, type TimelineEvent,
+  type CollectionData, type CollectionFieldType, type CollectionValue, type TimelineCalendar, type TimelineData, type TimelineEra, type TimelineEvent,
 } from './formats.ts'
 
 const PRESETS_DIR = fileURLToPath(new URL('../presets/', import.meta.url))
@@ -280,6 +280,8 @@ export async function buildPresetDocument(
 ): Promise<{ document: ContentDocument, focusModuleId?: string }> {
   const document = emptyCardDocument(preset.kind, name)
   let focusModuleId: string | undefined
+  /** 已落的集合模块：构建完成后统一把 place 文本解析成同卡引用。 */
+  const collections: { readonly module: ContentModule, readonly blockId: string, readonly data: CollectionData }[] = []
   const build = async (nodes: readonly PresetModuleNode[]): Promise<ContentModule[]> => {
     const out: ContentModule[] = []
     for (const node of nodes) {
@@ -314,8 +316,10 @@ export async function buildPresetDocument(
           }
           if (Object.keys(cells).length > 0) values[itemId] = cells
         }
-        const encoded = encodeCollection({ version: 2, fields, items, values, view: (node.view ?? 'list') as import('./formats.ts').CollectionView, artStyle: '' })
-        module.blocks.push({ kind: 'text', id: mintId(), content: await io.writeText(encoded) })
+        const data: CollectionData = { version: 2, fields, items, values, view: (node.view ?? 'list') as import('./formats.ts').CollectionView, artStyle: '' }
+        const block = { kind: 'text' as const, id: mintId(), content: await io.writeText(encodeCollection(data)) }
+        module.blocks.push(block)
+        collections.push({ module, blockId: block.id, data })
       } else if (node.widget === 'relation') {
         const nodes = (node.relation?.nodes ?? []).map(node2 => ({
           id: mintId(), name: node2.name, note: node2.note ?? '',
@@ -376,5 +380,36 @@ export async function buildPresetDocument(
     return out
   }
   document.modules = await build(preset.modules)
+  // 同卡引用：place 字段值命中本卡某集合条目名时，落成引用（显示名保留）。
+  if (collections.length > 0) {
+    const itemsByName = collections.flatMap(collection => collection.data.items.map(item => ({ itemId: item.id, name: item.name })))
+    for (const collection of collections) {
+      const placeFields = collection.data.fields.filter(field => field.type === 'place')
+      if (placeFields.length === 0) continue
+      let changed = false
+      const values: Record<string, Record<string, CollectionValue>> = {}
+      for (const [itemId, cells] of Object.entries(collection.data.values)) {
+        const next = { ...cells }
+        for (const field of placeFields) {
+          const value = next[field.id]
+          if (typeof value !== 'string' || value.length === 0) continue
+          const target = itemsByName.find(candidate => candidate.name === value)
+          if (target === undefined) continue
+          next[field.id] = { cardId: document.id, name: value, itemId: target.itemId }
+          changed = true
+        }
+        values[itemId] = next
+      }
+      if (!changed) continue
+      const nextData: CollectionData = { ...collection.data, values }
+      collection.module.blocks = collection.module.blocks.map(block => block.id === collection.blockId
+        ? { kind: 'text' as const, id: block.id, content: '' }
+        : block)
+      const index = collection.module.blocks.findIndex(block => block.id === collection.blockId)
+      if (index >= 0) {
+        collection.module.blocks[index] = { kind: 'text', id: collection.blockId, content: await io.writeText(encodeCollection(nextData)) }
+      }
+    }
+  }
   return { document, ...(focusModuleId === undefined ? {} : { focusModuleId }) }
 }

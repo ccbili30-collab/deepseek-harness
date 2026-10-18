@@ -69,6 +69,18 @@ for (const file of files) {
     const relPayload = JSON.parse(String(relModule?.blocks[0]?.content ?? '{}'))
     check(relPayload.noven?.nodes?.length === 4 && relPayload.noven?.edges?.length === 5, 'world: 关系图 4 节点 5 边')
     check(built.document.resources.length === 1, `world: 地图底图资源落盘（${built.document.resources.length}）`)
+    const collectCells = (moduleName, fieldName) => {
+      const module = all.find(m => m.name === moduleName)
+      const payload = JSON.parse(String(module?.blocks[0]?.content ?? '{}'))
+      const field = payload.noven?.fields?.find(f => f.name === fieldName)
+      return { field, items: payload.items ?? [], values: payload.noven?.values ?? {} }
+    }
+    const station = collectCells('势力名录', '驻地')
+    const refs = station.items.map(item => station.values[item.id]?.[station.field?.id])
+    check(station.field?.type === 'place', 'world: 驻地字段类型 = place')
+    check(refs.length === 4 && refs.every(v => typeof v === 'object' && v !== null && typeof v.cardId === 'string' && typeof v.itemId === 'string'), `world: 驻地落成同卡引用（${refs.filter(v => typeof v === 'object').length}/4）`)
+    const dist = collectCells('种族名录', '分布')
+    check(Object.values(dist.values).every(cells => Object.values(cells).every(v => typeof v !== 'string' || v === '')), 'world: 分布全部落成引用')
   }
   if (id === 'character') {
     check(built.document.resources.length === 3, `character: 三张立绘资源落盘（${built.document.resources.length}）`)
