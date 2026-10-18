@@ -79,9 +79,12 @@ function useBlockNoteStyles(): void {
  * @param outlineLabel - 标题树的标题文案（locale 归调用方）。
  * @param onChange - 防抖后的 markdown 快照。
  */
-export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, onWordCount, onMarks }: {
+export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, onWordCount, onMarks, zoom, onZoom }: {
   readonly markdown: string
   readonly onChange: (markdown: string) => void
+  /** 当前缩放（1 = 100%），Ctrl/Cmd + 滚轮调整，页签层负责持久化。 */
+  readonly zoom: number
+  readonly onZoom: (zoom: number) => void
   /** 每次内容变化后的实时字数（页签头显示，不依赖存盘）。 */
   readonly onWordCount: (count: number) => void
   /** 标题树数据交给页签层渲染（树在页签右上角，不占编辑器列）。 */
@@ -95,10 +98,25 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
   const editor = useCreateBlockNote({ dictionary: zh })
   const itemsRef = useRef<readonly OutlineItem[]>([])
   const scroller = useRef<HTMLDivElement | null>(null)
+  const zoomRef = useRef(zoom)
+  zoomRef.current = zoom
   const loaded = useRef(false)
   const last = useRef(markdown)
   const timer = useRef<number | undefined>(undefined)
   useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
+  // Ctrl/Cmd + 滚轮缩放；普通滚轮照常滚动。
+  useEffect(() => {
+    const view = scroller.current
+    if (view === null) return
+    const onWheel = (event: WheelEvent): void => {
+      if (!event.ctrlKey && !event.metaKey) return
+      event.preventDefault()
+      const next = Math.min(2, Math.max(0.5, Math.round((zoomRef.current + (event.deltaY > 0 ? -0.1 : 0.1)) * 10) / 10))
+      if (next !== zoomRef.current) onZoom(next)
+    }
+    view.addEventListener('wheel', onWheel, { passive: false })
+    return () => { view.removeEventListener('wheel', onWheel) }
+  }, [onZoom])
   /** 上报刻度位置：标题块顶部相对可滚动高度的比例。 */
   const reportMarks = useCallback(() => {
     const view = scroller.current
@@ -141,7 +159,8 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
     reportMarks()
   }, [editor, markdown, onOutline, onWordCount, reportMarks])
   return (
-    <div className="nv-doc-bn" ref={scroller} onScroll={trackActive}>
+    <div className="nv-doc-bn" ref={scroller} onScroll={trackActive}
+      style={{ ['--nv-doc-zoom' as string]: String(zoom) }}>
       <BlockNoteView
         editor={editor}
         theme="light"

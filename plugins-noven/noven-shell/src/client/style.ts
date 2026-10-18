@@ -1483,7 +1483,9 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   opacity: 0; transform: translateX(16px); pointer-events: none;
   transition: opacity 160ms ease, transform 160ms ease; }
 .nv-doc-panel-open { opacity: 1; transform: none; pointer-events: auto; }
-.nv-doc-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 10px; }
+.nv-doc-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 10px;
+  cursor: grab; touch-action: none; user-select: none; }
+.nv-doc-panel-head:active { cursor: grabbing; }
 .nv-doc-panel-title { font-size: 12px; font-weight: 700; letter-spacing: .14em; color: var(--nv-secondary-text); }
 .nv-doc-panel-pin { display: inline-flex; border: 0; background: none; border-radius: 7px; padding: 4px 6px;
   color: var(--nv-secondary-text); cursor: pointer; }
@@ -1559,7 +1561,8 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   background-color: transparent !important;
   color: rgba(255, 255, 255, .55) !important;
 }
-.nv-doc-bn .bn-editor { padding: 12px 48px 140px; max-width: none; margin: 0; font-family: inherit; }
+.nv-doc-bn .bn-editor { padding: 12px 48px 140px; max-width: none; margin: 0; font-family: inherit;
+  font-size: calc(16px * var(--nv-doc-zoom, 1)); }
 .nv-canvas-conflict { padding: 8px 14px; font-size: 12px; color: var(--nv-warn); background: var(--nv-warn-soft); }
 
 /* 通用编辑器：标题 + meta + 正文 + 底状态条（文稿与卡模块共用） */
@@ -1568,7 +1571,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-ed-more { position: absolute; top: 18px; right: 22px; border: 0; background: none; padding: 2px 8px;
   font-size: 15px; color: var(--nv-secondary-text); cursor: pointer; border-radius: 6px; }
 .nv-ed-more:hover { color: var(--nv-primary-text); background: var(--nv-accent-soft); }
-.nv-ed-title { margin: 0; font-size: 22px; font-weight: 700; color: var(--nv-primary-text); }
+.nv-ed-title { margin: 0; font-size: 22px; font-weight: 700; color: var(--nv-primary-text); cursor: text; }
 .nv-ed-titlein { display: block; width: 100%; box-sizing: border-box; border: 0; border-bottom: 1px solid var(--nv-accent-deep); background: transparent; padding: 0 0 2px; font-family: inherit; outline: none; }
 .nv-ed-meta { margin-top: 5px; font-size: 12px; color: var(--nv-secondary-text); }
 

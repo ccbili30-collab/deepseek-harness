@@ -33,6 +33,8 @@ import { useSessionSettings } from './session-settings.tsx'
 
 /** markdown 文稿走富编辑器（BlockNote）；其余文本（json/yaml/代码…）保留纯文本块编辑。 */
 const RICH_TEXT_PATH = /\.(md|markdown)$/i
+/** 文稿缩放记忆（全局，跨页签/重启保留）。 */
+const DOC_ZOOM_KEY = 'noven.doc.zoom'
 
 /** 文件行的标签种类：可编辑文本走文稿编辑器，其余（HTML/图片/二进制）走画框预览。 */
 export const fileTabKind = (path: string): 'doc' | 'work' =>
@@ -741,7 +743,17 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   const [liveCount, setLiveCount] = useState<number | undefined>(undefined)
   const [panelOpen, setPanelOpen] = useState(false)
   const [pinned, setPinned] = useState(false)
+  const [panelOffset, setPanelOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 })
+  const dragRef = useRef<{ px: number, py: number, ox: number, oy: number } | null>(null)
+  const justDragged = useRef(false)
   const closeTimer = useRef<number | undefined>(undefined)
+  const [zoom, setZoom] = useState<number>(() => {
+    try {
+      const raw = Number(window.localStorage.getItem(DOC_ZOOM_KEY))
+      return Number.isFinite(raw) && raw >= 0.5 && raw <= 2 ? raw : 1
+    } catch { return 1 }
+  })
+  useEffect(() => { window.localStorage.setItem(DOC_ZOOM_KEY, String(zoom)) }, [zoom])
   const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const entry = useDocs(s => s[docKey(sessionId, path)])
   useEffect(() => { ensureDoc(sessionId, path) }, [sessionId, path, ensureDoc])
@@ -808,12 +820,38 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
     const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(id)}"]`)
     element?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
+  // 面板拖动：窗口级监听（指针移出面板也能跟手）；松手后不自动收起（用户刚拖过它）。
+  const startPanelDrag = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (!(event.target instanceof Element) || event.target.closest('.nv-doc-panel-pin') !== null) return
+    event.preventDefault()
+    const host = event.currentTarget.closest('.nv-ed')?.getBoundingClientRect()
+    const start = { px: event.clientX, py: event.clientY, ox: panelOffset.x, oy: panelOffset.y }
+    dragRef.current = start
+    const move = (moveEvent: PointerEvent): void => {
+      const minX = -(host?.width ?? 800) + 340
+      const minY = -(host?.height ?? 600) + 180
+      setPanelOffset({
+        x: Math.min(0, Math.max(minX, start.ox + moveEvent.clientX - start.px)),
+        y: Math.min(400, Math.max(minY, start.oy + moveEvent.clientY - start.py)),
+      })
+    }
+    const up = (): void => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      dragRef.current = null
+      justDragged.current = true
+      if (closeTimer.current !== undefined) { window.clearTimeout(closeTimer.current); closeTimer.current = undefined }
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
   const openPanel = (): void => {
     if (closeTimer.current !== undefined) { window.clearTimeout(closeTimer.current); closeTimer.current = undefined }
+    justDragged.current = false
     setPanelOpen(true)
   }
   const scheduleClose = (): void => {
-    if (pinned || closeTimer.current !== undefined) return
+    if (pinned || dragRef.current !== null || justDragged.current || closeTimer.current !== undefined) return
     closeTimer.current = window.setTimeout(() => {
       closeTimer.current = undefined
       setPanelOpen(false)
@@ -835,9 +873,14 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
               void renameFile(path, `${base}${extension}`)
             }} />
         ) : (
-          <h1 className="nv-ed-title">{name}</h1>
+          <h1 className="nv-ed-title" title={t('canvas.doc.rename')}
+            onClick={() => setRenaming(true)}>{name}</h1>
         )}
-        <div className="nv-ed-meta">{metaOf([t('tree.docs'), fmt(t, 'editor.wordcount', { count: liveCount ?? wordCount(base) })])}</div>
+        <div className="nv-ed-meta">{metaOf([
+          t('tree.docs'),
+          fmt(t, 'editor.wordcount', { count: liveCount ?? wordCount(base) }),
+          zoom === 1 ? undefined : `${String(Math.round(zoom * 100))}%`,
+        ])}</div>
         <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => { arm.reset(); setMenuOpen(false) }}
           onSelect={id => {
@@ -859,7 +902,8 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
       </header>
       {RICH_TEXT_PATH.test(path)
         ? <BlockNoteDocEditor markdown={base} onChange={text => { void saveText(text) }}
-            onOutline={setOutline} onActive={setActiveHeading} onWordCount={setLiveCount} onMarks={setMarks} />
+            onOutline={setOutline} onActive={setActiveHeading} onWordCount={setLiveCount} onMarks={setMarks}
+            zoom={zoom} onZoom={setZoom} />
         : <BlockEditor blocks={docBlocks(base)} labels={mdLabels} t={t} onSaveBlock={saveBlock} onAdd={addBlock} />}
       </div>
       {RICH_TEXT_PATH.test(path) && (
@@ -875,8 +919,9 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
           </div>
           {/* 唤出：大纲面板 */}
           <div className={`nv-doc-panel${panelOpen ? ' nv-doc-panel-open' : ''}`}
+            style={panelOpen ? { transform: `translate(${String(panelOffset.x)}px, ${String(panelOffset.y)}px)` } : undefined}
             onPointerEnter={openPanel} onPointerLeave={scheduleClose}>
-            <div className="nv-doc-panel-head">
+            <div className="nv-doc-panel-head" onPointerDown={startPanelDrag}>
               <span className="nv-doc-panel-title">{t('canvas.outline')}</span>
               <button type="button" className={`nv-doc-panel-pin${pinned ? ' nv-doc-panel-pin-on' : ''}`}
                 title={t('canvas.outline.pin')} aria-pressed={pinned}
