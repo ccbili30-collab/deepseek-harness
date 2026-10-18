@@ -1,75 +1,150 @@
 /**
  * Creation-surface scene transitions. They decorate a real navigation commit;
- * no screenshot or page clone is retained. The temporary sheet exists only for
- * the 420ms handoff from the creation launcher into the persisted IDE layout.
+ * no screenshot or page clone is retained.
+ *
+ * The load-bearing rule: the commit runs INSIDE the View Transition update
+ * callback. The commits are store-driven (openSession/selectPanel flush React
+ * synchronously and unmount the ritual page), so calling commit() before
+ * startViewTransition() leaves the old capture with an empty stage — the old
+ * composer, the title, and the page are already detached, and the scene
+ * degenerates into a plain crossfade. Capturing first, then mutating, is what
+ * turns the same names into an actual morph.
  */
 
-const IDE_SCENE_MS = 420
 const COMPOSER_TRANSITION = 'noven-create-composer'
+const PAGE_TRANSITION = 'noven-create-page'
+const SEED_TRANSITION = 'noven-handcraft-seed'
+
+/** Ritual furniture that exits with its own name in the conversation scene. */
+const EXIT_REGIONS = [
+  { selector: '.nv-create-intro', name: 'noven-create-intro' },
+  { selector: '.nv-create-paths', name: 'noven-create-paths' },
+] as const
+
+/** IDE landmarks named for their entrances once the commit has landed them. */
+const IDE_REGIONS = [
+  { selector: '[data-sidebar-right-panel]', name: 'noven-ide-drawer' },
+  { selector: '.nv-canvas', name: 'noven-ide-canvas' },
+  { selector: '[data-conversation-region="chat"]', name: 'noven-ide-chat' },
+] as const
 
 type ViewTransitionDocument = Document & {
   startViewTransition?: (update: () => void | Promise<void>) => { finished: Promise<void> }
 }
 
 /**
+ * Pump for landmark polling inside a View Transition update. Rendering —
+ * requestAnimationFrame included — is suppressed while the update callback is
+ * pending, so frame callbacks never fire there; macrotask ticks do (the same
+ * reason ui-workspace's page turn commits through nested setTimeout).
+ */
+const nextTick = (): Promise<void> => new Promise(resolve => { setTimeout(resolve, 16) })
+
+/**
  * Morph the creation thought field into the real main-conversation composer.
- * The target name is attached only after navigation mounts the card, then
- * removed when the transition settles so embedded composers never collide.
- * @param commit - real async session/navigation commit.
- * @returns the commit result.
+ * A morph needs BOTH anchors named before the capture: the hero composer on
+ * the ritual page (old) and, once navigation mounts it, the docked composer
+ * in the conversation (new). Named exits paint above the incoming root image,
+ * so the ritual furniture gets a visible farewell — the title lifts, the path
+ * cards sink — instead of being covered in place by the conversation's
+ * opaque background. All names are removed when the transition settles so
+ * embedded composers never collide.
+ * @param commit - real session/navigation commit; runs inside the transition.
+ * @returns the commit result; a thrown commit is logged and reported as false.
  */
 export async function enterConversationScene(commit: () => Promise<boolean>): Promise<boolean> {
   const documentWithTransition = document as ViewTransitionDocument
   if (documentWithTransition.startViewTransition === undefined || matchMedia('(prefers-reduced-motion: reduce)').matches) {
     return commit()
   }
-  const operation = commit()
+  const page = document.querySelector<HTMLElement>('.nv-create-page')
+  if (page !== null) page.style.viewTransitionName = PAGE_TRANSITION
+  const source = document.querySelector<HTMLElement>('.nv-create-hero [data-composer-card]')
+  if (source !== null) source.style.viewTransitionName = COMPOSER_TRANSITION
+  const exits: HTMLElement[] = []
+  for (const region of EXIT_REGIONS) {
+    const el = document.querySelector<HTMLElement>(region.selector)
+    if (el !== null) { el.style.viewTransitionName = region.name; exits.push(el) }
+  }
   let target: HTMLElement | null = null
-  let failed = false
-  void operation.then(ok => { failed = !ok })
+  let result = false
+  // Cleanup reads the closure-assigned names through a function boundary so
+  // the outer scope's initializer narrowing does not collapse them to null.
+  const clearNames = (): void => {
+    if (target !== null) target.style.viewTransitionName = ''
+    if (source !== null) source.style.viewTransitionName = ''
+    if (page !== null) page.style.viewTransitionName = ''
+    for (const el of exits) el.style.viewTransitionName = ''
+  }
   const transition = documentWithTransition.startViewTransition(async () => {
-    for (let frame = 0; frame < 90 && target === null && !failed; frame += 1) {
-      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()))
+    try {
+      result = await commit()
+    } catch (reason: unknown) {
+      console.warn('noven-shell: conversation scene commit failed:', reason)
+      return
+    }
+    if (!result) return
+    for (let frame = 0; frame < 90 && target === null; frame += 1) {
+      await nextTick()
       target = document.querySelector<HTMLElement>('[data-center-col] [data-conversation-region="chat"] [data-composer-card]')
     }
     if (target !== null) target.style.viewTransitionName = COMPOSER_TRANSITION
   })
-  const result = await operation
-  await transition.finished.finally(() => {
-    if (target !== null) target.style.viewTransitionName = ''
-  })
+  await transition.finished.catch(() => undefined)
+  clearNames()
   return result
 }
 
 /**
- * Lift a temporary sheet from the handcraft action, then let the real IDE frame
- * take over underneath it.
- * @param source - handcraft action button.
- * @param commit - synchronous real layout/navigation commit.
+ * Choreograph the creation page into the clean IDE work surface: the clicked
+ * card lifts and dissolves as the seed, the ritual page exits beneath it, and
+ * the IDE lands region by region — drawer, canvas, conversation. The card's
+ * name and the page's name must be set before the capture, so they are marked
+ * ahead of the transition; the region names attach once the landed DOM shows
+ * them and are cleared when the transition settles, so later page turns
+ * capture the work layer whole again.
+ * @param source - the handcraft action card.
+ * @param commit - the real navigation + arrangement commit; runs inside the transition.
+ * @returns the commit result; a thrown commit is logged and reported as false.
  */
-export function enterIdeScene(source: HTMLElement, commit: () => void): void {
-  const rect = source.getBoundingClientRect()
-  const sheet = document.createElement('div')
-  sheet.className = 'nv-ide-sheet'
-  Object.assign(sheet.style, {
-    left: `${rect.left}px`,
-    top: `${rect.top}px`,
-    width: `${rect.width}px`,
-    height: `${rect.height}px`,
+export async function enterHandcraftScene(source: HTMLElement, commit: () => Promise<boolean>): Promise<boolean> {
+  const documentWithTransition = document as ViewTransitionDocument
+  if (documentWithTransition.startViewTransition === undefined || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    return commit()
+  }
+  const page = document.querySelector<HTMLElement>('.nv-create-page')
+  if (page !== null) page.style.viewTransitionName = PAGE_TRANSITION
+  // The thought field exits with the page in this scene: morph names are
+  // scene-scoped (set and cleared inside enterConversationScene), so the
+  // hero composer arrives unnamed and is captured into the page's old image.
+  source.style.viewTransitionName = SEED_TRANSITION
+  const regions: HTMLElement[] = []
+  let result = false
+  const transition = documentWithTransition.startViewTransition(async () => {
+    try {
+      result = await commit()
+    } catch (reason: unknown) {
+      console.warn('noven-shell: handcraft scene commit failed:', reason)
+      return
+    }
+    if (!result) return
+    for (let frame = 0; frame < 90; frame += 1) {
+      await nextTick()
+      for (const region of IDE_REGIONS) {
+        if (regions.some(el => el.style.viewTransitionName === region.name)) continue
+        const el = document.querySelector<HTMLElement>(region.selector)
+        if (el !== null && el.style.viewTransitionName === '') {
+          el.style.viewTransitionName = region.name
+          regions.push(el)
+        }
+      }
+      // The capture settles once the two load-bearing regions have landed.
+      if (regions.length >= 2) break
+    }
   })
-  document.body.append(sheet)
-  document.documentElement.dataset.novenScene = 'ide'
-
-  sheet.animate([
-    { transform: 'translateY(0) scale(1)', borderRadius: '14px', opacity: 0.72 },
-    { offset: 0.2, transform: 'translateY(-12px) scale(1.025)', borderRadius: '14px', opacity: 0.92 },
-    { offset: 0.72, transform: `translate(${24 - rect.left}px, ${18 - rect.top}px) scale(${Math.max(1, (innerWidth - 48) / Math.max(1, rect.width))}, ${Math.max(1, (innerHeight - 36) / Math.max(1, rect.height))})`, borderRadius: '8px', opacity: 0.42 },
-    { transform: `translate(${24 - rect.left}px, ${18 - rect.top}px) scale(${Math.max(1, (innerWidth - 48) / Math.max(1, rect.width))}, ${Math.max(1, (innerHeight - 36) / Math.max(1, rect.height))})`, borderRadius: '8px', opacity: 0 },
-  ], { duration: IDE_SCENE_MS, easing: 'cubic-bezier(.2,.72,.12,1)', fill: 'forwards' })
-
-  window.setTimeout(commit, 72)
-  window.setTimeout(() => {
-    sheet.remove()
-    delete document.documentElement.dataset.novenScene
-  }, IDE_SCENE_MS)
+  await transition.finished.catch(() => undefined)
+  for (const el of regions) el.style.viewTransitionName = ''
+  if (page !== null) page.style.viewTransitionName = ''
+  source.style.viewTransitionName = ''
+  return result
 }

@@ -16,8 +16,6 @@
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { IWorkspaces, WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import type { ModelCatalog, ModelSelection, PromptContentPart } from '@deepseek-ai/dsh-api-session-controller/types'
-import type { ImageMediaType } from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-client-file-upload/client'
 import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
@@ -31,7 +29,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
-import type { InjectFace, PropsLocale, PropsRuntime, PropsStore, SlotHookFactory } from '@deepseek-ai/dsh-client-ui-slots'
+import type { InjectFace, PropsLocale, PropsRenderFactories, PropsRuntime, PropsStore, SlotHookFactory } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SidebarRightGuideBox } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { MenuItemButton } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { NovenShellLocaleKey } from './locales.ts'
@@ -72,7 +70,7 @@ import { applyBranches } from './branches.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
 import { showComingSoon } from './coming-soon.ts'
 import { applyArrangement, type ArrangementDeps } from './arrangement.ts'
-import { enterIdeScene } from './creation-transition.ts'
+import { enterHandcraftScene } from './creation-transition.ts'
 import { injectNovenStyles } from './style.ts'
 import { CanvasHost, createCanvasStore, activeKey, fileTabKind, docKey, dirKey, statusKey, type CanvasInjected, type CanvasState, type DocEntry, type DirEntry, type ImportPack, type ProjectFocus, type SimRow, type TabFlags } from './canvas.tsx'
 import { ContentTree, type TreeInjected } from './tree.tsx'
@@ -208,26 +206,20 @@ export interface MePageInjected extends ShellFace {
   readonly moveCard: (addr: CardAddr, cardId: string, target: ProjectAddr) => Promise<void>
 }
 
-/** 创作页发送参数：目标工作区、模型选择（含推理档）、待发附件。 */
-export interface CreateSend {
-  readonly workspaceId?: WorkspaceId
-  readonly model?: ModelSelection
-  readonly files?: readonly File[]
-}
-
-/** Injected face for 创作: real session/prompt start, card creation, and the drafts catalog. */
+/** Injected face for 创作: blank-host ensure, conversation reveal, card creation, and the drafts catalog. */
 export interface CreatePageInjected extends ShellFace {
   readonly hooks: { readonly cards: ObservableSnapshot<readonly CardRow[]> }
-  /** 建/复用所选工作区的会话 → 应用模型选择 → 上传附件 → 排队 prompt → 揭开对话。失败回 false 让页面解除淡出。 */
-  readonly startPrompt: (text: string, send: CreateSend) => Promise<boolean>
-  readonly newCard: (kind: 'world' | 'character', name: string, workspaceId?: WorkspaceId) => void
+  /**
+   * Ensure the current main-view Session is a blank host for the page's
+   * embedded composer: acquire (reuse-or-create) a blank in the chosen
+   * workspace and select it under the panel — the page never visibly leaves.
+   */
+  readonly ensureBlankHost: (workspaceId: WorkspaceId | undefined) => Promise<void>
+  /** Reveal a Session's conversation in the main area (the submission handoff). */
+  readonly revealSession: (sessionId: SessionId) => void
   readonly importCard: (file: File, workspaceId?: WorkspaceId) => void
   /** Connect or create the chosen workspace session, then enter the persisted IDE canvas. */
   readonly startHandcraft: (workspaceId: WorkspaceId | undefined, source: HTMLElement) => Promise<boolean>
-  /** Host 代际的模型目录（默认路由 + 各提供商清单）。 */
-  readonly loadModels: () => Promise<ModelCatalog | undefined>
-  /** 弹宿主目录选择并把所选目录注册成 Workspace。 */
-  readonly pickWorkspace: () => Promise<WorkspaceId | undefined>
 }
 
 /** Injected face for the project page: the manifest observable plus mutation/read callbacks. */
@@ -252,7 +244,7 @@ export interface EditorPageInjected {
   readonly back: (tab: 'worlds' | 'characters') => void
 }
 
-type PageProps = PropsRuntime<'main'> & PropsLocale<'novenShell'>
+type PageProps = PropsRuntime<'main'> & PropsLocale<'novenShell'> & PropsRenderFactories
 type FacePageProps = PageProps & InjectFace<ShellFace>
 type EditorPageProps = PageProps & PropsStore<ReturnType<typeof createShellStore>>
 type TabBodyProps = PropsRuntime<'sidebar.right.pane.tab'> & PropsLocale<'novenShell'>
@@ -1379,71 +1371,31 @@ export function apply(ctx: ClientContext): void {
       })
     const sessionId = target?.sessionId
     if (sessionId === undefined) return false
-    ctx.uiWorkspace.openSession(sessionId)
-    enterIdeScene(source, () => {
+    return enterHandcraftScene(source, async () => {
+      ctx.uiWorkspace.openSession(sessionId)
       applyArrangement(arrangementDeps(), sessionId, 'ide')
       setCanvasParked(sessionId, false)
-    })
-    return true
-  }
-
-  /** 图片附件走内联 image part；其余文件经 fileUpload 暂存拿 receipt（服务缺席时丢弃并告警）。 */
-  const fileToPart = async (sessionId: SessionId, file: File): Promise<PromptContentPart | undefined> => {
-    const imageTypes = new Set<string>(['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
-    if (imageTypes.has(file.type)) {
-      const bytes = new Uint8Array(await file.arrayBuffer())
-      let binary = ''
-      for (const b of bytes) binary += String.fromCharCode(b)
-      return { type: 'image', mediaType: file.type as ImageMediaType, data: btoa(binary), name: file.name }
-    }
-    const uploader = ctx.get('fileUpload')
-    if (uploader === undefined) return undefined
-    const res = await uploader.upload(sessionId, file, file.name)
-    return res.ok ? { type: 'file', receiptId: res.value.receiptId } : undefined
-  }
-
-  /** 发送管线：连接所选工作区的会话 → 应用模型 → 传附件 → prompt → 揭开对话面板。 */
-  const startPromptSession = (text: string, send: CreateSend): Promise<boolean> =>
-    (async () => {
-      const sessionId = send.workspaceId !== undefined
-        ? await ctx.uiWorkspace.connectWorkspace(send.workspaceId)
-        : await createSessionIn(recentSession()?.cwd)
-      if (send.model !== undefined) {
-        const applied = await ctx.remote.session.selectModel({ sessionId, ...send.model })
-        if (!applied.ok) console.warn('noven-shell: model selection failed:', applied.error.message)
-      }
-      const parts: PromptContentPart[] = []
-      for (const file of send.files ?? []) {
-        const part = await fileToPart(sessionId, file).catch((reason: unknown) => {
-          console.warn('noven-shell: attachment upload failed:', reason)
-          return undefined
-        })
-        if (part !== undefined) parts.push(part)
-      }
-      if (text !== '') parts.push({ type: 'text', text })
-      ctx.uiWorkspace.openSession(sessionId)
-      await ctx.sessions.using(sessionId, { source: 'novenShell' }, async reference => {
-        const result = await reference.binding.session.prompt(parts, 'queue')
-        if (!result.ok) throw new Error(result.error.message)
-      })
       return true
-    })().catch((reason: unknown) => {
-      console.warn('noven-shell: prompt session failed:', reason)
-      return false
     })
-
-  /** Host 代际模型目录（默认路由 + 提供商清单）。 */
-  const loadModels = async (): Promise<ModelCatalog | undefined> => {
-    const res = await ctx.remote.session.modelCatalog()
-    return res.ok ? res.value : undefined
   }
 
-  /** 目录选择 + 注册成 Workspace（追随上游添加路径的唯一入口：挑宿主目录）。 */
-  const pickWorkspace = async (): Promise<WorkspaceId | undefined> => {
-    const path = await ctx.uiWorkspace.pickDirectory()
-    if (path === null) return undefined
-    const workspace = await ctx.workspaces.create({ path })
-    return workspace.workspaceId
+  /** 创作页宿主：当前主视图不是空白会话时，为所选工作区接/建一个空白并在面板下选定（页面不离开）。 */
+  const ensureBlankHost = async (workspaceId: WorkspaceId | undefined): Promise<void> => {
+    const list = ctx.sessions.list.getSnapshot()
+    const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
+    if (current?.blank === true) return
+    const sessionId = workspaceId !== undefined
+      ? await ctx.uiWorkspace.connectWorkspace(workspaceId)
+      : await createSessionIn(recentSession()?.cwd)
+    // preserve 保住面板：普通 reveal 会在 replaceMain 里 selectPanel(null)，
+    // 之后的任何面板重激活都输给晚到的提交。发布版 openSession 类型未带
+    // options 参数（ui-workspace 源码与产物已带 preserve），走局部窄化。
+    ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { panel?: 'preserve' }) => void)(sessionId, { panel: 'preserve' })
+  }
+
+  /** 投稿落点：揭开指定会话的对话面（面板回到 Conversation）。 */
+  const revealSession = (sessionId: SessionId): void => {
+    ctx.uiWorkspace.openSession(sessionId)
   }
 
   /**
@@ -2252,18 +2204,17 @@ export function apply(ctx: ClientContext): void {
       inject: (): CreatePageInjected => ({
         ...face,
         hooks: { cards },
-        startPrompt: startPromptSession,
+        ensureBlankHost,
+        revealSession,
         startHandcraft,
-        newCard,
         importCard,
-        loadModels,
-        pickWorkspace,
       }),
     }, (p: FacePageProps & InjectFace<CreatePageInjected>) => (
       <Create t={p.t} useWorkspaces={p.useWorkspaces} useSessions={p.useSessions}
-        onStartPrompt={p.startPrompt} onStartHandcraft={p.startHandcraft} onNewCard={p.newCard}
-        onImportCard={p.importCard} loadModels={p.loadModels} pickWorkspace={p.pickWorkspace}
-        useCards={p.useCards} onOpenCard={row => { face.openCard(row.cardId, { sessionId: row.sessionId, root: row.workspaceRoot }) }} />
+        renderFactorySlot={p.renderFactorySlot}
+        ensureBlankHost={p.ensureBlankHost} revealSession={p.revealSession}
+        onStartHandcraft={p.startHandcraft}
+        onImportCard={p.importCard} />
     ))
     yield ctx.slots.register({ name: 'main', key: MESSAGES_ID, locale: NS },
       (p: PageProps) => <Messages t={p.t} />)

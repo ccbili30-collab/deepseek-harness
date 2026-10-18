@@ -226,24 +226,48 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 ::view-transition-new(noven-create-composer) { animation: nv-create-composer-in 420ms cubic-bezier(.2,.72,.12,1) both; }
 @keyframes nv-create-composer-out { to { opacity: .18; filter: blur(2px); } }
 @keyframes nv-create-composer-in { from { opacity: .35; filter: blur(2px); } to { opacity: 1; filter: none; } }
+/* Conversation scene: the ritual furniture's farewell above the incoming
+   page — the title rises away, the path cards sink and follow. */
+::view-transition-old(noven-create-intro) { animation: nv-create-intro-out 280ms var(--nv-ease-in) both; }
+::view-transition-old(noven-create-paths) { animation: nv-create-paths-out 260ms var(--nv-ease-in) 40ms both; }
+@keyframes nv-create-intro-out { to { opacity: 0; transform: translateY(-16px); } }
+@keyframes nv-create-paths-out { to { opacity: 0; transform: translateY(12px); } }
 @media (prefers-reduced-motion: reduce) {
-  ::view-transition-group(noven-create-composer), ::view-transition-old(noven-create-composer), ::view-transition-new(noven-create-composer) { animation: none; }
+  ::view-transition-group(noven-create-composer), ::view-transition-old(noven-create-composer), ::view-transition-new(noven-create-composer),
+  ::view-transition-old(noven-create-intro), ::view-transition-old(noven-create-paths) { animation: none; }
 }
 
-/* Creation ritual: one quiet thought field, then two explicit working paths. */
-.nv-create-page { overflow: hidden; background:
-  radial-gradient(circle at 50% 15%, rgba(52,211,153,.075), transparent 36%), var(--nv-surface); }
-.nv-create-ritual { width: min(920px, calc(100% - 64px)); height: 100%; margin: 0 auto; padding: clamp(40px, 8vh, 88px) 0 42px;
-  box-sizing: border-box; display: flex; flex-direction: column; align-items: stretch; gap: 18px; overflow-y: auto; scrollbar-width: none; }
+/* Creation ritual: one quiet thought field, then two explicit working paths.
+   The page centers its column inside the center column (the session page's
+   reference frame), so the hero→session morph never slides sideways. */
+.nv-create-page { overflow: hidden; box-sizing: border-box;
+  /* The mint bloom is part of the composition: anchored on the title's line
+     (30% ≈ the lifted stack's head), strong enough to read (.075 was lost to
+     white), fading out before the path cards so the fold stays clean. */
+  background:
+  radial-gradient(circle at 50% 30%, rgba(52,211,153,.12), transparent 42%), var(--nv-surface); }
+.nv-create-ritual { width: min(920px, calc(100% - 64px)); height: 100%; margin: 0 auto; padding: 0;
+  box-sizing: border-box; display: flex; flex-direction: column; align-items: stretch; gap: 12px; overflow-y: auto; scrollbar-width: none; }
+/* The stack is the anchor, not any element in it: the leading spacer parks
+   the column's center at 46% of the page (above center — the fold lands past
+   the path cards, and the whole page reads as one lifted cluster). 190px =
+   half the resting stack plus the flex gaps; the spacer shrinks away on short
+   windows and the column scrolls, so nothing clips. */
+.nv-create-ritual::before { content: ""; display: block; flex: 0 1 calc(46% - 190px); min-height: 20px; }
 .nv-create-ritual::-webkit-scrollbar { display: none; }
-.nv-create-intro { text-align: center; margin: 0 auto 8px; max-width: 720px; }
-.nv-create-eyebrow { display: block; margin-bottom: 16px; font-size: 10px; font-weight: 700; letter-spacing: .2em; color: var(--nv-accent-deep); }
-.nv-create-intro h1 { margin: 0; font-size: clamp(30px, 4vw, 46px); line-height: 1.15; letter-spacing: -.045em; font-weight: 650; }
-.nv-create-intro p { margin: 14px 0 0; color: var(--nv-secondary-text); font-size: 14px; line-height: 1.7; }
-.nv-create-composer { width: min(780px, 100%); margin: 0 auto; padding: 16px 17px 11px; border-radius: 20px;
-  border-color: rgba(14,159,110,.17); box-shadow: 0 18px 54px rgba(28,64,51,.09), 0 2px 8px rgba(28,64,51,.04); }
-.nv-create-composer .nv-composer-input { min-height: 72px; font-size: 15px; line-height: 24px; }
-.nv-create-composer .nv-composer-chips { flex-wrap: wrap; }
+.nv-create-intro { text-align: center; margin: 0 auto; max-width: 720px; }
+.nv-create-eyebrow { display: block; margin-bottom: 10px; font-size: 10px; font-weight: 700; letter-spacing: .2em; color: var(--nv-accent-deep); }
+.nv-create-intro h1 { margin: 0; font-size: clamp(30px, 4vw, 46px); line-height: 1.15; letter-spacing: -.045em; font-weight: 650;
+  /* The anchor line never wraps: a narrow compensated column would otherwise
+     break the title mid-phrase and move its optical center. */
+  white-space: nowrap; }
+.nv-create-intro p { margin: 8px 0 0; color: var(--nv-secondary-text); font-size: 14px; line-height: 1.7; }
+/* The embedded real composer (conversation.content) sits in the same 780px
+   column as the old card; the hero's own brand shell and its BlankDock guide
+   stay home — the ritual page keeps the composer alone as the hero. */
+.nv-create-hero { width: min(780px, 100%); margin: 0 auto; }
+.nv-create-hero [data-conversation-hero-shell] { display: none; }
+.nv-create-hero .nv-create-guide { display: none; }
 .nv-create-paths { width: min(780px, 100%); margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .nv-create-path { min-width: 0; display: grid; grid-template-columns: 34px minmax(0,1fr) 18px; align-items: center; gap: 11px;
   padding: 13px 14px; border: .5px solid var(--nv-divider); border-radius: 14px; background: rgba(255,255,255,.72); color: var(--nv-primary-text);
@@ -256,33 +280,31 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 .nv-create-path-arrow { color: var(--nv-secondary-text); font-size: 14px; transition: transform 220ms var(--nv-ease-out); }
 .nv-create-path:hover .nv-create-path-arrow { transform: translate(2px,-2px); color: var(--nv-accent-deep); }
 .nv-create-inline-error { width: min(780px,100%); margin: -8px auto 0; font-size: 11.5px; color: var(--nv-danger); }
-.nv-create-startershelf { width: 100%; margin-top: clamp(12px, 4vh, 34px); }
-.nv-create-startershelf .nv-sec-label { padding-left: 1px; }
-.nv-create-startrow { display: flex; gap: 12px; overflow-x: auto; padding: 0 1px 12px; scrollbar-width: none; scroll-snap-type: x proximity; }
-.nv-create-startrow::-webkit-scrollbar { display: none; }
-.nv-create-mini { flex: 0 0 168px; display: grid; grid-template-columns: 48px minmax(0,1fr); align-items: center; gap: 10px; padding: 9px;
-  border: .5px solid transparent; border-radius: 13px; background: transparent; color: var(--nv-primary-text); text-align: left; cursor: pointer; scroll-snap-align: start;
-  transition: background 180ms ease, border-color 180ms ease, transform 180ms var(--nv-ease-out); }
-.nv-create-mini:hover { background: rgba(255,255,255,.82); border-color: var(--nv-divider); transform: translateY(-1px); }
-.nv-create-mini-art { width: 48px; height: 48px; border-radius: 11px; object-fit: cover; display: grid; place-items: center; overflow: hidden; color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
-.nv-create-mini-art > * { max-width: 100%; max-height: 100%; }
-.nv-create-mini-character { background: rgba(111,199,176,.15); }
-.nv-create-mini-draft { background: var(--nv-canvas); color: var(--nv-secondary-text); }
-.nv-create-mini > span:last-child { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-.nv-create-mini strong, .nv-create-mini small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nv-create-mini strong { font-size: 12.5px; font-weight: 620; }
-.nv-create-mini small { font-size: 11px; color: var(--nv-secondary-text); }
-.nv-ide-sheet { position: fixed; z-index: 1200; pointer-events: none; box-sizing: border-box; border: .5px solid rgba(14,159,110,.25);
-  background: linear-gradient(145deg, rgba(240,253,248,.96), rgba(255,255,255,.98)); box-shadow: 0 24px 70px rgba(28,64,51,.18); transform-origin: top left; }
-html[data-noven-scene='ide'] [data-shell-overlay] { pointer-events: none; }
+/* Handcraft scene (creation-transition.ts): the clicked card lifts as the
+   seed while the ritual page dissolves beneath it; the IDE then lands region
+   by region — drawer, canvas, conversation. One View Transition carries the
+   whole commit, so the Session's default page turn never runs underneath. */
+::view-transition-old(noven-create-page) { animation: nv-ide-ritual-out 300ms var(--nv-ease-in) 70ms both; }
+::view-transition-old(noven-handcraft-seed) { animation: nv-ide-seed-lift 340ms var(--nv-ease-out) both; }
+::view-transition-group(noven-handcraft-seed) { z-index: 3; }
+::view-transition-new(noven-ide-drawer) { animation: nv-ide-drawer-in var(--nv-dur-scene) var(--nv-ease-out) 90ms both; }
+::view-transition-new(noven-ide-canvas) { animation: nv-ide-canvas-in var(--nv-dur-scene) var(--nv-ease-out) 150ms both; }
+::view-transition-new(noven-ide-chat) { animation: nv-ide-chat-in var(--nv-dur-scene) var(--nv-ease-out) 210ms both; }
+@keyframes nv-ide-ritual-out { to { opacity: 0; transform: translateY(12px) scale(.99); } }
+@keyframes nv-ide-seed-lift {
+  30% { opacity: 1; transform: translateY(-18px) scale(1.05); filter: drop-shadow(0 16px 30px rgba(28,64,51,.2)); }
+  to { opacity: 0; transform: translateY(-34px) scale(1.08); filter: drop-shadow(0 24px 44px rgba(28,64,51,0)); }
+}
+@keyframes nv-ide-drawer-in { from { opacity: 0; transform: translateX(-16px); } }
+@keyframes nv-ide-canvas-in { from { opacity: 0; transform: translateY(16px) scale(.99); } }
+@keyframes nv-ide-chat-in { from { opacity: 0; transform: translateY(12px); } }
 @media (max-width: 760px) {
-  .nv-create-ritual { width: min(100% - 32px, 920px); padding-top: 36px; }
+  .nv-create-ritual { width: min(100% - 32px, 920px); }
   .nv-create-paths { grid-template-columns: 1fr; }
   .nv-create-intro h1 { font-size: 31px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .nv-create-path, .nv-create-mini { transition: none; }
-  .nv-ide-sheet { display: none; }
 }
 
 /* Creation slot shelf: pure artwork tiles, captions live in the page air below. */
@@ -335,33 +357,6 @@ html[data-noven-scene='ide'] [data-shell-overlay] { pointer-events: none; }
   box-shadow: 0 8px 24px rgba(0,0,0,.2);
 }
 .nv-slot:disabled .nv-slot-cap strong { color: var(--nv-secondary-text); }
-
-/* Composer card — mirrors the conversation composer's card form. */
-.nv-composer { display: flex; flex-direction: column; gap: 10px; background: var(--nv-surface); border: 0.5px solid var(--nv-divider); border-radius: 16px; padding: 12px 14px 8px; box-shadow: 0 6px 24px rgba(0,0,0,.05); }
-.nv-composer-input { width: 100%; box-sizing: border-box; border: 0; outline: none; resize: none; background: none; font-family: inherit; font-size: 13.5px; line-height: 22px; color: var(--nv-primary-text); min-height: 44px; }
-.nv-composer-input::placeholder { color: var(--nv-secondary-text); }
-.nv-composer-bar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.nv-composer-chips { display: flex; gap: 8px; }
-.nv-composer-chip { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 999px; padding: 5px 12px; font-size: 12px; background: var(--nv-canvas); color: var(--nv-secondary-text); cursor: pointer; }
-.nv-composer-chip:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-send { width: 36px; height: 36px; border-radius: 50%; border: 0; background: var(--nv-accent); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; flex: none; }
-.nv-send:disabled { opacity: .45; cursor: default; }
-.nv-composer-meta { display: flex; align-items: center; gap: 8px; }
-.nv-meta-chip { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 999px; padding: 4px 10px; font-size: 11.5px; background: var(--nv-canvas); color: var(--nv-secondary-text); cursor: pointer; max-width: 220px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nv-meta-chip:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-meta-caret { font-size: 10px; opacity: .7; }
-.nv-meta-icobtn { width: 26px; height: 26px; border: 0; border-radius: 8px; background: none; color: var(--nv-secondary-text); display: flex; align-items: center; justify-content: center; cursor: pointer; }
-.nv-meta-icobtn:hover { background: var(--nv-canvas); color: var(--nv-primary-text); }
-.nv-composer-files { display: flex; flex-wrap: wrap; gap: 6px; }
-.nv-composer-file { display: inline-flex; align-items: center; gap: 5px; border-radius: 8px; padding: 3px 6px 3px 9px; font-size: 11.5px; background: var(--nv-canvas); color: var(--nv-primary-text); }
-.nv-composer-filex { border: 0; background: none; color: var(--nv-secondary-text); font-size: 13px; cursor: pointer; padding: 0 2px; line-height: 1; }
-.nv-composer-filex:hover { color: var(--nv-danger); }
-.nv-composer-error { font-size: 11.5px; color: var(--nv-danger); padding: 0 2px; }
-.nv-composer-nowork { align-items: center; padding: 18px 14px; }
-.nv-composer-wsbtn { display: inline-flex; align-items: center; gap: 7px; border: 0; border-radius: 10px; padding: 9px 16px; font-size: 13px; background: var(--nv-accent-soft); color: var(--nv-accent-deep); cursor: pointer; }
-.nv-modelrow { display: inline-flex; align-items: center; gap: 8px; width: 100%; justify-content: space-between; }
-.nv-page.nv-leaving .nv-slots, .nv-page.nv-leaving .nv-create-bottom, .nv-page.nv-leaving .nv-h1, .nv-page.nv-leaving .nv-sub { opacity: 0; transform: translateY(6px); transition: opacity var(--nv-dur-scene) var(--nv-ease-out), transform var(--nv-dur-scene) var(--nv-ease-out); }
-.nv-page.nv-leaving .nv-composer { opacity: 0; transition: opacity var(--nv-dur-scene) var(--nv-ease-out) .1s; }
 
 /* Bottom pair: quiet section labels over template tiles and the tools list. */
 .nv-create-bottom { display: grid; grid-template-columns: 1.35fr 1fr; gap: 48px; margin-top: 6px; }
@@ -810,6 +805,10 @@ nav[class*="panelList"] button[aria-label="创作"] svg,
 nav[class*="panelList"] button[aria-label="Create"] svg { color: #fff !important; }
 nav[class*="panelList"] button[aria-label="创作"] span,
 nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !important; }
+/* 它是填充型主按钮，不是列表行：选中后全局「选中态唯一规则」会剥掉底色，
+   白字白图标落在透明底上等于整颗消失——这里把薄荷填充钉回来。 */
+nav[class*="panelList"] button[aria-label="创作"]:not(:hover),
+nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: var(--nv-accent); }
 
 /* 设定 sidecar — 上半工件区 */
 .nv-sidecar { display: flex; flex-direction: column; gap: 4px; padding: 4px 10px 20px; }

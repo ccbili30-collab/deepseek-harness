@@ -26,13 +26,23 @@ interface MainSelection {
   readonly subagentAddress?: SubagentAddress
 }
 
+/** Open-session options. */
+export interface OpenSessionOptions {
+  /**
+   * `preserve` keeps the active global panel open instead of revealing the
+   * Conversation — for hosts that seat a Session underneath a panel page.
+   */
+  readonly panel?: 'preserve'
+}
+
 /** Workspace archive and directory operations consumed by Client UI domains. */
 export interface UiWorkspace {
   /**
    * Select a Session and show its Conversation as one UI navigation action.
    * @param target - known Session identity or durable direct-parent subagent address to display.
+   * @param options - `panel: 'preserve'` selects without dismissing the active panel.
    */
-  openSession(target: SessionTarget): void
+  openSession(target: SessionTarget, options?: OpenSessionOptions): void
   /**
    * Connect a Workspace and open its Session unless a later navigation supersedes it.
    * @param workspaceId - target Workspace.
@@ -202,17 +212,18 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     }
   }
 
-  openSession(target: SessionTarget): void {
+  openSession(target: SessionTarget, options?: OpenSessionOptions): void {
+    const panel = options?.panel === 'preserve' ? 'preserve' : 'reveal'
     const current = this.mainReference?.sessionId
     const targetId = typeof target === 'string' ? target : target.childSessionId
     if (current === undefined || current === targetId) {
-      this.replaceMain(target, this.lifetime.signal, 'reveal')
+      this.replaceMain(target, this.lifetime.signal, panel)
       return
     }
     const byId = this.sessions.list.getSnapshot().byId
     const weight: PageTurnWeight = byId[current]?.cwd !== byId[targetId]?.cwd
       || this.ctx.layout.navGeometryDiffers(current, targetId) ? 'project' : 'session'
-    turnPage(() => { this.replaceMain(target, this.lifetime.signal, 'reveal') }, rowDirection(current, targetId), weight)
+    turnPage(() => { this.replaceMain(target, this.lifetime.signal, panel) }, rowDirection(current, targetId), weight)
   }
 
   async openWorkspace(workspaceId: WorkspaceId, beforeOpen?: (sessionId: SessionId) => void): Promise<void> {

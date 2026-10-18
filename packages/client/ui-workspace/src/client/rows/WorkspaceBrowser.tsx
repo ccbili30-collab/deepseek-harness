@@ -14,7 +14,10 @@
  * are slot entries with their own behavior, so this component threads no
  * action callbacks and hosts no action surface.
  */
-import { type CSSProperties, type ReactNode, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode,
+  useEffect, useLayoutEffect, useMemo, useRef, useState,
+} from 'react'
 import clsx from 'clsx'
 import {
   Button, IconArchiveCheckOutlineRegular, IconArchiveOffOutlineRegular, IconArchiveOutlineRegular,
@@ -50,6 +53,20 @@ interface ArchivedSelectionShare {
   anchor: SessionId | undefined
   /** Install the next selection and anchor from one row click. */
   onSelect: (next: { selection: ReadonlySet<SessionId>; anchor: SessionId | undefined }) => void
+  /** Drop the whole selection; Escape and the list body's empty space both call here. */
+  onClear: () => void
+}
+
+/**
+ * A list body click that lands off every row — the gaps between rows and the
+ * tail below the last one — drops the batch selection (the pointer parity of
+ * Escape). Row clicks keep their own meaning: rows and the list's own controls
+ * carry `data-row-key`, so they never reach here.
+ */
+function clearSelectionOnBodyClick(event: ReactMouseEvent<HTMLDivElement>, share: ArchivedSelectionShare | undefined): void {
+  if (share === undefined || share.selection.size === 0) return
+  if (event.target instanceof Element && event.target.closest('[data-row-key]') !== null) return
+  share.onClear()
 }
 
 /**
@@ -427,10 +444,13 @@ function SessionTree({
     return {
       selected: share.selection.has(node.id),
       onSelect: (edit) => {
-        // The Shift run spans the rows on screen, so the range excludes rows a
-        // collapse hides until they are expanded back in.
+        // The Shift run spans the archived rows on screen: ordinary Sessions
+        // are never selectable, so they leave the range's domain, and rows a
+        // collapse hides stay out until they are expanded back in.
         const renderedIds = groups.flatMap(group =>
-          collapsedSessionRows(group.sessions, sessionLimits[group.key]).rows.map(row => row.id))
+          collapsedSessionRows(group.sessions, sessionLimits[group.key]).rows
+            .filter(row => row.archived)
+            .map(row => row.id))
         share.onSelect(nextArchiveSelection(
           share.selection, renderedIds, node.id,
           { shift: edit.shiftKey, toggle: edit.metaKey || edit.ctrlKey || edit.plainToggle }, share.anchor,
@@ -638,7 +658,7 @@ function SessionTree({
   // because the Host pin order is most-recently-pinned-first with no
   // reorder verb.
   return (
-    <div className={clsx(css.treeBody, css.wide)}>
+    <div className={clsx(css.treeBody, css.wide)} onClick={(e) => { clearSelectionOnBodyClick(e, archivedSelection) }}>
       {workspaceDropAtListStart && <span className={css.listTopDropIndicator} aria-hidden="true" />}
       <AnimatedRows
         className={clsx(css.list, workspaceDropAtListStart && css.listTopDropActive)}
@@ -709,7 +729,9 @@ function FlatList({
       selected: share.selection.has(node.id),
       onSelect: (edit) => {
         share.onSelect(nextArchiveSelection(
-          share.selection, rows.map(row => row.id), node.id,
+          // The Shift run's domain holds archived rows alone — ordinary
+          // Sessions are never selectable.
+          share.selection, rows.filter(row => row.archived).map(row => row.id), node.id,
           { shift: edit.shiftKey, toggle: edit.metaKey || edit.ctrlKey || edit.plainToggle }, share.anchor,
         ))
       },
@@ -717,7 +739,7 @@ function FlatList({
   }
   const rowKeys: string[] = rows.length === 0 ? ['empty'] : rows.map(row => `session:${row.id}`)
   return (
-    <div className={clsx(css.treeBody, css.wide)}>
+    <div className={clsx(css.treeBody, css.wide)} onClick={(e) => { clearSelectionOnBodyClick(e, archivedSelection) }}>
       <AnimatedRows
         className={clsx(css.list, css.flatList)}
         label={t('section.sessions')}
@@ -963,10 +985,11 @@ export function WorkspaceBrowser({
   const workspaceReady = workspacePhase === 'ready' && workspaceStreamState !== 'loading'
 
   // Archived multi-selection: plain clicks address one row, Cmd/Ctrl clicks
-  // toggle, Shift clicks take the rendered run from the anchor, and Escape
-  // drops the whole selection. The selection lives wherever archived rows
-  // render — the show-archived and archived-only views — survives view flips
-  // between them, and cannot outlive the archive set.
+  // toggle, Shift clicks take the rendered archived run from the anchor, and
+  // Escape or a click on the list's empty space drops the whole selection.
+  // The selection lives wherever archived rows render — the show-archived and
+  // archived-only views — survives view flips between them, and holds archived
+  // Sessions only: leaving the archive set or the list leaves the selection.
   const [archivedSelection, setArchivedSelection] = useState<ReadonlySet<SessionId>>(() => new Set())
   const [selectionAnchor, setSelectionAnchor] = useState<SessionId | undefined>(undefined)
   const selectArchived = (next: { selection: ReadonlySet<SessionId>; anchor: SessionId | undefined }): void => {
@@ -978,12 +1001,14 @@ export function WorkspaceBrowser({
     setSelectionAnchor(undefined)
   }
   useEffect(() => {
+    const archived = new Set(archivedSessionIds)
     setArchivedSelection((current) => {
-      const kept = new Set([...current].filter(id => list.byId[id] !== undefined))
+      const kept = new Set([...current].filter(id => list.byId[id] !== undefined && archived.has(id)))
       return kept.size === current.size ? current : kept
     })
-    setSelectionAnchor(anchor => anchor !== undefined && list.byId[anchor] !== undefined ? anchor : undefined)
-  }, [list.byId])
+    setSelectionAnchor(anchor =>
+      anchor !== undefined && list.byId[anchor] !== undefined && archived.has(anchor) ? anchor : undefined)
+  }, [list.byId, archivedSessionIds])
   // The shared menu actions batch over the live selection, so keep the
   // injection owner's mirror current — synchronously at layout time, or a
   // menu opened in the same gesture as the click that made the selection
@@ -1111,7 +1136,12 @@ export function WorkspaceBrowser({
   // The archived selection share: any view that renders archived rows
   // (show-archived and archived-only) addresses their clicks to the selection.
   const archivedSelectionShare = archivedFilter !== 'default'
-    ? { selection: archivedSelection, anchor: selectionAnchor, onSelect: selectArchived }
+    ? {
+      selection: archivedSelection,
+      anchor: selectionAnchor,
+      onSelect: selectArchived,
+      onClear: clearArchivedSelection,
+    }
     : undefined
   // The Pinned strip leads the whole browser — above the Workspaces header,
   // outside every scrolling list, so it never moves and never reads as one
@@ -1129,7 +1159,10 @@ export function WorkspaceBrowser({
       selected: share.selection.has(node.id),
       onSelect: (edit) => {
         share.onSelect(nextArchiveSelection(
-          share.selection, topPinnedNodes.map(row => row.id), node.id,
+          // Same archived-only Shift domain as the list bodies; the Pinned
+          // section's rows are never archived today (the Host keeps the sets
+          // exclusive), so the filter is the contract, not the guard.
+          share.selection, topPinnedNodes.filter(row => row.archived).map(row => row.id), node.id,
           { shift: edit.shiftKey, toggle: edit.metaKey || edit.ctrlKey || edit.plainToggle }, share.anchor,
         ))
       },

@@ -105,18 +105,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
       },
       {
         signature: 'openRightbar(track: boolean, fullscreen: boolean, rail: boolean): void',
-        description: 'Report the right panel\'s presentation without changing its expanded state. The canvas claim is not part of the report: the frame pulls it from the occupant\'s canvasClaims source.',
+        description: 'Report the right panel\'s presentation without changing its expanded state. The canvas claim is not part of the report: it is pulled through ILayout.canvasClaims.',
         parameters: [{ name: 'track', description: 'whether the normal panel width reserves a grid track, including beneath a fullscreen overlay.' }, { name: 'fullscreen', description: 'whether the panel covers the frame and hides its outer resize handle; independent of the underlying grid track.' }, { name: 'rail', description: 'whether the shown panel stands collapsed to its icon rail; the track then holds the rail width instead of the panel preference.' }],
       },
       {
         signature: 'closeRightbar(): void',
         description: 'Report the right panel as hidden: no track, no handle.',
         parameters: [],
-      },
-      {
-        signature: 'setUnitSide(side: UnitSide): void',
-        description: 'Move the navigation+canvas unit to a side of the conversation column, stamped to the visible session\'s geometry record.',
-        parameters: [{ name: 'side', description: "'left' parks the unit against the sidebar; 'right' is the default scene." }],
       },
     ],
   },

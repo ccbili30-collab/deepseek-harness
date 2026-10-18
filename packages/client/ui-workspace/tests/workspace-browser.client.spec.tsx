@@ -1292,39 +1292,95 @@ describe('WorkspaceBrowser', () => {
     expect(selectedTitles()).toEqual([])
   })
 
-  it('keeps the selection while its Sessions stay listed and prunes deleted ones', () => {
+  it.each(['grouped', 'flat'] as const)('spans archived rows only on a Shift run in the show filter (%s view)', (mode) => {
+    const open = vi.fn()
+    const b = mount({
+      useSessions: hook(sessionState([
+        summary('arch-a', 4), summary('live-b', 3), summary('arch-c', 2), summary('live-d', 1),
+      ])),
+      useWorkspaces: hook(workspaceState(
+        [workspace('alpha', ['arch-a', 'live-b', 'arch-c', 'live-d'])],
+        [sid('arch-a'), sid('arch-c')],
+      )),
+      open,
+    })
+    // A saved manual order interleaves live rows between archived ones, so the
+    // Shift run must cross ordinary Sessions on screen.
+    act(() => {
+      b.store.actions.setSessionOrder(
+        mode === 'grouped' ? wid('alpha') : FLAT_SESSION_ORDER_KEY,
+        ['arch-a', 'live-b', 'arch-c', 'live-d'],
+        {},
+      )
+      if (mode === 'flat') b.store.actions.setGroupBy('flat')
+      b.store.actions.setArchivedFilter('show')
+    })
+    if (mode === 'grouped') fireEvent.click(screen.getByText('alpha'))
+    const rowOf = (id: string) => screen.getByText(id).closest('[role="treeitem"]') as HTMLElement
+    fireEvent.click(rowOf('arch-a'))
+    // The run from arch-a to arch-c crosses the ordinary live-b row; the
+    // selection holds archived rows only, so live-b never joins it and no
+    // click opened a Session.
+    fireEvent.click(rowOf('arch-c'), { shiftKey: true })
+    expect(selectedTitles()).toEqual(['arch-a', 'arch-c'])
+    expect(rowOf('live-b').className).not.toContain('selected')
+    expect(open).not.toHaveBeenCalled()
+  })
+
+  it.each(['grouped', 'flat'] as const)('clears the selection on a click on the list\'s empty space (%s view)', (mode) => {
     const b = mountArchivedOnly()
+    if (mode === 'flat') act(() => { b.store.actions.setGroupBy('flat') })
     fireEvent.click(b.rowOf('arch-b'))
     fireEvent.click(b.rowOf('arch-c'), { metaKey: true })
-    // arch-b left the archive set elsewhere: selection is a list fact, not an
-    // archive fact, so both rows stay selected for the next menu action.
+    expect(selectedTitles()).toEqual(['arch-b', 'arch-c'])
+    // The gaps off every row belong to the list body: a click there drops the
+    // selection, the pointer parity of Escape.
+    fireEvent.click(screen.getByRole('tree', { name: '会话' }))
+    expect(selectedTitles()).toEqual([])
+    // A row's own click never reaches that handler: the row joins the selection.
+    fireEvent.click(b.rowOf('arch-a'))
+    fireEvent.click(b.rowOf('arch-b'), { metaKey: true })
+    expect(selectedTitles()).toEqual(['arch-a', 'arch-b'])
+  })
+
+  it('holds archived Sessions only: a restored row leaves the selection, a deleted one is pruned', () => {
+    const b = mountArchivedOnly()
+    fireEvent.click(b.rowOf('arch-b'))
+    // Shift keeps the anchor on arch-b while the run selects both rows.
+    fireEvent.click(b.rowOf('arch-c'), { shiftKey: true })
+    expect(selectedTitles()).toEqual(['arch-b', 'arch-c'])
+    // arch-b left the archive set elsewhere: the selection holds archived
+    // Sessions only, so the restored row leaves with its archive mark,
+    // anchor included.
     rerender(b, {
       useWorkspaces: hook(workspaceState(
         [workspace('alpha', ['arch-a', 'arch-b', 'arch-c'])],
         [sid('arch-a'), sid('arch-c')],
       )),
     })
-    const selected = selectedTitles
-    // The archived-only view stops rendering the restored row, so only the
-    // still-archived selected row shows; arch-b rejoins the archive set and
-    // its retained selection reappears with it.
-    expect(selected()).toEqual(['arch-c'])
+    expect(selectedTitles()).toEqual(['arch-c'])
+    // Rejoining the archive set does not resurrect the membership, and with
+    // the anchor gone a Shift click addresses the clicked row alone.
     rerender(b, {
       useWorkspaces: hook(workspaceState(
         [workspace('alpha', ['arch-a', 'arch-b', 'arch-c'])],
         [sid('arch-a'), sid('arch-b'), sid('arch-c')],
       )),
     })
-    expect(selected()).toEqual(['arch-b', 'arch-c'])
+    expect(selectedTitles()).toEqual(['arch-c'])
+    fireEvent.click(b.rowOf('arch-a'), { shiftKey: true })
+    expect(selectedTitles()).toEqual(['arch-a'])
     // A Session that leaves the list entirely (deleted) leaves the selection.
+    fireEvent.click(b.rowOf('arch-c'), { metaKey: true })
+    expect(selectedTitles()).toEqual(['arch-a', 'arch-c'])
     rerender(b, {
       useWorkspaces: hook(workspaceState(
-        [workspace('alpha', ['arch-a', 'arch-c'])],
-        [sid('arch-a'), sid('arch-c')],
+        [workspace('alpha', ['arch-a', 'arch-b'])],
+        [sid('arch-a'), sid('arch-b')],
       )),
-      useSessions: hook(sessionState([summary('arch-a', 3), summary('arch-c', 1)])),
+      useSessions: hook(sessionState([summary('arch-a', 3), summary('arch-b', 2)])),
     })
-    expect(selected()).toEqual(['arch-c'])
+    expect(selectedTitles()).toEqual(['arch-a'])
   })
 
 

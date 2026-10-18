@@ -440,6 +440,13 @@ describe('UiWorkspaceService', () => {
     expect(b.sessions.refreshProjections).not.toHaveBeenCalled()
   })
 
+  it('retains the target without dismissing the active panel when the panel is preserved', () => {
+    const b = bench()
+    b.uiWorkspace.openSession(sid('target'), { panel: 'preserve' })
+    expect(b.selectPanel).not.toHaveBeenCalled()
+    expect(b.sessions.retain).toHaveBeenCalledWith(sid('target'), { source: 'mainView' })
+  })
+
   it('pages with the heavier project weight when the sessions read different nav geometry', async () => {
     const { turnPage } = await import('../src/client/page-turn.ts')
     const b = bench({
