@@ -1372,7 +1372,8 @@ export function apply(ctx: ClientContext): void {
     const sessionId = target?.sessionId
     if (sessionId === undefined) return false
     return enterHandcraftScene(source, async () => {
-      ctx.uiWorkspace.openSession(sessionId)
+      // 场景内的提交：转场归外层手作场景所有。
+      ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { transition?: 'none' }) => void)(sessionId, { transition: 'none' })
       applyArrangement(arrangementDeps(), sessionId, 'ide')
       setCanvasParked(sessionId, false)
       return true
@@ -1393,9 +1394,19 @@ export function apply(ctx: ClientContext): void {
     ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { panel?: 'preserve' }) => void)(sessionId, { panel: 'preserve' })
   }
 
-  /** 投稿落点：揭开指定会话的对话面（面板回到 Conversation）。 */
+  /**
+   * 投稿落点：揭开指定会话的对话面（面板回到 Conversation）。
+   * 「直接对话」的落点永远按入口意图重种 agent 排布：宿主空白可能曾被手作
+   * 入口复用并盖上 IDE 章，发送时该空白转正；若继承它的历史几何，ping 会落
+   * 进手作布局——排布属于入口，不属于被复用的空白。
+   */
   const revealSession = (sessionId: SessionId): void => {
-    ctx.uiWorkspace.openSession(sessionId)
+    applyArrangement(arrangementDeps(), sessionId, 'agent')
+    // 发布版 openSession 类型未带 options（源码已带 preserve/transition），按惯例局部窄化；
+    // transition:'none' 表示本次提交归外层场景转场所有，不再起导航转场。
+    ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { panel?: 'preserve', transition?: 'none' }) => void)(
+      sessionId, { transition: 'none' },
+    )
   }
 
   /**

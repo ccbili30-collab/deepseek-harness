@@ -33,6 +33,13 @@ export interface OpenSessionOptions {
    * Conversation — for hosts that seat a Session underneath a panel page.
    */
   readonly panel?: 'preserve'
+  /**
+   * `none` commits the selection without starting a navigation transition.
+   * Callers that already run a scene View Transition (for example the
+   * creation surface's exits) own the capture; a nested navigation transition
+   * would skip that scene.
+   */
+  readonly transition?: 'none'
 }
 
 /** Workspace archive and directory operations consumed by Client UI domains. */
@@ -226,6 +233,12 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     const panel = options?.panel === 'preserve' ? 'preserve' : 'reveal'
     const current = this.mainReference?.sessionId
     const targetId = typeof target === 'string' ? target : target.childSessionId
+    // A scene-owned commit runs inside the caller's View Transition; starting
+    // another here would skip that scene, so commit straight through.
+    if (options?.transition === 'none') {
+      this.replaceMain(target, this.lifetime.signal, panel)
+      return
+    }
     // Leaving a global panel is the panel's own exit, not a Session↔Session
     // page turn: the panel's named page animates out through its keyframes
     // over a default crossfade. A `preserve` open keeps the panel on stage,
