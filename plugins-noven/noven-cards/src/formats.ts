@@ -930,6 +930,8 @@ export interface RelationNode {
   readonly note: string
   readonly x: number | null
   readonly y: number | null
+  /** 头像资源 id（卡内 resources 的引用），可选。 */
+  readonly avatar?: string
 }
 
 /** 关系图连线：from/to 是节点 id；label 是关系名（如「师徒」「敌对」）。 */
@@ -960,6 +962,7 @@ function relNodeOf(raw: unknown, index: number): RelationNode {
     note: str(source.note),
     x: posOrNull(source.x),
     y: posOrNull(source.y),
+    ...(str(source.avatar) !== '' ? { avatar: str(source.avatar) } : {}),
   }
 }
 
@@ -993,12 +996,12 @@ export function decodeRelation(raw: string | undefined): RelationData {
 
 /** 编码关系图：noven 含坐标，顶层投影只留语义字段。 */
 export function encodeRelation(data: RelationData): string {
-  const nodes = data.nodes.map(node => ({ id: node.id, name: node.name, note: node.note, ...(node.x !== null ? { x: node.x } : {}), ...(node.y !== null ? { y: node.y } : {}) }))
+  const nodes = data.nodes.map(node => ({ id: node.id, name: node.name, note: node.note, ...(node.x !== null ? { x: node.x } : {}), ...(node.y !== null ? { y: node.y } : {}), ...(node.avatar !== undefined ? { avatar: node.avatar } : {}) }))
   const edges = data.edges.map(edge => ({ id: edge.id, from: edge.from, to: edge.to, label: edge.label }))
   return `${JSON.stringify({
     version: 1,
     kind: 'relation',
-    nodes: data.nodes.map(node => ({ id: node.id, name: node.name, note: node.note })),
+    nodes: data.nodes.map(node => ({ id: node.id, name: node.name, note: node.note, ...(node.avatar !== undefined ? { avatar: node.avatar } : {}) })),
     edges: data.edges.map(edge => ({ from: edge.from, to: edge.to, label: edge.label })),
     noven: { nodes, edges },
   }, null, 2)}\n`

@@ -103,23 +103,28 @@
             "nodes": [
               {
                 "name": "沈青梧",
-                "note": "玄天宗内门弟子"
+                "note": "玄天宗内门弟子",
+                "avatar": "assets/portrait-1.jpg"
               },
               {
                 "name": "玄尘子",
-                "note": "师父，玄天宗长老"
+                "note": "师父，玄天宗长老",
+                "avatar": "assets/avatar-xuan.jpg"
               },
               {
                 "name": "裴照",
-                "note": "宿敌，玄天宗长老之子"
+                "note": "宿敌，玄天宗长老之子",
+                "avatar": "assets/avatar-pei.jpg"
               },
               {
                 "name": "林小满",
-                "note": "同门师妹"
+                "note": "同门师妹",
+                "avatar": "assets/avatar-lin.jpg"
               },
               {
                 "name": "沈砚",
-                "note": "兄长，失踪多年"
+                "note": "兄长，失踪多年",
+                "avatar": "assets/avatar-shen.jpg"
               }
             ],
             "edges": [

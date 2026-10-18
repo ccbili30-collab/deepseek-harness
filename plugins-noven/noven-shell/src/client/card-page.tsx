@@ -196,7 +196,7 @@ function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBl
           )} />
       </div>
       {widget === 'timeline' && <TimelineWidget module={module} t={t} send={send} />}
-      {widget === 'relation' && <RelationWidget module={withDerivedRelation(module, refEdges)} t={t} send={send} />}
+      {widget === 'relation' && <RelationWidget module={withDerivedRelation(module, refEdges)} t={t} send={send} imageUrl={imageUrl} />}
       {widget === 'map' && <MapEditor module={module} t={t} send={send} ask={ask} imageUrl={imageUrl} imageResources={imageResources} referenced={mapReferenced} />}
       {widget === 'collection' && <CollectionWidget module={module} t={t} send={send} imageUrl={imageUrl} refTargets={refTargets} />}
       {widget !== undefined && widget !== 'document' && widget !== 'html'

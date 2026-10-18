@@ -83,7 +83,7 @@ for (const file of files) {
     check(Object.values(dist.values).every(cells => Object.values(cells).every(v => typeof v !== 'string' || v === '')), 'world: 分布全部落成引用')
   }
   if (id === 'character') {
-    check(built.document.resources.length === 4, `character: 立绘与表单头像资源落盘（${built.document.resources.length}）`)
+    check(built.document.resources.length === 9, `character: 立绘/表单头像/关系头像资源落盘（${built.document.resources.length}）`)
     check(built.document.resources.every(r => r.mediaType === 'image/jpeg'), 'character: 资源媒体类型正确')
     const forms = all.find(m => m.name === '基本信息')
     const formData = forms === undefined ? undefined : JSON.parse(String(forms.blocks[0]?.content ?? '{}'))
@@ -96,6 +96,7 @@ for (const file of files) {
     const relModule = all.find(m => m.name === '关系图' && m.widget?.type === 'relation')
     const relPayload = JSON.parse(String(relModule?.blocks[0]?.content ?? '{}'))
     check(relPayload.noven?.nodes?.length === 5 && relPayload.noven?.edges?.length === 5, 'character: 关系图 5 节点 5 边')
+    check(relPayload.noven?.nodes?.every(node => typeof node.avatar === 'string'), 'character: 关系节点带头像资源')
   }
 }
 

@@ -29,7 +29,7 @@ export type PresetRow = Readonly<Record<string, string | number | boolean | { re
 
 /** 预设里的关系图样例：按名字连边，落卡时换成真 id。 */
 export interface PresetRelation {
-  readonly nodes?: readonly { readonly name: string, readonly note?: string, readonly x?: number, readonly y?: number }[]
+  readonly nodes?: readonly { readonly name: string, readonly note?: string, readonly x?: number, readonly y?: number, readonly avatar?: string }[]
   readonly edges?: readonly { readonly from: string, readonly to: string, readonly label: string }[]
 }
 
@@ -198,6 +198,7 @@ function normalizeRelation(raw: unknown): PresetRelation | undefined {
     return {
       name: source.name,
       ...(typeof source.note === 'string' ? { note: source.note } : {}),
+      ...(typeof source.avatar === 'string' ? { avatar: source.avatar } : {}),
       ...(Number.isFinite(Number(source.x)) && source.x !== null ? { x: Number(source.x) } : {}),
       ...(Number.isFinite(Number(source.y)) && source.y !== null ? { y: Number(source.y) } : {}),
     }
@@ -321,9 +322,21 @@ export async function buildPresetDocument(
         module.blocks.push(block)
         collections.push({ module, blockId: block.id, data })
       } else if (node.widget === 'relation') {
-        const nodes = (node.relation?.nodes ?? []).map(node2 => ({
-          id: mintId(), name: node2.name, note: node2.note ?? '',
-          x: node2.x ?? null, y: node2.y ?? null,
+        const nodes = await Promise.all((node.relation?.nodes ?? []).map(async node2 => {
+          let avatar: string | undefined
+          if (node2.avatar !== undefined) {
+            const asset = node2.avatar
+            const bytes = await readFile(join(PRESETS_DIR, asset))
+            const mediaType = asset.endsWith('.png') ? 'image/png' : 'image/jpeg'
+            const resourceId = mintId()
+            document.resources.push({ id: resourceId, content: await io.writePayload(bytes, mediaType), mediaType })
+            avatar = resourceId
+          }
+          return {
+            id: mintId(), name: node2.name, note: node2.note ?? '',
+            x: node2.x ?? null, y: node2.y ?? null,
+            ...(avatar === undefined ? {} : { avatar }),
+          }
         }))
         const byName = new Map(nodes.map(node2 => [node2.name, node2.id]))
         const edges = (node.relation?.edges ?? []).flatMap(edge => {

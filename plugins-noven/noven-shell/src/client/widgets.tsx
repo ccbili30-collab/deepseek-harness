@@ -39,7 +39,7 @@ interface TlEra { readonly id: string, readonly name: string, readonly from: num
 interface TlEvent { readonly id: string, readonly at: number | null, readonly until: number | null, readonly ongoing?: boolean, readonly title: string, readonly description: string, readonly color?: string }
 interface TlData { readonly calendar: TlCalendar, readonly views: readonly TlCalendar[], readonly eras: readonly TlEra[], readonly events: readonly TlEvent[], readonly marks: readonly TlMark[] }
 
-interface RelNode { readonly id: string, readonly name: string, readonly note: string, readonly x: number | null, readonly y: number | null }
+interface RelNode { readonly id: string, readonly name: string, readonly note: string, readonly x: number | null, readonly y: number | null, readonly avatar?: string }
 interface RelEdge { readonly id: string, readonly from: string, readonly to: string, readonly label: string }
 interface RelData { readonly nodes: readonly RelNode[], readonly edges: readonly RelEdge[] }
 
@@ -1375,7 +1375,7 @@ function circlePos(index: number, total: number): { x: number, y: number } {
 }
 
 /** 人物关系图：SVG 节点 + 连线；拖节点摆位，点节点/线编辑。 */
-export function RelationWidget({ module, t, send }: WidgetProps) {
+export function RelationWidget({ module, t, send, imageUrl }: WidgetProps & { readonly imageUrl?: (resourceId: string) => string }) {
   const data = useMemo(() => rel(module.widget?.data), [module.widget?.data])
   const svgRef = useRef<SVGSVGElement | null>(null)
   /** 就地编辑单例（新建人物/人物/边三选一）；linking 是连线交互态，不是面板。 */
@@ -1431,6 +1431,11 @@ export function RelationWidget({ module, t, send }: WidgetProps) {
       <svg ref={svgRef} className="nv-rel-canvas" viewBox={`0 0 ${REL_W} ${REL_H}`}
         style={{ transform: `scale(${zoom})`, transformOrigin: '50% 50%', transition: 'transform 160ms ease-out' }}
         onClick={() => { setPanel(null); setLinking(null) }}>
+        <defs>
+          <clipPath id="nv-rel-avatar-clip">
+            <circle cx={0} cy={-REL_R * 1.3 + 6 + REL_R * 0.65} r={REL_R * 0.65} />
+          </clipPath>
+        </defs>
         {data.edges.map(edge => {
           const a = positions.get(edge.from)
           const b = positions.get(edge.to)
@@ -1470,14 +1475,28 @@ export function RelationWidget({ module, t, send }: WidgetProps) {
                 }
                 setPanel({ kind: 'node', id: node.id })
               }}>
-              <rect x={-REL_R * 1.6} y={node.note === '' ? -REL_R * 0.75 : -REL_R * 1.05} width={REL_R * 3.2}
-                height={node.note === '' ? REL_R * 1.5 : REL_R * 2.1} rx={12} className="nv-rel-card" />
-              <text y={node.note === '' ? 5 : -4} className="nv-rel-name" textAnchor="middle">{node.name}</text>
-              {node.note !== '' && (
-                <text y={12} className="nv-rel-note" textAnchor="middle">
-                  {node.note.length > 10 ? `${node.note.slice(0, 10)}…` : node.note}
-                </text>
-              )}
+              {(() => {
+                const withAvatar = node.avatar !== undefined && imageUrl !== undefined
+                const cardH = withAvatar ? REL_R * 2.6 : node.note === '' ? REL_R * 1.5 : REL_R * 2.1
+                const avatarSize = REL_R * 1.3
+                const avatarTop = -cardH / 2 + 6
+                const nameY = withAvatar ? avatarTop + avatarSize + 11 : node.note === '' ? 5 : -4
+                return (
+                  <>
+                    <rect x={-REL_R * 1.6} y={-cardH / 2} width={REL_R * 3.2} height={cardH} rx={12} className="nv-rel-card" />
+                    {withAvatar && node.avatar !== undefined && (
+                      <image href={imageUrl(node.avatar)} x={-avatarSize / 2} y={avatarTop}
+                        width={avatarSize} height={avatarSize} clipPath="url(#nv-rel-avatar-clip)" preserveAspectRatio="xMidYMid slice" />
+                    )}
+                    <text y={nameY} className="nv-rel-name" textAnchor="middle">{node.name}</text>
+                    {node.note !== '' && (
+                      <text y={nameY + 13} className="nv-rel-note" textAnchor="middle">
+                        {node.note.length > 10 ? `${node.note.slice(0, 10)}…` : node.note}
+                      </text>
+                    )}
+                  </>
+                )
+              })()}
             </g>
           )
         })}
