@@ -1804,8 +1804,18 @@ export function apply(ctx: ClientContext): void {
     if (openingCreateSurface) return
     if (ctx.layout.panelInfo.getSnapshot().activePanelId === CREATE_ID) return
     openingCreateSurface = true
-    void enterCreateScene(() => { ctx.layout.selectPanel(CREATE_ID) })
-      .finally(() => { openingCreateSurface = false })
+    void enterCreateScene(() => {
+      // Select a reusable blank host inside the same commit: the page's first
+      // render then already has hostBlank, so the composer mounts with the
+      // title instead of arriving a beat later through the async ensure.
+      const seam = ctx.uiWorkspace as {
+        reusableBlank?: () => SessionId | undefined
+        openSession?: (target: SessionId, options?: { panel?: 'preserve', transition?: 'none' }) => void
+      }
+      const blank = seam.reusableBlank?.()
+      if (blank !== undefined) seam.openSession?.(blank, { panel: 'preserve', transition: 'none' })
+      ctx.layout.selectPanel(CREATE_ID)
+    }).finally(() => { openingCreateSurface = false })
   }
   ctx.effect(() => sidebarPanels.registerActivation(CREATE_ID, () => { onCreateSurface() }),
     'noven-shell: create surface activation')

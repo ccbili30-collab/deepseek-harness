@@ -73,6 +73,14 @@ export interface UiWorkspace {
    */
   connectWorkspace(workspaceId: WorkspaceId): Promise<SessionId>
   /**
+   * Find, without any Host round-trip, the blank Session connectWorkspace
+   * would reuse for a Workspace. Hosts that mount a composer on a blank can
+   * select it inside their own commit instead of waiting for creation.
+   * @param workspaceId - target Workspace; absent picks the most recent one.
+   * @returns the reusable blank, or undefined when none exists yet.
+   */
+  reusableBlank(workspaceId?: WorkspaceId): SessionId | undefined
+  /**
    * Start a New Session flow and navigate to its Session; a creation the Host
    * refuses is shown through the Workspace notice and leaves the selection as it was.
    * @param workspaceId - explicit target; absent inherits the current or most recent Workspace.
@@ -218,6 +226,22 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       return this.reuseBlank(workspace.workspaceId, id)
     }
     return this.sessions.create({ workspaceId: workspace.workspaceId })
+  }
+
+  reusableBlank(workspaceId?: WorkspaceId): SessionId | undefined {
+    const workspace = this.workspaces.list.getSnapshot()
+    const sessions = this.sessions.list.getSnapshot()
+    const recentId = workspaceId ?? recentWorkspace(workspace.items, sessions.byId)
+    const target = workspace.items.find(item => item.workspaceId === recentId)
+    if (target === undefined) return undefined
+    const archived = new Set<string>(workspace.archivedSessionIds)
+    for (const id of sessions.ids) {
+      const summary = sessions.byId[id]
+      if (summary === undefined || !summary.blank || summary.cwd !== target.path
+        || !target.sessionIds.includes(id) || archived.has(id)) continue
+      return id
+    }
+    return undefined
   }
 
   private async reuseBlank(workspaceId: WorkspaceId, sessionId: SessionId): Promise<SessionId> {

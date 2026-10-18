@@ -470,6 +470,19 @@ describe('UiWorkspaceService', () => {
     expect(b.sessions.retain).not.toHaveBeenCalled()
   })
 
+  it('finds the reusable blank without a Host round-trip', () => {
+    const b = bench({
+      workspaces: workspaceState([workspace('a', [sid('host'), sid('real')])]),
+      sessions: sessionState([
+        summary('host', { cwd: '/w/a', blank: true }),
+        summary('real', { cwd: '/w/a' }),
+      ]),
+    })
+    b.sessions.create.mockClear()
+    expect(b.uiWorkspace.reusableBlank(wid('a'))).toBe(sid('host'))
+    expect(b.sessions.create).not.toHaveBeenCalled()
+  })
+
   it('archives the current Session onto the next live row instead of an empty main view', async () => {
     const b = bench({
       workspaces: workspaceState([workspace('a', [sid('one'), sid('two')])]),
