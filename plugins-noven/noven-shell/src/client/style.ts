@@ -1465,8 +1465,9 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-canvas-docstatus { padding: 6px 14px; font-size: 11px; color: var(--nv-secondary-text); border-top: 1px solid var(--nv-divider); }
 /* 文稿富编辑器（BlockNote）：左侧标题树 + 一页文档的版心；主题色换成本站调色板 */
 /* 文稿页签：正文一列 + 右上角标题树（从最顶上开始、2/3 高、白底渐隐） */
-/* 文稿页签：正文整幅，右上角浮一枚小挂窗（大纲）——不占布局列 */
-.nv-ed.nv-ed-doc { position: relative; }
+/* 文稿页签：正文整幅，右上角浮一枚小挂窗（大纲）——不占布局列。
+   注意覆盖旧 .nv-ed-doc 的 150px 右内边距（那是老编辑器预留的空白，正文会被它截断）。 */
+.nv-ed.nv-ed-doc { position: relative; padding: 0; overflow: hidden; }
 .nv-ed-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 /* 标题树：不开任何区域——无面板、无底色、无边框，直接浮在右侧页边。
    闲置时树自己是虚的（半透明 + 轻微模糊），底下的正文透出来；悬停变清晰可点。 */
