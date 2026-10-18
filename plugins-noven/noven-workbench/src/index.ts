@@ -357,7 +357,10 @@ async function serveDoc(request: Request, ctx: Context): Promise<Response> {
   if (absolute === undefined) return fail(403, { error: 'path escapes the workspace' })
   if (typeof payload.content !== 'string') return fail(400, { error: 'content must be a string' })
   const current = await readFile(absolute, 'utf8').catch(() => undefined)
-  if (payload.base !== null && payload.base !== undefined && current !== undefined && current !== payload.base) {
+  // 乐观锁按文本比较，容一个尾换行差：读取链可能不带文件末尾的 \n（编辑器 base 就是
+  // 读到的文本），若按字节比会永远不相等——每次保存都 409、一个字都写不进去。
+  const stripEnd = (text: string): string => text.replace(/\r?\n$/, '')
+  if (payload.base !== null && payload.base !== undefined && current !== undefined && stripEnd(current) !== stripEnd(payload.base)) {
     return fail(409, { conflict: true, error: 'file changed on disk since it was loaded' })
   }
   await mkdir(dirname(absolute), { recursive: true })

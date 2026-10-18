@@ -11,7 +11,8 @@ import { MarkdownDelegateProvider, Menu } from '@deepseek-ai/dsh-client-ui-primi
 import type { CardAddr, CardBlockView, CardDocView, CardModuleDoc, CardOpResult, CardState } from './card-api.ts'
 import { CardConflict, cardContentUrl, fetchCard } from './card-api.ts'
 import { findModule } from './pages/CardEditor.tsx'
-import { BlockEditor, type EditableBlock, type EditorSaveResult, type MdLabels } from './editor.tsx'
+import type { EditorSaveResult } from './editor.tsx'
+import { CardMarkdownEditor } from './doc-editor.tsx'
 import { CollectionWidget, MiniRelation, MiniTimeline, RelationWidget, TimelineWidget, chipTone, coll, collText, mapData, rel, tl, type RefBacklink, type RefTarget, type WidgetSend } from './widgets.tsx'
 import { MapEditor } from './map-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
@@ -129,19 +130,25 @@ function moduleGlyph(module: CardModuleDoc, size: number): ReturnType<typeof gly
   return icon(size)
 }
 
-/** 一个模块盒：标题（点击即改名）+ 正文（块级点编 / 预制模块渲染器）。
+/** 模块正文 → markdown：文字块原样、图片块写成 card-image 行（保存时由卡系统还原）。 */
+function moduleMarkdown(blocks: readonly CardBlockView[]): string {
+  return blocks.map(block => block.kind === 'text'
+    ? block.text ?? ''
+    : `![${block.caption ?? ''}](card-image:${block.resourceId ?? ''}#${block.id})`).join('\n\n')
+}
+
+/** 一个模块盒：标题（点击即改名）+ 正文（模块内富文本 / 预制模块渲染器）。
     子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
-function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBlock, addBlock, renameModule, removeModule, send, onOpenModule, ask, readFile, onOpenFile, refTargets, refEdges, mapReferenced }: {
+function ModuleBox({ module, t, card, imageUrl, imageResources, saveBlock, saveMarkdown, renameModule, removeModule, send, onOpenModule, ask, readFile, onOpenFile, refTargets, refEdges, mapReferenced }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
-  readonly mdLabels: MdLabels
   /** 宿主卡身份——html 模块的 NOVEN_FRAME.card 拿它。 */
   readonly card: { readonly name: string; readonly kind: string | undefined }
   readonly imageUrl: (resourceId: string) => string
   /** 本卡可用的图片资源（地图选底图用）。 */
   readonly imageResources: readonly { readonly id: string }[]
   readonly saveBlock: (module: CardModuleDoc, blockId: string, text: string, expected: string) => Promise<EditorSaveResult>
-  readonly addBlock: (module: CardModuleDoc, text: string) => Promise<EditorSaveResult>
+  readonly saveMarkdown: (module: CardModuleDoc, text: string) => Promise<EditorSaveResult>
   readonly renameModule: (module: CardModuleDoc, name: string) => void
   /** 删除模块（宿主负责回执与撤销）。 */
   readonly removeModule: (module: CardModuleDoc) => void
@@ -166,9 +173,6 @@ function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBl
   const [modMenu, setModMenu] = useState(false)
   const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const widget = module.widget?.type
-  const blocks: EditableBlock[] = module.blocks.map(b => b.kind === 'text'
-    ? { id: b.id, kind: 'text' as const, text: b.text ?? '', ref: b.ref }
-    : { id: b.id, kind: 'image' as const, imageUrl: b.resourceId === undefined ? undefined : imageUrl(b.resourceId), caption: b.caption })
   return (
     <section className="nv-modbox">
       <div className="nv-modbox-head">
@@ -210,9 +214,8 @@ function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBl
           card={card} />
       )}
       {(widget === undefined || widget === 'document') && (
-        <BlockEditor blocks={blocks} labels={mdLabels} t={t}
-          onSaveBlock={(blockId, text, expected) => saveBlock(module, blockId, text, expected)}
-          onAdd={text => addBlock(module, text)} />
+        <CardMarkdownEditor markdown={moduleMarkdown(module.blocks)}
+          onSave={(text: string) => { void saveMarkdown(module, text) }} />
       )}
       {module.children.length > 0 && (
         <div className="nv-page-children">
@@ -374,18 +377,16 @@ function OverviewTile({ module, t, imageUrl, onOpen }: {
  * 总览页：这张卡其余各页的成果橱窗——每页一块，只读摘要 + 迷你图 + 跳转；
  * 总览模块自己写的文字块作为页首导语（仍可直接编辑）。
  */
-function OverviewPage({ target, overviewModule, isCharacter, cardKind, t, mdLabels, imageUrl, imageResources, saveBlock, addBlock, roles, rolesOpen, onToggleRoles, onOpenRole, onOpenModule, onAdd, backlinks, onOpenRefCard }: {
+function OverviewPage({ target, overviewModule, isCharacter, cardKind, t, imageUrl, imageResources, saveMarkdown, roles, rolesOpen, onToggleRoles, onOpenRole, onOpenModule, onAdd, backlinks, onOpenRefCard }: {
   readonly target: Omit<CardDocView, 'characters'> | CardDocView
   readonly overviewModule: CardModuleDoc | undefined
   readonly isCharacter: boolean
   /** 宿主卡种类：总览按卡型挑选要展示的模块。 */
   readonly cardKind?: string
   readonly t: ShellT
-  readonly mdLabels: MdLabels
   readonly imageUrl: (resourceId: string) => string
   readonly imageResources: readonly { readonly id: string }[]
-  readonly saveBlock: (module: CardModuleDoc, blockId: string, text: string, expected: string) => Promise<EditorSaveResult>
-  readonly addBlock: (module: CardModuleDoc, text: string) => Promise<EditorSaveResult>
+  readonly saveMarkdown: (module: CardModuleDoc, text: string) => Promise<EditorSaveResult>
   readonly roles: readonly Omit<CardDocView, 'characters'>[]
   readonly rolesOpen: boolean
   readonly onToggleRoles: () => void
@@ -408,16 +409,13 @@ function OverviewPage({ target, overviewModule, isCharacter, cardKind, t, mdLabe
       : []
   const curatedTiles = curatedNames.flatMap(name => tiles.filter(tile => tile.name === name).slice(0, 1))
   const shownTiles = curatedTiles.length > 0 ? curatedTiles : tiles
-  const introBlocks: EditableBlock[] = (overviewModule?.blocks ?? []).map(b => b.kind === 'text'
-    ? { id: b.id, kind: 'text' as const, text: b.text ?? '', ref: b.ref }
-    : { id: b.id, kind: 'image' as const, imageUrl: b.resourceId === undefined ? undefined : imageUrl(b.resourceId), caption: b.caption })
+  const introMarkdown = moduleMarkdown(overviewModule?.blocks ?? [])
   return (
     <div className="nv-ov">
-      {overviewModule !== undefined && introBlocks.length > 0 && (
+      {overviewModule !== undefined && (overviewModule.blocks?.length ?? 0) > 0 && (
         <div className="nv-ov-intro">
-          <BlockEditor blocks={introBlocks} labels={mdLabels} t={t}
-            onSaveBlock={(blockId, text, expected) => saveBlock(overviewModule, blockId, text, expected)}
-            onAdd={text => addBlock(overviewModule, text)} />
+          <CardMarkdownEditor markdown={introMarkdown}
+            onSave={(text: string) => { void saveMarkdown(overviewModule, text) }} />
         </div>
       )}
       {tiles.length === 0 && <div className="nv-canvas-missing">{t('ov.empty')}</div>}
@@ -538,15 +536,6 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       .catch(() => { /* 索引缺席只是没有选择器与反查，不阻塞卡页 */ })
   }, [addr.root, owner])
 
-  const mdLabels = useMemo<MdLabels>(() => ({
-    code: {
-      copyLabel: t('editor.md.copy'),
-      copiedLabel: t('editor.md.copied'),
-      toolbarLabels: { codeLabel: t('editor.md.code'), wrapLabel: t('editor.md.wrap'), unwrapLabel: t('editor.md.unwrap') },
-    },
-    footnotes: '',
-  }), [t])
-
   const doc: CardDocView | undefined = preview !== undefined ? preview.document
     : typeof state === 'object' && state !== null ? state.document : undefined
   const proposal = typeof state === 'object' && state !== null ? state.proposal : undefined
@@ -629,17 +618,18 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     }
   }, [addr, cardId, locked, op, refresh, t, targetId, version])
 
-  const addBlock = useCallback(async (module: CardModuleDoc, text: string): Promise<EditorSaveResult> => {
+  const saveMarkdown = useCallback(async (module: CardModuleDoc, text: string): Promise<EditorSaveResult> => {
     if (locked) { setNotice(t('prop.locked')); return 'error' }
     try {
       const result = await op(addr, {
         op: 'apply', cardId, targetId, version,
-        command: { kind: 'write_text', moduleId: module.id, blockId: null, moduleName: module.name, text },
+        command: { kind: 'write_markdown', moduleId: module.id, name: module.name, text },
       })
       if (result.version !== undefined) setVersion(result.version)
       void refresh()
       return 'ok'
     } catch (error: unknown) {
+      if (error instanceof CardConflict) { setNotice(t('editor.conflict')); void refresh(); return 'conflict' }
       setNotice(String(error instanceof Error ? error.message : error))
       return 'error'
     }
@@ -826,16 +816,16 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
               ‹ {target.id === doc.id ? doc.name : `${doc.name} · ${target.name}`}
             </button>
             {pageModule !== undefined ? (
-              <ModuleBox module={pageModule} t={t} mdLabels={mdLabels}
+              <ModuleBox module={pageModule} t={t}
                 card={{ name: doc.name, kind: doc.kind }}
                 imageUrl={imageUrl} imageResources={imageResources}
-                saveBlock={saveBlock} addBlock={addBlock} renameModule={renameModule} removeModule={removeModule} send={send}
+                saveBlock={saveBlock} saveMarkdown={saveMarkdown} renameModule={renameModule} removeModule={removeModule} send={send}
                 onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} readFile={readFile} onOpenFile={onOpenFile}
                 refTargets={refIndex?.targets} refEdges={refDerived.edges} mapReferenced={refDerived.referenced} />
             ) : (
               <OverviewPage target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id} cardKind={doc?.kind}
-                t={t} mdLabels={mdLabels} imageUrl={imageUrl} imageResources={imageResources}
-                saveBlock={saveBlock} addBlock={addBlock}
+                t={t} imageUrl={imageUrl} imageResources={imageResources}
+                saveMarkdown={saveMarkdown}
                 roles={doc.characters} rolesOpen={rolesOpen}
                 onToggleRoles={() => setRolesOpen(v => !v)} onOpenRole={setRoleId}
                 onOpenModule={id => onOpenCard?.(cardId, id)} onAdd={() => setLibrary(true)}
@@ -850,8 +840,8 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
               </button>
             )}
             <OverviewPage target={target} overviewModule={overviewModule} isCharacter={roleId !== undefined} cardKind={doc?.kind}
-              t={t} mdLabels={mdLabels} imageUrl={imageUrl} imageResources={imageResources}
-              saveBlock={saveBlock} addBlock={addBlock}
+              t={t} imageUrl={imageUrl} imageResources={imageResources}
+              saveMarkdown={saveMarkdown}
               roles={doc.characters} rolesOpen={rolesOpen}
               onToggleRoles={() => setRolesOpen(v => !v)} onOpenRole={setRoleId}
               onOpenModule={id => onOpenCard?.(cardId, id)} onAdd={() => setLibrary(true)}

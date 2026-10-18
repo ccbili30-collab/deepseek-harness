@@ -16,7 +16,8 @@ import type { CardAddr, CardOp, CardOpResult, CardState } from './card-api.ts'
 import type { ImportReport } from './tree-api.ts'
 
 import { CardPage } from './card-page.tsx'
-import { BlockEditor, metaOf, wordCount, type EditableBlock, type MdLabels } from './editor.tsx'
+import { metaOf, wordCount, type MdLabels } from './editor.tsx'
+import { BlockNoteDocEditor, PlainTextDocEditor, type OutlineItem, type OutlineMark } from './doc-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { pagePending, type NovenTree, type TreeModuleRow } from './tree-api.ts'
 import { CreateDialog, type CreateKind, type CreateRequest } from './creation.tsx'
@@ -29,6 +30,14 @@ import type { IslandCall, IslandFrame } from './stage-island.tsx'
 import { buildEnv, realWebview, SIM_IME, WEBVIEW_BASELINE, type FrameSendResult } from './stage-frame.ts'
 import { collectDeltas, foldArchive, DELTA_WINDOW } from './stage-archive.ts'
 import { useSessionSettings } from './session-settings.tsx'
+
+/** markdown 文稿走富编辑器（BlockNote）；其余文本（json/yaml/代码…）保留纯文本块编辑。 */
+const RICH_TEXT_PATH = /\.(md|markdown|mdx|txt)$/i
+/** 文稿缩放记忆（全局，跨页签/重启保留）。 */
+const DOC_ZOOM_KEY = 'noven.doc.zoom'
+/** 大纲浮窗尺寸记忆（全局）。 */
+const PANEL_W_KEY = 'noven.doc.panel.w'
+const PANEL_H_KEY = 'noven.doc.panel.h'
 
 /** 文件行的标签种类：可编辑文本走文稿编辑器，其余（HTML/图片/二进制）走画框预览。 */
 export const fileTabKind = (path: string): 'doc' | 'work' =>
@@ -711,12 +720,6 @@ function CardTab({ tab, t, loadCard, op, ask, readFile, onOpenFile, onOpenCard, 
   )
 }
 
-/** 把文稿正文按空行切成伪块（id 携带原文，保存时整文重拼）。 */
-function docBlocks(text: string): EditableBlock[] {
-  if (text === '') return []
-  return text.split(/\n{2,}/).map((chunk, i) => ({ id: `p${i}`, kind: 'text' as const, text: chunk }))
-}
-
 /** 文稿体：通用编辑器 + /api/noven-doc 乐观锁保存；内容走温层——重挂先渲缓存不闪 loading。 */
 function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, renameFile, deleteFile }: {
   readonly tab: CanvasTab
@@ -732,21 +735,76 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   const path = tab.path ?? ''
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
+  const [outline, setOutline] = useState<readonly OutlineItem[]>([])
+  const [activeHeading, setActiveHeading] = useState<string | undefined>(undefined)
+  const [marks, setMarks] = useState<readonly OutlineMark[]>([])
+  const [liveCount, setLiveCount] = useState<number | undefined>(undefined)
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const [panelOffset, setPanelOffset] = useState<{ x: number, y: number }>({ x: 0, y: 0 })
+  const dragRef = useRef<{ px: number, py: number, ox: number, oy: number } | null>(null)
+  const justDragged = useRef(false)
+  const [panelW, setPanelW] = useState<number>(() => {
+    const raw = Number(window.localStorage.getItem(PANEL_W_KEY))
+    return Number.isFinite(raw) && raw >= 220 && raw <= 600 ? raw : 300
+  })
+  const [panelH, setPanelH] = useState<number | undefined>(() => {
+    const raw = Number(window.localStorage.getItem(PANEL_H_KEY))
+    return Number.isFinite(raw) && raw >= 200 ? raw : undefined
+  })
+  useEffect(() => { window.localStorage.setItem(PANEL_W_KEY, String(panelW)) }, [panelW])
+  useEffect(() => {
+    if (panelH !== undefined) window.localStorage.setItem(PANEL_H_KEY, String(panelH))
+  }, [panelH])
+  const closeTimer = useRef<number | undefined>(undefined)
+  const [zoom, setZoom] = useState<number>(() => {
+    try {
+      const raw = Number(window.localStorage.getItem(DOC_ZOOM_KEY))
+      return Number.isFinite(raw) && raw >= 0.5 && raw <= 2 ? raw : 1
+    } catch { return 1 }
+  })
+  useEffect(() => { window.localStorage.setItem(DOC_ZOOM_KEY, String(zoom)) }, [zoom])
   const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const entry = useDocs(s => s[docKey(sessionId, path)])
   useEffect(() => { ensureDoc(sessionId, path) }, [sessionId, path, ensureDoc])
   // 挂载即清上一任留下的旗标——本页自己产的状态点由本页续写。
   useEffect(() => { setStatus(tab.key, 'working', false); setStatus(tab.key, 'error', false) }, [tab.key, setStatus])
+  useEffect(() => () => {
+    if (closeTimer.current !== undefined) window.clearTimeout(closeTimer.current)
+  }, [])
+  useEffect(() => {
+    if (!RICH_TEXT_PATH.test(path)) return
+    const onShortcut = (event: KeyboardEvent): void => {
+      if (event.key.toLowerCase() !== 'o' || !event.shiftKey || !(event.metaKey || event.ctrlKey)) return
+      event.preventDefault()
+      togglePanel()
+    }
+    window.addEventListener('keydown', onShortcut)
+    return () => { window.removeEventListener('keydown', onShortcut) }
+  })
+  useEffect(() => {
+    if (!panelOpen) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setPinned(false)
+      setPanelOpen(false)
+    }
+    const onDown = (event: PointerEvent): void => {
+      if (pinned) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      if (target.closest('.nv-doc-panel') !== null || target.closest('.nv-doc-rail') !== null) return
+      setPanelOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onDown)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onDown)
+    }
+  }, [panelOpen, pinned])
   const state = entry === undefined || entry.state === 'loading' ? 'loading' : entry.state
   const base = entry?.content
-  const mdLabels = useMemo<MdLabels>(() => ({
-    code: {
-      copyLabel: t('editor.md.copy'),
-      copiedLabel: t('editor.md.copied'),
-      toolbarLabels: { codeLabel: t('editor.md.code'), wrapLabel: t('editor.md.wrap'), unwrapLabel: t('editor.md.unwrap') },
-    },
-    footnotes: '',
-  }), [t])
   const saveText = useCallback(async (text: string): Promise<'ok' | 'conflict' | 'error'> => {
     // 注入的 saveDoc 在 'ok' 时把新内容写回温层——base 的推进由缓存承担。
     setStatus(tab.key, 'working', true)
@@ -755,28 +813,116 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
     setStatus(tab.key, 'error', result !== 'ok')
     return result
   }, [sessionId, saveDoc, path, base, tab.key, setStatus])
-  const saveBlock = useCallback(async (blockId: string, text: string): Promise<'ok' | 'conflict' | 'error'> => {
-    if (base === undefined) return 'error'
-    const chunks = docBlocks(base)
-    const index = Number(blockId.slice(1))
-    const next = chunks.map((c, i) => i === index ? text : c.text ?? '').join('\n\n')
-    return saveText(next)
-  }, [base, saveText])
-  const addBlock = useCallback(async (text: string) => saveText(`${base ?? ''}\n\n${text}`), [base, saveText])
   if (state === 'missing' || base === undefined) {
     return <div className="nv-canvas-missing">{t(state === 'missing' ? 'canvas.doc.missing' : 'canvas.files.loading')}</div>
   }
-  const name = path.split('/').pop() ?? path
+  // 标题只显示名字（不带扩展名）；改名回写时保留原扩展名。
+  const fileName = path.split('/').pop() ?? path
+  const extension = /\.(md|markdown|mdx|txt)$/i.exec(path)?.[0] ?? ''
+  const name = extension === '' ? fileName : fileName.slice(0, -extension.length)
+  const jumpToHeading = (id: string): void => {
+    const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(id)}"]`)
+    element?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }
+  // 面板改尺寸：左缘改宽、下缘改高、右下角同时改；窗口级监听，尺寸持久化。
+  const startPanelResize = (axis: 'x' | 'y' | 'xy') => (event: React.PointerEvent<HTMLSpanElement>): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    const panelElement = event.currentTarget.closest('.nv-doc-panel')
+    const host = event.currentTarget.closest('.nv-ed')?.getBoundingClientRect()
+    const start = {
+      px: event.clientX, py: event.clientY,
+      w: panelW,
+      h: panelElement?.getBoundingClientRect().height ?? 400,
+    }
+    const move = (moveEvent: PointerEvent): void => {
+      if (axis !== 'y') setPanelW(Math.min(600, Math.max(220, start.w + (start.px - moveEvent.clientX))))
+      if (axis !== 'x') {
+        const maxH = Math.max(200, (host?.height ?? 700) - 108)
+        setPanelH(Math.min(maxH, Math.max(200, start.h + (moveEvent.clientY - start.py))))
+      }
+    }
+    const up = (): void => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      justDragged.current = true
+      if (closeTimer.current !== undefined) { window.clearTimeout(closeTimer.current); closeTimer.current = undefined }
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  // 面板拖动：窗口级监听（指针移出面板也能跟手）；松手后不自动收起（用户刚拖过它）。
+  const startPanelDrag = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (!(event.target instanceof Element) || event.target.closest('.nv-doc-panel-pin') !== null) return
+    event.preventDefault()
+    const host = event.currentTarget.closest('.nv-ed')?.getBoundingClientRect()
+    const start = { px: event.clientX, py: event.clientY, ox: panelOffset.x, oy: panelOffset.y }
+    dragRef.current = start
+    const move = (moveEvent: PointerEvent): void => {
+      const minX = -(host?.width ?? 800) + 340
+      const minY = -(host?.height ?? 600) + 180
+      setPanelOffset({
+        x: Math.min(0, Math.max(minX, start.ox + moveEvent.clientX - start.px)),
+        y: Math.min(400, Math.max(minY, start.oy + moveEvent.clientY - start.py)),
+      })
+    }
+    const up = (): void => {
+      window.removeEventListener('pointermove', move)
+      window.removeEventListener('pointerup', up)
+      dragRef.current = null
+      justDragged.current = true
+      if (closeTimer.current !== undefined) { window.clearTimeout(closeTimer.current); closeTimer.current = undefined }
+    }
+    window.addEventListener('pointermove', move)
+    window.addEventListener('pointerup', up)
+  }
+  const openPanel = (): void => {
+    if (closeTimer.current !== undefined) { window.clearTimeout(closeTimer.current); closeTimer.current = undefined }
+    justDragged.current = false
+    setPanelOpen(true)
+  }
+  /** 显式开关（按钮/快捷键/点击刻度）：开就钉住，再触发就收起。 */
+  const togglePanel = (): void => {
+    if (panelOpen) {
+      setPanelOpen(false)
+      setPinned(false)
+    } else {
+      justDragged.current = false
+      setPinned(true)
+      setPanelOpen(true)
+    }
+  }
+  const scheduleClose = (): void => {
+    if (pinned || dragRef.current !== null || justDragged.current || closeTimer.current !== undefined) return
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = undefined
+      setPanelOpen(false)
+    }, 300)
+  }
   return (
-    <div className="nv-ed">
+    <div className={RICH_TEXT_PATH.test(path) ? 'nv-ed nv-ed-doc' : 'nv-ed'}>
+      <div className="nv-ed-main">
       <header className="nv-ed-head">
         {renaming ? (
           <InlineRename className="nv-ed-title nv-ed-titlein" value={name}
-            onDone={next => { setRenaming(false); if (next !== undefined) void renameFile(path, next) }} />
+            onDone={next => {
+              setRenaming(false)
+              if (next === undefined) return
+              const trimmed = next.trim()
+              if (trimmed === '' || trimmed === name) return
+              const base = extension !== '' && trimmed.toLowerCase().endsWith(extension.toLowerCase())
+                ? trimmed.slice(0, -extension.length) : trimmed
+              void renameFile(path, `${base}${extension}`)
+            }} />
         ) : (
-          <h1 className="nv-ed-title">{name}</h1>
+          <h1 className="nv-ed-title" title={t('canvas.doc.rename')}
+            onClick={() => setRenaming(true)}>{name}</h1>
         )}
-        <div className="nv-ed-meta">{metaOf([t('tree.docs'), fmt(t, 'editor.wordcount', { count: wordCount(base) })])}</div>
+        <div className="nv-ed-meta">{metaOf([
+          t('tree.docs'),
+          fmt(t, 'editor.wordcount', { count: liveCount ?? wordCount(base) }),
+          zoom === 1 ? undefined : `${String(Math.round(zoom * 100))}%`,
+        ])}</div>
         <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => { arm.reset(); setMenuOpen(false) }}
           onSelect={id => {
@@ -795,8 +941,62 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
             <button type="button" className="nv-ed-more" aria-label={t('canvas.doc.more')}
               onClick={() => setMenuOpen(v => !v)}>⋯</button>
           )} />
+        {RICH_TEXT_PATH.test(path) && (
+          <button type="button" className={`nv-ed-outline-btn${panelOpen ? ' on' : ''}`}
+            title={`${t('canvas.outline')} · ⌘/Ctrl+Shift+O`}
+            aria-pressed={panelOpen} onClick={togglePanel}>
+            {t('canvas.outline')}
+          </button>
+        )}
       </header>
-      <BlockEditor blocks={docBlocks(base)} labels={mdLabels} t={t} onSaveBlock={saveBlock} onAdd={addBlock} />
+      {RICH_TEXT_PATH.test(path)
+        ? <BlockNoteDocEditor markdown={base} onChange={text => { void saveText(text) }}
+            onOutline={setOutline} onActive={setActiveHeading} onWordCount={setLiveCount} onMarks={setMarks}
+            zoom={zoom} onZoom={setZoom} />
+        : <PlainTextDocEditor text={base} onChange={text => { void saveText(text) }} />}
+      </div>
+      {RICH_TEXT_PATH.test(path) && (
+        <>
+          {/* 常驻：右缘刻度（位置标尺，不占布局、只标位置） */}
+          <div className="nv-doc-rail" aria-hidden="true"
+            onPointerEnter={openPanel} onPointerLeave={scheduleClose} onClick={togglePanel}>
+            {marks.map(mark => (
+              <span key={mark.id}
+                className={`nv-doc-rail-mark${mark.id === activeHeading ? ' nv-doc-rail-mark-on' : ''}`}
+                style={{ top: `${Math.round(mark.top * 1000) / 10}%` }} />
+            ))}
+          </div>
+          {/* 唤出：大纲面板 */}
+          <div className={`nv-doc-panel${panelOpen ? ' nv-doc-panel-open' : ''}`}
+            style={{
+              width: panelW,
+              ...(panelH === undefined ? {} : { height: panelH, bottom: 'auto' as const }),
+              ...(panelOpen ? { transform: `translate(${String(panelOffset.x)}px, ${String(panelOffset.y)}px)` } : {}),
+            }}
+            onPointerEnter={openPanel} onPointerLeave={scheduleClose}>
+            <span className="nv-doc-resize nv-doc-resize-l" onPointerDown={startPanelResize('x')} />
+            <span className="nv-doc-resize nv-doc-resize-b" onPointerDown={startPanelResize('y')} />
+            <span className="nv-doc-resize nv-doc-resize-c" onPointerDown={startPanelResize('xy')} />
+            <div className="nv-doc-panel-head" onPointerDown={startPanelDrag}>
+              <span className="nv-doc-panel-title">{t('canvas.outline')}</span>
+              <button type="button" className={`nv-doc-panel-pin${pinned ? ' nv-doc-panel-pin-on' : ''}`}
+                title={t('canvas.outline.pin')} aria-pressed={pinned}
+                onClick={() => { setPinned(v => !v); if (!pinned) setPanelOpen(true) }}>
+                {glyph.pin(13)}
+              </button>
+            </div>
+            {outline.length === 0 && <div className="nv-doc-panel-empty">{t('canvas.outline.empty')}</div>}
+            {outline.map(item => (
+              <button key={item.id} type="button"
+                className={`nv-doc-panel-item${item.id === activeHeading ? ' nv-doc-panel-item-on' : ''}`}
+                data-level={Math.min(item.level, 3)} title={item.text}
+                onClick={() => { jumpToHeading(item.id) }}>
+                {item.text}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   )
 }

@@ -1494,15 +1494,132 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-canvas-docedit { flex: 1; min-height: 0; border: 0; resize: none; padding: 24px 28px; font-size: 14px; line-height: 1.8;
   font-family: inherit; background: var(--nv-surface); color: var(--nv-primary-text); outline: none; }
 .nv-canvas-docstatus { padding: 6px 14px; font-size: 11px; color: var(--nv-secondary-text); border-top: 1px solid var(--nv-divider); }
+/* 文稿富编辑器（BlockNote）：左侧标题树 + 一页文档的版心；主题色换成本站调色板 */
+/* 文稿页签：正文一列 + 右上角标题树（从最顶上开始、2/3 高、白底渐隐） */
+/* 文稿页签：正文整幅，右上角浮一枚小挂窗（大纲）——不占布局列。
+   注意覆盖旧 .nv-ed-doc 的 150px 右内边距（那是老编辑器预留的空白，正文会被它截断）。 */
+.nv-ed.nv-ed-doc { position: relative; padding: 0; overflow: hidden; }
+.nv-ed-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+/* 右缘刻度：常驻的位置标尺——不占布局、不挡字，只标标题所在位置（当前项薄荷） */
+.nv-doc-rail { position: absolute; top: 84px; right: 4px; bottom: 24px; width: 12px; z-index: 6; cursor: pointer; }
+.nv-doc-rail-mark { position: absolute; right: 0; width: 8px; height: 2px; border-radius: 1px;
+  background: var(--nv-secondary-text); opacity: .28;
+  transition: width 120ms ease, opacity 120ms ease, background 120ms ease; }
+.nv-doc-rail-mark-on { width: 14px; opacity: .95; background: var(--nv-accent); }
+/* 唤出面板：白底圆角阴影，从右缘滑入；只在用户唤出时临时覆盖纸面 */
+.nv-doc-panel { position: absolute; top: 84px; right: 16px; bottom: 24px; width: 300px; z-index: 7;
+  display: flex; flex-direction: column; overflow-y: auto; padding: 10px 8px 24px; box-sizing: border-box;
+  background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(28, 64, 51, .16);
+  opacity: 0; transform: translateX(16px); pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease; }
+.nv-doc-panel-open { opacity: 1; transform: none; pointer-events: auto; }
+/* 边缘拖拽把手：左缘改宽、下缘改高、右下角同时改 */
+.nv-doc-resize { position: absolute; z-index: 2; }
+.nv-doc-resize-l { left: 0; top: 0; bottom: 14px; width: 7px; cursor: ew-resize; }
+.nv-doc-resize-b { left: 14px; right: 0; bottom: 0; height: 7px; cursor: ns-resize; }
+.nv-doc-resize-c { left: 0; bottom: 0; width: 16px; height: 16px; cursor: nwse-resize; }
+.nv-doc-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 10px;
+  cursor: grab; touch-action: none; user-select: none; }
+.nv-doc-panel-head:active { cursor: grabbing; }
+.nv-doc-panel-title { font-size: 12px; font-weight: 700; letter-spacing: .14em; color: var(--nv-secondary-text); }
+.nv-doc-panel-pin { display: inline-flex; border: 0; background: none; border-radius: 7px; padding: 4px 6px;
+  color: var(--nv-secondary-text); cursor: pointer; }
+.nv-doc-panel-pin:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
+.nv-doc-panel-pin-on { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-doc-panel-empty { padding: 10px; font-size: 12.5px; line-height: 1.8; color: var(--nv-secondary-text); }
+.nv-doc-panel-item { display: block; width: 100%; border: 0; background: none; border-radius: 8px; padding: 7px 10px; text-align: left;
+  font-size: 13.5px; line-height: 1.7; color: var(--nv-secondary-text); cursor: pointer; font-family: inherit;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nv-doc-panel-item:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
+.nv-doc-panel-item-on { color: var(--nv-accent-deep); font-weight: 600; }
+.nv-doc-panel-item[data-level='2'] { padding-left: 22px; }
+.nv-doc-panel-item[data-level='3'] { padding-left: 36px; }
+.nv-doc-bn { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--nv-surface); font-family: inherit; }
+.nv-doc-bn .bn-container { min-height: 100%; width: 100%; }
+/* 卡内模块正文（BlockNote）：盒内富文本，无页签级大纲 */
+.nv-card-bn { font-family: inherit; }
+.nv-card-bn .bn-container { width: 100%; }
+.nv-card-bn .bn-editor { padding: 6px 2px 12px; max-width: none; margin: 0; font-family: inherit; font-size: 14px; }
+/* 纯文本编辑面（代码/配置）：等宽、原样进出 */
+.nv-doc-plain { flex: 1; min-height: 0; border: 0; resize: none; padding: 16px 28px 80px; box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.7;
+  background: var(--nv-surface); color: var(--nv-primary-text); outline: none; white-space: pre; overflow: auto; }
+.nv-doc-bn .bn-container .bn-editor { width: 100%; max-width: none; }
+/* 标题字号收敛：满幅纸上 3em 的 H1 会一行只容五六字 */
+.nv-doc-bn .bn-block-content[data-content-type='heading'][data-level='1'] { font-size: 2em !important; }
+.nv-doc-bn .bn-block-content[data-content-type='heading'][data-level='2'] { font-size: 1.5em !important; }
+.nv-doc-bn .bn-block-content[data-content-type='heading'][data-level='3'] { font-size: 1.25em !important; }
+/* 选区高亮 = 薄荷绿（半透明，白底上不吞字）；块内所有行内元素共用 */
+.nv-doc-bn ::selection { background: rgba(52, 211, 153, .30); color: inherit; }
+.nv-doc-bn ::-moz-selection { background: rgba(52, 211, 153, .30); color: inherit; }
+/* BlockNote 浮层被 portal 到编辑器容器之外：主题变量挂全局根，浮窗按全局类改造。
+   浮窗（选中文字后的格式条）= 薄荷底 + 白图标；菜单/下拉保持白底、薄荷选中。 */
+:root {
+  --bn-font-family: inherit;
+  --bn-colors-editor-text: var(--nv-primary-text);
+  --bn-colors-editor-background: var(--nv-surface);
+  --bn-colors-menu-text: var(--nv-primary-text);
+  --bn-colors-menu-background: var(--nv-surface);
+  --bn-colors-tooltip-text: #fff;
+  --bn-colors-tooltip-background: var(--nv-primary-text);
+  --bn-colors-hovered-text: var(--nv-primary-text);
+  --bn-colors-hovered-background: var(--nv-accent-soft);
+  --bn-colors-selected-text: var(--nv-primary-text);
+  --bn-colors-selected-background: var(--nv-accent-soft);
+  --bn-colors-disabled-text: var(--nv-secondary-text);
+  --bn-colors-disabled-background: var(--nv-canvas);
+  --bn-colors-shadow: rgba(28, 64, 51, .12);
+  --bn-colors-border: var(--nv-divider);
+  --bn-colors-side-menu: var(--nv-secondary-text);
+  --bn-border-radius: 8px;
+  --bn-border-radius-small: 6px;
+  --bn-border-radius-medium: 8px;
+  --bn-border-radius-large: 12px;
+}
+.bn-toolbar {
+  background-color: var(--nv-accent) !important;
+  border-color: transparent !important;
+  box-shadow: 0 10px 28px rgba(28, 64, 51, .20) !important;
+}
+.bn-toolbar .mantine-ActionIcon-root,
+.bn-toolbar .mantine-Button-root,
+.bn-toolbar .bn-select,
+.bn-toolbar .bn-select-text,
+.bn-toolbar svg {
+  color: #fff !important;
+  background-color: transparent !important;
+}
+.bn-toolbar .mantine-ActionIcon-root:hover,
+.bn-toolbar .mantine-Button-root:hover {
+  background-color: rgba(255, 255, 255, .18) !important;
+  color: #fff !important;
+}
+.bn-toolbar .mantine-ActionIcon-root[data-selected],
+.bn-toolbar .mantine-Button-root[data-selected] {
+  background-color: rgba(255, 255, 255, .26) !important;
+  color: #fff !important;
+}
+.bn-toolbar .mantine-ActionIcon-root[data-disabled],
+.bn-toolbar .mantine-Button-root[data-disabled] {
+  background-color: transparent !important;
+  color: rgba(255, 255, 255, .55) !important;
+}
+.nv-doc-bn .bn-editor { padding: 12px 48px 140px; max-width: none; margin: 0; font-family: inherit;
+  font-size: calc(16px * var(--nv-doc-zoom, 1)); }
 .nv-canvas-conflict { padding: 8px 14px; font-size: 12px; color: var(--nv-warn); background: var(--nv-warn-soft); }
 
 /* 通用编辑器：标题 + meta + 正文 + 底状态条（文稿与卡模块共用） */
 .nv-ed { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .nv-ed .nv-ed-head { padding: 20px 28px 10px; position: relative; }
+.nv-ed-outline-btn { position: absolute; top: 18px; right: 52px; border: 0; background: none; border-radius: 7px;
+  padding: 3px 8px; font-size: 11.5px; font-family: inherit; color: var(--nv-secondary-text); cursor: pointer; }
+.nv-ed-outline-btn:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
+.nv-ed-outline-btn.on { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 .nv-ed-more { position: absolute; top: 18px; right: 22px; border: 0; background: none; padding: 2px 8px;
   font-size: 15px; color: var(--nv-secondary-text); cursor: pointer; border-radius: 6px; }
 .nv-ed-more:hover { color: var(--nv-primary-text); background: var(--nv-accent-soft); }
-.nv-ed-title { margin: 0; font-size: 22px; font-weight: 700; color: var(--nv-primary-text); }
+.nv-ed-title { margin: 0; font-size: 22px; font-weight: 700; color: var(--nv-primary-text); cursor: text; }
 .nv-ed-titlein { display: block; width: 100%; box-sizing: border-box; border: 0; border-bottom: 1px solid var(--nv-accent-deep); background: transparent; padding: 0 0 2px; font-family: inherit; outline: none; }
 .nv-ed-meta { margin-top: 5px; font-size: 12px; color: var(--nv-secondary-text); }
 
