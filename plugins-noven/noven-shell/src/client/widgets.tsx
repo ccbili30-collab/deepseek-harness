@@ -1382,6 +1382,7 @@ export function RelationWidget({ module, t, send }: WidgetProps) {
   const [panel, setPanel] = useState<{ kind: 'add' } | { kind: 'node', id: string } | { kind: 'edge', id: string } | null>(null)
   const [linking, setLinking] = useState<string | null>(null)
   const [drag, setDrag] = useState<{ id: string, x: number, y: number } | null>(null)
+  const [zoom, setZoom] = useState(1)
   const movedRef = useRef(false)
 
   const posOf = useCallback((node: RelNode, index: number): { x: number, y: number } => {
@@ -1428,6 +1429,7 @@ export function RelationWidget({ module, t, send }: WidgetProps) {
   return (
     <div className="nv-wg nv-relation">
       <svg ref={svgRef} className="nv-rel-canvas" viewBox={`0 0 ${REL_W} ${REL_H}`}
+        style={{ transform: `scale(${zoom})`, transformOrigin: '50% 50%', transition: 'transform 160ms ease-out' }}
         onClick={() => { setPanel(null); setLinking(null) }}>
         {data.edges.map(edge => {
           const a = positions.get(edge.from)
@@ -1483,6 +1485,14 @@ export function RelationWidget({ module, t, send }: WidgetProps) {
           <text x={REL_W / 2} y={REL_H / 2} className="nv-rel-empty" textAnchor="middle">{t('wg.rel.empty')}</text>
         )}
       </svg>
+      <div className="nv-rel-zoom">
+        <button type="button" className="nv-rel-zoomb" aria-label={t('wg.rel.zoomOut')}
+          onClick={() => setZoom(prev => Math.max(0.5, Math.round(prev / 1.2 * 10) / 10))}>−</button>
+        <span className="nv-rel-zoomval">{Math.round(zoom * 100)}%</span>
+        <button type="button" className="nv-rel-zoomb" aria-label={t('wg.rel.zoomIn')}
+          onClick={() => setZoom(prev => Math.min(2, Math.round(prev * 1.2 * 10) / 10))}>＋</button>
+        <button type="button" className="nv-rel-zoomb nv-rel-zoomfit" onClick={() => setZoom(1)}>{t('wg.rel.fit')}</button>
+      </div>
       <div className="nv-wg-actions">
         <button type="button" className="nv-wg-add" onClick={() => setPanel({ kind: 'add' })}>＋ {t('wg.rel.addPerson')}</button>
         {linking !== null && <span className="nv-wg-hint">{t('wg.rel.linkHint')}</span>}
@@ -1592,6 +1602,7 @@ export function MapWidget({ module, t, send, imageUrl, imageResources }: WidgetP
   const [editing, setEditing] = useState<MapMarker | null>(null)
   const [picking, setPicking] = useState(false)
   const [drag, setDrag] = useState<{ id: string, x: number, y: number } | null>(null)
+  const [zoom, setZoom] = useState(1)
   const movedRef = useRef(false)
 
   const point = (e: { clientX: number, clientY: number }): { x: number, y: number } => {
@@ -1901,18 +1912,20 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
           <div className="nv-coll-formrows">
             {data.fields.map(field => {
               const raw = data.values[item.id]?.[field.id]
-              if (field.type === 'image') {
-                const resourceId = typeof raw === 'object' && raw !== null && 'resourceId' in raw ? raw.resourceId : undefined
+              // 图片字段已由表单头部的头像承接，行内不再重复一张大图。
+              if (field.type === 'image') return null
+              const text = collText(raw)
+              if (field.type === 'chips') {
+                const chips = text.split('、').map(part => part.trim()).filter(part => part !== '')
                 return (
                   <div key={field.id} className="nv-coll-formrow">
                     <span className="nv-coll-formlabel">{field.name}</span>
-                    {resourceId === undefined
-                      ? <span className="nv-coll-formvalue nv-coll-formempty">—</span>
-                      : <img className="nv-coll-formimg" src={imageUrl(resourceId)} alt="" />}
+                    <span className="nv-coll-formvalue nv-coll-chips">
+                      {chips.length === 0 ? '—' : chips.map(chip => <span key={chip} className="nv-coll-chip nv-coll-chip-neutral">{chip}</span>)}
+                    </span>
                   </div>
                 )
               }
-              const text = collText(raw)
               return (
                 <div key={field.id} className="nv-coll-formrow">
                   <span className="nv-coll-formlabel">{field.name}</span>
@@ -1985,6 +1998,10 @@ function CollList({ data, t, moduleId, send, refTargets }: {
                 )
               }
               const text = collText(raw)
+              if (f.type === 'chips') {
+                const chips = text.split('、').map(part => part.trim()).filter(part => part !== '')
+                return <td key={f.id}>{chips.length === 0 ? '' : chips.map(chip => <span key={chip} className="nv-coll-chip nv-coll-chip-neutral">{chip}</span>)}</td>
+              }
               if (f.name === '立场') {
                 return <td key={f.id}>{text === '' ? '' : <span className={`nv-coll-chip nv-coll-chip-${chipTone(text)}`}>{text}</span>}</td>
               }
@@ -2068,6 +2085,36 @@ function CollScroll({ data, t, imageUrl, openId, onOpen }: {
 }
 
 /** 条目详情面板：字段可就地编辑（blur 提交），名称/摘要/正文走 update_item。 */
+/** 芯片字段：回车加一枚、点 × 删一枚；存成「、」连接的字符串。 */
+function ChipsField({ value, placeholder, onCommit }: {
+  readonly value: string
+  readonly placeholder: string
+  readonly onCommit: (text: string) => void
+}) {
+  const chips = value.split('、').map(part => part.trim()).filter(part => part !== '')
+  const [draft, setDraft] = useState('')
+  const commit = (next: readonly string[]): void => onCommit(next.join('、'))
+  return (
+    <span className="nv-coll-chips">
+      {chips.map(chip => (
+        <span key={chip} className="nv-coll-chip nv-coll-chip-neutral">{chip}
+          <button type="button" className="nv-coll-chipx" aria-label="remove" onClick={() => commit(chips.filter(candidate => candidate !== chip))}>×</button>
+        </span>
+      ))}
+      <input className="nv-coll-chipinput" value={draft} placeholder={placeholder}
+        onChange={event => setDraft(event.target.value)}
+        onKeyDown={event => {
+          if (event.key !== 'Enter') return
+          event.preventDefault()
+          const chip = draft.trim()
+          if (chip === '' || chips.includes(chip)) return
+          commit([...chips, chip])
+          setDraft('')
+        }} />
+    </span>
+  )
+}
+
 function CollDetail({ data, item, t, moduleId, imageUrl, send, refTargets, onClose }: {
   readonly data: CollData
   readonly item: CollItem
@@ -2115,6 +2162,8 @@ function CollDetail({ data, item, t, moduleId, imageUrl, send, refTargets, onClo
                     .filter(target => field.type === 'person' ? target.kind === 'CHARACTER' : target.kind === 'WORLD')
                     .map(target => <option key={target.cardId} value={target.cardId}>{target.name}</option>)}
                 </select>
+              ) : field.type === 'chips' ? (
+                <ChipsField value={v} placeholder={t('coll.chips.add')} onCommit={text => setValue(field, text)} />
               ) : field.type === 'longtext' ? (
                 <CollFieldArea value={v} onCommit={text => setValue(field, text)} />
               ) : (

@@ -345,10 +345,12 @@ function OverviewTile({ module, t, imageUrl, onOpen }: {
  * 总览页：这张卡其余各页的成果橱窗——每页一块，只读摘要 + 迷你图 + 跳转；
  * 总览模块自己写的文字块作为页首导语（仍可直接编辑）。
  */
-function OverviewPage({ target, overviewModule, isCharacter, t, mdLabels, imageUrl, imageResources, saveBlock, addBlock, roles, rolesOpen, onToggleRoles, onOpenRole, onOpenModule, onAdd, backlinks, onOpenRefCard }: {
+function OverviewPage({ target, overviewModule, isCharacter, cardKind, t, mdLabels, imageUrl, imageResources, saveBlock, addBlock, roles, rolesOpen, onToggleRoles, onOpenRole, onOpenModule, onAdd, backlinks, onOpenRefCard }: {
   readonly target: Omit<CardDocView, 'characters'> | CardDocView
   readonly overviewModule: CardModuleDoc | undefined
   readonly isCharacter: boolean
+  /** 宿主卡种类：总览按卡型挑选要展示的模块。 */
+  readonly cardKind?: string
   readonly t: ShellT
   readonly mdLabels: MdLabels
   readonly imageUrl: (resourceId: string) => string
@@ -369,6 +371,14 @@ function OverviewPage({ target, overviewModule, isCharacter, t, mdLabels, imageU
   const flattenLeaves = (modules: readonly CardModuleDoc[]): CardModuleDoc[] => modules.flatMap(module =>
     module.children.length === 0 ? [module] : flattenLeaves(module.children))
   const tiles = flattenLeaves(target.modules.filter(m => !isOverviewModule(m)))
+  // 总览不是目录：按卡型挑一组固定模块，其余留给抽屉树。
+  const curatedNames = cardKind === 'CHARACTER'
+    ? ['基本信息', '关系图', '时间线', '多形态', '语录']
+    : cardKind === 'WORLD'
+      ? ['力量与规则', '禁忌与代价', '地图', '地区名录', '势力名录', '种族名录', '时间线', '关系图']
+      : []
+  const curatedTiles = curatedNames.flatMap(name => tiles.filter(tile => tile.name === name).slice(0, 1))
+  const shownTiles = curatedTiles.length > 0 ? curatedTiles : tiles
   const introBlocks: EditableBlock[] = (overviewModule?.blocks ?? []).map(b => b.kind === 'text'
     ? { id: b.id, kind: 'text' as const, text: b.text ?? '', ref: b.ref }
     : { id: b.id, kind: 'image' as const, imageUrl: b.resourceId === undefined ? undefined : imageUrl(b.resourceId), caption: b.caption })
@@ -383,7 +393,7 @@ function OverviewPage({ target, overviewModule, isCharacter, t, mdLabels, imageU
       )}
       {tiles.length === 0 && <div className="nv-canvas-missing">{t('ov.empty')}</div>}
       <div className="nv-ov-grid">
-        {tiles.map(module => (
+        {shownTiles.map(module => (
           <OverviewTile key={module.id} module={module} t={t} imageUrl={imageUrl}
             onOpen={() => onOpenModule(module.id)} />
         ))}
@@ -794,7 +804,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                 onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} readFile={readFile} onOpenFile={onOpenFile}
                 refTargets={refIndex?.targets} refEdges={refDerived.edges} mapReferenced={refDerived.referenced} />
             ) : (
-              <OverviewPage target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id}
+              <OverviewPage target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id} cardKind={doc?.kind}
                 t={t} mdLabels={mdLabels} imageUrl={imageUrl} imageResources={imageResources}
                 saveBlock={saveBlock} addBlock={addBlock}
                 roles={doc.characters} rolesOpen={rolesOpen}
@@ -810,7 +820,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                 ‹ {doc.name}
               </button>
             )}
-            <OverviewPage target={target} overviewModule={overviewModule} isCharacter={roleId !== undefined}
+            <OverviewPage target={target} overviewModule={overviewModule} isCharacter={roleId !== undefined} cardKind={doc?.kind}
               t={t} mdLabels={mdLabels} imageUrl={imageUrl} imageResources={imageResources}
               saveBlock={saveBlock} addBlock={addBlock}
               roles={doc.characters} rolesOpen={rolesOpen}

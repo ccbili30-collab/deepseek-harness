@@ -88,6 +88,7 @@ for (const file of files) {
     const forms = all.find(m => m.name === '基本信息')
     const formData = forms === undefined ? undefined : JSON.parse(String(forms.blocks[0]?.content ?? '{}'))
     check(formData?.noven?.view === 'form', 'character: 基本信息默认表单视图')
+    check(formData?.noven?.fields?.some(f => f.name === '性格关键词' && f.type === 'chips') === true, 'character: 性格关键词是 chips 字段')
     const gallery = all.find(m => m.name === '多形态')
     const galleryData = gallery === undefined ? undefined : JSON.parse(String(gallery.blocks[0]?.content ?? '{}'))
     check(galleryData?.noven?.view === 'cards', 'character: 多形态默认图鉴视图')

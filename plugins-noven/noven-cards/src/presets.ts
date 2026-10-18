@@ -95,7 +95,7 @@ export interface PresetIo {
   readonly writePayload: (bytes: Uint8Array, mediaType: string) => Promise<string>
 }
 
-const FIELD_TYPES = new Set<string>(['text', 'longtext', 'date', 'person', 'image', 'place', 'link', 'number', 'time'])
+const FIELD_TYPES = new Set<string>(['text', 'longtext', 'chips', 'date', 'person', 'image', 'place', 'link', 'number', 'time'])
 const WIDGETS = new Set<string>(['overview', 'timeline', 'map', 'collection', 'relation', 'html'])
 const COLLECTION_VIEWS = new Set<string>(['list', 'cards', 'form', 'timeline', 'map'])
 const ERA_COLORS = new Set(['purple', 'blue', 'pink', 'green', 'amber', 'gray'])

@@ -2374,6 +2374,22 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-coll-reftd { min-width: 90px; padding: 3px 6px; font-size: 11.5px; }
 .nv-coll-formavatar { width: 96px; height: 96px; object-fit: cover; border-radius: 12px; margin: 12px 14px 0; display: block; }
 
+
+/* 芯片字段编辑：一枚一枚加、点 × 删 */
+.nv-coll-chips { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.nv-coll-chipx { border: 0; background: none; cursor: pointer; color: inherit; opacity: .55; font-size: 10px; padding: 0 0 0 4px; }
+.nv-coll-chipx:hover { opacity: 1; }
+.nv-coll-chipinput { min-width: 110px; border: 1px dashed var(--nv-divider); border-radius: 999px; padding: 3px 10px;
+  font: inherit; font-size: 11.5px; background: transparent; color: var(--nv-primary-text); outline: none; }
+.nv-coll-chipinput:focus { border-color: var(--nv-accent); }
+/* 关系图缩放控件 */
+.nv-wg.nv-relation { position: relative; }
+.nv-rel-zoom { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 4px;
+  background: rgba(255,255,255,.92); border: 1px solid var(--nv-divider); border-radius: 8px; padding: 2px 6px; }
+.nv-rel-zoomb { border: 0; background: none; cursor: pointer; font-size: 13px; padding: 2px 5px; color: var(--nv-primary-text); }
+.nv-rel-zoomval { font-size: 11px; color: var(--nv-secondary-text); min-width: 34px; text-align: center; }
+.nv-rel-zoomfit { font-size: 11px; }
+
 table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .nv-coll-table th { text-align: left; font-weight: 500; color: var(--nv-secondary-text); padding: 6px 8px; border-bottom: 1px solid var(--nv-divider); }
 .nv-coll-table td { padding: 7px 8px; border-bottom: 1px solid var(--nv-divider); vertical-align: top; }

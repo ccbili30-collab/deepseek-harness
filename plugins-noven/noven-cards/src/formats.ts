@@ -332,8 +332,8 @@ export function encodeTimeline(data: TimelineData): string {
 
 // ---------- 集合 ----------
 
-export type CollectionFieldType = 'text' | 'longtext' | 'date' | 'person' | 'image' | 'place' | 'link' | 'number' | 'time'
-const FIELD_TYPES = new Set<CollectionFieldType>(['text', 'longtext', 'date', 'person', 'image', 'place', 'link', 'number', 'time'])
+export type CollectionFieldType = 'text' | 'longtext' | 'chips' | 'date' | 'person' | 'image' | 'place' | 'link' | 'number' | 'time'
+const FIELD_TYPES = new Set<CollectionFieldType>(['text', 'longtext', 'chips', 'date', 'person', 'image', 'place', 'link', 'number', 'time'])
 
 export interface CollectionField {
   readonly id: string
