@@ -1468,6 +1468,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-doc-outline { width: 190px; flex: none; overflow-y: auto; padding: 16px 8px 40px;
   border-right: 1px solid var(--nv-divider); background: var(--nv-canvas); scrollbar-width: thin; }
 .nv-doc-outline-label { padding: 0 8px 8px; font-size: 11px; font-weight: 700; letter-spacing: .14em; color: var(--nv-secondary-text); }
+.nv-doc-outline-empty { padding: 2px 8px; font-size: 11.5px; line-height: 1.7; color: var(--nv-secondary-text); opacity: .7; }
 .nv-doc-outline-item { display: block; width: 100%; border: 0; background: none; border-radius: 7px; padding: 5px 8px; text-align: left;
   font-size: 12px; line-height: 1.5; color: var(--nv-secondary-text); cursor: pointer; font-family: inherit;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -800,7 +800,7 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
           )} />
       </header>
       {RICH_TEXT_PATH.test(path)
-        ? <BlockNoteDocEditor markdown={base} outlineLabel={t('canvas.outline')} onChange={text => { void saveText(text) }} />
+        ? <BlockNoteDocEditor markdown={base} outlineLabel={t('canvas.outline')} emptyLabel={t('canvas.outline.empty')} onChange={text => { void saveText(text) }} />
         : <BlockEditor blocks={docBlocks(base)} labels={mdLabels} t={t} onSaveBlock={saveBlock} onAdd={addBlock} />}
     </div>
   )

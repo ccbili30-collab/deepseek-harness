@@ -38,7 +38,7 @@ function outlineOf(blocks: readonly Block[]): OutlineItem[] {
     if (block.type !== 'heading') continue
     const props: unknown = block.props
     const rawLevel = isRecord(props) ? props['level'] : undefined
-    const level = typeof rawLevel === 'number' ? rawLevel : 1
+    const level = Number(rawLevel) >= 1 && Number(rawLevel) <= 6 ? Number(rawLevel) : 1
     const text = inlineText(block.content).trim()
     if (text !== '') items.push({ id: block.id, level, text })
   }
@@ -62,9 +62,10 @@ function useBlockNoteStyles(): void {
  * @param outlineLabel - 标题树的标题文案（locale 归调用方）。
  * @param onChange - 防抖后的 markdown 快照。
  */
-export function BlockNoteDocEditor({ markdown, outlineLabel, onChange }: {
+export function BlockNoteDocEditor({ markdown, outlineLabel, emptyLabel, onChange }: {
   readonly markdown: string
   readonly outlineLabel: string
+  readonly emptyLabel: string
   readonly onChange: (markdown: string) => void
 }) {
   useBlockNoteStyles()
@@ -88,18 +89,17 @@ export function BlockNoteDocEditor({ markdown, outlineLabel, onChange }: {
   }, [])
   return (
     <div className="nv-doc-split">
-      {outline.length > 0 && (
-        <aside className="nv-doc-outline" aria-label={outlineLabel}>
-          <div className="nv-doc-outline-label">{outlineLabel}</div>
-          {outline.map(item => (
-            <button key={item.id} type="button" className="nv-doc-outline-item"
-              data-level={Math.min(item.level, 3)} title={item.text}
-              onClick={() => { jumpTo(item.id) }}>
-              {item.text}
-            </button>
-          ))}
-        </aside>
-      )}
+      <aside className="nv-doc-outline" aria-label={outlineLabel}>
+        <div className="nv-doc-outline-label">{outlineLabel}</div>
+        {outline.length === 0 && <div className="nv-doc-outline-empty">{emptyLabel}</div>}
+        {outline.map(item => (
+          <button key={item.id} type="button" className="nv-doc-outline-item"
+            data-level={Math.min(item.level, 3)} title={item.text}
+            onClick={() => { jumpTo(item.id) }}>
+            {item.text}
+          </button>
+        ))}
+      </aside>
       <div className="nv-doc-bn">
         <BlockNoteView
           editor={editor}
