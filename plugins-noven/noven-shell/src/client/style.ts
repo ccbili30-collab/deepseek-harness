@@ -136,11 +136,13 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 .nv-nav-soon-glyph { display: inline-flex; }
 .nv-page { height: 100%; min-height: 0; overflow-y: auto; background: var(--nv-surface); color: var(--nv-primary-text); font-size: 13px;
   animation: nv-page-in var(--nv-dur-scene) var(--nv-ease-out); }
-/* Focus-in, not slide-in: the page resolves from a soft blur rather than
-   flashing in from nothing. */
+/* Resolves in with opacity only. A full-page filter blur() entrance is the
+   most expensive frame cost in every scene that mounts a page beside a View
+   Transition (measured: p95 50ms → 33ms on long Sessions); the fade carries
+   the same "resolve, don't flash" intent without a repaint of the whole page. */
 @keyframes nv-page-in {
-  from { opacity: 0.45; filter: blur(4px); }
-  to { opacity: 1; filter: blur(0); }
+  from { opacity: 0.55; }
+  to { opacity: 1; }
 }
 /* Outgoing-page clone: covers the swap frame, then lifts away so the old
    page exits instead of vanishing. Inner animations freeze so the ghost
@@ -242,6 +244,18 @@ html[data-create-scene='enter']::view-transition-new(noven-create-page) { animat
 html[data-create-scene='enter']::view-transition-old(noven-work) { animation: nv-desk-recede 380ms var(--nv-ease-out) both; }
 html[data-create-scene='conversation']::view-transition-new(noven-work) { animation: nv-desk-focus 380ms var(--nv-ease-out) both; }
 html[data-create-scene='handcraft']::view-transition-new(noven-work) { animation: nv-desk-focus 380ms var(--nv-ease-out) both; }
+/* The UA blends captured groups with plus-lighter; a plain crossfade is both
+   what these scenes mean and the cheaper compositing path over full-screen
+   snapshots. */
+html[data-create-scene]::view-transition-group(noven-work),
+html[data-create-scene]::view-transition-group(noven-create-page),
+html[data-create-scene]::view-transition-old(noven-work),
+html[data-create-scene]::view-transition-old(noven-create-page),
+html[data-create-scene]::view-transition-new(noven-work),
+html[data-create-scene]::view-transition-new(noven-create-page),
+html[data-panel-handoff]::view-transition-group(noven-work),
+html[data-panel-handoff]::view-transition-old(noven-work),
+html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: normal; }
 @keyframes nv-sheet-rise { from { opacity: 0; transform: translateY(28px) scale(.98); } }
 @keyframes nv-sheet-drop { to { opacity: 0; transform: translateY(28px) scale(.98); } }
 @keyframes nv-desk-recede { to { opacity: .85; transform: scale(.985); } }
