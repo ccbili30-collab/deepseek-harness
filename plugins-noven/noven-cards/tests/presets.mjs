@@ -83,7 +83,7 @@ for (const file of files) {
     check(Object.values(dist.values).every(cells => Object.values(cells).every(v => typeof v !== 'string' || v === '')), 'world: 分布全部落成引用')
   }
   if (id === 'character') {
-    check(built.document.resources.length === 3, `character: 三张立绘资源落盘（${built.document.resources.length}）`)
+    check(built.document.resources.length === 4, `character: 立绘与表单头像资源落盘（${built.document.resources.length}）`)
     check(built.document.resources.every(r => r.mediaType === 'image/jpeg'), 'character: 资源媒体类型正确')
     const forms = all.find(m => m.name === '基本信息')
     const formData = forms === undefined ? undefined : JSON.parse(String(forms.blocks[0]?.content ?? '{}'))

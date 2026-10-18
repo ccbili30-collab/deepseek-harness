@@ -1468,8 +1468,14 @@ export function RelationWidget({ module, t, send }: WidgetProps) {
                 }
                 setPanel({ kind: 'node', id: node.id })
               }}>
-              <circle r={REL_R} className="nv-rel-circle" />
-              <text y={5} className="nv-rel-name" textAnchor="middle">{node.name}</text>
+              <rect x={-REL_R * 1.6} y={node.note === '' ? -REL_R * 0.75 : -REL_R * 1.05} width={REL_R * 3.2}
+                height={node.note === '' ? REL_R * 1.5 : REL_R * 2.1} rx={12} className="nv-rel-card" />
+              <text y={node.note === '' ? 5 : -4} className="nv-rel-name" textAnchor="middle">{node.name}</text>
+              {node.note !== '' && (
+                <text y={12} className="nv-rel-note" textAnchor="middle">
+                  {node.note.length > 10 ? `${node.note.slice(0, 10)}…` : node.note}
+                </text>
+              )}
             </g>
           )
         })}
@@ -1734,6 +1740,12 @@ const collText = (v: CollValue | undefined): string => {
   return String(v)
 }
 
+/** 引用单元格的完整值（无引用返回 undefined）。 */
+const refValueOf = (v: CollValue | undefined): { cardId: string, name: string, itemId?: string } | undefined =>
+  typeof v === 'object' && v !== null && 'cardId' in v && typeof v.cardId === 'string' && 'name' in v && typeof v.name === 'string'
+    ? { cardId: v.cardId, name: v.name, ...('itemId' in v && typeof v.itemId === 'string' ? { itemId: v.itemId } : {}) }
+    : undefined
+
 /** 引用单元格里的卡 id（无引用返回 undefined）。 */
 const refCardId = (v: CollValue | undefined): string | undefined =>
   typeof v === 'object' && v !== null && 'cardId' in v && typeof v.cardId === 'string' && v.cardId.length > 0 ? v.cardId : undefined
@@ -1746,7 +1758,7 @@ const collGroupField = (data: CollData): CollField | undefined => {
   return data.fields.find(f => {
     if (f.type !== 'text') return false
     const distinct = new Set(data.items.map(item => collText(data.values[item.id]?.[f.id])).filter(v => v !== ''))
-    return distinct.size >= 2 && distinct.size <= 8
+    return distinct.size >= 2 && distinct.size <= 8 && distinct.size < data.items.length
   })
 }
 
@@ -1797,7 +1809,7 @@ export function CollectionWidget({ module, t, send, imageUrl, refTargets }: Widg
         </span>
       </div>
       {data.items.length === 0 && <div className="nv-coll-empty">{t('coll.empty')}</div>}
-      {view === 'list' && <CollList data={data} t={t} />}
+      {view === 'list' && <CollList data={data} t={t} moduleId={module.id} send={send} {...(refTargets === undefined ? {} : { refTargets })} />}
       {view === 'cards' && <CollCards data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
       {view === 'form' && <CollForm data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
       {view === 'timeline' && <CollScroll data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
@@ -1819,6 +1831,7 @@ function CollCards({ data, t, imageUrl, openId, onOpen }: {
 }) {
   const { sections } = collSections(data, t('coll.ungrouped'))
   const statField = data.fields.find(f => f.type === 'number')
+  const imageField = data.fields.find(f => f.type === 'image')
   return (
     <div className="nv-coll-deck">
       {sections.map((section, si) => (
@@ -1830,13 +1843,18 @@ function CollCards({ data, t, imageUrl, openId, onOpen }: {
             </h3>
           )}
           <div className="nv-coll-grid">
-            {section.items.map(item => {
+            {section.items.map((item, index) => {
               const stat = statField !== undefined ? data.values[item.id]?.[statField.id] : undefined
               const statText = typeof stat === 'number' ? String(stat) : collText(stat)
+              const subtitleField = data.fields.find(field => (field.type === 'text' || field.type === 'longtext')
+                && collText(data.values[item.id]?.[field.id]) !== ''
+                && collText(data.values[item.id]?.[field.id]) !== item.name)
+              const subtitle = subtitleField === undefined ? item.summary : collText(data.values[item.id]?.[subtitleField.id])
               return (
                 <button key={item.id} type="button"
                   className={`nv-coll-card${openId === item.id ? ' nv-coll-card-on' : ''}`}
                   onClick={() => onOpen(openId === item.id ? null : item.id)}>
+                  {imageField !== undefined && index === 0 && <span className="nv-coll-primary">{t('coll.primary')}</span>}
                   {item.visualKey !== null ? (
                     <img className="nv-coll-cardimg" src={imageUrl(item.visualKey)} alt="" />
                   ) : (
@@ -1845,8 +1863,8 @@ function CollCards({ data, t, imageUrl, openId, onOpen }: {
                     </span>
                   )}
                   <span className="nv-coll-cardname">{item.name}</span>
+                  {subtitle !== '' && <span className="nv-coll-cardsum">{subtitle}</span>}
                   {statText !== '' && <span className="nv-coll-cardstat">{statText}</span>}
-                  {item.summary !== '' && <span className="nv-coll-cardsum">{item.summary}</span>}
                 </button>
               )
             })}
@@ -1873,6 +1891,13 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
             <span className="nv-coll-formname">{item.name}</span>
             <span className="nv-coll-formedit">{t('coll.form.edit')}</span>
           </button>
+          {(() => {
+            const avatarField = data.fields.find(field => field.type === 'image')
+            const avatarValue = avatarField === undefined ? undefined : data.values[item.id]?.[avatarField.id]
+            const avatarId = typeof avatarValue === 'object' && avatarValue !== null && 'resourceId' in avatarValue && typeof avatarValue.resourceId === 'string'
+              ? avatarValue.resourceId : undefined
+            return avatarId === undefined ? null : <img className="nv-coll-formavatar" src={imageUrl(avatarId)} alt="" />
+          })()}
           <div className="nv-coll-formrows">
             {data.fields.map(field => {
               const raw = data.values[item.id]?.[field.id]
@@ -1902,23 +1927,70 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
   )
 }
 
-/** 列表视图：字段列 + 条目行，朴素表格。 */
-function CollList({ data, t }: { readonly data: CollData, readonly t: ShellT }) {
+/** 立场/阵营这类短标签的色阶：正道绿、魔道红、中立灰，其余中性。 */
+const chipTone = (text: string): string => {
+  if (/正道|正统|光明|秩序/.test(text)) return 'green'
+  if (/魔道|邪|混乱|暗/.test(text)) return 'red'
+  if (/中立|灰色/.test(text)) return 'gray'
+  return 'neutral'
+}
+
+/** 列表视图：字段列 + 条目行；引用列是行内选择器，立场列是彩色芯片。 */
+function CollList({ data, t, moduleId, send, refTargets }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly refTargets?: readonly RefTarget[]
+}) {
+  const setValue = (itemId: string, field: CollField, value: CollValue): void => {
+    void send({ kind: 'collection_set_value', moduleId, itemId, fieldId: field.id, value })
+  }
+  // 条目自带名称列；集合里若也有「名称」字段就不再重复一列。
+  const columns = data.fields.filter(field => field.name !== '名称' && field.name !== 'Name')
+  const showSummary = data.items.some(item => item.summary !== '')
   return (
     <table className="nv-coll-table">
       <thead>
         <tr>
           <th>{t('coll.col.name')}</th>
-          {data.fields.map(f => <th key={f.id}>{f.name}</th>)}
-          <th>{t('coll.col.summary')}</th>
+          {columns.map(f => <th key={f.id}>{f.name}</th>)}
+          {showSummary && <th>{t('coll.col.summary')}</th>}
         </tr>
       </thead>
       <tbody>
         {data.items.map(item => (
           <tr key={item.id}>
             <td className="nv-coll-tdname">{item.name}</td>
-            {data.fields.map(f => <td key={f.id}>{collText(data.values[item.id]?.[f.id])}</td>)}
-            <td className="nv-coll-tdsum">{item.summary}</td>
+            {columns.map(f => {
+              const raw = data.values[item.id]?.[f.id]
+              if (f.type === 'person' || f.type === 'place') {
+                const current = refValueOf(raw)
+                const currentKey = current === undefined ? '' : `ref:${current.itemId ?? current.cardId}`
+                return (
+                  <td key={f.id}>
+                    <select className="nv-coll-ref nv-coll-reftd" value={currentKey}
+                      onChange={event => {
+                        if (event.target.value.startsWith('ref:')) return
+                        const target = (refTargets ?? []).find(candidate => candidate.cardId === event.target.value)
+                        setValue(item.id, f, target === undefined ? '' : { cardId: target.cardId, name: target.name })
+                      }}>
+                      {current !== undefined && <option value={currentKey}>{current.name}</option>}
+                      <option value="">—</option>
+                      {(refTargets ?? [])
+                        .filter(target => f.type === 'person' ? target.kind === 'CHARACTER' : target.kind === 'WORLD')
+                        .map(target => <option key={target.cardId} value={target.cardId}>{target.name}</option>)}
+                    </select>
+                  </td>
+                )
+              }
+              const text = collText(raw)
+              if (f.name === '立场') {
+                return <td key={f.id}>{text === '' ? '' : <span className={`nv-coll-chip nv-coll-chip-${chipTone(text)}`}>{text}</span>}</td>
+              }
+              return <td key={f.id}>{text}</td>
+            })}
+            {showSummary && <td className="nv-coll-tdsum">{item.summary}</td>}
           </tr>
         ))}
       </tbody>

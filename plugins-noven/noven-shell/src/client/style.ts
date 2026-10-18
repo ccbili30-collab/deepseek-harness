@@ -2109,6 +2109,13 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-mini-rel-node { fill: var(--nv-surface); stroke: var(--nv-accent); stroke-width: 3; }
 
 /* 人物关系图 */
+/* 关系图节点卡片化：圆角卡片承载姓名与身份 */
+.nv-rel-card { fill: #ffffff; stroke: #dfe3df; stroke-width: 1; }
+.nv-rel-node:hover .nv-rel-card { stroke: rgba(14,159,110,.45); }
+.nv-rel-node-on .nv-rel-card { stroke: #34d399; stroke-width: 1.6; }
+.nv-rel-note { font-size: 10px; fill: #8a8f8a; }
+.nv-rel-name { fill: #1f2421; }
+
 .nv-rel-canvas { display: block; width: 100%; aspect-ratio: 1000 / 560; border-radius: 8px;
   background: var(--nv-pane, #F7F8F9); }
 .nv-rel-line { stroke: var(--nv-divider); stroke-width: 2; }
@@ -2353,6 +2360,20 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-coll-cardname { font-size: 13px; font-weight: 600; padding: 8px 10px 0; }
 .nv-coll-cardstat { font-size: 16px; font-weight: 700; padding: 2px 10px 0; }
 .nv-coll-cardsum { font-size: 11.5px; color: var(--nv-secondary-text); padding: 4px 10px 9px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* 集合复刻：主形态徽标 / 立场芯片 / 行内引用选择器 / 表单头像 */
+.nv-coll-card { position: relative; }
+.nv-coll-primary { position: absolute; top: 8px; right: 8px; z-index: 1; padding: 2px 8px; border-radius: 999px;
+  background: rgba(14,159,110,.14); color: var(--nv-accent-deep); font-size: 10.5px; }
+.nv-coll-cardsum { font-size: 11px; color: var(--nv-secondary-text); padding: 0 10px 8px; text-align: left; }
+.nv-coll-chip { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.nv-coll-chip-green { background: rgba(14,159,110,.14); color: #0b7a55; }
+.nv-coll-chip-red { background: rgba(214,69,69,.12); color: #b23a3a; }
+.nv-coll-chip-gray { background: rgba(120,124,128,.12); color: var(--nv-secondary-text); }
+.nv-coll-chip-neutral { background: rgba(52,120,211,.10); color: #2f6cb3; }
+.nv-coll-reftd { min-width: 90px; padding: 3px 6px; font-size: 11.5px; }
+.nv-coll-formavatar { width: 96px; height: 96px; object-fit: cover; border-radius: 12px; margin: 12px 14px 0; display: block; }
+
 table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .nv-coll-table th { text-align: left; font-weight: 500; color: var(--nv-secondary-text); padding: 6px 8px; border-bottom: 1px solid var(--nv-divider); }
 .nv-coll-table td { padding: 7px 8px; border-bottom: 1px solid var(--nv-divider); vertical-align: top; }
