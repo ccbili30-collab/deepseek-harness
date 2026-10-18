@@ -131,7 +131,7 @@ function moduleGlyph(module: CardModuleDoc, size: number): ReturnType<typeof gly
 
 /** 一个模块盒：标题（点击即改名）+ 正文（块级点编 / 预制模块渲染器）。
     子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
-function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBlock, addBlock, renameModule, removeModule, send, onOpenModule, ask, readFile, onOpenFile, refTargets }: {
+function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBlock, addBlock, renameModule, removeModule, send, onOpenModule, ask, readFile, onOpenFile, refTargets, refEdges, mapReferenced }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   readonly mdLabels: MdLabels
@@ -151,6 +151,10 @@ function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBl
   readonly onOpenModule: (moduleId: string) => void
   /** 引用选择器的目标卡（项目引用索引）。 */
   readonly refTargets?: readonly RefTarget[]
+  /** 同卡引用派生的关系边（渲染用，不落盘）。 */
+  readonly refEdges?: readonly { readonly from: string, readonly to: string, readonly label: string }[]
+  /** 被集合条目引用到的地点名（地图按引用过滤）。 */
+  readonly mapReferenced?: ReadonlySet<string>
   /** 模块向本会话排一句话（AI 任务入口）。 */
   readonly ask: (text: string) => Promise<void>
   /** 读项目内文件文本（html 模块的活引用渲染）。 */
@@ -192,8 +196,8 @@ function ModuleBox({ module, t, mdLabels, card, imageUrl, imageResources, saveBl
           )} />
       </div>
       {widget === 'timeline' && <TimelineWidget module={module} t={t} send={send} />}
-      {widget === 'relation' && <RelationWidget module={module} t={t} send={send} />}
-      {widget === 'map' && <MapEditor module={module} t={t} send={send} ask={ask} imageUrl={imageUrl} imageResources={imageResources} />}
+      {widget === 'relation' && <RelationWidget module={withDerivedRelation(module, refEdges)} t={t} send={send} />}
+      {widget === 'map' && <MapEditor module={module} t={t} send={send} ask={ask} imageUrl={imageUrl} imageResources={imageResources} referenced={mapReferenced} />}
       {widget === 'collection' && <CollectionWidget module={module} t={t} send={send} imageUrl={imageUrl} refTargets={refTargets} />}
       {widget !== undefined && widget !== 'document' && widget !== 'html'
         && widget !== 'timeline' && widget !== 'relation' && widget !== 'map' && widget !== 'collection' && (
@@ -418,6 +422,27 @@ function OverviewPage({ target, overviewModule, isCharacter, t, mdLabels, imageU
   )
 }
 
+/** 把集合引用派生的边并进关系图（仅渲染，不写回载荷）。 */
+function withDerivedRelation(module: CardModuleDoc, derived?: readonly { readonly from: string, readonly to: string, readonly label: string }[]): CardModuleDoc {
+  if (derived === undefined || derived.length === 0 || module.widget === undefined) return module
+  const widget = module.widget
+  const base = rel(module.widget?.data)
+  const nodes = [...base.nodes]
+  const edges = [...base.edges]
+  for (const edge of derived) {
+    for (const name of [edge.from, edge.to]) {
+      if (!nodes.some(node => node.name === name)) nodes.push({ id: `ref:${name}`, name, note: '', x: null, y: null })
+    }
+    const from = nodes.find(node => node.name === edge.from)
+    const to = nodes.find(node => node.name === edge.to)
+    if (from === undefined || to === undefined) continue
+    if (edges.some(candidate => candidate.from === from.id && candidate.to === to.id && candidate.label === edge.label)) continue
+    edges.push({ id: `ref:${from.id}:${to.id}:${edge.label}`, from: from.id, to: to.id, label: edge.label })
+  }
+  const baseData = typeof widget.data === 'object' && widget.data !== null ? widget.data : {}
+  return { ...module, widget: { ...widget, data: { ...baseData, nodes, edges } } }
+}
+
 /**
  * 卡页。`pageModuleId` 是本页签的模块实体：undefined = 卡总览页，否则整页只渲那个模块。
  * @param props - 卡地址、读写注入、开其它页签的回调。
@@ -486,6 +511,33 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
   const doc: CardDocView | undefined = preview !== undefined ? preview.document
     : typeof state === 'object' && state !== null ? state.document : undefined
   const proposal = typeof state === 'object' && state !== null ? state.proposal : undefined
+  /** 同卡引用派生：关系图额外边 + 地图被引用地点集合（渲染层派生，不落盘）。 */
+  const refDerived = useMemo(() => {
+    const edges: { from: string, to: string, label: string }[] = []
+    const referenced = new Set<string>()
+    if (doc === undefined) return { edges, referenced }
+    const walk = (modules: readonly CardModuleDoc[]): void => {
+      for (const module of modules) {
+        if (module.widget?.type === 'collection') {
+          const data = coll(module.widget.data)
+          for (const item of data.items) {
+            const values = data.values[item.id]
+            if (values === undefined) continue
+            for (const field of data.fields) {
+              const value = values[field.id]
+              if (typeof value !== 'object' || value === null || !('name' in value) || typeof value.name !== 'string') continue
+              if (!('itemId' in value) || typeof value.itemId !== 'string') continue
+              edges.push({ from: item.name, to: value.name, label: field.name })
+              referenced.add(value.name)
+            }
+          }
+        }
+        walk(module.children)
+      }
+    }
+    walk(doc.modules)
+    return { edges, referenced }
+  }, [doc])
   /** 模块页签：模块挂在哪个 target（卡根或某个角色）写操作就打到哪个 target。 */
   const pageOwner = doc === undefined || pageModuleId === undefined ? undefined
     : findModule(doc.modules, pageModuleId) !== undefined ? doc
@@ -740,7 +792,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                 imageUrl={imageUrl} imageResources={imageResources}
                 saveBlock={saveBlock} addBlock={addBlock} renameModule={renameModule} removeModule={removeModule} send={send}
                 onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} readFile={readFile} onOpenFile={onOpenFile}
-                refTargets={refIndex?.targets} />
+                refTargets={refIndex?.targets} refEdges={refDerived.edges} mapReferenced={refDerived.referenced} />
             ) : (
               <OverviewPage target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id}
                 t={t} mdLabels={mdLabels} imageUrl={imageUrl} imageResources={imageResources}

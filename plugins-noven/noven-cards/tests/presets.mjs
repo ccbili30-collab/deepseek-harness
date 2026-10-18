@@ -64,7 +64,7 @@ for (const file of files) {
     check(mapModule !== undefined, 'world: 地图模块存在')
     check(mapModule?.blocks.some(b => b.kind === 'image') === true, 'world: 地图带底图块')
     const mapPayload = JSON.parse(String(mapModule?.blocks.find(b => b.kind === 'text')?.content ?? '{}'))
-    check(mapPayload.noven?.markers?.length === 5, `world: 地图 5 个标记（${mapPayload.noven?.markers?.length ?? 0}）`)
+    check(mapPayload.noven?.markers?.length === 6, `world: 地图 6 个标记（${mapPayload.noven?.markers?.length ?? 0}）`)
     const relModule = all.find(m => m.name === '关系图' && m.widget?.type === 'relation')
     const relPayload = JSON.parse(String(relModule?.blocks[0]?.content ?? '{}'))
     check(relPayload.noven?.nodes?.length === 4 && relPayload.noven?.edges?.length === 5, 'world: 关系图 4 节点 5 边')

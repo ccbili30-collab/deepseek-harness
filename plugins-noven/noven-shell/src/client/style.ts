@@ -1485,7 +1485,11 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-ov-refrow:hover { border-color: rgba(14,159,110,.28); }
 .nv-ov-refname { font-size: 12.5px; font-weight: 600; }
 .nv-ov-refmeta { font-size: 11.5px; color: var(--nv-secondary-text); }
-/* 文稿体 */
+/* 地图「只看被引用」开关 */
+.nv-maped-refonly { border: 1px solid var(--nv-divider); border-radius: 8px; padding: 4px 10px; font-size: 11.5px;
+  background: var(--nv-surface); color: var(--nv-secondary-text); cursor: pointer; }
+.nv-maped-refonly.on { border-color: rgba(14,159,110,.4); color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
+
 .nv-canvas-docbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .nv-canvas-docedit { flex: 1; min-height: 0; border: 0; resize: none; padding: 24px 28px; font-size: 14px; line-height: 1.8;
   font-family: inherit; background: var(--nv-surface); color: var(--nv-primary-text); outline: none; }

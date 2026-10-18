@@ -907,7 +907,7 @@ interface Gesture {
   alt?: boolean
 }
 
-export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
+export function MapEditor({ module, t, send, ask, imageUrl, imageResources, referenced }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   readonly send: (command: CardCommand) => Promise<void>
@@ -915,8 +915,14 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
   readonly ask: (text: string) => Promise<void>
   readonly imageUrl: (resourceId: string) => string
   readonly imageResources: readonly { readonly id: string }[]
+  /** 被集合条目引用到的地点名：开启「只看被引用」时只画这些标记。 */
+  readonly referenced?: ReadonlySet<string>
 }) {
   const data = useMemo(() => editorData(module.widget?.data), [module.widget?.data])
+  const [refOnly, setRefOnly] = useState(false)
+  const refOnlyRef = useRef(false)
+  const referencedRef = useRef<ReadonlySet<string>>(new Set())
+  referencedRef.current = referenced ?? new Set()
   const image = module.blocks.find(b => b.kind === 'image')
   const stageRef = useRef<HTMLDivElement | null>(null)
   const cvRef = useRef<HTMLCanvasElement | null>(null)
@@ -1820,6 +1826,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
     const lw = 1.5 / v.s
     for (const o of docRef.current.objects) {
       if (hidden.has(o.layer)) continue
+      if (o.type === 'mark' && refOnlyRef.current && !referencedRef.current.has(o.name)) continue
       const on = o.id === selId
       if (o.type === 'face') {
         const pts = objWorkPts(o)
@@ -3618,6 +3625,12 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources }: {
           <div className="nv-maped-main">
             <div className="nv-maped-top">
               {viewSeg}
+              {referenced !== undefined && referenced.size > 0 && (
+                <button type="button" className={`nv-maped-refonly${refOnly ? ' on' : ''}`}
+                  onClick={() => { const next = !refOnly; setRefOnly(next); refOnlyRef.current = next; draw() }}>
+                  {t('wg.map.refOnly')}
+                </button>
+              )}
               {search}
               <div className="nv-maped-topr">
                 <span className="nv-maped-morewrap">

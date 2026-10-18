@@ -1,0 +1,70 @@
+/**
+ * Freeze-frame probe for the conversation morph: start the scene, catch the
+ * running View Transition animations via document.getAnimations(), pause them
+ * at chosen timestamps, and screenshot each frozen frame. This beats a frame
+ * burst, whose screenshot latency always lands after the 532ms scene.
+ * Run: node apps/web/_probe-conversation-freeze.mjs '<full token URL>'
+ */
+import { createRequire } from 'node:module'
+import { join } from 'node:path'
+import { mkdirSync } from 'node:fs'
+
+const url = process.argv[2]
+if (url === undefined) throw new Error('pass the full token URL')
+
+const repo = '/Users/noven/Documents/Codex/noven-pc'
+const runDir = join(repo, '.playwright-mcp', 'conversation-scene')
+mkdirSync(join(runDir, 'frames'), { recursive: true })
+
+const { chromium } = createRequire(join(repo, 'apps/web/package.json'))('playwright')
+const browser = await chromium.launch()
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, locale: 'zh-CN' })
+const page = await context.newPage()
+
+await page.goto(url)
+await page.waitForLoadState('domcontentloaded')
+const createNav = page.getByRole('button', { name: '创作', exact: true })
+await createNav.waitFor()
+await page.waitForTimeout(1500)
+await createNav.click()
+await page.locator('.nv-create-page').waitFor()
+
+const editor = page.locator('.nv-create-hero [data-composer-card] [contenteditable="true"]')
+await editor.waitFor()
+await editor.click()
+await page.keyboard.type('ping')
+
+// Freeze controller: poll for the transition's animations, then hold them.
+await page.evaluate(() => {
+  window.__freeze = { seen: 0, names: [] }
+  const orig = document.startViewTransition.bind(document)
+  document.startViewTransition = (update) => {
+    const t = orig(update)
+    const grab = () => {
+      const anims = document.getAnimations()
+      window.__freeze.seen = anims.length
+      window.__freeze.names = anims.map(a => a.animationName)
+      if (anims.length > 0) { window.__freeze.anims = anims; return }
+      setTimeout(grab, 10)
+    }
+    t.ready.then(grab, () => { window.__freeze.seen = -1 })
+    return t
+  }
+})
+await page.keyboard.press('Enter')
+await page.waitForFunction(() => (window.__freeze?.seen ?? 0) > 0, undefined, { timeout: 5000 })
+
+for (const [label, at] of [['10-early', 120], ['20-mid', 230], ['30-late', 340]]) {
+  await page.evaluate((ms) => {
+    for (const a of window.__freeze.anims) { a.pause(); a.currentTime = ms }
+  }, at)
+  await page.waitForTimeout(120)
+  await page.screenshot({ path: join(runDir, 'frames', `freeze-${label}.png`) })
+}
+await page.evaluate(() => { for (const a of window.__freeze.anims) a.play() })
+await page.waitForTimeout(900)
+await page.screenshot({ path: join(runDir, 'frames', 'freeze-99-settled.png') })
+console.log('animations seen:', await page.evaluate(() => window.__freeze.seen))
+console.log('animation names:', JSON.stringify(await page.evaluate(() => window.__freeze.names)))
+await context.close()
+await browser.close()
