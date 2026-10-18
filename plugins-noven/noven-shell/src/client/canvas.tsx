@@ -2048,6 +2048,37 @@ export function CanvasHost(props: CanvasProps) {
       if (name !== undefined && name !== row.title) actions.retitle(session, row.key, name)
     }
   }, [tree, tabs, session, actions])
+  // 页签跟着对象走：树确认某张卡/某个模块已不存在时，页签自己退场。
+  // "见过才算失踪"——新建对象与树轮询之间存在竞态，首帧快照里缺席的直接判死，
+  // 之后只关曾经出现过的对象，避免刚建的卡被旧树快照误杀。
+  const seenTargets = useRef<{ cards: Set<string>; modules: Set<string> } | undefined>(undefined)
+  useEffect(() => {
+    if (tree === undefined) return
+    const cards = new Set<string>()
+    const modules = new Set<string>()
+    const collect = (cardId: string, rows: readonly TreeModuleRow[]): void => {
+      for (const row of rows) {
+        modules.add(`${cardId}:${row.id}`)
+        collect(cardId, row.children)
+      }
+    }
+    for (const card of tree.cards) {
+      cards.add(card.cardId)
+      collect(card.cardId, card.modules)
+    }
+    const previous = seenTargets.current
+    for (const row of tabs) {
+      if (row.kind !== 'card' || row.cardId === undefined) continue
+      // 外项目的引用卡不在本树里，缺失态留给卡页自己裁决。
+      if (row.cardAddr?.root !== undefined && project !== undefined && row.cardAddr.root !== project.root) continue
+      const cardGone = !cards.has(row.cardId) && (previous === undefined || previous.cards.has(row.cardId))
+      const moduleKey = row.moduleId === undefined ? undefined : `${row.cardId}:${row.moduleId}`
+      const moduleGone = moduleKey !== undefined && !modules.has(moduleKey)
+        && (previous === undefined || previous.modules.has(moduleKey))
+      if (cardGone || moduleGone) actions.close(session, row.key)
+    }
+    seenTargets.current = { cards, modules }
+  }, [tree, tabs, session, actions, project])
   const leafProps = {
     t, session, actions, props, tabByKey, project, tree, sims, statusMap, simOpenMap,
     openDoc, readCardFile, importRef, dragKey, setDragKey, dropSpot, setDropSpot,
