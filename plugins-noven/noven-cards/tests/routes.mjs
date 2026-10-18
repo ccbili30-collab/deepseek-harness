@@ -92,11 +92,14 @@ try {
   const interviewCard = await (await post({ op: 'create', kind: 'CHARACTER', name: '访谈角色', starter: 'interview' })).json()
   check(interviewCard.ok === true && interviewCard.starter === 'interview', 'create 接 interview')
   check((await post({ op: 'create', kind: 'WORLD', name: 'x', starter: 'bogus' })).status === 400, '非法 starter 拒绝')
-  check((await post({ op: 'create', kind: 'WORLD', name: 'x', starter: 'template:fantasy' })).status === 501, 'template starter 诚实回 501')
+  check((await post({ op: 'create', kind: 'WORLD', name: 'x', starter: 'template:fantasy' })).status === 400, '未知模板 → 400')
+  const templated = await (await post({ op: 'create', kind: 'WORLD', name: '模板世界', starter: 'template:world' })).json()
+  const templatedDoc = (await store.open(templated.cardId)).document
+  check(templated.ok === true && templatedDoc.modules.some(m => m.name === '世界规则'), 'template:world 落预制骨架')
 
   // 5. /api/noven-tree：聚合 + since 304
   const tree1 = await (await treeRoute.fetch(new Request(`http://t/api/noven-tree?root=${encodeURIComponent(root)}`))).json()
-  check(tree1.cards.length === 4 && tree1.cards.some(c => c.name === '路由世界' && c.modules.some(m => m.type === 'document')), '树聚合卡与模块类型')
+  check(tree1.cards.length === 5 && tree1.cards.some(c => c.name === '路由世界' && c.modules.some(m => m.type === 'document')), '树聚合卡与模块类型')
   check(typeof tree1.revision === 'string' && tree1.files.count >= 0, '树带修订号与文件计数')
   const same = await treeRoute.fetch(new Request(`http://t/api/noven-tree?root=${encodeURIComponent(root)}&since=${tree1.revision}`))
   check(same.status === 304, 'since=同 token → 304')
