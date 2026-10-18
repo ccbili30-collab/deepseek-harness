@@ -18,11 +18,12 @@
   },
   "files": [
     "lib",
+    "presets",
     "cordis.patch.yml"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node tests/round-trip.mjs && node tests/proposals.mjs && node tests/selection.mjs && node tests/routes.mjs && node tests/map.mjs"
+    "test": "node tests/round-trip.mjs && node tests/proposals.mjs && node tests/selection.mjs && node tests/routes.mjs && node tests/map.mjs && node tests/presets.mjs"
   },
   "engines": {
     "node": ">=20"

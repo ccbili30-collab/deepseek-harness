@@ -1,0 +1,132 @@
+{
+  "id": "character",
+  "kind": "CHARACTER",
+  "title": "角色卡",
+  "summary": "档案、内在、关系、轨迹、多形态——一张能直接开演的角色卡",
+  "defaultName": "沈青梧",
+  "modules": [
+    {
+      "name": "基础档案",
+      "sample": "玄天宗内门弟子，十九岁，性情清冷、护短，背着一段不愿提起的旧事。",
+      "children": [
+        {
+          "name": "基本信息",
+          "widget": "collection",
+          "fields": [
+            { "name": "姓名", "type": "text" },
+            { "name": "身份", "type": "text" },
+            { "name": "年龄", "type": "number" },
+            { "name": "阵营", "type": "text" },
+            { "name": "出身", "type": "text" }
+          ],
+          "rows": [
+            { "姓名": "沈青梧", "身份": "玄天宗内门弟子", "年龄": 19, "阵营": "玄天宗", "出身": "北境" }
+          ]
+        },
+        { "name": "外貌与气质", "sample": "身量偏瘦，惯穿白衣，左手虎口有一道旧疤。不笑的时候像在下雪。" },
+        { "name": "性格与习惯", "sample": "话少，护短，口是心非。想事情时会用指节轻轻敲桌沿。" },
+        { "name": "兴趣爱好", "sample": "雪夜煮茶；收集各地的刀币。" }
+      ]
+    },
+    {
+      "name": "内在",
+      "children": [
+        { "name": "动机与欲望", "sample": "想查清师父之死的真相，又怕真相伤到还在的人。" },
+        { "name": "恐惧与软肋", "sample": "最怕被留下。看上去冷淡，其实是先伸手的那个人。" },
+        { "name": "价值观与底线", "sample": "不杀已认输的人；不拿同门当筹码。" }
+      ]
+    },
+    {
+      "name": "角色关系",
+      "children": [
+        { "name": "关系图", "widget": "relation" }
+      ]
+    },
+    {
+      "name": "行动轨迹",
+      "children": [
+        {
+          "name": "时间线",
+          "widget": "timeline",
+          "timeline": {
+            "eras": [],
+            "events": [
+              { "at": -12, "title": "入门", "description": "十四岁拜入玄天宗，成为玄尘子的关门弟子。" },
+              { "at": -3, "title": "下山", "description": "第一次独自下山，在北境边城卷入一场械斗。" },
+              { "at": 0, "title": "北境", "description": "奉师命重返北境，调查灵潮异动。" }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "多形态",
+      "widget": "collection",
+      "fields": [
+        { "name": "名称", "type": "text" },
+        { "name": "形象", "type": "image" },
+        { "name": "说明", "type": "text" }
+      ],
+      "rows": [
+        { "名称": "常态", "形象": { "asset": "assets/portrait-1.jpg" }, "说明": "玄天宗日常" },
+        { "名称": "剑修", "形象": { "asset": "assets/portrait-2.jpg" }, "说明": "持剑形态" },
+        { "名称": "战损", "形象": { "asset": "assets/portrait-3.jpg" }, "说明": "衣衫染血" }
+      ]
+    },
+    {
+      "name": "语录",
+      "widget": "collection",
+      "fields": [
+        { "name": "场景", "type": "text" },
+        { "name": "台词", "type": "longtext" }
+      ],
+      "rows": [
+        { "场景": "拒婚", "台词": "「我自有要守的人，便再难，也不会退。」" },
+        { "场景": "雪夜", "台词": "「有些事，不必问，也不必提。」" }
+      ]
+    },
+    {
+      "name": "属性面板",
+      "widget": "collection",
+      "fields": [
+        { "name": "属性", "type": "text" },
+        { "name": "数值", "type": "number" },
+        { "name": "说明", "type": "text" }
+      ],
+      "rows": [
+        { "属性": "修为", "数值": 42, "说明": "筑基后期" },
+        { "属性": "刀法", "数值": 18, "说明": "入门" },
+        { "属性": "心性", "数值": 77, "说明": "极稳" }
+      ]
+    },
+    {
+      "name": "随身装备",
+      "widget": "collection",
+      "fields": [
+        { "name": "名称", "type": "text" },
+        { "name": "品级", "type": "text" },
+        { "name": "效果", "type": "longtext" }
+      ],
+      "rows": [
+        { "名称": "断雪", "品级": "地阶", "效果": "出鞘三尺内落雪不化。" },
+        { "名称": "玄天令", "品级": "宗门信物", "效果": "可调北境三处驿站。" }
+      ]
+    },
+    {
+      "name": "天赋技能",
+      "widget": "collection",
+      "fields": [
+        { "name": "名称", "type": "text" },
+        { "name": "效果", "type": "longtext" },
+        { "name": "代价", "type": "longtext" }
+      ],
+      "rows": [
+        { "名称": "雪落无声", "效果": "十步之内隐匿气息。", "代价": "每次发动耗三日寿元。" }
+      ]
+    },
+    {
+      "name": "世界背景",
+      "sample": "出身北境雪村；十四岁那年村子被血刀门屠尽，被玄尘子带回山门。世界与势力的脉络见同项目的世界卡。"
+    }
+  ]
+}
