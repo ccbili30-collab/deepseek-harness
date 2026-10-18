@@ -17,7 +17,7 @@ import type { ImportReport } from './tree-api.ts'
 
 import { CardPage } from './card-page.tsx'
 import { BlockEditor, metaOf, wordCount, type EditableBlock, type MdLabels } from './editor.tsx'
-import { BlockNoteDocEditor } from './doc-editor.tsx'
+import { BlockNoteDocEditor, type OutlineItem } from './doc-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { pagePending, type NovenTree, type TreeModuleRow } from './tree-api.ts'
 import { CreateDialog, type CreateKind, type CreateRequest } from './creation.tsx'
@@ -735,6 +735,8 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   const path = tab.path ?? ''
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
+  const [outline, setOutline] = useState<readonly OutlineItem[]>([])
+  const [activeHeading, setActiveHeading] = useState<string | undefined>(undefined)
   const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const entry = useDocs(s => s[docKey(sessionId, path)])
   useEffect(() => { ensureDoc(sessionId, path) }, [sessionId, path, ensureDoc])
@@ -770,8 +772,13 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
     return <div className="nv-canvas-missing">{t(state === 'missing' ? 'canvas.doc.missing' : 'canvas.files.loading')}</div>
   }
   const name = path.split('/').pop() ?? path
+  const jumpToHeading = (id: string): void => {
+    const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(id)}"]`)
+    element?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }
   return (
-    <div className="nv-ed">
+    <div className={RICH_TEXT_PATH.test(path) ? 'nv-ed nv-ed-doc' : 'nv-ed'}>
+      <div className="nv-ed-main">
       <header className="nv-ed-head">
         {renaming ? (
           <InlineRename className="nv-ed-title nv-ed-titlein" value={name}
@@ -800,8 +807,24 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
           )} />
       </header>
       {RICH_TEXT_PATH.test(path)
-        ? <BlockNoteDocEditor markdown={base} outlineLabel={t('canvas.outline')} emptyLabel={t('canvas.outline.empty')} onChange={text => { void saveText(text) }} />
+        ? <BlockNoteDocEditor markdown={base} onChange={text => { void saveText(text) }}
+            onOutline={setOutline} onActive={setActiveHeading} />
         : <BlockEditor blocks={docBlocks(base)} labels={mdLabels} t={t} onSaveBlock={saveBlock} onAdd={addBlock} />}
+      </div>
+      {RICH_TEXT_PATH.test(path) && (
+        <aside className="nv-doc-outline" aria-label={t('canvas.outline')}>
+          <div className="nv-doc-outline-label">{t('canvas.outline')}</div>
+          {outline.length === 0 && <div className="nv-doc-outline-empty">{t('canvas.outline.empty')}</div>}
+          {outline.map(item => (
+            <button key={item.id} type="button"
+              className={`nv-doc-outline-item${item.id === activeHeading ? ' nv-doc-outline-item-on' : ''}`}
+              data-level={Math.min(item.level, 3)} title={item.text}
+              onClick={() => { jumpToHeading(item.id) }}>
+              {item.text}
+            </button>
+          ))}
+        </aside>
+      )}
     </div>
   )
 }

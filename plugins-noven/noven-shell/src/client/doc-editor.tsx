@@ -11,7 +11,7 @@ import { BlockNoteView } from '@blocknote/mantine'
 import { BLOCKNOTE_CSS } from './doc-blocknote-css.ts'
 
 /** 标题树的一项：块 id、层级与文字。 */
-interface OutlineItem {
+export interface OutlineItem {
   readonly id: string
   readonly level: number
   readonly text: string
@@ -62,16 +62,17 @@ function useBlockNoteStyles(): void {
  * @param outlineLabel - 标题树的标题文案（locale 归调用方）。
  * @param onChange - 防抖后的 markdown 快照。
  */
-export function BlockNoteDocEditor({ markdown, outlineLabel, emptyLabel, onChange }: {
+export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive }: {
   readonly markdown: string
-  readonly outlineLabel: string
-  readonly emptyLabel: string
   readonly onChange: (markdown: string) => void
+  /** 标题树数据交给页签层渲染（树在页签右上角，不占编辑器列）。 */
+  readonly onOutline: (items: readonly OutlineItem[]) => void
+  /** 滚动时当前所在标题；undefined = 视口在第一个标题之上。 */
+  readonly onActive: (id: string | undefined) => void
 }) {
   useBlockNoteStyles()
   const editor = useCreateBlockNote({ dictionary: zh })
-  const [outline, setOutline] = useState<readonly OutlineItem[]>([])
-  const [activeId, setActiveId] = useState<string | undefined>(undefined)
+  const itemsRef = useRef<readonly OutlineItem[]>([])
   const scroller = useRef<HTMLDivElement | null>(null)
   const loaded = useRef(false)
   const last = useRef(markdown)
@@ -82,57 +83,43 @@ export function BlockNoteDocEditor({ markdown, outlineLabel, emptyLabel, onChang
     loaded.current = true
     const blocks = editor.tryParseMarkdownToBlocks(markdown)
     if (blocks.length > 0) editor.replaceBlocks(editor.document, blocks)
-    setOutline(outlineOf(editor.document))
-  }, [editor, markdown])
+    const items = outlineOf(editor.document)
+    itemsRef.current = items
+    onOutline(items)
+  }, [editor, markdown, onOutline])
   useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
   const trackActive = useCallback(() => {
     const view = scroller.current
     if (view === null) return
     const top = view.getBoundingClientRect().top + 72
     let current: string | undefined
-    for (const item of outline) {
+    for (const item of itemsRef.current) {
       const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(item.id)}"]`)
       if (element === null) continue
       if (element.getBoundingClientRect().top <= top) current = item.id
       else break
     }
-    setActiveId(current)
-  }, [outline])
-  const jumpTo = useCallback((id: string) => {
-    const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(id)}"]`)
-    element?.scrollIntoView({ block: 'start', behavior: 'smooth' })
-  }, [])
+    onActive(current)
+  }, [onActive])
   return (
-    <div className="nv-doc-split">
-      <div className="nv-doc-bn" ref={scroller} onScroll={trackActive}>
-        <BlockNoteView
-          editor={editor}
-          theme="light"
-          onChange={() => {
-            setOutline(outlineOf(editor.document))
-            if (timer.current !== undefined) window.clearTimeout(timer.current)
-            timer.current = window.setTimeout(() => {
-              timer.current = undefined
-              const text = editor.blocksToMarkdownLossy()
-              if (text === last.current) return
-              last.current = text
-              onChange(text)
-            }, 600)
-          }}
-        />
-      </div>
-      <aside className="nv-doc-outline" aria-label={outlineLabel}>
-        <div className="nv-doc-outline-label">{outlineLabel}</div>
-        {outline.length === 0 && <div className="nv-doc-outline-empty">{emptyLabel}</div>}
-        {outline.map(item => (
-          <button key={item.id} type="button"
-            className={`nv-doc-outline-item${item.id === activeId ? ' nv-doc-outline-item-on' : ''}`}
-            data-level={Math.min(item.level, 3)} title={item.text}
-            onClick={() => { jumpTo(item.id) }}>
-            {item.text}
-          </button>
-        ))}
-      </aside>
+    <div className="nv-doc-bn" ref={scroller} onScroll={trackActive}>
+      <BlockNoteView
+        editor={editor}
+        theme="light"
+        onChange={() => {
+          const items = outlineOf(editor.document)
+          itemsRef.current = items
+          onOutline(items)
+          if (timer.current !== undefined) window.clearTimeout(timer.current)
+          timer.current = window.setTimeout(() => {
+            timer.current = undefined
+            const text = editor.blocksToMarkdownLossy()
+            if (text === last.current) return
+            last.current = text
+            onChange(text)
+          }, 600)
+        }}
+      />
     </div>
   )
 }
