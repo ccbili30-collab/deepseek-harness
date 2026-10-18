@@ -1465,13 +1465,26 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-canvas-docstatus { padding: 6px 14px; font-size: 11px; color: var(--nv-secondary-text); border-top: 1px solid var(--nv-divider); }
 /* 文稿富编辑器（BlockNote）：左侧标题树 + 一页文档的版心；主题色换成本站调色板 */
 /* 文稿页签：正文一列 + 右上角标题树（从最顶上开始、2/3 高、白底渐隐） */
-/* 复合选择器：必须压过后面 .nv-ed 的 column（同级单类会被文件顺序反杀） */
-.nv-ed.nv-ed-doc { flex-direction: row; }
+/* 文稿页签：正文整幅，右上角浮一枚小挂窗（大纲）——不占布局列 */
+.nv-ed.nv-ed-doc { position: relative; }
 .nv-ed-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-.nv-doc-outline { width: 196px; flex: none; align-self: flex-start; height: 66.666%; overflow-y: auto; padding: 14px 8px 48px;
-  border-left: 1px solid var(--nv-divider); background: var(--nv-surface); scrollbar-width: none;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 62%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0, #000 62%, transparent 100%); }
+/* 小挂窗：闲置时半透 + 背景虚化（底下正文透出来、只是略糊）；悬停变实、条目清晰可点 */
+.nv-doc-outline { position: absolute; top: 10px; right: 10px; z-index: 6;
+  width: 176px; max-height: min(42%, 360px); overflow-y: auto; padding: 10px 8px 26px; box-sizing: border-box;
+  border: 1px solid var(--nv-divider); border-radius: 12px;
+  background: rgba(255, 255, 255, .55);
+  -webkit-backdrop-filter: blur(2.5px); backdrop-filter: blur(2.5px);
+  box-shadow: 0 6px 22px rgba(28, 64, 51, .08);
+  opacity: .78; scrollbar-width: none;
+  transition: opacity 160ms ease, background 160ms ease, box-shadow 160ms ease;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 78%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 78%, transparent 100%); }
+.nv-doc-outline:hover {
+  opacity: 1; background: rgba(255, 255, 255, .97);
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+  box-shadow: 0 10px 30px rgba(28, 64, 51, .14);
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 92%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 92%, transparent 100%); }
 .nv-doc-outline-label { padding: 0 8px 8px; font-size: 11px; font-weight: 700; letter-spacing: .14em; color: var(--nv-secondary-text); }
 .nv-doc-outline-empty { padding: 2px 8px; font-size: 11.5px; line-height: 1.7; color: var(--nv-secondary-text); opacity: .7; }
 .nv-doc-outline-item { display: block; width: 100%; border: 0; background: none; border-radius: 7px; padding: 5px 8px; text-align: left;
