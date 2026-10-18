@@ -71,6 +71,8 @@ export function BlockNoteDocEditor({ markdown, outlineLabel, emptyLabel, onChang
   useBlockNoteStyles()
   const editor = useCreateBlockNote({ dictionary: zh })
   const [outline, setOutline] = useState<readonly OutlineItem[]>([])
+  const [activeId, setActiveId] = useState<string | undefined>(undefined)
+  const scroller = useRef<HTMLDivElement | null>(null)
   const loaded = useRef(false)
   const last = useRef(markdown)
   const timer = useRef<number | undefined>(undefined)
@@ -83,24 +85,26 @@ export function BlockNoteDocEditor({ markdown, outlineLabel, emptyLabel, onChang
     setOutline(outlineOf(editor.document))
   }, [editor, markdown])
   useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
+  const trackActive = useCallback(() => {
+    const view = scroller.current
+    if (view === null) return
+    const top = view.getBoundingClientRect().top + 72
+    let current: string | undefined
+    for (const item of outline) {
+      const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(item.id)}"]`)
+      if (element === null) continue
+      if (element.getBoundingClientRect().top <= top) current = item.id
+      else break
+    }
+    setActiveId(current)
+  }, [outline])
   const jumpTo = useCallback((id: string) => {
     const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(id)}"]`)
     element?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }, [])
   return (
     <div className="nv-doc-split">
-      <aside className="nv-doc-outline" aria-label={outlineLabel}>
-        <div className="nv-doc-outline-label">{outlineLabel}</div>
-        {outline.length === 0 && <div className="nv-doc-outline-empty">{emptyLabel}</div>}
-        {outline.map(item => (
-          <button key={item.id} type="button" className="nv-doc-outline-item"
-            data-level={Math.min(item.level, 3)} title={item.text}
-            onClick={() => { jumpTo(item.id) }}>
-            {item.text}
-          </button>
-        ))}
-      </aside>
-      <div className="nv-doc-bn">
+      <div className="nv-doc-bn" ref={scroller} onScroll={trackActive}>
         <BlockNoteView
           editor={editor}
           theme="light"
@@ -117,6 +121,18 @@ export function BlockNoteDocEditor({ markdown, outlineLabel, emptyLabel, onChang
           }}
         />
       </div>
+      <aside className="nv-doc-outline" aria-label={outlineLabel}>
+        <div className="nv-doc-outline-label">{outlineLabel}</div>
+        {outline.length === 0 && <div className="nv-doc-outline-empty">{emptyLabel}</div>}
+        {outline.map(item => (
+          <button key={item.id} type="button"
+            className={`nv-doc-outline-item${item.id === activeId ? ' nv-doc-outline-item-on' : ''}`}
+            data-level={Math.min(item.level, 3)} title={item.text}
+            onClick={() => { jumpTo(item.id) }}>
+            {item.text}
+          </button>
+        ))}
+      </aside>
     </div>
   )
 }
