@@ -101,6 +101,7 @@ describe('handOffPanel', () => {
     const update = vi.fn()
     handOffPanel(update, doc as never)
     expect(document.documentElement.hasAttribute(PAGE_TURN_ATTRIBUTE)).toBe(false)
+    expect(document.documentElement.hasAttribute('data-panel-handoff')).toBe(true)
     expect(update).toHaveBeenCalledTimes(1)
     await pending
     finish()
@@ -108,5 +109,6 @@ describe('handOffPanel', () => {
     await Promise.resolve()
     expect(update).toHaveBeenCalledTimes(1)
     expect(document.documentElement.hasAttribute(PAGE_TURN_ATTRIBUTE)).toBe(false)
+    expect(document.documentElement.hasAttribute('data-panel-handoff')).toBe(false)
   })
 })

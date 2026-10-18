@@ -106,11 +106,14 @@ export function turnPage(
   if (failed) throw failure
 }
 
+/** Root attribute marking a panel→Session hand-off for the work-layer motion. */
+const PANEL_HANDOFF_ATTRIBUTE = 'data-panel-handoff'
+
 /**
  * Apply a panel→Session hand-off as a bare View Transition. The page turn is
  * a Session↔Session gesture; leaving a global panel is the panel's own exit
- * (its named page animates out through its keyframes) over a default
- * crossfade, so no page-turn direction or work-layer motion is published.
+ * (its named page animates out through its keyframes) while the returning
+ * work layer rises into place, so no page-turn direction is published.
  * @param update - the synchronous navigation commit; runs inside the transition.
  * @param doc - document to animate; defaults to the global document when one exists.
  */
@@ -121,6 +124,8 @@ export function handOffPanel(update: () => void, doc?: ViewTransitionDocument): 
     update()
     return
   }
+  const root = target.documentElement
+  root.setAttribute(PANEL_HANDOFF_ATTRIBUTE, '')
   let failure: unknown
   let failed = false
   const transition = target.startViewTransition(async () => {
@@ -133,6 +138,8 @@ export function handOffPanel(update: () => void, doc?: ViewTransitionDocument): 
     }
     await nextCommit()
   })
-  void transition.finished.catch((error: unknown) => { void error })
+  void transition.finished.catch((error: unknown) => { void error }).finally(() => {
+    root.removeAttribute(PANEL_HANDOFF_ATTRIBUTE)
+  })
   if (failed) throw failure
 }

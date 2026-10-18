@@ -350,6 +350,17 @@
 @keyframes noven-page-out-down { to { transform: translateY(100%); filter: brightness(0.92); } }
 @keyframes noven-page-in-down { from { transform: translateY(-100%); } }
 
+/* Panel→Session hand-off: the panel's page exits through its own keyframes
+   (host-owned); the returning work layer rises into place — the mirror of the
+   creation page's entrance, so arriving at and leaving the page read as one
+   gesture. */
+@keyframes noven-work-rise { from { opacity: 0; transform: translateY(18px) scale(0.988); } }
+:global(html[data-panel-handoff]::view-transition-new(noven-work)) {
+  animation-name: noven-work-rise;
+  animation-duration: 380ms;
+  animation-timing-function: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
 /* Project: per-segment easing — lift eases out, the slide accelerates away,
    the arrival decelerates and sets down. The outer curve is linear so these
    segment curves are the whole timing. */
