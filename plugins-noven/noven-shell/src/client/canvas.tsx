@@ -568,7 +568,7 @@ function StartTab({ t, empty, noProject, onPreset, onStart }: {
   readonly empty: boolean
   readonly noProject: boolean
   readonly onPreset: (preset: 'world' | 'character' | 'manual') => void
-  readonly onStart: () => void
+  readonly onStart: (kind: 'doc' | 'world' | 'character' | 'timeline' | 'map' | 'collection') => void
 }) {
   return (
     <div className="nv-desk">
@@ -597,14 +597,38 @@ function StartTab({ t, empty, noProject, onPreset, onStart }: {
         </section>
         <section className="nv-desk-section">
           <h3 className="nv-desk-label">{t('canvas.desk.start')}</h3>
-          <button type="button" className="nv-desk-start" onClick={onStart}>
-            <span className="nv-desk-glyph">{glyph.file(18)}</span>
-            <span className="nv-desk-start-text">
-              <strong>{t('canvas.desk.doc')}</strong>
-              <small>{t('canvas.desk.doc.sub')}</small>
-            </span>
-            <span className="nv-desk-arrow" aria-hidden="true">↗</span>
-          </button>
+          <div className="nv-desk-row">
+            <button type="button" className="nv-desk-tile" onClick={() => onStart('doc')}>
+              <span className="nv-desk-glyph">{glyph.file(20)}</span>
+              <span className="nv-desk-name">{t('canvas.desk.doc')}</span>
+              <span className="nv-desk-sub">{t('canvas.desk.doc.sub')}</span>
+            </button>
+            <button type="button" className="nv-desk-tile" onClick={() => onStart('world')}>
+              <span className="nv-desk-glyph">{glyph.globe(20)}</span>
+              <span className="nv-desk-name">{t('canvas.desk.blankworld')}</span>
+              <span className="nv-desk-sub">{t('canvas.desk.blankworld.sub')}</span>
+            </button>
+            <button type="button" className="nv-desk-tile" onClick={() => onStart('character')}>
+              <span className="nv-desk-glyph">{glyph.user(20)}</span>
+              <span className="nv-desk-name">{t('canvas.desk.blankcharacter')}</span>
+              <span className="nv-desk-sub">{t('canvas.desk.blankcharacter.sub')}</span>
+            </button>
+            <button type="button" className="nv-desk-tile" onClick={() => onStart('timeline')}>
+              <span className="nv-desk-glyph">{glyph.clock(20)}</span>
+              <span className="nv-desk-name">{t('canvas.desk.timeline')}</span>
+              <span className="nv-desk-sub">{t('canvas.desk.timeline.sub')}</span>
+            </button>
+            <button type="button" className="nv-desk-tile" onClick={() => onStart('map')}>
+              <span className="nv-desk-glyph">{glyph.map(20)}</span>
+              <span className="nv-desk-name">{t('canvas.desk.map')}</span>
+              <span className="nv-desk-sub">{t('canvas.desk.map.sub')}</span>
+            </button>
+            <button type="button" className="nv-desk-tile" onClick={() => onStart('collection')}>
+              <span className="nv-desk-glyph">{glyph.grid(20)}</span>
+              <span className="nv-desk-name">{t('canvas.desk.collection')}</span>
+              <span className="nv-desk-sub">{t('canvas.desk.collection.sub')}</span>
+            </button>
+          </div>
         </section>
         {empty && <p className="nv-desk-empty">{t('canvas.desk.empty')}</p>}
       </div>
@@ -1610,13 +1634,28 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
               starter: `template:${preset}`,
             })
           }}
-          onStart={() => {
-            // 单页签直接落一张空白文稿；重名自动编号，绝不覆盖已有文稿。
-            const base = t('canvas.desk.doc.name')
-            const taken = new Set((tree?.docs ?? []).map(row => row.path))
-            let name = base
-            for (let index = 2; taken.has(`文稿/${name}.md`); index += 1) name = `${base} ${index}`
-            props.submitCreate({ kind: 'doc', name, starter: 'blank' })
+          onStart={kind => {
+            if (kind === 'doc') {
+              // 单页签直接落一张空白文稿；重名自动编号，绝不覆盖已有文稿。
+              const base = t('canvas.desk.doc.name')
+              const taken = new Set((tree?.docs ?? []).map(row => row.path))
+              let name = base
+              for (let index = 2; taken.has(`文稿/${name}.md`); index += 1) name = `${base} ${index}`
+              props.submitCreate({ kind: 'doc', name, starter: 'blank' })
+              return
+            }
+            // 空白卡：不带骨架从零填；单模块卡：带一个专用模块并直开该模块页。
+            const names = {
+              world: t('canvas.desk.world.name'), character: t('canvas.desk.character.name'),
+              timeline: t('canvas.desk.timeline.name'), map: t('canvas.desk.map.name'),
+              collection: t('canvas.desk.collection.name'),
+            } as const
+            const blank = kind === 'world' || kind === 'character'
+            props.submitCreate({
+              kind: kind === 'character' ? 'character' : 'world',
+              name: names[kind],
+              starter: blank ? 'blank' : `template:${kind}`,
+            })
           }} />
       )}
       {tab.kind === 'card' && (

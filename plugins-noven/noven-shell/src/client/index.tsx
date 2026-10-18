@@ -1762,7 +1762,7 @@ export function apply(ctx: ClientContext): void {
         op: 'create', kind: request.kind === 'world' ? 'WORLD' : 'CHARACTER', name: request.name, starter: request.starter,
       })
       treeSource.refresh()
-      if (created.cardId !== undefined) openCanvasCard(created.cardId, addr, undefined, addr.sessionId)
+      if (created.cardId !== undefined) openCanvasCard(created.cardId, addr, created.focusModuleId, addr.sessionId)
       if (created.interview === true) queueInterview(request)
     })().catch((reason: unknown) => { console.warn('noven-shell: create failed:', reason) })
   }
