@@ -233,6 +233,15 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     const panel = options?.panel === 'preserve' ? 'preserve' : 'reveal'
     const current = this.mainReference?.sessionId
     const targetId = typeof target === 'string' ? target : target.childSessionId
+    // A blank Session belongs to its host surface (for example the creation
+    // page's composer): revealing its own page would show a stale empty
+    // surface, so a normal open routes to that surface instead.
+    if (panel === 'reveal' && options?.transition !== 'none'
+      && this.newSessionSurface !== undefined
+      && this.sessions.list.getSnapshot().byId[targetId]?.blank === true) {
+      this.newSessionSurface()
+      return
+    }
     // A scene-owned commit runs inside the caller's View Transition; starting
     // another here would skip that scene, so commit straight through.
     if (options?.transition === 'none') {

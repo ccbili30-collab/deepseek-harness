@@ -1795,11 +1795,17 @@ export function apply(ctx: ClientContext): void {
    * The creation page is the one New Session surface: the nav row, the shell's
    * new-session action (sidebar brand button and its shortcut), and the empty
    * main view after archiving all land here. It enters with its own scene, not
-   * the Session page turn.
+   * the Session page turn. The in-flight latch is synchronous: the scene's
+   * panel commit lands inside an async update, so a second route (list update,
+   * blank routing) firing before it would start a competing transition.
    */
+  let openingCreateSurface = false
   const onCreateSurface = (): void => {
+    if (openingCreateSurface) return
     if (ctx.layout.panelInfo.getSnapshot().activePanelId === CREATE_ID) return
-    enterCreateScene(() => { ctx.layout.selectPanel(CREATE_ID) })
+    openingCreateSurface = true
+    void enterCreateScene(() => { ctx.layout.selectPanel(CREATE_ID) })
+      .finally(() => { openingCreateSurface = false })
   }
   ctx.effect(() => sidebarPanels.registerActivation(CREATE_ID, () => { onCreateSurface() }),
     'noven-shell: create surface activation')
@@ -1830,6 +1836,22 @@ export function apply(ctx: ClientContext): void {
     reconcile()
     return () => { stopSessions(); stopWorkspaces?.() }
   }, 'noven-shell: archive fallback surface')
+  // A blank Session has no page of its own: it is the creation page's
+  // composer host, so whenever the main view would show it (its tree row, a
+  // restore, any other route) the creation page takes the stage instead.
+  ctx.effect(() => {
+    const reconcile = (): void => {
+      const list = ctx.sessions.list.getSnapshot()
+      const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
+      if (current?.blank !== true) return
+      if (ctx.layout.panelInfo.getSnapshot().activePanelId !== null) return
+      onCreateSurface()
+    }
+    const stopSessions = ctx.sessions.list.subscribe(reconcile)
+    const stopPanel = ctx.layout.panelInfo.subscribe(reconcile)
+    reconcile()
+    return () => { stopSessions(); stopPanel() }
+  }, 'noven-shell: blank surface routing')
   const NAV: readonly { id: MainPanelId; order: number; label: () => string; Icon: (p: { size: number; active: boolean }) => React.ReactNode }[] = [
     { id: CREATE_ID, order: 5, label: () => t('nav.create'), Icon: CreateIcon },
     { id: HOME_ID, order: 10, label: () => t('nav.home'), Icon: HomeIcon },

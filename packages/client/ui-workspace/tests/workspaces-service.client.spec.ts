@@ -458,6 +458,18 @@ describe('UiWorkspaceService', () => {
     expect(open).toHaveBeenCalledTimes(1)
   })
 
+  it('routes a blank Session open to the registered new-session surface', () => {
+    const b = bench({
+      workspaces: workspaceState([workspace('a', [sid('host')])]),
+      sessions: sessionState([summary('host', { cwd: '/w/a', blank: true })]),
+    })
+    const open = vi.fn()
+    b.uiWorkspace.registerNewSessionSurface(open)
+    b.uiWorkspace.openSession(sid('host'))
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(b.sessions.retain).not.toHaveBeenCalled()
+  })
+
   it('archives the current Session onto the next live row instead of an empty main view', async () => {
     const b = bench({
       workspaces: workspaceState([workspace('a', [sid('one'), sid('two')])]),

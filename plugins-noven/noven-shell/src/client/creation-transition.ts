@@ -158,12 +158,13 @@ export async function enterHandcraftScene(source: HTMLElement, commit: () => Pro
  * its view-transition-name in CSS, so no naming step is needed on either side.
  * The panel commit runs inside the update, per the capture rule above.
  * @param commit - the synchronous panel commit (selectPanel(CREATE_ID)).
+ * @returns settlement of the scene (immediately without the API or under reduced motion).
  */
-export function enterCreateScene(commit: () => void): void {
+export function enterCreateScene(commit: () => void): Promise<void> {
   const documentWithTransition = document as ViewTransitionDocument
   if (documentWithTransition.startViewTransition === undefined || matchMedia('(prefers-reduced-motion: reduce)').matches) {
     commit()
-    return
+    return Promise.resolve()
   }
   const root = document.documentElement
   root.setAttribute(SCENE_ATTRIBUTE, 'enter')
@@ -179,4 +180,5 @@ export function enterCreateScene(commit: () => void): void {
   void transition.finished.catch(() => undefined).finally(() => {
     if (root.getAttribute(SCENE_ATTRIBUTE) === 'enter') root.removeAttribute(SCENE_ATTRIBUTE)
   })
+  return transition.finished.catch(() => undefined)
 }
