@@ -721,7 +721,7 @@ function docBlocks(text: string): EditableBlock[] {
 }
 
 /** 文稿体：通用编辑器 + /api/noven-doc 乐观锁保存；内容走温层——重挂先渲缓存不闪 loading。 */
-function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, renameFile, deleteFile }: {
+function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, deleteFile }: {
   readonly tab: CanvasTab
   readonly t: ShellT
   readonly sessionId: SessionId
@@ -729,12 +729,10 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   readonly ensureDoc: CanvasInjected['ensureDoc']
   readonly saveDoc: CanvasInjected['saveDoc']
   readonly setStatus: CanvasInjected['setStatus']
-  readonly renameFile: CanvasInjected['renameFile']
   readonly deleteFile: CanvasInjected['deleteFile']
 }) {
   const path = tab.path ?? ''
   const [menuOpen, setMenuOpen] = useState(false)
-  const [renaming, setRenaming] = useState(false)
   const [outline, setOutline] = useState<readonly OutlineItem[]>([])
   const [activeHeading, setActiveHeading] = useState<string | undefined>(undefined)
   const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
@@ -771,7 +769,8 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   if (state === 'missing' || base === undefined) {
     return <div className="nv-canvas-missing">{t(state === 'missing' ? 'canvas.doc.missing' : 'canvas.files.loading')}</div>
   }
-  const name = path.split('/').pop() ?? path
+  // 文稿页只展示名字（不带扩展名）；改名归档案树，这里不提供。
+  const name = (path.split('/').pop() ?? path).replace(/\.(md|markdown|mdx|txt)$/i, '')
   const jumpToHeading = (id: string): void => {
     const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(id)}"]`)
     element?.scrollIntoView({ block: 'start', behavior: 'smooth' })
@@ -780,25 +779,18 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
     <div className={RICH_TEXT_PATH.test(path) ? 'nv-ed nv-ed-doc' : 'nv-ed'}>
       <div className="nv-ed-main">
       <header className="nv-ed-head">
-        {renaming ? (
-          <InlineRename className="nv-ed-title nv-ed-titlein" value={name}
-            onDone={next => { setRenaming(false); if (next !== undefined) void renameFile(path, next) }} />
-        ) : (
-          <h1 className="nv-ed-title">{name}</h1>
-        )}
+        <h1 className="nv-ed-title">{name}</h1>
         <div className="nv-ed-meta">{metaOf([t('tree.docs'), fmt(t, 'editor.wordcount', { count: wordCount(base) })])}</div>
         <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => { arm.reset(); setMenuOpen(false) }}
           onSelect={id => {
             if (arm.select(id) === 'armed') return
             setMenuOpen(false)
-            if (id === 'rename') setRenaming(true)
             if (id === 'delete') {
               void deleteFile(path).then(ok => { notifyUndo({ text: fmt(t, ok ? 'ui.receipt.fileDeleted' : 'ui.receipt.failed', { name }) }) })
             }
           }}
           items={arm.decorate([
-            { id: 'rename', label: t('canvas.doc.rename') },
             { id: 'delete', label: t('canvas.doc.delete'), danger: true },
           ])}
           anchor={(
@@ -1701,7 +1693,7 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
       {tab.kind === 'doc' && (
         <DocTab key={tab.key} tab={tab} t={t} sessionId={session}
           useDocs={props.useDocs} ensureDoc={props.ensureDoc} saveDoc={props.saveDoc}
-          setStatus={props.setStatus} renameFile={props.renameFile} deleteFile={props.deleteFile} />
+          setStatus={props.setStatus} deleteFile={props.deleteFile} />
       )}
       {tab.kind === 'files' && (
         <FilesTab t={t} sessionId={session} useDirs={props.useDirs} refreshDir={props.refreshDir} openDoc={openDoc} />

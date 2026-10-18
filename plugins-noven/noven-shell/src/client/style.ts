@@ -1468,23 +1468,19 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 /* 文稿页签：正文整幅，右上角浮一枚小挂窗（大纲）——不占布局列 */
 .nv-ed.nv-ed-doc { position: relative; }
 .nv-ed-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-/* 小挂窗：闲置时半透 + 背景虚化（底下正文透出来、只是略糊）；悬停变实、条目清晰可点 */
-.nv-doc-outline { position: absolute; top: 10px; right: 10px; z-index: 6;
-  width: 176px; max-height: min(42%, 360px); overflow-y: auto; padding: 10px 8px 26px; box-sizing: border-box;
-  border: 1px solid var(--nv-divider); border-radius: 12px;
-  background: rgba(255, 255, 255, .55);
-  -webkit-backdrop-filter: blur(2.5px); backdrop-filter: blur(2.5px);
-  box-shadow: 0 6px 22px rgba(28, 64, 51, .08);
-  opacity: .78; scrollbar-width: none;
-  transition: opacity 160ms ease, background 160ms ease, box-shadow 160ms ease;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 78%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0, #000 78%, transparent 100%); }
-.nv-doc-outline:hover {
-  opacity: 1; background: rgba(255, 255, 255, .97);
-  -webkit-backdrop-filter: none; backdrop-filter: none;
-  box-shadow: 0 10px 30px rgba(28, 64, 51, .14);
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 92%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0, #000 92%, transparent 100%); }
+/* 标题树：不开任何区域——无面板、无底色、无边框，直接浮在右侧页边。
+   闲置时树自己是虚的（半透明 + 轻微模糊），底下的正文透出来；悬停变清晰可点。 */
+.nv-doc-outline { position: absolute; top: 8px; right: 12px; z-index: 6;
+  width: 168px; max-height: min(42%, 360px); overflow-y: auto; padding: 0 0 22px; box-sizing: border-box;
+  scrollbar-width: none;
+  opacity: .38; filter: blur(.5px);
+  transition: opacity 160ms ease, filter 160ms ease;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 80%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 80%, transparent 100%); }
+.nv-doc-outline:hover { opacity: 1; filter: none; }
+/* 正文滚动条让到左侧，右侧整条留给树（rtl 只改滚动条所在边，内容方向复位） */
+.nv-doc-bn { direction: rtl; }
+.nv-doc-bn > * { direction: ltr; }
 .nv-doc-outline-label { padding: 0 8px 8px; font-size: 11px; font-weight: 700; letter-spacing: .14em; color: var(--nv-secondary-text); }
 .nv-doc-outline-empty { padding: 2px 8px; font-size: 11.5px; line-height: 1.7; color: var(--nv-secondary-text); opacity: .7; }
 .nv-doc-outline-item { display: block; width: 100%; border: 0; background: none; border-radius: 7px; padding: 5px 8px; text-align: left;
