@@ -17,7 +17,7 @@ import type { ImportReport } from './tree-api.ts'
 
 import { CardPage } from './card-page.tsx'
 import { BlockEditor, metaOf, wordCount, type EditableBlock, type MdLabels } from './editor.tsx'
-import { BlockNoteDocEditor, type OutlineItem } from './doc-editor.tsx'
+import { BlockNoteDocEditor, type OutlineItem, type OutlineMark } from './doc-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { pagePending, type NovenTree, type TreeModuleRow } from './tree-api.ts'
 import { CreateDialog, type CreateKind, type CreateRequest } from './creation.tsx'
@@ -737,7 +737,11 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   const [renaming, setRenaming] = useState(false)
   const [outline, setOutline] = useState<readonly OutlineItem[]>([])
   const [activeHeading, setActiveHeading] = useState<string | undefined>(undefined)
+  const [marks, setMarks] = useState<readonly OutlineMark[]>([])
   const [liveCount, setLiveCount] = useState<number | undefined>(undefined)
+  const [panelOpen, setPanelOpen] = useState(false)
+  const [pinned, setPinned] = useState(false)
+  const closeTimer = useRef<number | undefined>(undefined)
   const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const entry = useDocs(s => s[docKey(sessionId, path)])
   useEffect(() => { ensureDoc(sessionId, path) }, [sessionId, path, ensureDoc])
@@ -780,6 +784,41 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
     const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(id)}"]`)
     element?.scrollIntoView({ block: 'start', behavior: 'smooth' })
   }
+  const openPanel = (): void => {
+    if (closeTimer.current !== undefined) { window.clearTimeout(closeTimer.current); closeTimer.current = undefined }
+    setPanelOpen(true)
+  }
+  const scheduleClose = (): void => {
+    if (pinned || closeTimer.current !== undefined) return
+    closeTimer.current = window.setTimeout(() => {
+      closeTimer.current = undefined
+      setPanelOpen(false)
+    }, 300)
+  }
+  useEffect(() => () => {
+    if (closeTimer.current !== undefined) window.clearTimeout(closeTimer.current)
+  }, [])
+  useEffect(() => {
+    if (!panelOpen) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setPinned(false)
+      setPanelOpen(false)
+    }
+    const onDown = (event: PointerEvent): void => {
+      if (pinned) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      if (target.closest('.nv-doc-panel') !== null || target.closest('.nv-doc-rail') !== null) return
+      setPanelOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onDown)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onDown)
+    }
+  }, [panelOpen, pinned])
   return (
     <div className={RICH_TEXT_PATH.test(path) ? 'nv-ed nv-ed-doc' : 'nv-ed'}>
       <div className="nv-ed-main">
@@ -820,22 +859,42 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
       </header>
       {RICH_TEXT_PATH.test(path)
         ? <BlockNoteDocEditor markdown={base} onChange={text => { void saveText(text) }}
-            onOutline={setOutline} onActive={setActiveHeading} onWordCount={setLiveCount} />
+            onOutline={setOutline} onActive={setActiveHeading} onWordCount={setLiveCount} onMarks={setMarks} />
         : <BlockEditor blocks={docBlocks(base)} labels={mdLabels} t={t} onSaveBlock={saveBlock} onAdd={addBlock} />}
       </div>
       {RICH_TEXT_PATH.test(path) && (
-        <aside className="nv-doc-outline" aria-label={t('canvas.outline')}>
-          <div className="nv-doc-outline-label">{t('canvas.outline')}</div>
-          {outline.length === 0 && <div className="nv-doc-outline-empty">{t('canvas.outline.empty')}</div>}
-          {outline.map(item => (
-            <button key={item.id} type="button"
-              className={`nv-doc-outline-item${item.id === activeHeading ? ' nv-doc-outline-item-on' : ''}`}
-              data-level={Math.min(item.level, 3)} title={item.text}
-              onClick={() => { jumpToHeading(item.id) }}>
-              {item.text}
-            </button>
-          ))}
-        </aside>
+        <>
+          {/* 常驻：右缘刻度（位置标尺，不占布局、只标位置） */}
+          <div className="nv-doc-rail" aria-hidden="true"
+            onPointerEnter={openPanel} onPointerLeave={scheduleClose} onClick={openPanel}>
+            {marks.map(mark => (
+              <span key={mark.id}
+                className={`nv-doc-rail-mark${mark.id === activeHeading ? ' nv-doc-rail-mark-on' : ''}`}
+                style={{ top: `${Math.round(mark.top * 1000) / 10}%` }} />
+            ))}
+          </div>
+          {/* 唤出：大纲面板 */}
+          <div className={`nv-doc-panel${panelOpen ? ' nv-doc-panel-open' : ''}`}
+            onPointerEnter={openPanel} onPointerLeave={scheduleClose}>
+            <div className="nv-doc-panel-head">
+              <span className="nv-doc-panel-title">{t('canvas.outline')}</span>
+              <button type="button" className={`nv-doc-panel-pin${pinned ? ' nv-doc-panel-pin-on' : ''}`}
+                title={t('canvas.outline.pin')} aria-pressed={pinned}
+                onClick={() => { setPinned(v => !v); if (!pinned) setPanelOpen(true) }}>
+                {glyph.pin(13)}
+              </button>
+            </div>
+            {outline.length === 0 && <div className="nv-doc-panel-empty">{t('canvas.outline.empty')}</div>}
+            {outline.map(item => (
+              <button key={item.id} type="button"
+                className={`nv-doc-panel-item${item.id === activeHeading ? ' nv-doc-panel-item-on' : ''}`}
+                data-level={Math.min(item.level, 3)} title={item.text}
+                onClick={() => { jumpToHeading(item.id) }}>
+                {item.text}
+              </button>
+            ))}
+          </div>
+        </>
       )}
     </div>
   )

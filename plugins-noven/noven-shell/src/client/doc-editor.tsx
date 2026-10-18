@@ -11,6 +11,12 @@ import { BlockNoteView } from '@blocknote/mantine'
 import { wordCount } from './editor.tsx'
 import { BLOCKNOTE_CSS } from './doc-blocknote-css.ts'
 
+/** 右缘刻度：标题在全文中的相对位置（0..1，按可滚动高度归一）。 */
+export interface OutlineMark {
+  readonly id: string
+  readonly top: number
+}
+
 /** 标题树的一项：块 id、层级与文字。 */
 export interface OutlineItem {
   readonly id: string
@@ -73,7 +79,7 @@ function useBlockNoteStyles(): void {
  * @param outlineLabel - 标题树的标题文案（locale 归调用方）。
  * @param onChange - 防抖后的 markdown 快照。
  */
-export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, onWordCount }: {
+export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, onWordCount, onMarks }: {
   readonly markdown: string
   readonly onChange: (markdown: string) => void
   /** 每次内容变化后的实时字数（页签头显示，不依赖存盘）。 */
@@ -82,6 +88,8 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
   readonly onOutline: (items: readonly OutlineItem[]) => void
   /** 滚动时当前所在标题；undefined = 视口在第一个标题之上。 */
   readonly onActive: (id: string | undefined) => void
+  /** 右缘刻度的位置（随内容与滚动更新）。 */
+  readonly onMarks: (marks: readonly OutlineMark[]) => void
 }) {
   useBlockNoteStyles()
   const editor = useCreateBlockNote({ dictionary: zh })
@@ -90,18 +98,22 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
   const loaded = useRef(false)
   const last = useRef(markdown)
   const timer = useRef<number | undefined>(undefined)
-  // 首帧灌入磁盘内容（layout 阶段，画面前完成，避免空文档闪一帧）。
-  useLayoutEffect(() => {
-    if (loaded.current) return
-    loaded.current = true
-    const blocks = editor.tryParseMarkdownToBlocks(markdown)
-    if (blocks.length > 0) editor.replaceBlocks(editor.document, blocks)
-    const items = outlineOf(editor.document)
-    itemsRef.current = items
-    onOutline(items)
-    onWordCount(wordCount(plainTextOf(editor.document)))
-  }, [editor, markdown, onOutline, onWordCount])
   useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
+  /** 上报刻度位置：标题块顶部相对可滚动高度的比例。 */
+  const reportMarks = useCallback(() => {
+    const view = scroller.current
+    if (view === null) return
+    const viewTop = view.getBoundingClientRect().top
+    const total = Math.max(1, view.scrollHeight)
+    const marks: OutlineMark[] = []
+    for (const item of itemsRef.current) {
+      const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(item.id)}"]`)
+      if (element === null) continue
+      const offset = element.getBoundingClientRect().top - viewTop + view.scrollTop
+      marks.push({ id: item.id, top: Math.min(1, Math.max(0, offset / total)) })
+    }
+    onMarks(marks)
+  }, [onMarks])
   const trackActive = useCallback(() => {
     const view = scroller.current
     if (view === null) return
@@ -114,7 +126,20 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
       else break
     }
     onActive(current)
-  }, [onActive])
+    reportMarks()
+  }, [onActive, reportMarks])
+  // 首帧灌入磁盘内容（layout 阶段，画面前完成，避免空文档闪一帧）。
+  useLayoutEffect(() => {
+    if (loaded.current) return
+    loaded.current = true
+    const blocks = editor.tryParseMarkdownToBlocks(markdown)
+    if (blocks.length > 0) editor.replaceBlocks(editor.document, blocks)
+    const items = outlineOf(editor.document)
+    itemsRef.current = items
+    onOutline(items)
+    onWordCount(wordCount(plainTextOf(editor.document)))
+    reportMarks()
+  }, [editor, markdown, onOutline, onWordCount, reportMarks])
   return (
     <div className="nv-doc-bn" ref={scroller} onScroll={trackActive}>
       <BlockNoteView
@@ -125,6 +150,7 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
           itemsRef.current = items
           onOutline(items)
           onWordCount(wordCount(plainTextOf(editor.document)))
+          reportMarks()
           if (timer.current !== undefined) window.clearTimeout(timer.current)
           timer.current = window.setTimeout(() => {
             timer.current = undefined

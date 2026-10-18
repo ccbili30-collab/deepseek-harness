@@ -1469,36 +1469,34 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
    注意覆盖旧 .nv-ed-doc 的 150px 右内边距（那是老编辑器预留的空白，正文会被它截断）。 */
 .nv-ed.nv-ed-doc { position: relative; padding: 0; overflow: hidden; }
 .nv-ed-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-/* 标题树：右下固定的一片区域，放大、下移（文档头部让出）。
-   闲置：树上的字完全不可见，只有它覆盖的正文被虚化；
-   鼠标明显浮上去：树与字一起显形。容器对点击透明，只有条目本身可交互。 */
-.nv-doc-outline { position: absolute; top: 96px; right: 16px; bottom: 40px; z-index: 6;
-  width: 340px; overflow-y: auto; padding: 8px 0 28px; box-sizing: border-box;
-  scrollbar-width: none; pointer-events: none;
-  background: transparent; border: 0; box-shadow: none;
-  -webkit-backdrop-filter: blur(2.5px); backdrop-filter: blur(2.5px);
-  transition: backdrop-filter 180ms ease;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 82%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0, #000 82%, transparent 100%); }
-.nv-doc-outline:hover { -webkit-backdrop-filter: none; backdrop-filter: none; }
-/* 闲置时树体不可见（仍可被悬停命中）；悬停整树显形 */
-.nv-doc-outline-label, .nv-doc-outline-item, .nv-doc-outline-empty {
-  opacity: 0; transition: opacity 180ms ease; }
-.nv-doc-outline:hover .nv-doc-outline-label,
-.nv-doc-outline:hover .nv-doc-outline-item,
-.nv-doc-outline:hover .nv-doc-outline-empty { opacity: 1; }
-/* 正文滚动条让到左侧，右侧整条留给树（rtl 只改滚动条所在边，内容方向复位） */
-.nv-doc-bn { direction: rtl; }
-.nv-doc-bn > * { direction: ltr; }
-.nv-doc-outline-label { padding: 2px 12px 12px; font-size: 12.5px; font-weight: 700; letter-spacing: .14em; color: var(--nv-secondary-text); }
-.nv-doc-outline-empty { padding: 2px 10px; font-size: 12.5px; line-height: 1.8; color: var(--nv-secondary-text); }
-.nv-doc-outline-item { display: block; width: 100%; pointer-events: auto; border: 0; background: none; border-radius: 9px; padding: 9px 12px; text-align: left;
-  font-size: 14.5px; line-height: 1.9; color: var(--nv-secondary-text); cursor: pointer; font-family: inherit;
+/* 右缘刻度：常驻的位置标尺——不占布局、不挡字，只标标题所在位置（当前项薄荷） */
+.nv-doc-rail { position: absolute; top: 84px; right: 10px; bottom: 24px; width: 14px; z-index: 6; cursor: pointer; }
+.nv-doc-rail-mark { position: absolute; right: 0; width: 8px; height: 2px; border-radius: 1px;
+  background: var(--nv-secondary-text); opacity: .28;
+  transition: width 120ms ease, opacity 120ms ease, background 120ms ease; }
+.nv-doc-rail-mark-on { width: 14px; opacity: .95; background: var(--nv-accent); }
+/* 唤出面板：白底圆角阴影，从右缘滑入；只在用户唤出时临时覆盖纸面 */
+.nv-doc-panel { position: absolute; top: 84px; right: 16px; bottom: 24px; width: 300px; z-index: 7;
+  display: flex; flex-direction: column; overflow-y: auto; padding: 10px 8px 24px; box-sizing: border-box;
+  background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 14px;
+  box-shadow: 0 18px 48px rgba(28, 64, 51, .16);
+  opacity: 0; transform: translateX(16px); pointer-events: none;
+  transition: opacity 160ms ease, transform 160ms ease; }
+.nv-doc-panel-open { opacity: 1; transform: none; pointer-events: auto; }
+.nv-doc-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 10px; }
+.nv-doc-panel-title { font-size: 12px; font-weight: 700; letter-spacing: .14em; color: var(--nv-secondary-text); }
+.nv-doc-panel-pin { display: inline-flex; border: 0; background: none; border-radius: 7px; padding: 4px 6px;
+  color: var(--nv-secondary-text); cursor: pointer; }
+.nv-doc-panel-pin:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
+.nv-doc-panel-pin-on { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-doc-panel-empty { padding: 10px; font-size: 12.5px; line-height: 1.8; color: var(--nv-secondary-text); }
+.nv-doc-panel-item { display: block; width: 100%; border: 0; background: none; border-radius: 8px; padding: 7px 10px; text-align: left;
+  font-size: 13.5px; line-height: 1.7; color: var(--nv-secondary-text); cursor: pointer; font-family: inherit;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nv-doc-outline-item:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
-.nv-doc-outline-item-on { color: var(--nv-accent-deep); font-weight: 600; }
-.nv-doc-outline-item[data-level='2'] { padding-left: 28px; }
-.nv-doc-outline-item[data-level='3'] { padding-left: 46px; }
+.nv-doc-panel-item:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
+.nv-doc-panel-item-on { color: var(--nv-accent-deep); font-weight: 600; }
+.nv-doc-panel-item[data-level='2'] { padding-left: 22px; }
+.nv-doc-panel-item[data-level='3'] { padding-left: 36px; }
 .nv-doc-bn { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--nv-surface); font-family: inherit; }
 .nv-doc-bn .bn-container { min-height: 100%; width: 100%; }
 .nv-doc-bn .bn-container .bn-editor { width: 100%; max-width: none; }
