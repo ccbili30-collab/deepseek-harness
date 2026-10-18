@@ -139,19 +139,16 @@ function moduleMarkdown(blocks: readonly CardBlockView[]): string {
 
 /** 一个模块盒：标题（点击即改名）+ 正文（模块内富文本 / 预制模块渲染器）。
     子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
-function ModuleBox({ module, t, card, imageUrl, imageResources, saveBlock, saveMarkdown, renameModule, removeModule, send, onOpenModule, ask, readFile, onOpenFile, refTargets, refEdges, mapReferenced }: {
+function ModuleBox({ module, t, card, imageUrl, imageResources, saveBlock, saveMarkdown, send, onOpenModule, ask, readFile, onOpenFile, refTargets, refEdges, mapReferenced }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   /** 宿主卡身份——html 模块的 NOVEN_FRAME.card 拿它。 */
-  readonly card: { readonly name: string; readonly kind: string | undefined }
+  readonly card: { readonly name: string, readonly kind: string | undefined }
   readonly imageUrl: (resourceId: string) => string
   /** 本卡可用的图片资源（地图选底图用）。 */
   readonly imageResources: readonly { readonly id: string }[]
   readonly saveBlock: (module: CardModuleDoc, blockId: string, text: string, expected: string) => Promise<EditorSaveResult>
   readonly saveMarkdown: (module: CardModuleDoc, text: string) => Promise<EditorSaveResult>
-  readonly renameModule: (module: CardModuleDoc, name: string) => void
-  /** 删除模块（宿主负责回执与撤销）。 */
-  readonly removeModule: (module: CardModuleDoc) => void
   /** 预制模块的编辑命令直发（apply + 刷新由宿主负责）。 */
   readonly send: WidgetSend
   /** 打开另一个模块的页签。 */
@@ -169,36 +166,9 @@ function ModuleBox({ module, t, card, imageUrl, imageResources, saveBlock, saveM
   /** 打开项目文件到画布页签。 */
   readonly onOpenFile?: (path: string) => void
 }) {
-  const [renaming, setRenaming] = useState(false)
-  const [modMenu, setModMenu] = useState(false)
-  const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const widget = module.widget?.type
   return (
     <section className="nv-modbox">
-      <div className="nv-modbox-head">
-        {renaming ? (
-          <InlineRename className="nv-modbox-rename" value={module.name}
-            onDone={next => { setRenaming(false); if (next !== undefined) renameModule(module, next) }} />
-        ) : (
-          <h2 className="nv-modbox-title" onClick={() => setRenaming(true)}>{module.name}</h2>
-        )}
-        <Menu open={modMenu} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
-          onClose={() => { arm.reset(); setModMenu(false) }}
-          onSelect={id => {
-            if (arm.select(id) === 'armed') return
-            setModMenu(false)
-            if (id === 'copy') void send({ kind: 'copy_module', moduleId: module.id })
-            if (id === 'delete') removeModule(module)
-          }}
-          items={arm.decorate([
-            { id: 'copy', label: t('editor.module.copy') },
-            { id: 'delete', label: t('editor.module.remove'), danger: true },
-          ])}
-          anchor={(
-            <button type="button" className="nv-modbox-more" aria-label={t('tree.mod.more')}
-              onClick={() => setModMenu(v => !v)}>⋯</button>
-          )} />
-      </div>
       {widget === 'timeline' && <TimelineWidget module={module} t={t} send={send} />}
       {widget === 'relation' && <RelationWidget module={withDerivedRelation(module, refEdges)} t={t} send={send} imageUrl={imageUrl} />}
       {widget === 'map' && <MapEditor module={module} t={t} send={send} ask={ask} imageUrl={imageUrl} imageResources={imageResources} referenced={mapReferenced} />}
@@ -297,78 +267,85 @@ function HtmlModule({ module, t, saveBlock, readFile, onOpenFile, card }: {
 }
 
 /** 总览里一页模块的成果行：图标 + 名 + 摘要 + 迷你图，点击翻到那一页。 */
-function OverviewTile({ module, t, imageUrl, onOpen }: {
+function OverviewTile({ module, imageUrl, onOpen }: {
   readonly module: CardModuleDoc
-  readonly t: ShellT
   readonly imageUrl: (resourceId: string) => string
   readonly onOpen: () => void
 }) {
   const widget = module.widget?.type
   const excerpt = module.blocks.find(b => b.kind === 'text')?.text?.trim() ?? ''
-  const summary = ((): string => {
-    if (widget === 'timeline') {
-      const d = tl(module.widget?.data)
-      return fmt(t, 'ov.sum.timeline', { eras: d.eras.length, events: d.events.length })
-    }
-    if (widget === 'relation') {
-      const d = rel(module.widget?.data)
-      return fmt(t, 'ov.sum.relation', { nodes: d.nodes.length, edges: d.edges.length })
-    }
-    if (widget === 'map') return fmt(t, 'ov.sum.map', { markers: mapData(module.widget?.data).markers.length })
-    if (widget === 'collection') return fmt(t, 'ov.sum.collection', { count: coll(module.widget?.data).items.length })
-    if (widget === 'html') return t('ov.sum.html')
-    const chars = module.blocks.reduce((n, b) => n + (b.text?.length ?? 0), 0)
-    return chars === 0 ? t('ov.sum.emptyDoc') : fmt(t, 'editor.wordcount', { count: chars })
-  })()
   const imageBlock = widget === 'map' ? module.blocks.find(b => b.kind === 'image') : undefined
   return (
     <button type="button" className="nv-ov-tile" onClick={onOpen}>
-      <span className="nv-ov-mini">
+      <span className="nv-ov-info">
+        <span className="nv-ov-glyph">{moduleGlyph(module, 18)}</span>
+        <span className="nv-ov-name">{module.name}</span>
+        <span className="nv-ov-arrow">›</span>
+      </span>
+      <span className={`nv-ov-mini nv-ov-mini-${widget ?? 'document'}`}>
         {widget === 'timeline' && <MiniTimeline data={tl(module.widget?.data)} />}
         {widget === 'relation' && <MiniRelation data={rel(module.widget?.data)} />}
-        {widget === 'map' && imageBlock?.resourceId !== undefined && (
-          <img className="nv-ov-mapimg" src={imageUrl(imageBlock.resourceId)} alt="" />
-        )}
-        {(widget === undefined || widget === 'document') && excerpt !== '' && (
-          <span className="nv-ov-excerpt">{excerpt.slice(0, 140)}</span>
+        {widget === 'map' && (imageBlock?.resourceId !== undefined
+          ? <img className="nv-ov-mapimg" src={imageUrl(imageBlock.resourceId)} alt="" />
+          : <span className="nv-ov-excerpt">{excerpt.slice(0, 160)}</span>)}
+        {(widget === undefined || widget === 'document') && (
+          <span className="nv-ov-excerpt">{excerpt === '' ? module.name : excerpt.slice(0, 200)}</span>
         )}
         {widget === 'html' && <span className="nv-ov-htmlglyph">{glyph.code(26)}</span>}
         {widget === 'collection' && (() => {
           const data = coll(module.widget?.data)
-          const item = data.items[0]
-          const values = item === undefined ? undefined : data.values[item.id]
+          const first = data.items[0]
+          const firstValues = first === undefined ? undefined : data.values[first.id]
           const imageField = data.fields.find(field => field.type === 'image')
-          const thumbs = imageField === undefined ? [] : data.items
+          const thumbs = imageField === undefined || data.items.length < 2 ? [] : data.items
             .map(candidate => candidate.visualKey)
             .filter((key): key is string => key !== null)
             .slice(0, 3)
-          const rows = data.fields.filter(field => field.type !== 'image' && field.type !== 'chips').slice(0, 3)
+          const textFields = data.fields.filter(field => field.type !== 'image' && field.type !== 'chips' && field.name !== '名称')
           const chipField = data.fields.find(field => field.type === 'chips')
-          const chips = chipField === undefined || values === undefined ? [] : collText(values[chipField.id]).split('、').map(part => part.trim()).filter(part => part !== '').slice(0, 4)
+          const firstChips = chipField === undefined || firstValues === undefined
+            ? [] : collText(firstValues[chipField.id]).split('、').map(part => part.trim()).filter(part => part !== '').slice(0, 4)
           return (
             <span className="nv-ov-collpreview">
-              {thumbs.length > 0 && <span className="nv-ov-thumbs">{thumbs.map(key => <img key={key} src={imageUrl(key)} alt="" />)}</span>}
-              {rows.map(field => {
-                const value = values === undefined ? '' : collText(values[field.id])
-                return (
-                  <span key={field.id} className="nv-ov-prow">
-                    <span className="nv-ov-plabel">{field.name}</span>
-                    {field.name === '立场' && value !== ''
-                      ? <span className={`nv-coll-chip nv-coll-chip-${chipTone(value)}`}>{value}</span>
-                      : <span className="nv-ov-pvalue">{value === '' ? '—' : value}</span>}
+              {thumbs.length > 0
+                ? <span className="nv-ov-thumbs">{thumbs.map(key => <img key={key} src={imageUrl(key)} alt="" />)}</span>
+                : data.items.length > 1
+                  ? <span className="nv-ov-rows">
+                    {data.items.slice(0, 4).map(item => {
+                      const values = data.values[item.id]
+                      const second = textFields[0]
+                      const text = second === undefined || values === undefined ? '' : collText(values[second.id])
+                      const meta = text === item.name ? '' : text
+                      const stance = data.fields.find(field => field.name === '立场')
+                      const stanceText = stance === undefined || values === undefined ? '' : collText(values[stance.id])
+                      return (
+                        <span key={item.id} className="nv-ov-itemrow">
+                          <span className="nv-ov-itemname">{item.name}</span>
+                          {stanceText !== ''
+                            ? <span className={`nv-coll-chip nv-coll-chip-${chipTone(stanceText)}`}>{stanceText}</span>
+                            : meta === '' ? null : <span className="nv-ov-itemmeta">{meta}</span>}
+                        </span>
+                      )
+                    })}
                   </span>
-                )
-              })}
-              {chips.length > 0 && <span className="nv-ov-pchips">{chips.map(chip => <span key={chip} className="nv-coll-chip nv-coll-chip-neutral">{chip}</span>)}</span>}
+                  : <span className="nv-ov-rows">
+                    {(firstValues === undefined ? [] : textFields.slice(0, 5)).map(field => {
+                      const value = firstValues === undefined ? '' : collText(firstValues[field.id])
+                      return (
+                        <span key={field.id} className="nv-ov-prow">
+                          <span className="nv-ov-plabel">{field.name}</span>
+                          {field.name === '立场' && value !== ''
+                            ? <span className={`nv-coll-chip nv-coll-chip-${chipTone(value)}`}>{value}</span>
+                            : <span className="nv-ov-pvalue">{value === '' ? '—' : value}</span>}
+                        </span>
+                      )
+                    })}
+                  </span>}
+              {firstChips.length > 0 && <span className="nv-ov-pchips">{firstChips.map(chip => <span key={chip} className="nv-coll-chip nv-coll-chip-neutral">{chip}</span>)}</span>}
             </span>
           )
         })()}
       </span>
-      <span className="nv-ov-info">
-        <span className="nv-ov-name">{moduleGlyph(module, 14)}{module.name}</span>
-        <span className="nv-ov-sum">{summary}</span>
-      </span>
-      <span className="nv-ov-go">{t('ov.open')} ›</span>
     </button>
   )
 }
@@ -421,7 +398,7 @@ function OverviewPage({ target, overviewModule, isCharacter, cardKind, t, imageU
       {tiles.length === 0 && <div className="nv-canvas-missing">{t('ov.empty')}</div>}
       <div className="nv-ov-grid">
         {shownTiles.map(module => (
-          <OverviewTile key={module.id} module={module} t={t} imageUrl={imageUrl}
+          <OverviewTile key={module.id} module={module} imageUrl={imageUrl}
             onOpen={() => onOpenModule(module.id)} />
         ))}
       </div>
@@ -635,15 +612,6 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     }
   }, [addr, cardId, locked, op, refresh, t, targetId, version])
 
-  const renameModule = useCallback((module: CardModuleDoc, name: string) => {
-    if (locked) { setNotice(t('prop.locked')); return }
-    void op(addr, {
-      op: 'apply', cardId, targetId, version,
-      command: { kind: 'rename_module', moduleId: module.id, name },
-    }).then(result => { if (result.version !== undefined) setVersion(result.version); void refresh() })
-      .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
-  }, [addr, cardId, locked, op, refresh, t, targetId, version])
-
   /** 预制模块命令直发：apply → 记 version → 刷新。错误进 notice 条。 */
   const send = useCallback<WidgetSend>(async command => {
     if (locked) { setNotice(t('prop.locked')); return }
@@ -655,20 +623,6 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       setNotice(String(error instanceof Error ? error.message : error))
     }
   }, [addr, cardId, locked, op, refresh, t, targetId, version])
-
-  /** 删模块 + 撤销回执：撤销走卡的 undo op（删除是最近一笔修订）。 */
-  const removeModule = useCallback((module: CardModuleDoc) => {
-    void send({ kind: 'remove_module', moduleId: module.id }).then(() => {
-      notifyUndo({
-        text: fmt(t, 'ui.receipt.moduleDeleted', { name: module.name }),
-        undoLabel: t('ui.undo'),
-        undo: () => {
-          void op(addr, { op: 'undo', cardId }).then(result => { if (result.version !== undefined) setVersion(result.version); void refresh() })
-            .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
-        },
-      })
-    })
-  }, [addr, cardId, op, refresh, send, t])
 
   const addModule = useCallback((widget: string | undefined, name?: string) => {
     if (target === undefined || locked) return
@@ -725,6 +679,8 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
   const overviewModule = target.modules.find(isOverviewModule)
   const foundPage = pageModuleId === undefined ? undefined : findModule(target.modules, pageModuleId)
   const pageModule = foundPage === undefined || isOverviewModule(foundPage) ? undefined : foundPage
+  /** 关系图与地图没有第二层画框：页头让位，画布铺满整列。 */
+  const bleed = pageModule?.widget?.type === 'relation' || pageModule?.widget?.type === 'map'
   const imageResources = state.resources.filter(r => r.mediaType.startsWith('image/')).map(r => ({ id: r.id }))
   /** 合并请求只挂它碰过的页：模块页按 moduleId，概览页挂卡层/角色/无头稿页可去的兜底变更。 */
   const pageHasProposal = proposal !== undefined && proposal !== null && (() => {
@@ -738,56 +694,54 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
         && !doc.characters.some(ch => ch.id === c.moduleId)
     })
   })()
+  const cardMenuControl = (
+    <Menu open={cardMenu} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
+      onClose={() => { cardArm.reset(); setCardMenu(false) }}
+      onSelect={id => {
+        if (cardArm.select(id) === 'armed') return
+        setCardMenu(false)
+        if (id === 'rename') setCardRenaming(true)
+        if (id === 'source' && state.dir !== undefined) onOpenFile?.(`卡/${state.dir}/card.json`)
+        if (id === 'delete') {
+          const name = doc.name
+          void op(addr, { op: 'delete', cardId }).then(() => {
+            setState(undefined)
+            notifyUndo({
+              text: fmt(t, 'ui.receipt.cardDeleted', { name }),
+              undoLabel: t('ui.undo'),
+              undo: () => {
+                void op(addr, { op: 'restore', cardId }).then(() => refresh())
+                  .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
+              },
+            })
+          }).catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
+        }
+      }}
+      items={cardArm.decorate([
+        { id: 'rename', label: t('tree.card.rename') },
+        ...(onOpenFile !== undefined ? [{ id: 'source', label: t('tree.card.showSource') }] : []),
+        { id: 'delete', label: t('tree.card.delete'), danger: true },
+      ])}
+      anchor={(
+        <button type="button" className="nv-cardpage-more" aria-label={t('tree.card.more')}
+          onClick={() => setCardMenu(v => !v)}>⋯</button>
+      )} />
+  )
+  // 单条目集合且条目就是这张卡（「基本信息」）时，页头用卡名——它已经承担了整页的身份。
+  const singleSelf = pageModule?.widget?.type === 'collection'
+    ? coll(pageModule.widget.data).items
+    : []
+  const pageOwnsCardName = singleSelf.length === 1 && singleSelf[0] !== undefined
+    && doc.name.startsWith(singleSelf[0].name)
+  const headerTitle = pageModule === undefined || pageOwnsCardName
+    ? (roleId !== undefined ? target.name : doc.name)
+    : pageModule.name
+  const headerKicker = pageModule === undefined
+    ? (roleId !== undefined ? `${kindLabel} · ${t('card.kind.character')}` : kindLabel)
+    : `${kindLabel} · ${pageModule.name}`
   return (
     <MarkdownDelegateProvider linkProtocols={NOVEN_LINK_PROTOCOLS} openLink={openLink} openFile={onOpenFile}>
     <div className="nv-cardpage">
-      <header className="nv-cardpage-head">
-        <span className="nv-cardpage-kind">{kindLabel}</span>
-        {cardRenaming ? (
-          <InlineRename className="nv-modbox-rename" value={doc.name}
-            onDone={next => {
-              setCardRenaming(false)
-              if (next === undefined) return
-              void op(addr, { op: 'apply', cardId, targetId, version, command: { kind: 'rename_card', name: next } })
-                .then(result => { if (result.version !== undefined) setVersion(result.version); void refresh() })
-                .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
-            }} />
-        ) : (
-          <span className="nv-cardpage-name">{doc.name}</span>
-        )}
-        {state.hasDraft && <span className="nv-cardpage-draft">{t('me.draft')}</span>}
-        <Menu open={cardMenu} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
-          onClose={() => { cardArm.reset(); setCardMenu(false) }}
-          onSelect={id => {
-            if (cardArm.select(id) === 'armed') return
-            setCardMenu(false)
-            if (id === 'rename') setCardRenaming(true)
-            if (id === 'source' && state.dir !== undefined) onOpenFile?.(`卡/${state.dir}/card.json`)
-            if (id === 'delete') {
-              const name = doc.name
-              void op(addr, { op: 'delete', cardId }).then(() => {
-                setState(undefined)
-                notifyUndo({
-                  text: fmt(t, 'ui.receipt.cardDeleted', { name }),
-                  undoLabel: t('ui.undo'),
-                  undo: () => {
-                    void op(addr, { op: 'restore', cardId }).then(() => refresh())
-                      .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
-                  },
-                })
-              }).catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
-            }
-          }}
-          items={cardArm.decorate([
-            { id: 'rename', label: t('tree.card.rename') },
-            ...(onOpenFile !== undefined ? [{ id: 'source', label: t('tree.card.showSource') }] : []),
-            { id: 'delete', label: t('tree.card.delete'), danger: true },
-          ])}
-          anchor={(
-            <button type="button" className="nv-cardpage-more" aria-label={t('tree.card.more')}
-              onClick={() => setCardMenu(v => !v)}>⋯</button>
-          )} />
-      </header>
       {notice !== undefined && <div className="nv-canvas-conflict">{notice}</div>}
       {pageHasProposal && (
         <div className="nv-prop">
@@ -809,21 +763,77 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
           </span>
         </div>
       )}
-      <div className="nv-cardpage-scroll" ref={scrollRef}>
-        {pageModuleId !== undefined ? (
-          <div className="nv-cardpage-module">
-            <button type="button" className="nv-page-back" onClick={() => onOpenCard?.(cardId)}>
-              ‹ {target.id === doc.id ? doc.name : `${doc.name} · ${target.name}`}
+      <div className={`nv-cardpage-scroll${bleed ? ' nv-cardpage-scroll-bleed' : ''}`} ref={scrollRef}>
+        {bleed ? (
+          <>
+            <button type="button" className="nv-page-bleedback" onClick={() => onOpenCard?.(cardId)}>
+              ‹ {doc.name}
             </button>
-            {pageModule !== undefined ? (
-              <ModuleBox module={pageModule} t={t}
-                card={{ name: doc.name, kind: doc.kind }}
-                imageUrl={imageUrl} imageResources={imageResources}
-                saveBlock={saveBlock} saveMarkdown={saveMarkdown} renameModule={renameModule} removeModule={removeModule} send={send}
-                onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} readFile={readFile} onOpenFile={onOpenFile}
-                refTargets={refIndex?.targets} refEdges={refDerived.edges} mapReferenced={refDerived.referenced} />
+            <div className="nv-cardpage-bleed">
+              {pageModule !== undefined && (
+                <ModuleBox module={pageModule} t={t}
+                  card={{ name: doc.name, kind: doc.kind }}
+                  imageUrl={imageUrl} imageResources={imageResources}
+                  saveBlock={saveBlock} saveMarkdown={saveMarkdown} send={send}
+                  onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} readFile={readFile} onOpenFile={onOpenFile}
+                  refTargets={refIndex?.targets} refEdges={refDerived.edges} mapReferenced={refDerived.referenced} />
+              )}
+            </div>
+          </>
+        ) : (
+          <div className="nv-page-inner">
+            <header className="nv-pagehead">
+              <div className="nv-pagehead-main">
+                {pageModuleId !== undefined && (
+                  <button type="button" className="nv-pagehead-crumb" onClick={() => onOpenCard?.(cardId)}>
+                    ‹ {target.id === doc.id ? doc.name : `${doc.name} · ${target.name}`}
+                  </button>
+                )}
+                {roleId !== undefined && (
+                  <button type="button" className="nv-pagehead-crumb" onClick={() => setRoleId(undefined)}>
+                    ‹ {doc.name}
+                  </button>
+                )}
+                {cardRenaming ? (
+                  <InlineRename className="nv-pagehead-rename" value={doc.name}
+                    onDone={next => {
+                      setCardRenaming(false)
+                      if (next === undefined) return
+                      void op(addr, { op: 'apply', cardId, targetId, version, command: { kind: 'rename_card', name: next } })
+                        .then(result => { if (result.version !== undefined) setVersion(result.version); void refresh() })
+                        .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
+                    }} />
+                ) : (
+                  <h1 className="nv-pagehead-title">{headerTitle}</h1>
+                )}
+              </div>
+              <div className="nv-pagehead-side">
+                <span className="nv-pagehead-kicker">{headerKicker}</span>
+                {state.hasDraft && <span className="nv-cardpage-draft">{t('me.draft')}</span>}
+                {cardMenuControl}
+              </div>
+            </header>
+            {pageModuleId !== undefined ? (
+              <div className="nv-cardpage-module">
+                {pageModule !== undefined ? (
+                  <ModuleBox module={pageModule} t={t}
+                    card={{ name: doc.name, kind: doc.kind }}
+                    imageUrl={imageUrl} imageResources={imageResources}
+                    saveBlock={saveBlock} saveMarkdown={saveMarkdown} send={send}
+                    onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} readFile={readFile} onOpenFile={onOpenFile}
+                    refTargets={refIndex?.targets} refEdges={refDerived.edges} mapReferenced={refDerived.referenced} />
+                ) : (
+                  <OverviewPage target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id} cardKind={doc?.kind}
+                    t={t} imageUrl={imageUrl} imageResources={imageResources}
+                    saveMarkdown={saveMarkdown}
+                    roles={doc.characters} rolesOpen={rolesOpen}
+                    onToggleRoles={() => setRolesOpen(v => !v)} onOpenRole={setRoleId}
+                    onOpenModule={id => onOpenCard?.(cardId, id)} onAdd={() => setLibrary(true)}
+                    backlinks={refIndex?.backlinks[cardId]} onOpenRefCard={id => onOpenCard?.(id)} />
+                )}
+              </div>
             ) : (
-              <OverviewPage target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id} cardKind={doc?.kind}
+              <OverviewPage target={target} overviewModule={overviewModule} isCharacter={roleId !== undefined} cardKind={doc?.kind}
                 t={t} imageUrl={imageUrl} imageResources={imageResources}
                 saveMarkdown={saveMarkdown}
                 roles={doc.characters} rolesOpen={rolesOpen}
@@ -832,21 +842,6 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                 backlinks={refIndex?.backlinks[cardId]} onOpenRefCard={id => onOpenCard?.(id)} />
             )}
           </div>
-        ) : (
-          <>
-            {roleId !== undefined && (
-              <button type="button" className="nv-cardpage-back" onClick={() => setRoleId(undefined)}>
-                ‹ {doc.name}
-              </button>
-            )}
-            <OverviewPage target={target} overviewModule={overviewModule} isCharacter={roleId !== undefined} cardKind={doc?.kind}
-              t={t} imageUrl={imageUrl} imageResources={imageResources}
-              saveMarkdown={saveMarkdown}
-              roles={doc.characters} rolesOpen={rolesOpen}
-              onToggleRoles={() => setRolesOpen(v => !v)} onOpenRole={setRoleId}
-              onOpenModule={id => onOpenCard?.(cardId, id)} onAdd={() => setLibrary(true)}
-              backlinks={refIndex?.backlinks[cardId]} onOpenRefCard={id => onOpenCard?.(id)} />
-          </>
         )}
       </div>
       {library && (

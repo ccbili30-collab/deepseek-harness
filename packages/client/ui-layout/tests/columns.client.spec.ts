@@ -24,14 +24,14 @@ describe('computeColumns', () => {
   })
 
   it.each([
-    [1300, 280, 620, 400],
-    [1100, 280, 420, 400],
-    [1120, 420, 300, 400],
-    [1119, 420, 299, 400],
-    [1024, 420, 204, 400],
-    [999, 420, 179, 400],
-    [756, 0, 300, 400],
-    [755, 0, 299, 400],
+    [1300, 280, 700, 320],
+    [1100, 280, 500, 320],
+    [1120, 420, 380, 320],
+    [1119, 420, 379, 320],
+    [1024, 420, 284, 320],
+    [999, 420, 259, 320],
+    [756, 0, 380, 320],
+    [755, 0, 379, 320],
     [455, 0, 0, 399],
     [20, 0, 0, 0],
   ])('solves frame %i and sidebar %i to right %i and center %i', (viewport, sidebar, rightbar, center) => {
@@ -39,11 +39,11 @@ describe('computeColumns', () => {
   })
 
   it('does not reduce the wide sidebar to keep a normal right panel open', () => {
-    expect(computeColumns(1024, 420, 500)).toEqual({ sidebar: 420, center: 400, rightbar: 204 })
+    expect(computeColumns(1024, 420, 500)).toEqual({ sidebar: 420, center: 320, rightbar: 284 })
   })
 
   it('restores a still-open preference when the frame widens', () => {
-    expect(computeColumns(1100, 280, 864).rightbar).toBe(420)
+    expect(computeColumns(1100, 280, 864).rightbar).toBe(500)
     expect(computeColumns(1920, 280, 864).rightbar).toBe(864)
   })
 
@@ -57,9 +57,9 @@ describe('canvasShareWidth', () => {
   it.each([
     [1944, 220, 1427],
     [2000, 220, 1466],
-    [1640, 340, 1240],
-    [1384, 340, 984],
-    [800, 180, 400],
+    [1640, 340, 1250],
+    [1384, 340, 1064],
+    [800, 180, 480],
   ])('reserves the drawer before dividing work=%i drawer=%i', (work, drawer, unit) => {
     expect(canvasShareWidth(work, drawer, 0.7)).toBe(unit)
   })

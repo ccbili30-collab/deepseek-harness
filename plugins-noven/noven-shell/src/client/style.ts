@@ -1460,19 +1460,24 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 
 
 /* 集合 · 表单视图：一条一张表单卡，标签—值逐行（填表的阅读面） */
-.nv-coll-forms { display: flex; flex-direction: column; gap: 12px; padding: 14px 0; }
-.nv-coll-formcard { border: 1px solid var(--nv-divider); border-radius: 14px; background: var(--nv-surface); overflow: hidden; }
-.nv-coll-formcard-on { border-color: rgba(14,159,110,.34); }
-.nv-coll-formhead { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px;
+/* 表单：一页一实体，头像 216×210 + 80px 资料行，不再套表单卡。 */
+.nv-coll-forms { display: flex; flex-direction: column; gap: 40px; padding: 0; }
+.nv-coll-formcard { border: 0; border-radius: 0; background: transparent; overflow: visible; }
+.nv-coll-formhead { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 0 20px;
   border: 0; background: none; cursor: pointer; font: inherit; color: var(--nv-primary-text); }
-.nv-coll-formname { font-size: 13px; font-weight: 650; }
-.nv-coll-formedit { font-size: 11.5px; color: var(--nv-accent-deep); }
+.nv-coll-formname { font-size: 24px; line-height: 32px; font-weight: 600; }
+.nv-coll-formhead-solo { justify-content: flex-end; padding-bottom: 4px; }
+.nv-coll-formedit { font-size: 14px; color: var(--nv-secondary-text); padding: 5px 12px; border-radius: 999px; }
+.nv-coll-formcard:hover .nv-coll-formedit { background: var(--nv-hover); color: var(--nv-primary-text); }
 .nv-coll-formrows { display: flex; flex-direction: column; }
-.nv-coll-formrow { display: flex; align-items: baseline; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--nv-divider); font-size: 12.5px; }
-.nv-coll-formlabel { flex: none; width: 88px; color: var(--nv-secondary-text); }
-.nv-coll-formvalue { flex: 1; min-width: 0; line-height: 1.7; white-space: pre-wrap; color: var(--nv-primary-text); }
-.nv-coll-formempty { color: var(--nv-secondary-text); opacity: .55; }
-.nv-coll-formimg { max-width: 160px; border-radius: 8px; display: block; }
+.nv-coll-formrow { display: flex; align-items: center; gap: 20px; min-height: 80px; padding: 16px 0;
+  border-top: 1px solid #f0f0f0; font-size: 16px; }
+.nv-coll-formrow:first-child { border-top: 0; }
+.nv-coll-formlabel { flex: none; width: 96px; font-size: 15px; line-height: 22px; color: var(--nv-secondary-text); }
+.nv-coll-formvalue { flex: 1; min-width: 0; font-size: 18px; line-height: 26px; font-weight: 600;
+  white-space: pre-wrap; color: var(--nv-primary-text); }
+.nv-coll-formempty { color: var(--nv-secondary-text); opacity: .55; font-weight: 400; }
+.nv-coll-formimg { max-width: 216px; border-radius: 12px; display: block; }
 
 /* 引用选择器（集合里的 person/place 字段）：选项目里的卡，不是填字 */
 .nv-coll-ref { width: 100%; box-sizing: border-box; border: 1px solid var(--nv-divider); border-radius: 8px; padding: 5px 8px;
@@ -1624,19 +1629,37 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-ed-meta { margin-top: 5px; font-size: 12px; color: var(--nv-secondary-text); }
 
 /* 卡页：头栏 + 模块竖排堆叠（设计稿 J02），模块导航归抽屉树 */
-.nv-cardpage { height: 100%; display: flex; flex-direction: column; }
-.nv-cardpage-head { display: flex; align-items: center; gap: 8px; padding: 10px 18px; border-bottom: 1px solid var(--nv-divider); }
-.nv-cardpage-kind { font-size: 11px; color: var(--nv-accent-deep); background: var(--nv-accent-soft); padding: 2px 8px; border-radius: 999px; }
-.nv-cardpage-name { font-size: 14px; font-weight: 600; color: var(--nv-primary-text); }
-.nv-cardpage-more { margin-left: auto; width: 26px; height: 24px; border: 0; border-radius: 6px;
-  background: none; color: var(--nv-secondary-text); font-size: 14px; cursor: pointer; }
-.nv-cardpage-more:hover { background: var(--nv-hover); }
-.nv-cardpage-draft { font-size: 11px; color: var(--nv-warn); background: var(--nv-warn-soft); padding: 2px 8px; border-radius: 999px; }
-.nv-cardpage-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 14px 22px 40px; }
+/* 卡页：白纸一页，内容 666 居中；页头是唯一的分隔线，模块自己不再套卡片。 */
+.nv-cardpage { height: 100%; display: flex; flex-direction: column; background: var(--nv-surface); font-size: 16px; }
+.nv-cardpage-more { width: 28px; height: 28px; border: 0; border-radius: 8px;
+  background: none; color: var(--nv-secondary-text); font-size: 18px; line-height: 1; cursor: pointer; }
+.nv-cardpage-more:hover { background: var(--nv-hover); color: var(--nv-primary-text); }
+.nv-cardpage-draft { font-size: 12px; color: var(--nv-warn); background: var(--nv-warn-soft); padding: 3px 9px; border-radius: 999px; }
+.nv-cardpage-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 0 64px; }
+.nv-page-inner { width: min(666px, calc(100% - 48px)); margin: 0 auto; padding-top: 24px; }
+.nv-pagehead { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px;
+  padding-bottom: 20px; border-bottom: 1px solid var(--nv-divider); margin-bottom: 32px; }
+.nv-pagehead-main { min-width: 0; flex: 1; }
+.nv-pagehead-crumb { display: block; border: 0; background: none; padding: 0 0 10px; font: inherit;
+  font-size: 14px; line-height: 20px; color: var(--nv-secondary-text); cursor: pointer; }
+.nv-pagehead-crumb:hover { color: var(--nv-accent-deep); }
+.nv-pagehead-title { margin: 0; font-size: 32px; line-height: 40px; font-weight: 600; letter-spacing: -.01em;
+  color: var(--nv-primary-text); }
+.nv-pagehead-rename { display: block; width: 100%; border: 0; border-bottom: 2px solid var(--nv-accent);
+  background: none; padding: 0 0 2px; font: inherit; font-size: 32px; line-height: 40px; font-weight: 600;
+  color: var(--nv-primary-text); outline: none; }
+.nv-pagehead-side { display: flex; align-items: center; gap: 12px; padding-bottom: 6px; flex: none; }
+.nv-pagehead-kicker { font-size: 14px; line-height: 20px; color: var(--nv-secondary-text); white-space: nowrap; }
 /* 模块页容器是普通块——滚动全交给 .nv-cardpage-scroll，不能再套自带 overflow 的页类。 */
 .nv-cardpage-module { display: block; }
-.nv-cardpage-back { border: 0; background: none; text-align: left; font-size: 12px; color: var(--nv-secondary-text); padding: 4px 8px; cursor: pointer; border-radius: 6px; margin-bottom: 6px; }
-.nv-cardpage-back:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
+/* 关系图/地图：无页头、无内框，画布直接铺满整列。 */
+.nv-cardpage-scroll-bleed { position: relative; padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+.nv-cardpage-bleed { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.nv-page-bleedback { position: absolute; top: 14px; left: 14px; z-index: 20; display: inline-flex; align-items: center;
+  border: 1px solid var(--nv-divider); border-radius: 999px; padding: 6px 14px; font: inherit; font-size: 13px;
+  background: rgba(255,255,255,.94); color: var(--nv-secondary-text); cursor: pointer;
+  box-shadow: 0 1px 4px rgba(20,30,26,.06); }
+.nv-page-bleedback:hover { color: var(--nv-primary-text); border-color: var(--nv-accent); }
 
 /* AI 提案条：挂起提案的确认入口——数量徽标 + 改动名清单 + 预览/接受/拒绝 */
 .nv-prop { display: flex; align-items: center; gap: 10px; padding: 8px 18px;
@@ -1657,27 +1680,9 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-prop-reject { color: var(--nv-warn); }
 .nv-prop-reject:hover { border-color: var(--nv-warn); }
 
-/* 模块盒：标题 + 正文（块级点编） */
-.nv-modbox { position: relative; border: 1px solid var(--nv-divider); border-radius: 12px; background: var(--nv-surface);
-  margin-bottom: 14px; padding: 14px 18px 12px; }
-.nv-modbox-head { display: flex; align-items: flex-start; gap: 8px; }
-.nv-modbox-head .nv-modbox-title, .nv-modbox-head .nv-modbox-rename { flex: 1; min-width: 0; }
-/* ⋯ 走正常流：Menu 的 anchor 包装层自身带定位，absolute 会被吸进包装层而非 modbox。 */
-.nv-modbox-more { flex: none; width: 24px; height: 24px; border: 0;
-  border-radius: 6px; background: none; color: var(--nv-secondary-text); font-size: 14px; cursor: pointer;
-  opacity: 0; transition: opacity var(--nv-dur-micro); }
-.nv-modbox:hover .nv-modbox-more, .nv-modbox-more[data-open='true'] { opacity: 1; }
-.nv-modbox-more:hover { background: var(--nv-hover); }
-.nv-modbox[data-depth='1'], .nv-modbox[data-depth='2'], .nv-modbox[data-depth='3'], .nv-modbox[data-depth='4'] { border-radius: 8px; background: transparent; }
-.nv-modbox-title { margin: 0 0 8px; font-size: 16px; font-weight: 700; color: var(--nv-primary-text); cursor: text; }
-.nv-modbox-rename { display: block; margin: 0 0 8px; padding: 0 0 2px; width: 100%; border: 0;
-  border-bottom: 1.5px solid var(--nv-accent); background: none; font-size: 16px; font-weight: 700;
-  color: var(--nv-primary-text); outline: none; font-family: inherit; }
-.nv-modbox[data-depth='1'] .nv-modbox-rename, .nv-modbox[data-depth='2'] .nv-modbox-rename { font-size: 13.5px; }
-.nv-modbox[data-depth='1'] .nv-modbox-title, .nv-modbox[data-depth='2'] .nv-modbox-title { font-size: 13.5px; }
-.nv-modbox-children { margin-top: 10px; margin-left: 10px; }
-.nv-modbox-children .nv-modbox { margin-bottom: 8px; padding: 10px 12px 8px; }
-.nv-modbox-widget { font-size: 12.5px; color: var(--nv-secondary-text); padding: 8px 0; }
+/* 模块正文：页头已承担标题，模块只留内容。 */
+.nv-modbox { position: relative; margin: 0; padding: 0; border: 0; background: transparent; }
+.nv-modbox-widget { font-size: 14px; color: var(--nv-secondary-text); padding: 8px 0; }
 .nv-modbox-html { min-height: 120px; font-family: ui-monospace, monospace; }
 
 /* html 模块的文件活引用：顶条（文件名 + 打开）+ 沙箱 iframe */
@@ -2198,44 +2203,49 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   background: none; padding: 7px 4px; font-size: 13px; color: var(--nv-primary-text);
   cursor: pointer; border-radius: 7px; text-align: left; }
 .nv-page-childlink:hover { background: var(--nv-hover); }
-.nv-ov-intro { margin-bottom: 14px; }
-.nv-ov-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; margin-bottom: 12px; }
-.nv-ov-tile { display: flex; flex-direction: column; gap: 8px; border: 0.5px solid var(--nv-divider);
-  border-radius: 12px; background: var(--nv-surface); padding: 10px 12px; cursor: pointer;
-  text-align: left; }
-.nv-ov-tile:hover { border-color: var(--nv-accent); }
-.nv-ov-mini { height: 84px; border-radius: 8px; background: var(--nv-pane); overflow: hidden;
-  position: relative; display: flex; align-items: center; justify-content: center; }
-.nv-ov-mapimg { width: 100%; height: 100%; object-fit: cover; }
-.nv-ov-excerpt { padding: 10px 12px; font-size: 12px; line-height: 1.7; color: var(--nv-secondary-text);
-  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden;
-  text-align: left; align-self: stretch; }
+.nv-ov-intro { margin-bottom: 32px; font-size: 16px; line-height: 26px; }
+.nv-ov-intro .md, .nv-ov-intro p { font-size: 16px; line-height: 26px; }
+.nv-ov-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 24px; }
+.nv-ov-tile { display: flex; flex-direction: column; gap: 20px; min-height: 206px; text-align: left;
+  padding: 22px 24px 24px; border: 1px solid #ececec; border-radius: 16px; background: var(--nv-surface);
+  cursor: pointer; transition: border-color var(--nv-dur-micro), background var(--nv-dur-micro); }
+.nv-ov-tile:hover { border-color: #dcdedd; background: #fafafa; }
+.nv-ov-tile:focus-visible { outline: 2px solid var(--nv-accent); outline-offset: 2px; }
+.nv-ov-info { display: flex; align-items: center; gap: 12px; }
+.nv-ov-glyph { width: 36px; height: 36px; border-radius: 10px; display: inline-flex; align-items: center;
+  justify-content: center; background: var(--nv-accent-soft); color: var(--nv-accent-deep); flex: none; }
+.nv-ov-name { flex: 1; min-width: 0; font-size: 20px; line-height: 28px; font-weight: 600; color: var(--nv-primary-text); }
+.nv-ov-arrow { font-size: 20px; line-height: 1; color: #b9bdbc; }
+.nv-ov-mini { flex: 1; min-height: 110px; display: flex; flex-direction: column; justify-content: flex-start; }
+.nv-ov-mapimg { width: 100%; height: 100%; min-height: 118px; object-fit: cover; border-radius: 10px; }
+.nv-ov-excerpt { font-size: 15px; line-height: 25px; color: var(--nv-secondary-text);
+  display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; }
 .nv-ov-htmlglyph { color: var(--nv-secondary-text); }
-.nv-ov-info { display: flex; align-items: baseline; gap: 8px; min-width: 0; }
-.nv-ov-name { display: inline-flex; align-items: center; gap: 6px; font-size: 13.5px;
-  font-weight: 600; color: var(--nv-primary-text); white-space: nowrap; }
-.nv-ov-sum { font-size: 12px; color: var(--nv-secondary-text); overflow: hidden;
-  text-overflow: ellipsis; white-space: nowrap; }
-.nv-ov-go { align-self: flex-end; font-size: 11.5px; color: var(--nv-accent-deep); }
-.nv-mini-tl { position: relative; width: 100%; height: 100%; }
-.nv-mini-tl-era { position: absolute; top: 12px; height: 10px; border-radius: 3px; }
-.nv-mini-tl-ev { position: absolute; bottom: 14px; width: 5px; height: 5px; border-radius: 50%;
-  transform: translateX(-50%); background: var(--nv-accent-deep); }
-.nv-mini-rel { width: 100%; height: 100%; }
-.nv-mini-rel-line { stroke: var(--nv-divider); stroke-width: 2; }
-.nv-mini-rel-node { fill: var(--nv-surface); stroke: var(--nv-accent); stroke-width: 3; }
+.nv-ov-sum, .nv-ov-go { display: none; }
+.nv-mini-tl { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.nv-mini-tl-row { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 14px; line-height: 20px; }
+.nv-mini-tl-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--nv-accent); flex: none; }
+.nv-mini-tl-row b { flex: 1; min-width: 0; font-weight: 500; color: var(--nv-primary-text);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nv-mini-tl-row > span { flex: none; font-size: 13px; color: var(--nv-secondary-text); }
+.nv-mini-rel { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.nv-mini-relrow { display: flex; align-items: center; gap: 8px; min-width: 0; font-size: 14px; line-height: 20px; }
+.nv-mini-relrow b { font-weight: 500; color: var(--nv-primary-text); }
+.nv-mini-relrow i { flex: 1; min-width: 0; font-style: normal; font-size: 13px; text-align: center;
+  color: var(--nv-secondary-text); border-bottom: 1px dashed #e3e6e3; }
+.nv-mini-relrow > span { flex: none; color: var(--nv-secondary-text); }
 
 /* 人物关系图 */
 /* 关系图节点卡片化：圆角卡片承载姓名与身份 */
 .nv-rel-card { fill: #ffffff; stroke: #dfe3df; stroke-width: 1; }
 .nv-rel-node:hover .nv-rel-card { stroke: rgba(14,159,110,.45); }
 .nv-rel-node-on .nv-rel-card { stroke: #34d399; stroke-width: 1.6; }
-.nv-rel-note { font-size: 10px; fill: #8a8f8a; }
+.nv-rel-note { font-size: 14px; fill: #8a8f8a; }
 .nv-rel-name { fill: #1f2421; }
 
-.nv-rel-canvas { display: block; width: 100%; aspect-ratio: 1000 / 560; border-radius: 8px;
+.nv-rel-canvas { display: block; width: 100%; aspect-ratio: 760 / 680; border-radius: 8px;
   background: var(--nv-pane, #F7F8F9); }
-.nv-rel-line { stroke: var(--nv-divider); stroke-width: 2; }
+.nv-rel-line { stroke: var(--nv-divider); stroke-width: 1.5; }
 .nv-rel-linehit { stroke: transparent; stroke-width: 18; }
 .nv-rel-edge { cursor: pointer; }
 .nv-rel-edge:hover .nv-rel-line { stroke: var(--nv-accent); }
@@ -2247,7 +2257,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-rel-node:hover .nv-rel-circle { stroke: var(--nv-accent); }
 .nv-rel-node-on .nv-rel-circle { stroke: var(--nv-accent-deep); stroke-width: 2.5; }
 .nv-rel-node-linkable .nv-rel-circle { stroke: var(--nv-accent); stroke-dasharray: 4 3; }
-.nv-rel-name { font-size: 13px; font-weight: 600; fill: var(--nv-primary-text); pointer-events: none; }
+.nv-rel-name { font-size: 20px; font-weight: 600; fill: var(--nv-primary-text); pointer-events: none; }
 .nv-rel-empty { font-size: 14px; fill: var(--nv-secondary-text); }
 
 /* 地图 */
@@ -2457,39 +2467,46 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   color: var(--nv-primary-text); font-size: 11.5px; border-radius: 6px; padding: 3px 8px; cursor: pointer; }
 .nv-maped-insmembers button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep);
   border-color: var(--nv-accent); }
-/* 集合渲染器（设计稿 06 + collection-v2 B/C）：视图切换 + 图鉴卡 + 表格 + 编年长卷。 */
-.nv-coll { margin-top: 10px; }
-.nv-coll-bar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
-.nv-coll-count { font-size: 12px; color: var(--nv-secondary-text); }
-.nv-coll-views { display: inline-flex; gap: 2px; background: var(--nv-canvas); border-radius: 8px; padding: 2px; }
-.nv-coll-view { border: 0; background: none; border-radius: 6px; padding: 4px 12px; font-size: 12px; color: var(--nv-secondary-text); cursor: pointer; }
-.nv-coll-view-on { background: var(--nv-surface); color: var(--nv-primary-text); box-shadow: 0 1px 2px rgba(0,0,0,.06); }
-.nv-coll-empty { padding: 28px 0; text-align: center; color: var(--nv-secondary-text); font-size: 13px; }
-.nv-coll-sec { margin-bottom: 18px; }
-.nv-coll-secname { display: flex; align-items: center; gap: 7px; margin: 0 0 10px; font-size: 13px; font-weight: 600; color: var(--nv-primary-text); }
-.nv-coll-dot { width: 8px; height: 8px; border-radius: 50%; }
-.nv-coll-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.nv-coll-card { display: flex; flex-direction: column; text-align: left; border: 1px solid var(--nv-divider); border-radius: 12px; background: var(--nv-surface); padding: 0; overflow: hidden; cursor: pointer; }
-.nv-coll-card:hover { border-color: var(--nv-accent); }
-.nv-coll-card-on { border-color: var(--nv-accent); box-shadow: 0 0 0 1px var(--nv-accent); }
-.nv-coll-cardimg { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; }
-.nv-coll-cardimg-empty { display: flex; align-items: center; justify-content: center; background: var(--nv-canvas); color: var(--nv-secondary-text); }
-.nv-coll-cardname { font-size: 13px; font-weight: 600; padding: 8px 10px 0; }
-.nv-coll-cardstat { font-size: 16px; font-weight: 700; padding: 2px 10px 0; }
-.nv-coll-cardsum { font-size: 11.5px; color: var(--nv-secondary-text); padding: 4px 10px 9px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+/* 集合渲染器：页头下的内容本身，不再自带计数与四段切换。 */
+.nv-coll { margin-top: 0; }
+.nv-coll-bar { display: flex; align-items: center; justify-content: flex-end; gap: 20px; margin-bottom: 28px; min-height: 40px; }
+.nv-coll-views { display: inline-flex; gap: 2px; border-radius: 10px; padding: 2px; }
+.nv-coll-view { border: 0; background: none; border-radius: 8px; padding: 8px 16px; font: inherit;
+  font-size: 14px; line-height: 20px; color: var(--nv-secondary-text); cursor: pointer; }
+.nv-coll-view:hover { color: var(--nv-primary-text); background: #f4f5f4; }
+.nv-coll-view-on { background: #f0f2f1; color: var(--nv-primary-text); font-weight: 500; }
+.nv-coll-empty { padding: 40px 0; text-align: center; color: var(--nv-secondary-text); font-size: 15px; }
+.nv-coll-sec { margin-bottom: 40px; }
+.nv-coll-sec:last-child { margin-bottom: 0; }
+.nv-coll-secname { display: flex; align-items: center; gap: 12px; margin: 0 0 20px; font-size: 20px;
+  line-height: 28px; font-weight: 600; color: var(--nv-primary-text); }
+.nv-coll-secname::before { content: ''; width: 4px; height: 20px; border-radius: 2px; background: var(--nv-accent); }
+.nv-coll-dot { display: none; }
+.nv-coll-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 214px)); justify-content: space-between; row-gap: 24px; column-gap: 0; }
+.nv-coll-card { display: flex; flex-direction: column; text-align: left; border: 0; border-radius: 12px;
+  background: transparent; padding: 0; overflow: hidden; cursor: pointer; }
+.nv-coll-card-on .nv-coll-cardimg { outline: 2px solid var(--nv-accent); outline-offset: 2px; }
+.nv-coll-cardimg { width: 100%; aspect-ratio: 4/3; object-fit: cover; display: block; border-radius: 12px; }
+.nv-coll-cardimg-empty { display: flex; align-items: center; justify-content: center; aspect-ratio: 3/4;
+  background: #f4f5f4; color: var(--nv-secondary-text); border-radius: 12px; }
+.nv-coll-cardname { font-size: 19px; line-height: 27px; font-weight: 600; padding: 14px 0 0; }
+.nv-coll-cardstat { font-size: 16px; font-weight: 700; padding: 2px 0 0; }
+.nv-coll-cardsum { font-size: 14px; line-height: 22px; color: var(--nv-secondary-text); padding: 6px 0 0;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 
 /* 集合复刻：主形态徽标 / 立场芯片 / 行内引用选择器 / 表单头像 */
 .nv-coll-card { position: relative; }
-.nv-coll-primary { position: absolute; top: 8px; left: 8px; z-index: 2; padding: 2px 9px; border-radius: 999px;
-  background: rgba(14,159,110,.92); color: #fff; font-size: 10.5px; box-shadow: 0 1px 4px rgba(20,60,45,.2); }
-.nv-coll-cardsum { font-size: 11px; color: var(--nv-secondary-text); padding: 0 10px 8px; text-align: left; }
-.nv-coll-chip { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; white-space: nowrap; }
+.nv-coll-primary { position: absolute; top: 12px; left: 12px; z-index: 2; display: inline-flex; align-items: center;
+  height: 28px; padding: 0 12px; border-radius: 999px; background: var(--nv-accent); color: #fff;
+  font-size: 13px; font-weight: 500; box-shadow: 0 1px 6px rgba(20,60,45,.18); }
+.nv-coll-chip { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 13px;
+  line-height: 20px; white-space: nowrap; }
 .nv-coll-chip-green { background: rgba(14,159,110,.14); color: #0b7a55; }
 .nv-coll-chip-red { background: rgba(214,69,69,.12); color: #b23a3a; }
 .nv-coll-chip-gray { background: rgba(120,124,128,.12); color: var(--nv-secondary-text); }
 .nv-coll-chip-neutral { background: rgba(52,120,211,.10); color: #2f6cb3; }
-.nv-coll-reftd { min-width: 90px; padding: 3px 6px; font-size: 11.5px; }
-.nv-coll-formavatar { width: 96px; height: 96px; object-fit: cover; border-radius: 12px; margin: 12px 14px 0; display: block; }
+.nv-coll-reftd { min-width: 150px; padding: 6px 8px; font-size: 15px; }
+.nv-coll-formavatar { width: 216px; height: 210px; object-fit: cover; border-radius: 12px; margin: 0; display: block; }
 
 
 /* 芯片字段编辑：一枚一枚加、点 × 删 */
@@ -2501,48 +2518,102 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-coll-chipinput:focus { border-color: var(--nv-accent); }
 /* 关系图缩放控件 */
 .nv-wg.nv-relation { position: relative; }
-.nv-rel-zoom { position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 4px;
-  background: rgba(255,255,255,.92); border: 1px solid var(--nv-divider); border-radius: 8px; padding: 2px 6px; }
-.nv-rel-zoomb { border: 0; background: none; cursor: pointer; font-size: 13px; padding: 2px 5px; color: var(--nv-primary-text); }
-.nv-rel-zoomval { font-size: 11px; color: var(--nv-secondary-text); min-width: 34px; text-align: center; }
-.nv-rel-zoomfit { font-size: 11px; }
+.nv-rel-zoom { position: absolute; top: 14px; right: 14px; display: flex; align-items: center; gap: 2px;
+  background: rgba(255,255,255,.94); border: 1px solid var(--nv-divider); border-radius: 10px; padding: 4px 6px; }
+.nv-rel-zoomb { width: 28px; height: 28px; border: 0; border-radius: 7px; background: none; cursor: pointer;
+  font-size: 16px; line-height: 1; color: var(--nv-primary-text); }
+.nv-rel-zoomb:hover { background: var(--nv-hover); }
+.nv-rel-zoomval { font-size: 12px; color: var(--nv-secondary-text); min-width: 38px; text-align: center; }
+.nv-rel-zoomfit { font-size: 13px; padding: 6px 10px; border-radius: 7px; }
 
 
 /* 关系图 1:1：连边胶囊与图例 */
 .nv-rel-pill { fill: #ffffff; stroke: #e3e6e3; }
 .nv-rel-edgelabel { font-size: 11px; fill: #6b716c; }
-.nv-rel-legend { position: absolute; top: 10px; left: 10px; display: flex; gap: 14px; font-size: 11px; color: var(--nv-secondary-text); }
-.nv-rel-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.nv-rel-legend { position: absolute; bottom: 16px; left: 16px; top: auto; display: flex; gap: 16px;
+  padding: 7px 14px; border: 1px solid var(--nv-divider); border-radius: 999px; background: rgba(255,255,255,.94);
+  font-size: 13px; color: var(--nv-secondary-text); }
+.nv-rel-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .nv-rel-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .nv-rel-dot-person { background: #34d399; }
 .nv-rel-dot-faction { background: #8b93a1; }
-/* 表单 1:1：左头像右字段，背景句独立成软底块 */
-.nv-coll-formmain { display: flex; gap: 18px; padding: 12px 14px; align-items: flex-start; }
-.nv-coll-formmain .nv-coll-formavatar { width: 160px; margin: 0; flex: none; aspect-ratio: 4 / 5; height: auto; }
+/* 关系图 CTA：右下 112×40 实心按钮 */
+.nv-cardpage-bleed .nv-wg-actions { position: absolute; right: 24px; bottom: 24px; z-index: 6; }
+.nv-cardpage-bleed .nv-wg-add { height: 40px; min-width: 112px; padding: 0 18px; border: 0; border-radius: 10px;
+  background: var(--nv-accent); color: #fff; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer;
+  box-shadow: 0 4px 14px rgba(20,60,45,.16); }
+.nv-cardpage-bleed .nv-wg-add:hover { background: var(--nv-accent-deep); color: #fff; }
+/* 关系图画布铺满整列，返回浮在画布上。 */
+.nv-cardpage-bleed .nv-modbox { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.nv-cardpage-bleed .nv-relation { flex: 1; min-height: 0; display: flex; }
+.nv-cardpage-bleed .nv-rel-canvas { flex: 1; width: 100%; height: 100%; aspect-ratio: auto; border-radius: 0; }
+/* 地图浮动信息卡与右下缩放 */
+.nv-maped { position: relative; }
+.nv-maped-infocard { position: absolute; top: 20px; right: 20px; z-index: 8; box-sizing: border-box; width: 212px; min-height: 225px;
+  display: flex; flex-direction: column; padding: 18px; border-radius: 14px; background: #fff;
+  box-shadow: 0 12px 36px rgba(22,24,26,.16); }
+.nv-maped-infocardhead { display: flex; align-items: flex-start; gap: 8px; }
+.nv-maped-infocardhead b { flex: 1; min-width: 0; font-size: 18px; line-height: 26px; font-weight: 600; color: var(--nv-primary-text); }
+.nv-maped-infocardx { flex: none; width: 24px; height: 24px; border: 0; border-radius: 6px; background: none;
+  font-size: 16px; line-height: 1; color: var(--nv-secondary-text); cursor: pointer; }
+.nv-maped-infocardx:hover { background: var(--nv-hover); color: var(--nv-primary-text); }
+.nv-maped-infocarddesc { flex: 1; margin: 10px 0 14px; font-size: 13px; line-height: 21px; color: var(--nv-secondary-text); }
+.nv-maped-infocardacts { display: flex; gap: 8px; }
+.nv-maped-infocardacts button { flex: 1; height: 34px; border: 1px solid var(--nv-divider); border-radius: 8px;
+  background: var(--nv-surface); color: var(--nv-primary-text); font: inherit; font-size: 13px; cursor: pointer; }
+.nv-maped-infocardacts button:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); }
+.nv-maped-infocardacts .primary { border-color: var(--nv-accent); background: var(--nv-accent); color: #fff; }
+.nv-maped-infocardacts .primary:hover { background: var(--nv-accent-deep); color: #fff; }
+.nv-maped-zoomnub { position: absolute; right: 20px; bottom: 20px; z-index: 7; display: flex; flex-direction: column;
+  border-radius: 12px; background: #fff; box-shadow: 0 6px 20px rgba(22,24,26,.14); overflow: hidden; }
+.nv-maped-zoomnub button { width: 40px; height: 40px; border: 0; border-top: 1px solid #f0f0f0; background: #fff;
+  color: var(--nv-primary-text); font-size: 16px; line-height: 1; display: flex; align-items: center; justify-content: center; cursor: pointer; }
+.nv-maped-zoomnub button:first-child { border-top: 0; }
+.nv-maped-zoomnub button:hover { background: #fafafa; }
+/* 地图：底图铺满，工具栏与图注让位给画面。 */
+.nv-cardpage-bleed .nv-maped { flex: 1; min-height: 0; gap: 0; }
+.nv-cardpage-bleed .nv-maped-pbar, .nv-cardpage-bleed .nv-maped-caption { display: none; }
+.nv-cardpage-bleed .nv-maped-stage { flex: 1; height: 100%; max-height: none; border: 0; border-radius: 0; }
+/* 表单：左头像右字段，背景句独立成整幅软底引用块 */
+.nv-coll-formmain { display: flex; gap: 32px; padding: 0; align-items: flex-start; }
+.nv-coll-formmain .nv-coll-formavatar { width: 216px; height: 210px; margin: 0; flex: none; aspect-ratio: auto;
+  object-fit: cover; border-radius: 12px; }
 .nv-coll-formmain .nv-coll-formrows { flex: 1; min-width: 0; }
 .nv-coll-formmain .nv-coll-formrow:first-child { border-top: 0; }
-.nv-coll-formrow-quote { display: block; }
-.nv-coll-formquote { display: block; margin-top: 6px; padding: 10px 12px; border-radius: 10px; background: rgba(14,159,110,.05); color: var(--nv-primary-text); line-height: 1.7; }
+.nv-coll-formquote { margin-top: 28px; min-height: 110px; padding: 26px 28px; border-radius: 12px;
+  background: #f4faf7; display: flex; align-items: center; font-size: 18px; line-height: 30px;
+  color: var(--nv-primary-text); }
 
 
-/* 画廊 1:1：竖版立绘卡片 + 集合头部的添加入口 */
+/* 画廊：竖版立绘卡片 + 40px 实心添加 */
 .nv-coll-barright { display: inline-flex; align-items: center; gap: 10px; }
-.nv-coll-add { border: 1px solid rgba(14,159,110,.3); border-radius: 9px; padding: 4px 12px; background: var(--nv-accent-soft);
-  color: var(--nv-accent-deep); font-size: 11.5px; cursor: pointer; }
-.nv-coll-add:hover { background: rgba(14,159,110,.16); }
+.nv-coll-add { height: 40px; padding: 0 20px; border: 0; border-radius: 10px; background: var(--nv-accent);
+  color: #fff; font: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
+.nv-coll-add:hover { background: var(--nv-accent-deep); }
+.nv-coll-add:focus-visible { outline: 2px solid var(--nv-accent); outline-offset: 2px; }
 .nv-coll-cardimg { aspect-ratio: 3 / 4; height: auto; object-fit: cover; }
-/* 总览瓦片内容预览：字段行 / 芯片 / 缩略图 */
-.nv-ov-collpreview { display: flex; flex-direction: column; gap: 4px; width: 100%; }
-.nv-ov-prow { display: flex; gap: 10px; font-size: 11px; line-height: 1.5; }
-.nv-ov-plabel { flex: none; width: 52px; color: var(--nv-secondary-text); }
+/* 总览瓦片内容预览：字段行 / 条目行 / 芯片 / 缩略图 */
+.nv-ov-collpreview { display: flex; flex-direction: column; gap: 10px; width: 100%; }
+.nv-ov-rows { display: flex; flex-direction: column; gap: 10px; }
+.nv-ov-prow { display: flex; gap: 16px; font-size: 15px; line-height: 23px; }
+.nv-ov-plabel { flex: none; width: 64px; font-size: 14px; color: var(--nv-secondary-text); }
 .nv-ov-pvalue { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--nv-primary-text); }
-.nv-ov-pchips { display: flex; gap: 5px; flex-wrap: wrap; }
-.nv-ov-thumbs { display: flex; gap: 6px; }
-.nv-ov-thumbs img { width: 46px; height: 58px; object-fit: cover; border-radius: 6px; }
+.nv-ov-itemrow { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 15px; line-height: 23px; }
+.nv-ov-itemname { font-weight: 500; color: var(--nv-primary-text); }
+.nv-ov-itemmeta { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 14px; color: var(--nv-secondary-text); }
+.nv-ov-pchips { display: flex; gap: 6px; flex-wrap: wrap; }
+.nv-ov-pchips .nv-coll-chip, .nv-ov-itemrow .nv-coll-chip { font-size: 13px; padding: 3px 11px; }
+.nv-ov-thumbs { display: flex; gap: 10px; }
+.nv-ov-thumbs img { width: 74px; height: 100px; object-fit: cover; border-radius: 8px; }
 
-table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
-.nv-coll-table th { text-align: left; font-weight: 500; color: var(--nv-secondary-text); padding: 6px 8px; border-bottom: 1px solid var(--nv-divider); }
-.nv-coll-table td { padding: 7px 8px; border-bottom: 1px solid var(--nv-divider); vertical-align: top; }
+.nv-coll-table select.nv-coll-ref { border-color: transparent; background: transparent; padding: 4px 6px; font-size: 16px; }
+.nv-coll-table select.nv-coll-ref:hover, .nv-coll-table select.nv-coll-ref:focus { border-color: var(--nv-divider); background: var(--nv-surface); }
+table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 16px; }
+.nv-coll-table th { height: 48px; text-align: left; font-weight: 500; font-size: 15px; color: var(--nv-secondary-text);
+  padding: 0 14px; border-bottom: 1px solid var(--nv-divider); }
+.nv-coll-table td { height: 58px; padding: 8px 14px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; font-size: 16px; }
+.nv-coll-table .nv-coll-chip { font-size: 14px; line-height: 22px; padding: 4px 14px; }
 .nv-coll-tdname { font-weight: 600; }
 .nv-coll-tdsum { color: var(--nv-secondary-text); }
 .nv-coll-scroll { position: relative; padding-top: 8px; }

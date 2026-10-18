@@ -930,6 +930,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
 
   // 工作空间：x∈[0,aspect]，y∈[0,1]；存储转回宽/高比例。
   const aspectRef = useRef(1.6)
+  /** 用户自己缩放过就不再跟着舞台尺寸重取景。 */
+  const userZoomRef = useRef(false)
   const docRef = useRef<EditorDoc>(data)
   const busyRef = useRef(false)
   const [, setTick] = useState(0)
@@ -1855,11 +1857,24 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
         }
       } else {
         const m = markWork(o)
+        // 标记是屏幕尺度：圆点 + 白底药丸名，缩放地图时大小不变。
+        const dotR = 6 / v.s
         c.fillStyle = o.color
-        c.beginPath(); c.arc(m[0], m[1], 7 / v.s, 0, 7); c.fill()
-        c.strokeStyle = '#fff'; c.lineWidth = 1.5 / v.s; c.stroke()
-        c.fillStyle = INK; c.font = `${11 / v.s}px sans-serif`
-        if (o.name !== '') c.fillText(o.name, m[0] + 9 / v.s, m[1] - 7 / v.s)
+        c.beginPath(); c.arc(m[0], m[1], dotR, 0, 7); c.fill()
+        c.strokeStyle = '#fff'; c.lineWidth = 2 / v.s; c.stroke()
+        if (o.name !== '') {
+          const fs = 14 / v.s
+          c.font = `${fs}px sans-serif`
+          const tw = c.measureText(o.name).width
+          const padX = 12 / v.s, h = 34 / v.s, gap = 8 / v.s
+          const x = m[0] + dotR + gap, y = m[1] - h / 2
+          c.beginPath(); c.roundRect(x, y, tw + padX * 2, h, h / 2)
+          c.fillStyle = 'rgba(255,255,255,.95)'; c.fill()
+          c.strokeStyle = '#e3e6e3'; c.lineWidth = 1 / v.s; c.stroke()
+          c.fillStyle = INK; c.textBaseline = 'middle'
+          c.fillText(o.name, x + padX, m[1])
+          c.textBaseline = 'alphabetic'
+        }
       }
     }
 
@@ -2094,6 +2109,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
     v.s = Math.min(stage.clientWidth / aspectRef.current, stage.clientHeight) * .96
     v.x = (stage.clientWidth - aspectRef.current * v.s) / 2
     v.y = (stage.clientHeight - v.s) / 2
+    userZoomRef.current = false
     setZoomPct(100)
     return true
   }, [])
@@ -2134,6 +2150,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
 
   /** 立即缩放（滚轮路径）：锚定光标下的世界点。 */
   const setZoomAt = useCallback((sRaw: number, mx: number, my: number): void => {
+    userZoomRef.current = true
     const v = viewRef.current
     const [lo, hi] = zoomBounds()
     const s2 = Math.min(Math.max(sRaw, lo), hi)
@@ -2148,6 +2165,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
 
   /** 平滑飞到目标取景（按钮/双击/快捷键路径）。 */
   const animView = useCallback((to: { s: number, x: number, y: number }, ms = 240): void => {
+    userZoomRef.current = true
     cancelAnimationFrame(viewAnimRef.current)
     const from = { ...viewRef.current }
     const t0 = performance.now()
@@ -2278,6 +2296,9 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
   const fitIfNeeded = useCallback((): void => {
     const key = image?.resourceId ?? 'blank'
     if (fitRef.current === key) return
+    // 底图还没 decode 时宽高比还是默认值——此时取景会把比例记错，
+    // 等 onload 拿到真实 aspect 再取。
+    if (image?.resourceId !== undefined && imgRef.current === null) return
     if (image?.resourceId === undefined) { imgRef.current = null; aspectRef.current = worldAspectOf(docRef.current.world) ?? docRef.current.aspect ?? 1.6 }
     if (fitView()) fitRef.current = key
   }, [image?.resourceId, fitView])
@@ -2305,6 +2326,8 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
       // 被盖住才平移进来）；否则以视野中心的世界点为锚。z 含义随适配重算。
       const last = lastSizeRef.current
       const W = stage.clientWidth, H = stage.clientHeight
+      // 卡片页铺满整列时舞台会在挂载后再长高；停在适配比例就重新取景，
+      // 用户自己缩放过则保留其视野。
       if (last !== null && fitRef.current !== null) {
         const v = viewRef.current
         const an = selAnchorRef.current, ph = builtRef.current?.built?.world.config.height
@@ -2322,11 +2345,13 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
         clampView(); setZoomPct(Math.round(v.s / fitScale() * 100))
       }
       lastSizeRef.current = { w: W, h: H }
-      fitIfNeeded(); draw()
+      if (fitRef.current !== null && !userZoomRef.current) fitView()
+      else fitIfNeeded()
+      draw()
     })
     ro.observe(stage)
     return () => { ro.disconnect() }
-  }, [stageEl, clampView, draw, fitIfNeeded, fitScale])
+  }, [stageEl, clampView, draw, fitIfNeeded, fitScale, fitView])
 
   /* 滚轮协议（原生 passive:false，拦下浏览器自身的页面缩放/捏合）：
    *   滑动/滚轮 = 平移；捏合或 ⌘/⌃+滚轮 = 以光标为锚的连续缩放。 */
@@ -2718,7 +2743,11 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
     const releaseBusy = (): void => { busyRef.current = false }
     if (g.kind === 'pan') {
       if (g.moved !== true && g.path?.[0] !== undefined) {
-        if (g.btn === 2) {
+        if (!expanded && g.btn !== 2) {
+          // 阅读态点地标：打开浮动信息卡；点空白收起。
+          const target = hitTest(g.path[0])
+          setSelId(target !== null && target.type === 'mark' ? target.id : null)
+        } else if (g.btn === 2) {
           // 右键未拖动：「此地」菜单——动作从地方出发，不经顶栏
           const built = builtRef.current?.built ?? null
           const hit = built !== null
@@ -2904,7 +2933,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
     }
     releaseBusy()
     draw()
-  }, [brush, brushPx, commit, drawLayer, erasing, how, markWork, objWorkPts, pal?.color, pushWorldEditUndo, resolveBuilt, selectWorldAt, selWorld, snapTarget, t, toStore, workOfEvent, worldView])
+  }, [brush, brushPx, commit, drawLayer, erasing, expanded, hitTest, how, markWork, objWorkPts, pal?.color, pushWorldEditUndo, resolveBuilt, selectWorldAt, selWorld, snapTarget, t, toStore, workOfEvent, worldView])
 
   /* ---------- 对象卡 ---------- */
 
@@ -3595,6 +3624,14 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
     </div>
   )
 
+  const focusMark = useCallback((): void => {
+    const st = stageRef.current
+    if (st === null || sel === null || sel.type !== 'mark') return
+    const w = markWork(sel)
+    const s = Math.max(viewRef.current.s, fitScale() * 1.5)
+    animView({ s, x: st.clientWidth / 2 - w[0] * s, y: st.clientHeight / 2 - w[1] * s }, 300)
+  }, [animView, fitScale, markWork, sel])
+
   if (!expanded) {
     return (
       <div className="nv-maped" ref={hostRef}>
@@ -3610,6 +3647,25 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
           </button>
         </div>
         {stage}
+        {sel !== null && sel.type === 'mark' && (
+          <div className="nv-maped-infocard">
+            <div className="nv-maped-infocardhead">
+              <b>{sel.name === '' ? t('wg.map.marker') : sel.name}</b>
+              <button type="button" className="nv-maped-infocardx" aria-label={t('wg.map.side.close')}
+                onClick={() => setSelId(null)}>×</button>
+            </div>
+            <p className="nv-maped-infocarddesc">{sel.description === '' ? t('wg.map.noDesc') : sel.description}</p>
+            <div className="nv-maped-infocardacts">
+              <button type="button" className="primary" onClick={focusMark}>{t('wg.map.locate')}</button>
+              <button type="button" onClick={() => setSelId(null)}>{t('wg.map.side.close')}</button>
+            </div>
+          </div>
+        )}
+        <div className="nv-maped-zoomnub">
+          <button type="button" aria-label={t('wg.rel.zoomIn')} onClick={() => zoomStep(1.3)}>{glyph.plus(14)}</button>
+          <button type="button" aria-label={t('wg.rel.zoomOut')} onClick={() => zoomStep(1 / 1.3)}>{glyph.minus(14)}</button>
+          <button type="button" aria-label={t('wg.rel.fit')} onClick={() => { if (fitView()) draw() }}>{glyph.expand(14)}</button>
+        </div>
         {MAP_WORLD && <div className="nv-maped-caption">{t('wg.map.world.note')}</div>}
       </div>
     )

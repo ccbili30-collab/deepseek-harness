@@ -8,7 +8,7 @@
 export interface Columns { sidebar: number; center: number; rightbar: number }
 
 /** Center width protected while the normal right column is open. */
-export const CENTER_MIN = 400
+export const CENTER_MIN = 320
 /** Sidebar drag clamp floor. */
 export const SIDEBAR_MIN = 264
 /** Sidebar drag clamp ceiling. */
@@ -26,7 +26,7 @@ export const RIGHTBAR_MIN = 96
 /** Maximum normal right panel width as a fraction of the frame. */
 export const RIGHTBAR_MAX_RATIO = 0.7
 /** Right column width before any user drag — a tools column, sized like the sidebar, not a second work surface. */
-export const RIGHTBAR_DEFAULT = 340
+export const RIGHTBAR_DEFAULT = 320
 /** Collapsed right column: an icon rail, matching the closed sidebar's width. */
 export const RIGHTBAR_RAIL = 56
 /** Canvas page floor inside the unit column while a canvas claims it — the unit seam stops shrinking once the page drops to this. */

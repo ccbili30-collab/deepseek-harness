@@ -80,7 +80,7 @@ for (const file of files) {
     check(station.field?.type === 'place', 'world: 驻地字段类型 = place')
     check(refs.length === 4 && refs.every(v => typeof v === 'object' && v !== null && typeof v.cardId === 'string' && typeof v.itemId === 'string'), `world: 驻地落成同卡引用（${refs.filter(v => typeof v === 'object').length}/4）`)
     const dist = collectCells('种族名录', '分布')
-    check(Object.values(dist.values).every(cells => Object.values(cells).every(v => typeof v !== 'string' || v === '')), 'world: 分布全部落成引用')
+    check(Object.values(dist.values).every(cells => { const v = cells[dist.field?.id ?? '']; return typeof v !== 'string' || v === '' }), 'world: 分布全部落成引用')
   }
   if (id === 'character') {
     check(built.document.resources.length === 9, `character: 立绘/表单头像/关系头像资源落盘（${built.document.resources.length}）`)

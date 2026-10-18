@@ -1301,72 +1301,55 @@ export function TimelineWidget({ module, t, send }: WidgetProps) {
   )
 }
 
-/** 总览用迷你时间线：纪元色带 + 事件点，纯展示无交互。 */
+/** 总览用迷你时间线：三个事件行，右侧标纪元名——读得懂，不是一根光杆坐标轴。 */
 export function MiniTimeline({ data }: { readonly data: TlData }) {
-  const domain = ((): [number, number] => {
-    const values = [
-      ...data.eras.flatMap(e => [e.from, e.to].filter((v): v is number => v !== null)),
-      ...data.events.flatMap(e => e.at === null ? [] : [e.at, ...(e.until === null ? [] : [e.until])]),
-    ]
-    if (values.length === 0) return [0, 100]
-    const min = Math.min(...values); const max = Math.max(...values)
-    return min === max ? [min - 1, max + 1] : [min, max]
-  })()
-  const [lo, hi] = domain
-  const pct = (v: number): number => ((v - lo) / (hi - lo)) * 100
-  const eraLaneMap = new Map<string, number>()
-  {
-    const ends: number[] = []
-    for (const era of [...data.eras].sort((a, b) => ((b.to ?? hi) - (b.from ?? lo)) - ((a.to ?? hi) - (a.from ?? lo)))) {
-      const start = era.from ?? lo
-      let l = ends.findIndex(end => start >= end)
-      if (l < 0) { l = ends.length; ends.push(Number.NEGATIVE_INFINITY) }
-      ends[l] = era.to ?? hi
-      eraLaneMap.set(era.id, l)
-    }
-  }
+  const events = data.events.filter(event => event.at !== null).slice(0, 3)
+  const eraOf = (at: number): string => data.eras.find(era =>
+    (era.from ?? Number.NEGATIVE_INFINITY) <= at && at <= (era.to ?? Number.POSITIVE_INFINITY))?.name ?? ''
+  if (events.length === 0) return <span className="nv-ov-excerpt">—</span>
   return (
-    <div className="nv-mini-tl">
-      {data.eras.map(era => (
-        <span key={era.id} className="nv-mini-tl-era"
-          style={{
-            left: `${pct(era.from ?? lo)}%`, width: `${Math.max(2, pct(era.to ?? hi) - pct(era.from ?? lo))}%`,
-            top: `${(eraLaneMap.get(era.id) ?? 0) * 12}px`, background: ERA_BG[era.color] ?? ERA_BG.gray,
-          }} />
+    <span className="nv-mini-tl">
+      {events.map(event => (
+        <span key={event.id} className="nv-mini-tl-row">
+          <i className="nv-mini-tl-dot" />
+          <b>{event.title}</b>
+          <span>{eraOf(event.at ?? 0) || event.description.slice(0, 10)}</span>
+        </span>
       ))}
-      {data.events.filter(e => e.at !== null).map(e => (
-        <span key={e.id} className="nv-mini-tl-ev" style={{ left: `${pct(e.at ?? 0)}%` }} />
-      ))}
-    </div>
+    </span>
   )
 }
 
-/** 总览用迷你关系图：节点和边原样缩进小框。 */
+/** 总览用迷你关系：三条「从 — 关系 — 到」行，替代缩到看不清的迷你图。 */
 export function MiniRelation({ data }: { readonly data: RelData }) {
-  const positions = new Map(data.nodes.map((node, i) => [
-    node.id,
-    node.x !== null && node.y !== null ? { x: node.x, y: node.y } : circlePos(i, data.nodes.length),
-  ]))
+  const rows = data.edges.slice(0, 3).map(edge => {
+    const from = data.nodes.find(node => node.id === edge.from)
+    const to = data.nodes.find(node => node.id === edge.to)
+    return from === undefined || to === undefined ? undefined : { id: edge.id, from: from.name, label: edge.label, to: to.name }
+  }).filter((row): row is { id: string, from: string, label: string, to: string } => row !== undefined)
+  if (rows.length === 0) return <span className="nv-ov-excerpt">—</span>
   return (
-    <svg className="nv-mini-rel" viewBox="0 0 1000 560" preserveAspectRatio="xMidYMid meet">
-      {data.edges.map(edge => {
-        const a = positions.get(edge.from); const b = positions.get(edge.to)
-        if (a === undefined || b === undefined) return null
-        return <line key={edge.id} x1={a.x * 1000} y1={a.y * 560} x2={b.x * 1000} y2={b.y * 560} className="nv-mini-rel-line" />
-      })}
-      {data.nodes.map(node => {
-        const p = positions.get(node.id) ?? { x: 0.5, y: 0.5 }
-        return <circle key={node.id} cx={p.x * 1000} cy={p.y * 560} r={34} className="nv-mini-rel-node" />
-      })}
-    </svg>
+    <span className="nv-mini-rel">
+      {rows.map(row => (
+        <span key={row.id} className="nv-mini-relrow">
+          <b>{row.from}</b>
+          <i>{row.label}</i>
+          <span>{row.to}</span>
+        </span>
+      ))}
+    </span>
   )
 }
 
 // ---------- 人物关系图 ----------
 
-const REL_W = 1000
-const REL_H = 560
-const REL_R = 34
+const REL_W = 760
+const REL_H = 680
+const REL_R = 41
+/** 有头像的节点：132×150 的卡片 + 72 的圆头像。 */
+const REL_AVATAR = 72
+const REL_AVATAR_CARD_H = 150
+const REL_AVATAR_TOP = -REL_AVATAR_CARD_H / 2 + 8
 
 /** 未摆位节点的确定性圆形布局（渲染层补位，不落库；拖到才写回）。 */
 function circlePos(index: number, total: number): { x: number, y: number } {
@@ -1433,7 +1416,7 @@ export function RelationWidget({ module, t, send, imageUrl }: WidgetProps & { re
         onClick={() => { setPanel(null); setLinking(null) }}>
         <defs>
           <clipPath id="nv-rel-avatar-clip">
-            <circle cx={0} cy={-REL_R * 1.3 + 6 + REL_R * 0.65} r={REL_R * 0.65} />
+            <circle cx={0} cy={REL_AVATAR_TOP + REL_AVATAR / 2} r={REL_AVATAR / 2} />
           </clipPath>
         </defs>
         {data.edges.map(edge => {
@@ -1481,10 +1464,10 @@ export function RelationWidget({ module, t, send, imageUrl }: WidgetProps & { re
               }}>
               {(() => {
                 const withAvatar = node.avatar !== undefined && imageUrl !== undefined
-                const cardH = withAvatar ? REL_R * 2.6 : node.note === '' ? REL_R * 1.5 : REL_R * 2.1
-                const avatarSize = REL_R * 1.3
-                const avatarTop = -cardH / 2 + 6
-                const nameY = withAvatar ? avatarTop + avatarSize + 11 : node.note === '' ? 5 : -4
+                const cardH = withAvatar ? REL_AVATAR_CARD_H : node.note === '' ? REL_R * 1.5 : REL_R * 2.1
+                const avatarSize = REL_AVATAR
+                const avatarTop = REL_AVATAR_TOP
+                const nameY = withAvatar ? avatarTop + avatarSize + 24 : node.note === '' ? 5 : -4
                 return (
                   <>
                     <rect x={-REL_R * 1.6} y={-cardH / 2} width={REL_R * 3.2} height={cardH} rx={12} className="nv-rel-card" />
@@ -1494,7 +1477,7 @@ export function RelationWidget({ module, t, send, imageUrl }: WidgetProps & { re
                     )}
                     <text y={nameY} className="nv-rel-name" textAnchor="middle">{node.name}</text>
                     {node.note !== '' && (
-                      <text y={nameY + 13} className="nv-rel-note" textAnchor="middle">
+                      <text y={nameY + 20} className="nv-rel-note" textAnchor="middle">
                         {node.note.length > 10 ? `${node.note.slice(0, 10)}…` : node.note}
                       </text>
                     )}
@@ -1834,23 +1817,34 @@ export function CollectionWidget({ module, t, send, imageUrl, refTargets }: Widg
     { id: 'form', label: t('coll.view.form') },
     { id: 'timeline', label: t('coll.view.timeline') },
   ]
+  const hasImages = data.fields.some(field => field.type === 'image')
+  const hasTime = data.fields.some(field => field.type === 'date' || field.type === 'time')
+  // 只出现这组数据真有意义的视图；单条目集合只保留它自己的视图，不摆切换器。
+  const views = data.items.length === 1
+    ? VIEWS.filter(entry => entry.id === view)
+    : VIEWS.filter(entry => entry.id === 'list' || entry.id === 'form'
+      || (entry.id === 'cards' && hasImages) || (entry.id === 'timeline' && hasTime))
+  const showAdd = !(view === 'form' && data.items.length === 1)
   return (
-    <div className="nv-coll">
-      <div className="nv-coll-bar">
-        <span className="nv-coll-count">{fmt(t, 'coll.count', { count: data.items.length })}</span>
-        <span className="nv-coll-barright">
-          <button type="button" className="nv-coll-add" onClick={() => {
-            void send({ kind: 'collection_add_item', moduleId: module.id, item: { name: t('coll.newItem') } })
-          }}>＋ {t('coll.add')}</button>
-          <span className="nv-coll-views">
-          {VIEWS.map(v => (
-            <button key={v.id} type="button"
-              className={`nv-coll-view${view === v.id ? ' nv-coll-view-on' : ''}`}
-              onClick={() => setView(v.id)}>{v.label}</button>
-          ))}
-          </span>
-        </span>
-      </div>
+    <div className={`nv-coll${views.length <= 1 && !showAdd ? ' nv-coll-noactions' : ''}`}>
+      {(views.length > 1 || showAdd) && (
+        <div className="nv-coll-bar">
+          {views.length > 1 && (
+            <span className="nv-coll-views">
+              {views.map(v => (
+                <button key={v.id} type="button"
+                  className={`nv-coll-view${view === v.id ? ' nv-coll-view-on' : ''}`}
+                  onClick={() => setView(v.id)}>{v.label}</button>
+              ))}
+            </span>
+          )}
+          {showAdd && (
+            <button type="button" className="nv-coll-add" onClick={() => {
+              void send({ kind: 'collection_add_item', moduleId: module.id, item: { name: t('coll.newItem') } })
+            }}>＋ {t('coll.add')}</button>
+          )}
+        </div>
+      )}
       {data.items.length === 0 && <div className="nv-coll-empty">{t('coll.empty')}</div>}
       {view === 'list' && <CollList data={data} t={t} moduleId={module.id} send={send} {...(refTargets === undefined ? {} : { refTargets })} />}
       {view === 'cards' && <CollCards data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
@@ -1930,8 +1924,9 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
     <div className="nv-coll-forms">
       {data.items.map(item => (
         <section key={item.id} className={`nv-coll-formcard${openId === item.id ? ' nv-coll-formcard-on' : ''}`}>
-          <button type="button" className="nv-coll-formhead" onClick={() => onOpen(openId === item.id ? null : item.id)}>
-            <span className="nv-coll-formname">{item.name}</span>
+          <button type="button" className={`nv-coll-formhead${data.items.length === 1 ? ' nv-coll-formhead-solo' : ''}`}
+            onClick={() => onOpen(openId === item.id ? null : item.id)}>
+            {data.items.length > 1 && <span className="nv-coll-formname">{item.name}</span>}
             <span className="nv-coll-formedit">{t('coll.form.edit')}</span>
           </button>
           <div className="nv-coll-formmain">
@@ -1945,8 +1940,9 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
           <div className="nv-coll-formrows">
             {data.fields.map(field => {
               const raw = data.values[item.id]?.[field.id]
-              // 图片字段已由表单头部的头像承接，行内不再重复一张大图。
+              // 图片字段已由表单头部的头像承接，行内不再重复一张大图；背景句移到整幅引用块。
               if (field.type === 'image') return null
+              if (field.name === '一句话' || field.name === '一句话背景') return null
               const text = collText(raw)
               if (field.type === 'chips') {
                 const chips = text.split('、').map(part => part.trim()).filter(part => part !== '')
@@ -1959,14 +1955,6 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
                   </div>
                 )
               }
-              if (field.name === '一句话' || field.name === '一句话背景') {
-                return (
-                  <div key={field.id} className="nv-coll-formrow nv-coll-formrow-quote">
-                    <span className="nv-coll-formlabel">{field.name}</span>
-                    <span className="nv-coll-formquote">{text === '' ? '—' : text}</span>
-                  </div>
-                )
-              }
               return (
                 <div key={field.id} className="nv-coll-formrow">
                   <span className="nv-coll-formlabel">{field.name}</span>
@@ -1976,6 +1964,13 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
             })}
           </div>
           </div>
+          {(() => {
+            const quoteField = data.fields.find(field => field.name === '一句话' || field.name === '一句话背景')
+            const quoteText = quoteField === undefined ? '' : collText(data.values[item.id]?.[quoteField.id])
+            return quoteText === ''
+              ? null
+              : <div className="nv-coll-formquote">{quoteText}</div>
+          })()}
         </section>
       ))}
     </div>
