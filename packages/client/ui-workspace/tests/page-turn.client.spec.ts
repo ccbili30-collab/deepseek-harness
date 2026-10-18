@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 /** Session page turn: direction from row order, weight attribute, and fallback without the API. */
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { PAGE_TURN_ATTRIBUTE, rowDirection, turnPage } from '../src/client/page-turn.ts'
+import { handOffPanel, PAGE_TURN_ATTRIBUTE, rowDirection, turnPage } from '../src/client/page-turn.ts'
 
 function rows(ids: readonly string[]): HTMLElement {
   const list = document.createElement('div')
@@ -68,6 +68,45 @@ describe('turnPage', () => {
     finish()
     await finished
     await Promise.resolve()
+    expect(document.documentElement.hasAttribute(PAGE_TURN_ATTRIBUTE)).toBe(false)
+  })
+})
+
+describe('handOffPanel', () => {
+  it('applies the update directly without the View Transitions API', () => {
+    const update = vi.fn()
+    handOffPanel(update, {} as never)
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(document.documentElement.hasAttribute(PAGE_TURN_ATTRIBUTE)).toBe(false)
+  })
+
+  it('applies the update directly under reduced motion', () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: true }))
+    const start = vi.fn()
+    const update = vi.fn()
+    handOffPanel(update, { documentElement: document.documentElement, startViewTransition: start } as never)
+    expect(update).toHaveBeenCalledTimes(1)
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('runs the commit inside the transition without publishing a page turn', async () => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }))
+    let finish: () => void = () => {}
+    const finished = new Promise<void>((resolve) => { finish = resolve })
+    let pending: Promise<void> | void = undefined
+    const doc = {
+      documentElement: document.documentElement,
+      startViewTransition: (callback: () => Promise<void> | void) => { pending = callback(); return { finished } },
+    }
+    const update = vi.fn()
+    handOffPanel(update, doc as never)
+    expect(document.documentElement.hasAttribute(PAGE_TURN_ATTRIBUTE)).toBe(false)
+    expect(update).toHaveBeenCalledTimes(1)
+    await pending
+    finish()
+    await finished
+    await Promise.resolve()
+    expect(update).toHaveBeenCalledTimes(1)
     expect(document.documentElement.hasAttribute(PAGE_TURN_ATTRIBUTE)).toBe(false)
   })
 })

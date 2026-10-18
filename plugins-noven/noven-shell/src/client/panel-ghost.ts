@@ -13,10 +13,16 @@ const OUT_MS = 300
  * Snapshot `.nv-page` into a static overlay. If the live page element is
  * still mounted next frame the click changed nothing — the overlay is dropped
  * before it can ever be seen (it renders identical pixels anyway).
+ *
+ * The creation page is excluded: it exits through its own View Transition
+ * (named group + keyframes), and a clone carrying the same
+ * view-transition-name would abort that transition as a duplicate. The clone
+ * also strips any name it picked up, so a ghost lingering over a later
+ * transition cannot collide either.
  */
 export function capturePanelGhost(): void {
   const page = document.querySelector<HTMLElement>('.nv-page')
-  if (page === null) return
+  if (page === null || page.classList.contains('nv-create-page')) return
   const rect = page.getBoundingClientRect()
   if (rect.width === 0 || rect.height === 0) return
 
@@ -26,6 +32,7 @@ export function capturePanelGhost(): void {
     `width:${rect.width}px;height:${rect.height}px;overflow:hidden;pointer-events:none;`
   const clone = page.cloneNode(true) as HTMLElement
   clone.style.height = `${rect.height}px`
+  clone.style.viewTransitionName = 'none'
   ghost.append(clone)
   clone.scrollTop = page.scrollTop
   // Inner scroll regions do not clone: a stale to-top snapshot over a

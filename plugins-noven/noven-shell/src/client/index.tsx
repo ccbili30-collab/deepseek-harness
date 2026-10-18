@@ -70,7 +70,7 @@ import { applyBranches } from './branches.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
 import { showComingSoon } from './coming-soon.ts'
 import { applyArrangement, type ArrangementDeps } from './arrangement.ts'
-import { enterHandcraftScene } from './creation-transition.ts'
+import { enterCreateScene, enterHandcraftScene } from './creation-transition.ts'
 import { injectNovenStyles } from './style.ts'
 import { CanvasHost, createCanvasStore, activeKey, fileTabKind, docKey, dirKey, statusKey, type CanvasInjected, type CanvasState, type DocEntry, type DirEntry, type ImportPack, type ProjectFocus, type SimRow, type TabFlags } from './canvas.tsx'
 import { ContentTree, type TreeInjected } from './tree.tsx'
@@ -1777,6 +1777,45 @@ export function apply(ctx: ClientContext): void {
       showComingSoon(target, t('nav.comingSoon'))
     }), `noven-shell: unavailable panel ${id}`)
   }
+  /**
+   * The creation page is the one New Session surface: the nav row, the shell's
+   * new-session action (sidebar brand button and its shortcut), and the empty
+   * main view after archiving all land here. It enters with its own scene, not
+   * the Session page turn.
+   */
+  const onCreateSurface = (): void => {
+    if (ctx.layout.panelInfo.getSnapshot().activePanelId === CREATE_ID) return
+    enterCreateScene(() => { ctx.layout.selectPanel(CREATE_ID) })
+  }
+  ctx.effect(() => sidebarPanels.registerActivation(CREATE_ID, () => { onCreateSurface() }),
+    'noven-shell: create surface activation')
+  ctx.effect(() => {
+    const surface = ctx.uiWorkspace as { registerNewSessionSurface?: (open: () => void) => () => void }
+    const dispose = surface.registerNewSessionSurface?.(() => { onCreateSurface() })
+    return () => { dispose?.() }
+  }, 'noven-shell: new session surface')
+  // Archiving the Session on stage with no live row left clears the selection;
+  // the viewer lands on the creation page instead of an empty main view.
+  ctx.effect(() => {
+    let previous: SessionId | undefined
+    const reconcile = (): void => {
+      const list = ctx.sessions.list.getSnapshot()
+      const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)?.id
+      const archived = new Set<string>(
+        (ctx.get('workspaces') as IWorkspaces | undefined)?.list.getSnapshot().archivedSessionIds ?? [],
+      )
+      if (current === undefined && previous !== undefined && archived.has(previous)
+        && ctx.layout.panelInfo.getSnapshot().activePanelId === null) {
+        onCreateSurface()
+      }
+      previous = current
+    }
+    const stopSessions = ctx.sessions.list.subscribe(reconcile)
+    const workspaces = ctx.get('workspaces') as IWorkspaces | undefined
+    const stopWorkspaces = workspaces?.list.subscribe(reconcile)
+    reconcile()
+    return () => { stopSessions(); stopWorkspaces?.() }
+  }, 'noven-shell: archive fallback surface')
   const NAV: readonly { id: MainPanelId; order: number; label: () => string; Icon: (p: { size: number; active: boolean }) => React.ReactNode }[] = [
     { id: CREATE_ID, order: 5, label: () => t('nav.create'), Icon: CreateIcon },
     { id: HOME_ID, order: 10, label: () => t('nav.home'), Icon: HomeIcon },

@@ -232,15 +232,30 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 ::view-transition-old(noven-create-paths) { animation: nv-create-paths-out 260ms var(--nv-ease-in) 40ms both; }
 @keyframes nv-create-intro-out { to { opacity: 0; transform: translateY(-16px); } }
 @keyframes nv-create-paths-out { to { opacity: 0; transform: translateY(12px); } }
+/* Entry/exit scene: arriving on the creation page sinks the work layer and
+   blooms the page up; leaving it plays the page's own dissolve (the shared
+   old(noven-create-page) keyframes), never the Session page turn. The
+   pseudo-elements hang off the root element, so the attribute selector sits
+   directly on it (same shape as the page-turn rules in AppFrame). */
+html[data-create-scene='enter']::view-transition-old(noven-work) { animation: nv-create-stage-out 340ms var(--nv-ease-in) both; }
+html[data-create-scene='enter']::view-transition-new(noven-create-page) { animation: nv-create-page-in 380ms var(--nv-ease-out) both; }
+@keyframes nv-create-stage-out { to { opacity: 0; transform: translateY(28px) scale(.988); } }
+@keyframes nv-create-page-in { from { opacity: 0; transform: translateY(18px) scale(.985); } }
 @media (prefers-reduced-motion: reduce) {
   ::view-transition-group(noven-create-composer), ::view-transition-old(noven-create-composer), ::view-transition-new(noven-create-composer),
-  ::view-transition-old(noven-create-intro), ::view-transition-old(noven-create-paths) { animation: none; }
+  ::view-transition-old(noven-create-intro), ::view-transition-old(noven-create-paths),
+  ::view-transition-old(noven-work), ::view-transition-new(noven-create-page) { animation: none; }
 }
 
 /* Creation ritual: one quiet thought field, then two explicit working paths.
    The page centers its column inside the center column (the session page's
    reference frame), so the hero→session morph never slides sideways. */
 .nv-create-page { overflow: hidden; box-sizing: border-box;
+  /* The page's own View Transition name lives here, not on one scene: every
+     transition the page takes part in — entering, leaving for any Session,
+     morphing into the conversation, dissolving into the IDE — captures it as
+     the same named group, and its entrance/exit keyframes below are canonical. */
+  view-transition-name: noven-create-page;
   /* The mint bloom is part of the composition: anchored on the title's line
      (30% ≈ the lifted stack's head), strong enough to read (.075 was lost to
      white), fading out before the path cards so the fold stays clean. */

@@ -105,3 +105,34 @@ export function turnPage(
   })
   if (failed) throw failure
 }
+
+/**
+ * Apply a panel→Session hand-off as a bare View Transition. The page turn is
+ * a Session↔Session gesture; leaving a global panel is the panel's own exit
+ * (its named page animates out through its keyframes) over a default
+ * crossfade, so no page-turn direction or work-layer motion is published.
+ * @param update - the synchronous navigation commit; runs inside the transition.
+ * @param doc - document to animate; defaults to the global document when one exists.
+ */
+export function handOffPanel(update: () => void, doc?: ViewTransitionDocument): void {
+  const target = doc ?? (typeof document === 'undefined' ? undefined : document as ViewTransitionDocument)
+  const reduced = typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches
+  if (target === undefined || typeof target.startViewTransition !== 'function' || reduced) {
+    update()
+    return
+  }
+  let failure: unknown
+  let failed = false
+  const transition = target.startViewTransition(async () => {
+    try {
+      update()
+    } catch (error: unknown) {
+      failed = true
+      failure = error
+      throw error
+    }
+    await nextCommit()
+  })
+  void transition.finished.catch((error: unknown) => { void error })
+  if (failed) throw failure
+}

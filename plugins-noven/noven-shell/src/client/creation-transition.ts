@@ -15,6 +15,9 @@ const COMPOSER_TRANSITION = 'noven-create-composer'
 const PAGE_TRANSITION = 'noven-create-page'
 const SEED_TRANSITION = 'noven-handcraft-seed'
 
+/** Root attribute marking which creation-surface scene is running. */
+const SCENE_ATTRIBUTE = 'data-create-scene'
+
 /** Ritual furniture that exits with its own name in the conversation scene. */
 const EXIT_REGIONS = [
   { selector: '.nv-create-intro', name: 'noven-create-intro' },
@@ -147,4 +150,33 @@ export async function enterHandcraftScene(source: HTMLElement, commit: () => Pro
   if (page !== null) page.style.viewTransitionName = ''
   source.style.viewTransitionName = ''
   return result
+}
+
+/**
+ * Reveal the creation page from wherever the viewer stands: the work layer
+ * sinks and dims while the ritual page blooms up from below. The page carries
+ * its view-transition-name in CSS, so no naming step is needed on either side.
+ * The panel commit runs inside the update, per the capture rule above.
+ * @param commit - the synchronous panel commit (selectPanel(CREATE_ID)).
+ */
+export function enterCreateScene(commit: () => void): void {
+  const documentWithTransition = document as ViewTransitionDocument
+  if (documentWithTransition.startViewTransition === undefined || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    commit()
+    return
+  }
+  const root = document.documentElement
+  root.setAttribute(SCENE_ATTRIBUTE, 'enter')
+  const transition = documentWithTransition.startViewTransition(async () => {
+    commit()
+    // Rendering inside a pending update is suppressed; tick until React has
+    // actually mounted the page, or the new capture still shows the old view
+    // and the page's own group never exists.
+    for (let frame = 0; frame < 90 && document.querySelector('.nv-create-page') === null; frame += 1) {
+      await nextTick()
+    }
+  })
+  void transition.finished.catch(() => undefined).finally(() => {
+    if (root.getAttribute(SCENE_ATTRIBUTE) === 'enter') root.removeAttribute(SCENE_ATTRIBUTE)
+  })
 }

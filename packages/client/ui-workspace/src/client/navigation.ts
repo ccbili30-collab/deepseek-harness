@@ -17,7 +17,7 @@ import type {
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { RowToast } from './contract/slots.ts'
-import { rowDirection, turnPage, type PageTurnWeight } from './page-turn.ts'
+import { handOffPanel, rowDirection, turnPage, type PageTurnWeight } from './page-turn.ts'
 import { pinOrderAccounts, pinOrderSource } from './pin-order.ts'
 import type { WorkspaceViewStoreActions } from './stores.ts'
 
@@ -71,6 +71,15 @@ export interface UiWorkspace {
    * @param workspaceId - explicit target; absent inherits the current or most recent Workspace.
    */
   startSession(workspaceId?: WorkspaceId): void
+  /**
+   * Redirect the shell's New Session action to a host surface (for example a
+   * creation page). While registered, startSession() opens that surface
+   * instead of creating a blank Session; the surface owns whatever Session it
+   * needs. Registrations ride the caller's effect.
+   * @param open - host action that reveals the new-session surface.
+   * @returns disposer restoring the default blank-Session flow.
+   */
+  registerNewSessionSurface(open: () => void): () => void
   /**
    * Archive a Session and clear it when it is the current selection.
    * @param sessionId - Session to archive.
@@ -146,6 +155,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     {}, { persist: { name: 'dsh.sessions.current' } },
   )
   private mainReference: SessionReference | undefined
+  private newSessionSurface: (() => void) | undefined
 
   /**
    * @param ctx - Client root Context.
@@ -216,8 +226,25 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     const panel = options?.panel === 'preserve' ? 'preserve' : 'reveal'
     const current = this.mainReference?.sessionId
     const targetId = typeof target === 'string' ? target : target.childSessionId
-    if (current === undefined || current === targetId) {
+    // Leaving a global panel is the panel's own exit, not a Session↔Session
+    // page turn: the panel's named page animates out through its keyframes
+    // over a default crossfade. A `preserve` open keeps the panel on stage,
+    // so it commits without any motion at all.
+    if (panel === 'preserve') {
       this.replaceMain(target, this.lifetime.signal, panel)
+      return
+    }
+    const panelActive = this.ctx.layout.panelInfo.getSnapshot().activePanelId !== null
+    if (current === undefined || current === targetId) {
+      if (panelActive) {
+        handOffPanel(() => { this.replaceMain(target, this.lifetime.signal, panel) })
+        return
+      }
+      this.replaceMain(target, this.lifetime.signal, panel)
+      return
+    }
+    if (panelActive) {
+      handOffPanel(() => { this.replaceMain(target, this.lifetime.signal, panel) })
       return
     }
     const byId = this.sessions.list.getSnapshot().byId
@@ -257,6 +284,10 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   }
 
   startSession(workspaceId?: WorkspaceId): void {
+    if (this.newSessionSurface !== undefined) {
+      this.newSessionSurface()
+      return
+    }
     const workspace = this.workspaces.list.getSnapshot()
     const sessions = this.sessions.list.getSnapshot()
     const current = this.mainReference?.sessionId
@@ -276,9 +307,48 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     )
   }
 
+  registerNewSessionSurface(open: () => void): () => void {
+    this.newSessionSurface = open
+    return () => {
+      if (this.newSessionSurface === open) this.newSessionSurface = undefined
+    }
+  }
+
   async archiveSession(sessionId: SessionId, options: { readonly stopActivity?: boolean } = {}): Promise<void> {
     await this.workspaces.archiveSession(sessionId, options)
-    if (this.mainReference?.sessionId === sessionId) this.clearMain()
+    if (this.mainReference?.sessionId !== sessionId) return
+    // The list update normally lands the rule in clearArchivedCurrent; this
+    // covers a controller that reports completion before its snapshot settles.
+    this.landAfterRemoved(sessionId)
+  }
+
+  /**
+   * The row a viewer lands on after archiving the Session they were viewing:
+   * the next live member of the same Workspace's recorded order, else the most
+   * recently updated live Session anywhere. Blank host Sessions are skipped.
+   * @param archivedId - the Session just archived, always skipped.
+   * @returns the live Session to open, or undefined when none is left.
+   */
+  private nextLiveSession(archivedId: SessionId): SessionId | undefined {
+    const workspace = this.workspaces.list.getSnapshot()
+    const sessions = this.sessions.list.getSnapshot()
+    const archived = new Set<string>(workspace.archivedSessionIds)
+    // A blank Session is a host for a surface (for example the creation
+    // page's composer), never a destination: landing there would strand the
+    // viewer in an empty conversation.
+    const live = (id: SessionId): boolean =>
+      id !== archivedId && !archived.has(id) && sessions.byId[id]?.blank !== true
+    const own = workspace.items.find(item => item.sessionIds.includes(archivedId))
+    const sibling = own?.sessionIds.find(live)
+    if (sibling !== undefined) return sibling
+    let best: SessionId | undefined
+    let at = Number.NEGATIVE_INFINITY
+    for (const id of sessions.ids) {
+      const row = sessions.byId[id]
+      if (row === undefined || !live(id)) continue
+      if (row.updatedAt > at) { at = row.updatedAt; best = id }
+    }
+    return best
   }
 
   async unarchiveSession(sessionId: SessionId): Promise<void> {
@@ -287,7 +357,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
 
   async deleteArchivedSession(sessionId: SessionId): Promise<void> {
     await this.workspaces.deleteArchivedSession(sessionId)
-    if (this.mainReference?.sessionId === sessionId) this.clearMain()
+    if (this.mainReference?.sessionId === sessionId) this.landAfterRemoved(sessionId)
     // The Host removed the durable Session; pull the list so its summary and
     // projections drop too. The deletion stands, so a refresh failure is a
     // console diagnostic, not a failed delete.
@@ -407,16 +477,30 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     const current = this.mainReference?.sessionId
     if (current === undefined
       || !this.workspaces.list.getSnapshot().archivedSessionIds.includes(current)) return false
-    this.clearMain()
+    this.landAfterRemoved(current)
     return true
   }
 
-  private clearMain(): void {
+  /**
+   * Land the viewer after the Session on stage was removed (archived or
+   * deleted): open the next live row — keeping a global panel on stage — or
+   * clear the main view when nothing is left, so a host surface (for example a
+   * creation page) can take over. The archived/deleted row itself is skipped.
+   * @param removedId - the Session just archived or deleted.
+   */
+  private landAfterRemoved(removedId: SessionId): void {
+    const panelActive = this.ctx.layout.panelInfo.getSnapshot().activePanelId !== null
+    this.clearMain({ keepPanel: panelActive })
+    const next = this.nextLiveSession(removedId)
+    if (next !== undefined) this.openSession(next, panelActive ? { panel: 'preserve' } : undefined)
+  }
+
+  private clearMain(options: { readonly keepPanel?: boolean } = {}): void {
     const previous = this.mainReference
     this.mainReference = undefined
     this.selection.set({})
     previous?.release()
-    this.ctx.layout.selectPanel(null)
+    if (options.keepPanel !== true) this.ctx.layout.selectPanel(null)
   }
 
   private replaceMain(
