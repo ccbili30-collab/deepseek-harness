@@ -414,9 +414,12 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
         if (kind !== 'WORLD' && kind !== 'CHARACTER') return bad('invalid kind')
         if (name.length === 0) return bad('missing name')
         if (!['blank', 'interview'].includes(starter) && !starter.startsWith('template:')) return bad('invalid starter')
-        if (starter.startsWith('template:')) return new Response('模板库尚未实现（P0.7 预留）', { status: 501, headers: JSON_HEADERS })
-        const document = emptyCardDocument(kind, name)
-        if (kind === 'WORLD') {
+        const template = starter.startsWith('template:') ? starter.slice('template:'.length) : undefined
+        const document = template === undefined
+          ? emptyCardDocument(kind, name)
+          : templateCardDocument(kind, name, template)
+        if (document === undefined) return bad('invalid template')
+        if (kind === 'WORLD' && template === undefined) {
           // 契约 C7：世界卡的 blank/interview 起手带一个「设定总览」模块——
           // widget.type='overview' 标它是卡的聚合页（重命名不失效）；角色卡保持空卡（Q4）。
           document.modules.push({ id: mintId(), name: '设定总览', tags: [], children: [], layout: 'VERTICAL', characterIds: [], blocks: [], widget: { type: 'overview' } })
@@ -535,6 +538,25 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
     }
     return new Response(error instanceof Error ? error.message : 'card op failed', { status: 500, headers: JSON_HEADERS })
   }
+}
+
+/** 预制卡骨架：`template:world` / `template:character` 落一组命名模块，用户进门即有结构可填。 */
+function templateCardDocument(kind: 'WORLD' | 'CHARACTER', name: string, template: string): ContentDocument | undefined {
+  const skeletons: Readonly<Record<string, readonly string[]>> = {
+    world: ['世界规则', '地理与势力', '历史与传说'],
+    character: ['外貌与气质', '性格与动机', '背景故事', '人际关系'],
+  }
+  const moduleNames = skeletons[template]
+  if (moduleNames === undefined) return undefined
+  if ((template === 'world') !== (kind === 'WORLD')) return undefined
+  const document = emptyCardDocument(kind, name)
+  if (kind === 'WORLD') {
+    document.modules.push({ id: mintId(), name: '设定总览', tags: [], children: [], layout: 'VERTICAL', characterIds: [], blocks: [], widget: { type: 'overview' } })
+  }
+  for (const moduleName of moduleNames) {
+    document.modules.push({ id: mintId(), name: moduleName, tags: [], children: [], layout: 'VERTICAL', characterIds: [], blocks: [] })
+  }
+  return document
 }
 
 /** Register the card HTTP route against the connection's fetch registry. */

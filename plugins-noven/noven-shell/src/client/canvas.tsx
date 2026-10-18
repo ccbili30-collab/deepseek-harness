@@ -11,7 +11,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import { defineStore } from '@deepseek-ai/dsh-client-store'
 import type { PropsLocale, PropsRuntime, PropsStore, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
-import { Menu, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Menu, MarkdownText, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardAddr, CardOp, CardOpResult, CardState } from './card-api.ts'
 import type { ImportReport } from './tree-api.ts'
 
@@ -40,7 +40,7 @@ const IMAGE_WORK_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg
 /** 画布上一个打开的对象：key 去重，kind 派发体组件，owner 归属会话（C9）。 */
 export interface CanvasTab {
   readonly key: string
-  readonly kind: 'start' | 'chat' | 'card' | 'doc' | 'files' | 'work' | 'conv'
+  readonly kind: 'start' | 'chat' | 'card' | 'doc' | 'files' | 'work' | 'conv' | 'manual'
   readonly title: string
   /** 会话域归属——"开着什么"是每个会话自己的工作现场，跨会话不串。 */
   readonly owner: SessionId
@@ -56,6 +56,8 @@ export interface CanvasTab {
   /** conv 体：背后的侧线会话 id + 发送通道（见 conv.tsx）。 */
   readonly convId?: SessionId
   readonly convChannel?: ConvChannel
+  /** manual 体：翻开的手册主题（noven-docs 的 slug）。 */
+  readonly slug?: string
 }
 
 /** 一页从页签条撕下的对象：键引用同一个 CanvasTab，坐标尺寸归浮窗态。 */
@@ -555,13 +557,18 @@ type CanvasProps = PropsRuntime<'sidebar.right.pane.tab'> & PropsLocale<'novenSh
 /** 文档温层选择器——tab 体通过注入 hooks.docs 拿到的 hook 类型。 */
 export type DocsHook = CanvasProps['useDocs']
 
-/** IDE 起点页：先放入第一样内容，也可重用官方布局种子；不要求作品类型。 */
-function StartTab({ t, empty, noProject, onCreate, onApplyLayout }: {
+/**
+ * 案头 — the IDE start page. Two sections: 预设 (prepared work: the two
+ * prefilled card kinds and the built-in manual) and 开始 (a blank document
+ * in one tab). Everything here lands with one click: no dialog stands
+ * between the desk and the work.
+ */
+function StartTab({ t, empty, noProject, onPreset, onStart }: {
   readonly t: ShellT
   readonly empty: boolean
   readonly noProject: boolean
-  readonly onCreate: (kind: CreateKind) => void
-  readonly onApplyLayout: () => void
+  readonly onPreset: (preset: 'world' | 'character' | 'manual') => void
+  readonly onStart: () => void
 }) {
   if (noProject) {
     return (
@@ -574,44 +581,70 @@ function StartTab({ t, empty, noProject, onCreate, onApplyLayout }: {
     )
   }
   return (
-    <div className="nv-canvas-start">
-      <div className="nv-start-center">
-        <div className="nv-start-title">{t(empty ? 'canvas.start.emptyTitle' : 'canvas.start.title')}</div>
-        <div className="nv-start-sub">{t('canvas.start.sub')}</div>
-        <div className="nv-start-grid">
-          <button type="button" className="nv-start-card" onClick={() => onCreate('world')}>
-            <span className="nv-start-glyph">{glyph.globe(22)}</span>
-            <span>{t('canvas.start.world')}</span>
-          </button>
-          <button type="button" className="nv-start-card" onClick={() => onCreate('character')}>
-            <span className="nv-start-glyph">{glyph.user(22)}</span>
-            <span>{t('canvas.start.character')}</span>
-          </button>
-          <button type="button" className="nv-start-card" onClick={() => onCreate('doc')}>
-            <span className="nv-start-glyph">{glyph.file(22)}</span>
-            <span>{t('canvas.start.doc')}</span>
-          </button>
-          <button type="button" className="nv-start-card" onClick={() => onCreate('comic')}>
-            <span className="nv-start-glyph">{glyph.image(22)}</span>
-            <span>{t('canvas.start.comic')}</span>
-          </button>
-          <button type="button" className="nv-start-card" onClick={() => onCreate('import')}>
-            <span className="nv-start-glyph">{glyph.download(22)}</span>
-            <span>{t('canvas.start.import')}</span>
-          </button>
-        </div>
-        <div className="nv-start-layouts" aria-label={t('canvas.layout.label')}>
-          <button type="button" className="nv-start-layout nv-start-layout-official" onClick={onApplyLayout}>
-            <span className="nv-start-layout-diagram" aria-hidden="true"><i /><i /><i /></span>
-            <span><strong>{t('canvas.layout.official')}</strong><small>{t('canvas.layout.official.sub')}</small></span>
-          </button>
-          <div className="nv-start-layout nv-start-layout-free">
-            <span className="nv-start-layout-diagram" aria-hidden="true"><i /><i /></span>
-            <span><strong>{t('canvas.layout.free')}</strong><small>{t('canvas.layout.free.sub')}</small></span>
+    <div className="nv-desk">
+      <div className="nv-desk-inner">
+        <p className="nv-desk-lead">{t('canvas.desk.lead')}</p>
+        <section className="nv-desk-section">
+          <h3 className="nv-desk-label">{t('canvas.desk.preset')}</h3>
+          <div className="nv-desk-row">
+            <button type="button" className="nv-desk-tile" onClick={() => onPreset('world')}>
+              <span className="nv-desk-glyph">{glyph.globe(20)}</span>
+              <span className="nv-desk-name">{t('canvas.desk.world')}</span>
+              <span className="nv-desk-sub">{t('canvas.desk.world.sub')}</span>
+            </button>
+            <button type="button" className="nv-desk-tile" onClick={() => onPreset('character')}>
+              <span className="nv-desk-glyph">{glyph.user(20)}</span>
+              <span className="nv-desk-name">{t('canvas.desk.character')}</span>
+              <span className="nv-desk-sub">{t('canvas.desk.character.sub')}</span>
+            </button>
+            <button type="button" className="nv-desk-tile" onClick={() => onPreset('manual')}>
+              <span className="nv-desk-glyph">{glyph.file(20)}</span>
+              <span className="nv-desk-name">{t('canvas.desk.manual')}</span>
+              <span className="nv-desk-sub">{t('canvas.desk.manual.sub')}</span>
+            </button>
           </div>
-        </div>
-        <div className="nv-start-hint">{t('canvas.start.hint')}</div>
+        </section>
+        <section className="nv-desk-section">
+          <h3 className="nv-desk-label">{t('canvas.desk.start')}</h3>
+          <button type="button" className="nv-desk-start" onClick={onStart}>
+            <span className="nv-desk-glyph">{glyph.file(18)}</span>
+            <span className="nv-desk-start-text">
+              <strong>{t('canvas.desk.doc')}</strong>
+              <small>{t('canvas.desk.doc.sub')}</small>
+            </span>
+            <span className="nv-desk-arrow" aria-hidden="true">↗</span>
+          </button>
+        </section>
+        {empty && <p className="nv-desk-empty">{t('canvas.desk.empty')}</p>}
       </div>
+    </div>
+  )
+}
+
+/** 手册页签：内置说明书（noven-docs 的只读 Markdown），不是文稿、不可编辑。 */
+function ManualTab({ tab, t }: { readonly tab: CanvasTab; readonly t: ShellT }) {
+  const [doc, setDoc] = useState<{ readonly title: string; readonly content: string } | undefined>(undefined)
+  const [failed, setFailed] = useState(false)
+  useEffect(() => {
+    setFailed(false)
+    void fetch(new URL(`api/noven-docs?slug=${encodeURIComponent(tab.slug ?? 'getting-started')}`, document.baseURI).href)
+      .then(response => response.ok ? response.json() as Promise<{ title: string; content: string }> : Promise.reject(new Error(String(response.status))))
+      .then(setDoc)
+      .catch(() => { setFailed(true) })
+  }, [tab.slug])
+  const labels = useMemo<MdLabels>(() => ({
+    code: {
+      copyLabel: t('editor.md.copy'),
+      copiedLabel: t('editor.md.copied'),
+      toolbarLabels: { codeLabel: t('editor.md.code'), wrapLabel: t('editor.md.wrap'), unwrapLabel: t('editor.md.unwrap') },
+    },
+    footnotes: '',
+  }), [t])
+  return (
+    <div className="nv-manual">
+      {failed && <div className="nv-manual-note">{t('canvas.manual.failed')}</div>}
+      {!failed && doc === undefined && <div className="nv-manual-note">{t('canvas.manual.loading')}</div>}
+      {doc !== undefined && <MarkdownText text={doc.content} labels={labels} />}
     </div>
   )
 }
@@ -1572,8 +1605,28 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
       {tab.kind === 'start' && (
         <StartTab t={t} noProject={project === undefined}
           empty={(tree?.cards.length ?? 0) === 0 && (tree?.docs.length ?? 0) === 0 && (tree?.works.length ?? 0) === 0}
-          onApplyLayout={props.applyLayoutSeed}
-          onCreate={kind => { if (kind === 'import') importRef.current?.click(); else actions.openDialog(session, kind) }} />
+          onPreset={preset => {
+            if (preset === 'manual') {
+              actions.open({
+                key: 'manual:getting-started', kind: 'manual', title: t('canvas.desk.manual'),
+                owner: session, slug: 'getting-started',
+              })
+              return
+            }
+            props.submitCreate({
+              kind: preset,
+              name: preset === 'world' ? t('canvas.desk.world.name') : t('canvas.desk.character.name'),
+              starter: `template:${preset}`,
+            })
+          }}
+          onStart={() => {
+            // 单页签直接落一张空白文稿；重名自动编号，绝不覆盖已有文稿。
+            const base = t('canvas.desk.doc.name')
+            const taken = new Set((tree?.docs ?? []).map(row => row.path))
+            let name = base
+            for (let index = 2; taken.has(`文稿/${name}.md`); index += 1) name = `${base} ${index}`
+            props.submitCreate({ kind: 'doc', name, starter: 'blank' })
+          }} />
       )}
       {tab.kind === 'card' && (
         <CardTab tab={tab} t={t} loadCard={props.loadCard} op={props.cardOp} ask={props.ask}
@@ -1606,6 +1659,7 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
       {tab.kind === 'conv' && tab.convId !== undefined && (
         <ConvTab convId={tab.convId} channel={tab.convChannel ?? 'direct'} t={t} props={props} />
       )}
+      {tab.kind === 'manual' && <ManualTab tab={tab} t={t} />}
     </>
   )
 }

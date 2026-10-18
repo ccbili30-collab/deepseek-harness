@@ -1398,6 +1398,36 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-start-layout-free { opacity: .68; }
 .nv-start-hint { margin-top: 18px; font-size: 12px; color: var(--nv-secondary-text); }
 
+/* 案头：画布起点的桌面——预设一排，开始一列，其余留白 */
+.nv-desk { flex: 1; min-height: 0; overflow-y: auto; display: flex; justify-content: center; }
+.nv-desk-inner { width: min(640px, calc(100% - 48px)); margin: auto 0; padding: 40px 0; }
+.nv-desk-lead { margin: 0 0 34px; font-size: 15px; line-height: 1.8; color: var(--nv-secondary-text); text-align: center; }
+.nv-desk-section { margin-bottom: 26px; }
+.nv-desk-label { margin: 0 0 12px; font-size: 11px; font-weight: 700; letter-spacing: .16em; color: var(--nv-accent-deep); }
+.nv-desk-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+.nv-desk-tile { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; padding: 16px; text-align: left;
+  border: 1px solid var(--nv-divider); border-radius: 14px; background: var(--nv-surface); cursor: pointer; color: var(--nv-primary-text);
+  transition: transform 160ms var(--nv-ease-out), border-color 160ms ease, box-shadow 160ms ease; }
+.nv-desk-tile:hover { transform: translateY(-2px); border-color: rgba(14,159,110,.28); box-shadow: 0 10px 24px rgba(28,64,51,.07); }
+.nv-desk-glyph { color: var(--nv-accent-deep); }
+.nv-desk-name { margin-top: 6px; font-size: 13.5px; font-weight: 650; }
+.nv-desk-sub { font-size: 11.5px; line-height: 1.6; color: var(--nv-secondary-text); }
+.nv-desk-start { width: 100%; display: flex; align-items: center; gap: 12px; padding: 14px 16px; text-align: left; box-sizing: border-box;
+  border: 1px solid var(--nv-divider); border-radius: 14px; background: var(--nv-surface); cursor: pointer; color: var(--nv-primary-text);
+  transition: transform 160ms var(--nv-ease-out), border-color 160ms ease, box-shadow 160ms ease; }
+.nv-desk-start:hover { transform: translateY(-2px); border-color: rgba(14,159,110,.28); box-shadow: 0 10px 24px rgba(28,64,51,.07); }
+.nv-desk-start-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.nv-desk-start-text strong { font-size: 13.5px; font-weight: 650; }
+.nv-desk-start-text small { font-size: 11.5px; color: var(--nv-secondary-text); }
+.nv-desk-arrow { color: var(--nv-secondary-text); font-size: 14px; }
+.nv-desk-empty { margin: 10px 0 0; font-size: 12px; color: var(--nv-secondary-text); text-align: center; }
+@media (max-width: 620px) { .nv-desk-row { grid-template-columns: 1fr; } }
+
+/* 说明书页签：只读 Markdown，一页书的边距 */
+.nv-manual { flex: 1; min-height: 0; overflow-y: auto; padding: 30px 36px 60px; }
+.nv-manual > * { max-width: 720px; margin-left: auto; margin-right: auto; }
+.nv-manual-note { padding: 40px 0; text-align: center; font-size: 12.5px; color: var(--nv-secondary-text); }
+
 /* 文稿体 */
 .nv-canvas-docbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .nv-canvas-docedit { flex: 1; min-height: 0; border: 0; resize: none; padding: 24px 28px; font-size: 14px; line-height: 1.8;

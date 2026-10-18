@@ -1359,6 +1359,9 @@ export function apply(ctx: ClientContext): void {
       for (const id of sessions.ids) {
         const row = sessions.byId[id]
         if (row?.cwd !== root) continue
+        // 空白会话没有内容可铺开，也没有项目坐标——复用它会落进一个空抽屉空画布的
+        // 无项目现场。手作要的是"最近的真实会话"，空白只算待命位。
+        if (row.blank === true) continue
         if (found === undefined || row.updatedAt > found.at) found = { id, cwd: row.cwd, at: row.updatedAt }
       }
       reusable = found === undefined ? undefined : { id: found.id, cwd: found.cwd }
