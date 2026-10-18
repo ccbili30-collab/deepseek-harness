@@ -1463,10 +1463,41 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-canvas-docedit { flex: 1; min-height: 0; border: 0; resize: none; padding: 24px 28px; font-size: 14px; line-height: 1.8;
   font-family: inherit; background: var(--nv-surface); color: var(--nv-primary-text); outline: none; }
 .nv-canvas-docstatus { padding: 6px 14px; font-size: 11px; color: var(--nv-secondary-text); border-top: 1px solid var(--nv-divider); }
-/* 文稿富编辑器（BlockNote）：一页文档的版心 */
-.nv-doc-bn { flex: 1; min-height: 0; overflow-y: auto; background: var(--nv-surface); font-family: inherit; }
+/* 文稿富编辑器（BlockNote）：左侧标题树 + 一页文档的版心；主题色换成本站调色板 */
+.nv-doc-split { flex: 1; min-height: 0; display: flex; }
+.nv-doc-outline { width: 190px; flex: none; overflow-y: auto; padding: 16px 8px 40px;
+  border-right: 1px solid var(--nv-divider); background: var(--nv-canvas); scrollbar-width: thin; }
+.nv-doc-outline-label { padding: 0 8px 8px; font-size: 11px; font-weight: 700; letter-spacing: .14em; color: var(--nv-secondary-text); }
+.nv-doc-outline-item { display: block; width: 100%; border: 0; background: none; border-radius: 7px; padding: 5px 8px; text-align: left;
+  font-size: 12px; line-height: 1.5; color: var(--nv-secondary-text); cursor: pointer; font-family: inherit;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nv-doc-outline-item:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
+.nv-doc-outline-item[data-level='2'] { padding-left: 20px; }
+.nv-doc-outline-item[data-level='3'] { padding-left: 32px; }
+.nv-doc-bn { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--nv-surface); font-family: inherit;
+  --bn-font-family: inherit;
+  --bn-colors-editor-text: var(--nv-primary-text);
+  --bn-colors-editor-background: var(--nv-surface);
+  --bn-colors-menu-text: var(--nv-primary-text);
+  --bn-colors-menu-background: var(--nv-surface);
+  --bn-colors-tooltip-text: #fff;
+  --bn-colors-tooltip-background: var(--nv-primary-text);
+  --bn-colors-hovered-text: var(--nv-primary-text);
+  --bn-colors-hovered-background: var(--nv-accent-soft);
+  --bn-colors-selected-text: var(--nv-primary-text);
+  --bn-colors-selected-background: var(--nv-accent-soft);
+  --bn-colors-disabled-text: var(--nv-secondary-text);
+  --bn-colors-disabled-background: var(--nv-canvas);
+  --bn-colors-shadow: rgba(28,64,51,.12);
+  --bn-colors-border: var(--nv-divider);
+  --bn-colors-side-menu: var(--nv-secondary-text);
+  --bn-border-radius: 8px;
+  --bn-border-radius-small: 6px;
+  --bn-border-radius-medium: 8px;
+  --bn-border-radius-large: 12px;
+}
 .nv-doc-bn .bn-container { min-height: 100%; }
-.nv-doc-bn .bn-editor { padding: 10px 32px 140px; max-width: 840px; margin: 0 auto; font-family: inherit; }
+.nv-doc-bn .bn-editor { padding: 12px 36px 140px; max-width: 860px; margin: 0 auto; font-family: inherit; }
 .nv-canvas-conflict { padding: 8px 14px; font-size: 12px; color: var(--nv-warn); background: var(--nv-warn-soft); }
 
 /* 通用编辑器：标题 + meta + 正文 + 底状态条（文稿与卡模块共用） */

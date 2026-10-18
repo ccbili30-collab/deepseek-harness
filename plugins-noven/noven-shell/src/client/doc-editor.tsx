@@ -1,12 +1,49 @@
 /**
- * 文稿富编辑器 —— BlockNote 底座（MPL-2.0）。界面是所见即所得：选中加格式、
- * 斜杠插入、块拖拽；markdown 只是硬盘格式——打开时把 md 解析成块，存盘时
- * 序列化回 md。样式由构建期打平的字符串注入一次（插件构建盒不处理 CSS import）。
+ * 文稿富编辑器 —— BlockNote 底座（MPL-2.0）。界面所见即所得：选中加格式、
+ * 斜杠插入、块拖拽；markdown 只是硬盘格式，打开时解析成块、存盘时序列化回 md。
+ * 左侧标题树由块的 heading 实时生成，点条目跳到对应标题。
  */
-import { useEffect, useLayoutEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { Block } from '@blocknote/core'
+import { zh } from '@blocknote/core/locales'
 import { useCreateBlockNote } from '@blocknote/react'
 import { BlockNoteView } from '@blocknote/mantine'
 import { BLOCKNOTE_CSS } from './doc-blocknote-css.ts'
+
+/** 标题树的一项：块 id、层级与文字。 */
+interface OutlineItem {
+  readonly id: string
+  readonly level: number
+  readonly text: string
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null
+
+/** 从行内内容里取纯文字（文本/链接/提及等容器的递归）。 */
+function inlineText(content: unknown): string {
+  if (!Array.isArray(content)) return ''
+  let text = ''
+  for (const item of content) {
+    if (!isRecord(item)) continue
+    if (typeof item['text'] === 'string') text += item['text']
+    else if (item['content'] !== undefined) text += inlineText(item['content'])
+  }
+  return text
+}
+
+/** 扫描文档块，产出标题树（只认 heading 块）。 */
+function outlineOf(blocks: readonly Block[]): OutlineItem[] {
+  const items: OutlineItem[] = []
+  for (const block of blocks) {
+    if (block.type !== 'heading') continue
+    const props: unknown = block.props
+    const rawLevel = isRecord(props) ? props['level'] : undefined
+    const level = typeof rawLevel === 'number' ? rawLevel : 1
+    const text = inlineText(block.content).trim()
+    if (text !== '') items.push({ id: block.id, level, text })
+  }
+  return items
+}
 
 /** 全书共用一份样式，多页签只注入一次。 */
 function useBlockNoteStyles(): void {
@@ -22,14 +59,17 @@ function useBlockNoteStyles(): void {
 /**
  * 富文本文稿体。
  * @param markdown - 打开时的磁盘内容（只用作首帧填充；之后的变更由本编辑器产生）。
- * @param onChange - 防抖后的 markdown 快照（空值不写：空稿与"还没加载"不可区分）。
+ * @param outlineLabel - 标题树的标题文案（locale 归调用方）。
+ * @param onChange - 防抖后的 markdown 快照。
  */
-export function BlockNoteDocEditor({ markdown, onChange }: {
+export function BlockNoteDocEditor({ markdown, outlineLabel, onChange }: {
   readonly markdown: string
+  readonly outlineLabel: string
   readonly onChange: (markdown: string) => void
 }) {
   useBlockNoteStyles()
-  const editor = useCreateBlockNote()
+  const editor = useCreateBlockNote({ dictionary: zh })
+  const [outline, setOutline] = useState<readonly OutlineItem[]>([])
   const loaded = useRef(false)
   const last = useRef(markdown)
   const timer = useRef<number | undefined>(undefined)
@@ -39,24 +79,44 @@ export function BlockNoteDocEditor({ markdown, onChange }: {
     loaded.current = true
     const blocks = editor.tryParseMarkdownToBlocks(markdown)
     if (blocks.length > 0) editor.replaceBlocks(editor.document, blocks)
+    setOutline(outlineOf(editor.document))
   }, [editor, markdown])
   useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
+  const jumpTo = useCallback((id: string) => {
+    const element = document.querySelector(`.nv-doc-bn .bn-block[data-id="${CSS.escape(id)}"]`)
+    element?.scrollIntoView({ block: 'start', behavior: 'smooth' })
+  }, [])
   return (
-    <div className="nv-doc-bn">
-      <BlockNoteView
-        editor={editor}
-        theme="light"
-        onChange={() => {
-          if (timer.current !== undefined) window.clearTimeout(timer.current)
-          timer.current = window.setTimeout(() => {
-            timer.current = undefined
-            const text = editor.blocksToMarkdownLossy()
-            if (text === last.current) return
-            last.current = text
-            onChange(text)
-          }, 600)
-        }}
-      />
+    <div className="nv-doc-split">
+      {outline.length > 0 && (
+        <aside className="nv-doc-outline" aria-label={outlineLabel}>
+          <div className="nv-doc-outline-label">{outlineLabel}</div>
+          {outline.map(item => (
+            <button key={item.id} type="button" className="nv-doc-outline-item"
+              data-level={Math.min(item.level, 3)} title={item.text}
+              onClick={() => { jumpTo(item.id) }}>
+              {item.text}
+            </button>
+          ))}
+        </aside>
+      )}
+      <div className="nv-doc-bn">
+        <BlockNoteView
+          editor={editor}
+          theme="light"
+          onChange={() => {
+            setOutline(outlineOf(editor.document))
+            if (timer.current !== undefined) window.clearTimeout(timer.current)
+            timer.current = window.setTimeout(() => {
+              timer.current = undefined
+              const text = editor.blocksToMarkdownLossy()
+              if (text === last.current) return
+              last.current = text
+              onChange(text)
+            }, 600)
+          }}
+        />
+      </div>
     </div>
   )
 }
