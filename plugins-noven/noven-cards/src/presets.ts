@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { emptyCardDocument, mintId, type ContentBlock, type ContentDocument, type ContentModule } from './model.ts'
 import {
-  encodeCollection, encodeTimeline,
+  encodeCollection, encodeMap, encodeRelation, encodeTimeline,
   type CollectionFieldType, type CollectionValue, type TimelineCalendar, type TimelineData, type TimelineEra, type TimelineEvent,
 } from './formats.ts'
 
@@ -26,6 +26,20 @@ export interface PresetField {
 
 /** 预设里的一行样例数据：字段名 → 值；图片列用 `{ asset }` 指向预设资源。 */
 export type PresetRow = Readonly<Record<string, string | number | boolean | { readonly asset: string }>>
+
+/** 预设里的关系图样例：按名字连边，落卡时换成真 id。 */
+export interface PresetRelation {
+  readonly nodes?: readonly { readonly name: string, readonly note?: string, readonly x?: number, readonly y?: number }[]
+  readonly edges?: readonly { readonly from: string, readonly to: string, readonly label: string }[]
+}
+
+/** 预设里的地图样例：底图资源 + 标记点（归一化坐标）。 */
+export interface PresetMap {
+  readonly description?: string
+  /** presets 下的底图相对路径（jpg/png）。 */
+  readonly image?: string
+  readonly markers?: readonly { readonly x: number, readonly y: number, readonly label: string, readonly description?: string }[]
+}
 
 /** 预设里的时间线样例：纪元与事件。 */
 export interface PresetTimeline {
@@ -53,6 +67,10 @@ export interface PresetModuleNode {
   readonly view?: string
   /** 时间线模块的样例纪元与事件。 */
   readonly timeline?: PresetTimeline
+  /** 关系图模块的样例节点与连线。 */
+  readonly relation?: PresetRelation
+  /** 地图模块的样例底图与标记。 */
+  readonly map?: PresetMap
   /** 单模块预设：落卡后直接打开这个模块页。 */
   readonly focus?: boolean
   readonly children?: readonly PresetModuleNode[]
@@ -149,6 +167,10 @@ function normalizeNode(raw: unknown): PresetModuleNode | undefined {
   if (rows !== undefined && rows.some(row => typeof row !== 'object' || row === null)) return undefined
   const timeline = record.timeline === undefined ? undefined : normalizeTimeline(record.timeline)
   if (record.timeline !== undefined && timeline === undefined) return undefined
+  const relation = record.relation === undefined ? undefined : normalizeRelation(record.relation)
+  if (record.relation !== undefined && relation === undefined) return undefined
+  const map = record.map === undefined ? undefined : normalizeMap(record.map)
+  if (record.map !== undefined && map === undefined) return undefined
   const children = record.children === undefined ? undefined : (record.children as unknown[]).map(normalizeNode)
   if (children !== undefined && children.some(node => node === undefined)) return undefined
   return {
@@ -159,8 +181,57 @@ function normalizeNode(raw: unknown): PresetModuleNode | undefined {
     ...(rows === undefined ? {} : { rows: rows as PresetRow[] }),
     ...(record.view === undefined ? {} : { view: record.view as string }),
     ...(timeline === undefined ? {} : { timeline }),
+    ...(relation === undefined ? {} : { relation }),
+    ...(map === undefined ? {} : { map }),
     ...(record.focus === undefined ? {} : { focus: record.focus as boolean }),
     ...(children === undefined ? {} : { children: children as PresetModuleNode[] }),
+  }
+}
+
+function normalizeRelation(raw: unknown): PresetRelation | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const record = raw as Record<string, unknown>
+  const nodes = record.nodes === undefined ? undefined : (record.nodes as unknown[]).map(node => {
+    if (typeof node !== 'object' || node === null) return undefined
+    const source = node as Record<string, unknown>
+    if (typeof source.name !== 'string' || source.name.length === 0) return undefined
+    return {
+      name: source.name,
+      ...(typeof source.note === 'string' ? { note: source.note } : {}),
+      ...(Number.isFinite(Number(source.x)) && source.x !== null ? { x: Number(source.x) } : {}),
+      ...(Number.isFinite(Number(source.y)) && source.y !== null ? { y: Number(source.y) } : {}),
+    }
+  })
+  if (nodes !== undefined && nodes.some(node => node === undefined)) return undefined
+  const edges = record.edges === undefined ? undefined : (record.edges as unknown[]).map(edge => {
+    if (typeof edge !== 'object' || edge === null) return undefined
+    const source = edge as Record<string, unknown>
+    if (typeof source.from !== 'string' || typeof source.to !== 'string' || typeof source.label !== 'string') return undefined
+    return { from: source.from, to: source.to, label: source.label }
+  })
+  if (edges !== undefined && edges.some(edge => edge === undefined)) return undefined
+  return { ...(nodes === undefined ? {} : { nodes: nodes as NonNullable<PresetRelation['nodes']> }), ...(edges === undefined ? {} : { edges: edges as NonNullable<PresetRelation['edges']> }) }
+}
+
+function normalizeMap(raw: unknown): PresetMap | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const record = raw as Record<string, unknown>
+  if (record.description !== undefined && typeof record.description !== 'string') return undefined
+  if (record.image !== undefined && typeof record.image !== 'string') return undefined
+  const markers = record.markers === undefined ? undefined : (record.markers as unknown[]).map(marker => {
+    if (typeof marker !== 'object' || marker === null) return undefined
+    const source = marker as Record<string, unknown>
+    if (typeof source.label !== 'string' || !Number.isFinite(Number(source.x)) || !Number.isFinite(Number(source.y))) return undefined
+    return {
+      x: Number(source.x), y: Number(source.y), label: source.label,
+      ...(typeof source.description === 'string' ? { description: source.description } : {}),
+    }
+  })
+  if (markers !== undefined && markers.some(marker => marker === undefined)) return undefined
+  return {
+    ...(record.description === undefined ? {} : { description: record.description as string }),
+    ...(record.image === undefined ? {} : { image: record.image as string }),
+    ...(markers === undefined ? {} : { markers: markers as NonNullable<PresetMap['markers']> }),
   }
 }
 
@@ -245,6 +316,42 @@ export async function buildPresetDocument(
         }
         const encoded = encodeCollection({ version: 2, fields, items, values, view: (node.view ?? 'list') as import('./formats.ts').CollectionView, artStyle: '' })
         module.blocks.push({ kind: 'text', id: mintId(), content: await io.writeText(encoded) })
+      } else if (node.widget === 'relation') {
+        const nodes = (node.relation?.nodes ?? []).map(node2 => ({
+          id: mintId(), name: node2.name, note: node2.note ?? '',
+          x: node2.x ?? null, y: node2.y ?? null,
+        }))
+        const byName = new Map(nodes.map(node2 => [node2.name, node2.id]))
+        const edges = (node.relation?.edges ?? []).flatMap(edge => {
+          const from = byName.get(edge.from)
+          const to = byName.get(edge.to)
+          return from === undefined || to === undefined ? [] : [{ id: mintId(), from, to, label: edge.label }]
+        })
+        module.blocks.push({ kind: 'text', id: mintId(), content: await io.writeText(encodeRelation({ version: 1, nodes, edges })) })
+      } else if (node.widget === 'map') {
+        if (node.map?.image !== undefined) {
+          const asset = node.map.image
+          const bytes = await readFile(join(PRESETS_DIR, asset))
+          const mediaType = asset.endsWith('.png') ? 'image/png' : 'image/jpeg'
+          const resourceId = mintId()
+          document.resources.push({ id: resourceId, content: await io.writePayload(bytes, mediaType), mediaType })
+          module.blocks.push({ kind: 'image', id: mintId(), resourceId })
+        }
+        const marks = (node.map?.markers ?? []).map(marker => ({
+          id: mintId(), type: 'mark' as const, layer: 'marks', name: marker.label, color: '#34d399',
+          pos: [marker.x, marker.y] as const, description: marker.description ?? '',
+        }))
+        module.blocks.push({
+          kind: 'text', id: mintId(),
+          content: await io.writeText(encodeMap({
+            version: 1,
+            description: node.map?.description ?? '',
+            markers: marks.map(mark => ({ id: mark.id, x: mark.pos[0], y: mark.pos[1], label: mark.name, description: mark.description })),
+            objects: marks,
+            draft: [],
+            palette: [],
+          })),
+        })
       } else if (node.widget === 'timeline') {
         const data: TimelineData = {
           version: 2,

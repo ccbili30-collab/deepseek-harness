@@ -97,7 +97,7 @@ try {
   check(presetCard.ok === true && typeof presetCard.cardId === 'string', '模板 starter 落卡')
   const presetPayload = await (await cardRoute.fetch(new Request(`http://t/api/noven-cards?root=${encodeURIComponent(root)}&card=${presetCard.cardId}`))).json()
   check(presetPayload.card.document.modules.some(m => m.name === '势力名录' && m.widget?.type === 'collection'), '预设世界带势力名录集合模块')
-  check(presetPayload.card.document.resources.length === 0, '世界预设不带图片资源')
+  check(presetPayload.card.document.resources.length === 1, '世界预设带地图底图资源')
 
   // 5. /api/noven-tree：聚合 + since 304
   const tree1 = await (await treeRoute.fetch(new Request(`http://t/api/noven-tree?root=${encodeURIComponent(root)}`))).json()

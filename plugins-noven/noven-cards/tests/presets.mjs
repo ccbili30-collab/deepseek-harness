@@ -43,6 +43,8 @@ for (const file of files) {
   const all = collect(built.document.modules)
   check(all.length > 0, `${file}: 落出模块（${all.length}）`)
   check(new Set(all.map(m => m.id)).size === all.length, `${file}: 模块 id 唯一`)
+  const emptyLeaves = all.filter(m => m.children.length === 0 && m.blocks.length === 0)
+  check(emptyLeaves.length === 0, `${file}: 无空模块（${emptyLeaves.map(m => m.name).join('/') || '全部有内容'}）`)
   for (const module of all) {
     if (module.widget?.type === 'collection') {
       const block = module.blocks.find(b => b.kind === 'text')
@@ -58,7 +60,15 @@ for (const file of files) {
     const fields = all.find(m => m.name === '势力名录')?.blocks[0]
     check(fields !== undefined, 'world: 势力名录存在')
     check(all.some(m => m.name === '时间线' && m.widget?.type === 'timeline'), 'world: 时间线模块存在')
-    check(all.some(m => m.name === '地图' && m.widget?.type === 'map'), 'world: 地图模块存在')
+    const mapModule = all.find(m => m.name === '地图' && m.widget?.type === 'map')
+    check(mapModule !== undefined, 'world: 地图模块存在')
+    check(mapModule?.blocks.some(b => b.kind === 'image') === true, 'world: 地图带底图块')
+    const mapPayload = JSON.parse(String(mapModule?.blocks.find(b => b.kind === 'text')?.content ?? '{}'))
+    check(mapPayload.noven?.markers?.length === 5, `world: 地图 5 个标记（${mapPayload.noven?.markers?.length ?? 0}）`)
+    const relModule = all.find(m => m.name === '关系图' && m.widget?.type === 'relation')
+    const relPayload = JSON.parse(String(relModule?.blocks[0]?.content ?? '{}'))
+    check(relPayload.noven?.nodes?.length === 4 && relPayload.noven?.edges?.length === 5, 'world: 关系图 4 节点 5 边')
+    check(built.document.resources.length === 1, `world: 地图底图资源落盘（${built.document.resources.length}）`)
   }
   if (id === 'character') {
     check(built.document.resources.length === 3, `character: 三张立绘资源落盘（${built.document.resources.length}）`)
@@ -70,6 +80,9 @@ for (const file of files) {
     const galleryData = gallery === undefined ? undefined : JSON.parse(String(gallery.blocks[0]?.content ?? '{}'))
     check(galleryData?.noven?.view === 'cards', 'character: 多形态默认图鉴视图')
     check(galleryData?.items?.every(item => typeof item.visualKey === 'string'), 'character: 形态条目带主图（visualKey）')
+    const relModule = all.find(m => m.name === '关系图' && m.widget?.type === 'relation')
+    const relPayload = JSON.parse(String(relModule?.blocks[0]?.content ?? '{}'))
+    check(relPayload.noven?.nodes?.length === 5 && relPayload.noven?.edges?.length === 5, 'character: 关系图 5 节点 5 边')
   }
 }
 
