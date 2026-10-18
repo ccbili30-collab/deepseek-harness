@@ -1473,7 +1473,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-doc-outline { position: absolute; top: 8px; right: 12px; z-index: 6;
   width: 168px; max-height: min(42%, 360px); overflow-y: auto; padding: 0 0 22px; box-sizing: border-box;
   scrollbar-width: none;
-  opacity: .38; filter: blur(.5px);
+  opacity: .38; filter: blur(.5px); pointer-events: none;
   transition: opacity 160ms ease, filter 160ms ease;
   -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 80%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0, #000 80%, transparent 100%); }
@@ -1483,7 +1483,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-doc-bn > * { direction: ltr; }
 .nv-doc-outline-label { padding: 0 8px 8px; font-size: 11px; font-weight: 700; letter-spacing: .14em; color: var(--nv-secondary-text); }
 .nv-doc-outline-empty { padding: 2px 8px; font-size: 11.5px; line-height: 1.7; color: var(--nv-secondary-text); opacity: .7; }
-.nv-doc-outline-item { display: block; width: 100%; border: 0; background: none; border-radius: 7px; padding: 5px 8px; text-align: left;
+.nv-doc-outline-item { display: block; width: 100%; pointer-events: auto; border: 0; background: none; border-radius: 7px; padding: 5px 8px; text-align: left;
   font-size: 12px; line-height: 1.5; color: var(--nv-secondary-text); cursor: pointer; font-family: inherit;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nv-doc-outline-item:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
@@ -1547,7 +1547,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   background-color: transparent !important;
   color: rgba(255, 255, 255, .55) !important;
 }
-.nv-doc-bn .bn-editor { padding: 12px 36px 140px; max-width: 860px; margin: 0 auto; font-family: inherit; }
+.nv-doc-bn .bn-editor { padding: 12px 48px 140px; max-width: none; margin: 0; font-family: inherit; }
 .nv-canvas-conflict { padding: 8px 14px; font-size: 12px; color: var(--nv-warn); background: var(--nv-warn-soft); }
 
 /* 通用编辑器：标题 + meta + 正文 + 底状态条（文稿与卡模块共用） */
