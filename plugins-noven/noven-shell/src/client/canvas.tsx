@@ -778,6 +778,16 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
     if (closeTimer.current !== undefined) window.clearTimeout(closeTimer.current)
   }, [])
   useEffect(() => {
+    if (!RICH_TEXT_PATH.test(path)) return
+    const onShortcut = (event: KeyboardEvent): void => {
+      if (event.key.toLowerCase() !== 'o' || !event.shiftKey || !(event.metaKey || event.ctrlKey)) return
+      event.preventDefault()
+      togglePanel()
+    }
+    window.addEventListener('keydown', onShortcut)
+    return () => { window.removeEventListener('keydown', onShortcut) }
+  })
+  useEffect(() => {
     if (!panelOpen) return
     const onKey = (event: KeyboardEvent): void => {
       if (event.key !== 'Escape') return
@@ -892,6 +902,17 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
     justDragged.current = false
     setPanelOpen(true)
   }
+  /** 显式开关（按钮/快捷键/点击刻度）：开就钉住，再触发就收起。 */
+  const togglePanel = (): void => {
+    if (panelOpen) {
+      setPanelOpen(false)
+      setPinned(false)
+    } else {
+      justDragged.current = false
+      setPinned(true)
+      setPanelOpen(true)
+    }
+  }
   const scheduleClose = (): void => {
     if (pinned || dragRef.current !== null || justDragged.current || closeTimer.current !== undefined) return
     closeTimer.current = window.setTimeout(() => {
@@ -941,6 +962,13 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
             <button type="button" className="nv-ed-more" aria-label={t('canvas.doc.more')}
               onClick={() => setMenuOpen(v => !v)}>⋯</button>
           )} />
+        {RICH_TEXT_PATH.test(path) && (
+          <button type="button" className={`nv-ed-outline-btn${panelOpen ? ' on' : ''}`}
+            title={`${t('canvas.outline')} · ⌘/Ctrl+Shift+O`}
+            aria-pressed={panelOpen} onClick={togglePanel}>
+            {t('canvas.outline')}
+          </button>
+        )}
       </header>
       {RICH_TEXT_PATH.test(path)
         ? <BlockNoteDocEditor markdown={base} onChange={text => { void saveText(text) }}
@@ -952,7 +980,7 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
         <>
           {/* 常驻：右缘刻度（位置标尺，不占布局、只标位置） */}
           <div className="nv-doc-rail" aria-hidden="true"
-            onPointerEnter={openPanel} onPointerLeave={scheduleClose} onClick={openPanel}>
+            onPointerEnter={openPanel} onPointerLeave={scheduleClose} onClick={togglePanel}>
             {marks.map(mark => (
               <span key={mark.id}
                 className={`nv-doc-rail-mark${mark.id === activeHeading ? ' nv-doc-rail-mark-on' : ''}`}

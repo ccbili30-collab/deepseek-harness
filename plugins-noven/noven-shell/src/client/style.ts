@@ -1470,7 +1470,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-ed.nv-ed-doc { position: relative; padding: 0; overflow: hidden; }
 .nv-ed-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 /* 右缘刻度：常驻的位置标尺——不占布局、不挡字，只标标题所在位置（当前项薄荷） */
-.nv-doc-rail { position: absolute; top: 84px; right: 10px; bottom: 24px; width: 14px; z-index: 6; cursor: pointer; }
+.nv-doc-rail { position: absolute; top: 84px; right: 4px; bottom: 24px; width: 12px; z-index: 6; cursor: pointer; }
 .nv-doc-rail-mark { position: absolute; right: 0; width: 8px; height: 2px; border-radius: 1px;
   background: var(--nv-secondary-text); opacity: .28;
   transition: width 120ms ease, opacity 120ms ease, background 120ms ease; }
@@ -1573,6 +1573,10 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 /* 通用编辑器：标题 + meta + 正文 + 底状态条（文稿与卡模块共用） */
 .nv-ed { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .nv-ed .nv-ed-head { padding: 20px 28px 10px; position: relative; }
+.nv-ed-outline-btn { position: absolute; top: 18px; right: 52px; border: 0; background: none; border-radius: 7px;
+  padding: 3px 8px; font-size: 11.5px; font-family: inherit; color: var(--nv-secondary-text); cursor: pointer; }
+.nv-ed-outline-btn:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
+.nv-ed-outline-btn.on { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 .nv-ed-more { position: absolute; top: 18px; right: 22px; border: 0; background: none; padding: 2px 8px;
   font-size: 15px; color: var(--nv-secondary-text); cursor: pointer; border-radius: 6px; }
 .nv-ed-more:hover { color: var(--nv-primary-text); background: var(--nv-accent-soft); }
