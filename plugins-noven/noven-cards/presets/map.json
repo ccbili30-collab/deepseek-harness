@@ -1,0 +1,7 @@
+{
+  "id": "map", "kind": "WORLD", "title": "地图", "summary": "一张只装地图的卡：底图 + 标记的交互地图", "defaultName": "未命名地图",
+  "modules": [
+    { "name": "设定总览", "widget": "overview", "sample": "先放一张底图，再把地点标上去。" },
+    { "name": "地图", "widget": "map", "focus": true }
+  ]
+}

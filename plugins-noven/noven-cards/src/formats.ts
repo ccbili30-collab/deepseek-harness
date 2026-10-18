@@ -341,6 +341,13 @@ export interface CollectionField {
   readonly type: CollectionFieldType
 }
 
+/** 引用单元格：指向一张卡（`itemId` 可指向该卡某集合条目）。 */
+export interface CardRefValue {
+  readonly cardId: string
+  readonly name: string
+  readonly itemId?: string
+}
+
 export interface CollectionItem {
   readonly id: string
   readonly name: string
@@ -349,9 +356,9 @@ export interface CollectionItem {
   readonly visualKey: string | null
 }
 
-export type CollectionValue = string | number | boolean | null | { readonly resourceId: string }
-export type CollectionView = 'list' | 'cards' | 'timeline' | 'map'
-const VIEWS = new Set<CollectionView>(['list', 'cards', 'timeline', 'map'])
+export type CollectionValue = string | number | boolean | null | { readonly resourceId: string } | CardRefValue
+export type CollectionView = 'list' | 'cards' | 'form' | 'timeline' | 'map'
+const VIEWS = new Set<CollectionView>(['list', 'cards', 'form', 'timeline', 'map'])
 
 export interface CollectionData {
   readonly version: 2

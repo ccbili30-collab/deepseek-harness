@@ -1,0 +1,7 @@
+{
+  "id": "collection", "kind": "WORLD", "title": "集合", "summary": "一张只装集合表的卡：字段与条目，从零定义", "defaultName": "未命名集合",
+  "modules": [
+    { "name": "设定总览", "widget": "overview", "sample": "先定义列，再加行。" },
+    { "name": "集合", "widget": "collection", "focus": true }
+  ]
+}

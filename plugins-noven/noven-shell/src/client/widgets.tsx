@@ -92,7 +92,24 @@ export const mapData = (data: unknown): MapData => {
 
 interface CollField { readonly id: string, readonly name: string, readonly type: string }
 interface CollItem { readonly id: string, readonly name: string, readonly summary: string, readonly description: string, readonly visualKey: string | null }
-type CollValue = string | number | boolean | null | { readonly resourceId?: string }
+type CollValue = string | number | boolean | null
+  | { readonly resourceId?: string }
+  | { readonly cardId?: string, readonly name?: string, readonly itemId?: string }
+
+/** 引用选择器的目标：项目内一张卡。 */
+export interface RefTarget { readonly cardId: string, readonly name: string, readonly kind: string }
+
+/** 反查索引里的一条：某张卡在哪个模块/字段引用了我。 */
+export interface RefBacklink {
+  readonly fromCardId: string
+  readonly fromCardName: string
+  readonly fromKind: string
+  readonly moduleId: string
+  readonly moduleName: string
+  readonly fieldId: string
+  readonly fieldName: string
+  readonly itemName: string
+}
 interface CollData {
   readonly fields: readonly CollField[]
   readonly items: readonly CollItem[]
@@ -1712,10 +1729,14 @@ function MarkerForm({ t, title, marker, onSubmit, onDelete, onCancel }: {
 /** 集合条目字段值 → 展示文本；图片值返回 ''（卡片走 resourceId 单独渲染）。 */
 const collText = (v: CollValue | undefined): string => {
   if (v === undefined || v === null) return ''
-  if (typeof v === 'object') return ''
+  if (typeof v === 'object') return 'name' in v && typeof v.name === 'string' ? v.name : ''
   if (typeof v === 'boolean') return v ? '✓' : ''
   return String(v)
 }
+
+/** 引用单元格里的卡 id（无引用返回 undefined）。 */
+const refCardId = (v: CollValue | undefined): string | undefined =>
+  typeof v === 'object' && v !== null && 'cardId' in v && typeof v.cardId === 'string' && v.cardId.length > 0 ? v.cardId : undefined
 
 /** 分组字段：优先惯用名（类别/分类…），否则取第一个取值在 2..8 种的 text 字段。 */
 const GROUP_NAMES = new Set(['类别', '分类', '分组', '类型', 'category', 'type', 'group'])
@@ -1751,15 +1772,16 @@ const collSections = (data: CollData, ungrouped: string): { readonly field: Coll
  * 集合渲染器：list 表格 / cards 图鉴卡 / timeline 编年长卷。
  * 前端按数据规则定版式（分组字段、关键数字、时间轴位置），AI 只供素材与值。
  */
-export function CollectionWidget({ module, t, send, imageUrl }: WidgetProps & { readonly imageUrl: (resourceId: string) => string }) {
+export function CollectionWidget({ module, t, send, imageUrl, refTargets }: WidgetProps & { readonly imageUrl: (resourceId: string) => string, readonly refTargets?: readonly RefTarget[] }) {
   const data = coll(module.widget?.data)
-  const view = data.view === 'cards' || data.view === 'timeline' ? data.view : 'list'
+  const view = data.view === 'cards' || data.view === 'form' || data.view === 'timeline' ? data.view : 'list'
   const [openId, setOpenId] = useState<string | null>(null)
   const openItem = data.items.find(item => item.id === openId)
   const setView = (next: string): void => { void send({ kind: 'collection_set_view', moduleId: module.id, view: next }) }
   const VIEWS: readonly { readonly id: string, readonly label: string }[] = [
     { id: 'list', label: t('coll.view.list') },
     { id: 'cards', label: t('coll.view.cards') },
+    { id: 'form', label: t('coll.view.form') },
     { id: 'timeline', label: t('coll.view.timeline') },
   ]
   return (
@@ -1777,10 +1799,11 @@ export function CollectionWidget({ module, t, send, imageUrl }: WidgetProps & { 
       {data.items.length === 0 && <div className="nv-coll-empty">{t('coll.empty')}</div>}
       {view === 'list' && <CollList data={data} t={t} />}
       {view === 'cards' && <CollCards data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
+      {view === 'form' && <CollForm data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
       {view === 'timeline' && <CollScroll data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
       {openItem !== undefined && (
         <CollDetail data={data} item={openItem} t={t} moduleId={module.id} imageUrl={imageUrl}
-          send={send} onClose={() => setOpenId(null)} />
+          send={send} refTargets={refTargets} onClose={() => setOpenId(null)} />
       )}
     </div>
   )
@@ -1825,6 +1848,51 @@ function CollCards({ data, t, imageUrl, openId, onOpen }: {
                   {statText !== '' && <span className="nv-coll-cardstat">{statText}</span>}
                   {item.summary !== '' && <span className="nv-coll-cardsum">{item.summary}</span>}
                 </button>
+              )
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+/** 表单视图：一条一张表单卡，字段按「标签—值」逐行排；点卡头打开完整编辑。 */
+function CollForm({ data, t, imageUrl, openId, onOpen }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly imageUrl: (resourceId: string) => string
+  readonly openId: string | null
+  readonly onOpen: (id: string | null) => void
+}) {
+  return (
+    <div className="nv-coll-forms">
+      {data.items.map(item => (
+        <section key={item.id} className={`nv-coll-formcard${openId === item.id ? ' nv-coll-formcard-on' : ''}`}>
+          <button type="button" className="nv-coll-formhead" onClick={() => onOpen(openId === item.id ? null : item.id)}>
+            <span className="nv-coll-formname">{item.name}</span>
+            <span className="nv-coll-formedit">{t('coll.form.edit')}</span>
+          </button>
+          <div className="nv-coll-formrows">
+            {data.fields.map(field => {
+              const raw = data.values[item.id]?.[field.id]
+              if (field.type === 'image') {
+                const resourceId = typeof raw === 'object' && raw !== null && 'resourceId' in raw ? raw.resourceId : undefined
+                return (
+                  <div key={field.id} className="nv-coll-formrow">
+                    <span className="nv-coll-formlabel">{field.name}</span>
+                    {resourceId === undefined
+                      ? <span className="nv-coll-formvalue nv-coll-formempty">—</span>
+                      : <img className="nv-coll-formimg" src={imageUrl(resourceId)} alt="" />}
+                  </div>
+                )
+              }
+              const text = collText(raw)
+              return (
+                <div key={field.id} className="nv-coll-formrow">
+                  <span className="nv-coll-formlabel">{field.name}</span>
+                  <span className={`nv-coll-formvalue${text === '' ? ' nv-coll-formempty' : ''}`}>{text === '' ? '—' : text}</span>
+                </div>
               )
             })}
           </div>
@@ -1928,13 +1996,14 @@ function CollScroll({ data, t, imageUrl, openId, onOpen }: {
 }
 
 /** 条目详情面板：字段可就地编辑（blur 提交），名称/摘要/正文走 update_item。 */
-function CollDetail({ data, item, t, moduleId, imageUrl, send, onClose }: {
+function CollDetail({ data, item, t, moduleId, imageUrl, send, refTargets, onClose }: {
   readonly data: CollData
   readonly item: CollItem
   readonly t: ShellT
   readonly moduleId: string
   readonly imageUrl: (resourceId: string) => string
   readonly send: WidgetSend
+  readonly refTargets?: readonly RefTarget[]
   readonly onClose: () => void
 }) {
   const setValue = (field: CollField, raw: string): void => {
@@ -1960,7 +2029,21 @@ function CollDetail({ data, item, t, moduleId, imageUrl, send, onClose }: {
           return (
             <label key={field.id} className="nv-coll-field">
               <span className="nv-coll-fieldname">{field.name}</span>
-              {field.type === 'longtext' ? (
+              {field.type === 'person' || field.type === 'place' ? (
+                <select className="nv-coll-ref" value={refCardId(data.values[item.id]?.[field.id]) ?? ''}
+                  onChange={event => {
+                    const target = (refTargets ?? []).find(candidate => candidate.cardId === event.target.value)
+                    void send({
+                      kind: 'collection_set_value', moduleId, itemId: item.id, fieldId: field.id,
+                      value: target === undefined ? '' : { cardId: target.cardId, name: target.name },
+                    })
+                  }}>
+                  <option value="">—</option>
+                  {(refTargets ?? [])
+                    .filter(target => field.type === 'person' ? target.kind === 'CHARACTER' : target.kind === 'WORLD')
+                    .map(target => <option key={target.cardId} value={target.cardId}>{target.name}</option>)}
+                </select>
+              ) : field.type === 'longtext' ? (
                 <CollFieldArea value={v} onCommit={text => setValue(field, text)} />
               ) : (
                 <CollFieldInput value={v} numeric={field.type === 'number' || field.type === 'time'} onCommit={text => setValue(field, text)} />
