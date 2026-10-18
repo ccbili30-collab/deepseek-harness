@@ -1474,7 +1474,14 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-doc-outline-item:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
 .nv-doc-outline-item[data-level='2'] { padding-left: 20px; }
 .nv-doc-outline-item[data-level='3'] { padding-left: 32px; }
-.nv-doc-bn { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--nv-surface); font-family: inherit;
+.nv-doc-bn { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--nv-surface); font-family: inherit; }
+.nv-doc-bn .bn-container { min-height: 100%; }
+/* 选区高亮 = 薄荷绿（半透明，白底上不吞字）；块内所有行内元素共用 */
+.nv-doc-bn ::selection { background: rgba(52, 211, 153, .30); color: inherit; }
+.nv-doc-bn ::-moz-selection { background: rgba(52, 211, 153, .30); color: inherit; }
+/* BlockNote 浮层被 portal 到编辑器容器之外：主题变量挂全局根，浮窗按全局类改造。
+   浮窗（选中文字后的格式条）= 薄荷底 + 白图标；菜单/下拉保持白底、薄荷选中。 */
+:root {
   --bn-font-family: inherit;
   --bn-colors-editor-text: var(--nv-primary-text);
   --bn-colors-editor-background: var(--nv-surface);
@@ -1488,7 +1495,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   --bn-colors-selected-background: var(--nv-accent-soft);
   --bn-colors-disabled-text: var(--nv-secondary-text);
   --bn-colors-disabled-background: var(--nv-canvas);
-  --bn-colors-shadow: rgba(28,64,51,.12);
+  --bn-colors-shadow: rgba(28, 64, 51, .12);
   --bn-colors-border: var(--nv-divider);
   --bn-colors-side-menu: var(--nv-secondary-text);
   --bn-border-radius: 8px;
@@ -1496,44 +1503,33 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   --bn-border-radius-medium: 8px;
   --bn-border-radius-large: 12px;
 }
-.nv-doc-bn .bn-container { min-height: 100%; }
-/* 选区高亮 = 薄荷绿（半透明，白底上不吞字）；块内所有行内元素共用 */
-.nv-doc-bn ::selection { background: rgba(52, 211, 153, .30); color: inherit; }
-.nv-doc-bn ::-moz-selection { background: rgba(52, 211, 153, .30); color: inherit; }
-/* 浮窗（选中文字的格式条 / 块操作条）：薄荷底 + 白图标——注意两套浮窗的
-   外壳类不同（bn-formatting-toolbar / bn-action-toolbar），且按钮底色/文字色
-   由 mantine 规则直接给，必须按更高优先级盖掉，否则白字落白底=整排消失。 */
-.nv-doc-bn .bn-formatting-toolbar,
-.nv-doc-bn .bn-action-toolbar {
-  background-color: var(--nv-accent);
-  border-color: transparent;
-  box-shadow: 0 10px 28px rgba(28, 64, 51, .20);
-  color: #fff;
+.bn-toolbar {
+  background-color: var(--nv-accent) !important;
+  border-color: transparent !important;
+  box-shadow: 0 10px 28px rgba(28, 64, 51, .20) !important;
 }
-.nv-doc-bn .bn-formatting-toolbar .bn-button,
-.nv-doc-bn .bn-formatting-toolbar .bn-button svg,
-.nv-doc-bn .bn-formatting-toolbar .mantine-Button-root,
-.nv-doc-bn .bn-formatting-toolbar .mantine-ActionIcon-root,
-.nv-doc-bn .bn-formatting-toolbar .mantine-ActionIcon-root svg,
-.nv-doc-bn .bn-formatting-toolbar .bn-select,
-.nv-doc-bn .bn-formatting-toolbar .bn-select-text,
-.nv-doc-bn .bn-formatting-toolbar .bn-select svg,
-.nv-doc-bn .bn-action-toolbar .bn-button,
-.nv-doc-bn .bn-action-toolbar .bn-button svg,
-.nv-doc-bn .bn-action-toolbar .mantine-Button-root,
-.nv-doc-bn .bn-action-toolbar .mantine-ActionIcon-root,
-.nv-doc-bn .bn-action-toolbar .mantine-ActionIcon-root svg,
-.nv-doc-bn .bn-action-toolbar .bn-select,
-.nv-doc-bn .bn-action-toolbar .bn-select-text,
-.nv-doc-bn .bn-action-toolbar .bn-select svg {
-  color: #fff;
-  background-color: transparent;
+.bn-toolbar .mantine-ActionIcon-root,
+.bn-toolbar .mantine-Button-root,
+.bn-toolbar .bn-select,
+.bn-toolbar .bn-select-text,
+.bn-toolbar svg {
+  color: #fff !important;
+  background-color: transparent !important;
 }
-.nv-doc-bn .bn-formatting-toolbar .mantine-ActionIcon-root:hover,
-.nv-doc-bn .bn-formatting-toolbar .mantine-Button-root:hover,
-.nv-doc-bn .bn-action-toolbar .mantine-ActionIcon-root:hover,
-.nv-doc-bn .bn-action-toolbar .mantine-Button-root:hover {
-  background-color: rgba(255, 255, 255, .18);
+.bn-toolbar .mantine-ActionIcon-root:hover,
+.bn-toolbar .mantine-Button-root:hover {
+  background-color: rgba(255, 255, 255, .18) !important;
+  color: #fff !important;
+}
+.bn-toolbar .mantine-ActionIcon-root[data-selected],
+.bn-toolbar .mantine-Button-root[data-selected] {
+  background-color: rgba(255, 255, 255, .26) !important;
+  color: #fff !important;
+}
+.bn-toolbar .mantine-ActionIcon-root[data-disabled],
+.bn-toolbar .mantine-Button-root[data-disabled] {
+  background-color: transparent !important;
+  color: rgba(255, 255, 255, .55) !important;
 }
 .nv-doc-bn .bn-editor { padding: 12px 36px 140px; max-width: 860px; margin: 0 auto; font-family: inherit; }
 .nv-canvas-conflict { padding: 8px 14px; font-size: 12px; color: var(--nv-warn); background: var(--nv-warn-soft); }
