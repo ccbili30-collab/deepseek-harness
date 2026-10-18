@@ -1463,6 +1463,10 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-canvas-docedit { flex: 1; min-height: 0; border: 0; resize: none; padding: 24px 28px; font-size: 14px; line-height: 1.8;
   font-family: inherit; background: var(--nv-surface); color: var(--nv-primary-text); outline: none; }
 .nv-canvas-docstatus { padding: 6px 14px; font-size: 11px; color: var(--nv-secondary-text); border-top: 1px solid var(--nv-divider); }
+/* 文稿富编辑器（BlockNote）：一页文档的版心 */
+.nv-doc-bn { flex: 1; min-height: 0; overflow-y: auto; background: var(--nv-surface); font-family: inherit; }
+.nv-doc-bn .bn-container { min-height: 100%; }
+.nv-doc-bn .bn-editor { padding: 10px 32px 140px; max-width: 840px; margin: 0 auto; font-family: inherit; }
 .nv-canvas-conflict { padding: 8px 14px; font-size: 12px; color: var(--nv-warn); background: var(--nv-warn-soft); }
 
 /* 通用编辑器：标题 + meta + 正文 + 底状态条（文稿与卡模块共用） */

@@ -31,7 +31,17 @@ export default defineConfig({
     neverBundle: isPlatform,
     alwaysBundle: (specifier: string) => !isPlatform(specifier),
   },
+  define: {
+    // 浏览器包：第三方依赖（mantine/BlockNote 生态）会读 NODE_ENV。
+    'process.env.NODE_ENV': '"production"',
+  },
+  alias: {
+    // node:crypto 只被品牌库的 webcrypto 用到——浏览器原生提供，按垫片内联。
+    'node:crypto': new URL('./src/client/shim-crypto.ts', import.meta.url).pathname,
+  },
   outputOptions: {
+    // BlockNote/mantine 触发代码分割；模块加载器只认单个 factory 包，强制内联。
+    inlineDynamicImports: true,
     entryFileNames: 'client.js',
     chunkFileNames: 'client.[name].js',
     banner: (chunk) =>

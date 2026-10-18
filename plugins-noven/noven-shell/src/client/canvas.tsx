@@ -17,6 +17,7 @@ import type { ImportReport } from './tree-api.ts'
 
 import { CardPage } from './card-page.tsx'
 import { BlockEditor, metaOf, wordCount, type EditableBlock, type MdLabels } from './editor.tsx'
+import { BlockNoteDocEditor } from './doc-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { pagePending, type NovenTree, type TreeModuleRow } from './tree-api.ts'
 import { CreateDialog, type CreateKind, type CreateRequest } from './creation.tsx'
@@ -29,6 +30,9 @@ import type { IslandCall, IslandFrame } from './stage-island.tsx'
 import { buildEnv, realWebview, SIM_IME, WEBVIEW_BASELINE, type FrameSendResult } from './stage-frame.ts'
 import { collectDeltas, foldArchive, DELTA_WINDOW } from './stage-archive.ts'
 import { useSessionSettings } from './session-settings.tsx'
+
+/** markdown 文稿走富编辑器（BlockNote）；其余文本（json/yaml/代码…）保留纯文本块编辑。 */
+const RICH_TEXT_PATH = /\.(md|markdown)$/i
 
 /** 文件行的标签种类：可编辑文本走文稿编辑器，其余（HTML/图片/二进制）走画框预览。 */
 export const fileTabKind = (path: string): 'doc' | 'work' =>
@@ -795,7 +799,9 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
               onClick={() => setMenuOpen(v => !v)}>⋯</button>
           )} />
       </header>
-      <BlockEditor blocks={docBlocks(base)} labels={mdLabels} t={t} onSaveBlock={saveBlock} onAdd={addBlock} />
+      {RICH_TEXT_PATH.test(path)
+        ? <BlockNoteDocEditor markdown={base} onChange={text => { void saveText(text) }} />
+        : <BlockEditor blocks={docBlocks(base)} labels={mdLabels} t={t} onSaveBlock={saveBlock} onAdd={addBlock} />}
     </div>
   )
 }

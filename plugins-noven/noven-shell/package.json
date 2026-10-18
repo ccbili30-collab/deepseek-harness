@@ -87,5 +87,12 @@
       "platform": "web"
     },
     "manifestVersion": 1
+  },
+  "dependencies": {
+    "@blocknote/core": "0.56.0",
+    "@blocknote/mantine": "0.56.0",
+    "@blocknote/react": "0.56.0",
+    "@mantine/core": "^8.3.18",
+    "@mantine/hooks": "^8.3.18"
   }
 }
