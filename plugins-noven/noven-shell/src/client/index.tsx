@@ -1629,7 +1629,10 @@ export function apply(ctx: ClientContext): void {
     }).catch(() => undefined)
     if (response === undefined) return 'error'
     if (response.status === 409) return 'conflict'
-    return response.ok ? 'ok' : 'error'
+    if (!response.ok) return 'error'
+    // 保存成功后推进温层的 base：否则下一次防抖保存仍拿旧 base，必然再次 409。
+    docCache.put(docKey(sessionId, path), { state: 'ready', content })
+    return 'ok'
   }
 
   const listDir = async (sessionId: SessionId, path: string): Promise<readonly { name: string; type: string }[]> => {
