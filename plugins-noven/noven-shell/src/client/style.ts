@@ -2363,8 +2363,8 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 
 /* 集合复刻：主形态徽标 / 立场芯片 / 行内引用选择器 / 表单头像 */
 .nv-coll-card { position: relative; }
-.nv-coll-primary { position: absolute; top: 8px; right: 8px; z-index: 1; padding: 2px 8px; border-radius: 999px;
-  background: rgba(14,159,110,.14); color: var(--nv-accent-deep); font-size: 10.5px; }
+.nv-coll-primary { position: absolute; top: 8px; left: 8px; z-index: 2; padding: 2px 9px; border-radius: 999px;
+  background: rgba(14,159,110,.92); color: #fff; font-size: 10.5px; box-shadow: 0 1px 4px rgba(20,60,45,.2); }
 .nv-coll-cardsum { font-size: 11px; color: var(--nv-secondary-text); padding: 0 10px 8px; text-align: left; }
 .nv-coll-chip { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11px; white-space: nowrap; }
 .nv-coll-chip-green { background: rgba(14,159,110,.14); color: #0b7a55; }
@@ -2389,6 +2389,39 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-rel-zoomb { border: 0; background: none; cursor: pointer; font-size: 13px; padding: 2px 5px; color: var(--nv-primary-text); }
 .nv-rel-zoomval { font-size: 11px; color: var(--nv-secondary-text); min-width: 34px; text-align: center; }
 .nv-rel-zoomfit { font-size: 11px; }
+
+
+/* 关系图 1:1：连边胶囊与图例 */
+.nv-rel-pill { fill: #ffffff; stroke: #e3e6e3; }
+.nv-rel-edgelabel { font-size: 11px; fill: #6b716c; }
+.nv-rel-legend { position: absolute; top: 10px; left: 10px; display: flex; gap: 14px; font-size: 11px; color: var(--nv-secondary-text); }
+.nv-rel-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.nv-rel-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.nv-rel-dot-person { background: #34d399; }
+.nv-rel-dot-faction { background: #8b93a1; }
+/* 表单 1:1：左头像右字段，背景句独立成软底块 */
+.nv-coll-formmain { display: flex; gap: 18px; padding: 12px 14px; align-items: flex-start; }
+.nv-coll-formmain .nv-coll-formavatar { width: 160px; margin: 0; flex: none; aspect-ratio: 4 / 5; height: auto; }
+.nv-coll-formmain .nv-coll-formrows { flex: 1; min-width: 0; }
+.nv-coll-formmain .nv-coll-formrow:first-child { border-top: 0; }
+.nv-coll-formrow-quote { display: block; }
+.nv-coll-formquote { display: block; margin-top: 6px; padding: 10px 12px; border-radius: 10px; background: rgba(14,159,110,.05); color: var(--nv-primary-text); line-height: 1.7; }
+
+
+/* 画廊 1:1：竖版立绘卡片 + 集合头部的添加入口 */
+.nv-coll-barright { display: inline-flex; align-items: center; gap: 10px; }
+.nv-coll-add { border: 1px solid rgba(14,159,110,.3); border-radius: 9px; padding: 4px 12px; background: var(--nv-accent-soft);
+  color: var(--nv-accent-deep); font-size: 11.5px; cursor: pointer; }
+.nv-coll-add:hover { background: rgba(14,159,110,.16); }
+.nv-coll-cardimg { aspect-ratio: 3 / 4; height: auto; object-fit: cover; }
+/* 总览瓦片内容预览：字段行 / 芯片 / 缩略图 */
+.nv-ov-collpreview { display: flex; flex-direction: column; gap: 4px; width: 100%; }
+.nv-ov-prow { display: flex; gap: 10px; font-size: 11px; line-height: 1.5; }
+.nv-ov-plabel { flex: none; width: 52px; color: var(--nv-secondary-text); }
+.nv-ov-pvalue { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--nv-primary-text); }
+.nv-ov-pchips { display: flex; gap: 5px; flex-wrap: wrap; }
+.nv-ov-thumbs { display: flex; gap: 6px; }
+.nv-ov-thumbs img { width: 46px; height: 58px; object-fit: cover; border-radius: 6px; }
 
 table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 .nv-coll-table th { text-align: left; font-weight: 500; color: var(--nv-secondary-text); padding: 6px 8px; border-bottom: 1px solid var(--nv-divider); }

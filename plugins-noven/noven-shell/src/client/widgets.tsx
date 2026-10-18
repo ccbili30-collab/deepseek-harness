@@ -1448,7 +1448,11 @@ export function RelationWidget({ module, t, send, imageUrl }: WidgetProps & { re
               <line x1={x1} y1={y1} x2={x2} y2={y2} className="nv-rel-line" />
               <line x1={x1} y1={y1} x2={x2} y2={y2} className="nv-rel-linehit" />
               {edge.label !== '' && (
-                <text x={mx} y={my - 6} className="nv-rel-edgelabel" textAnchor="middle">{edge.label}</text>
+                <g className="nv-rel-edgebadge">
+                  <rect x={mx - (edge.label.length * 11 + 20) / 2} y={my - 22} width={edge.label.length * 11 + 20}
+                    height={18} rx={9} className="nv-rel-pill" />
+                  <text x={mx} y={my - 9} className="nv-rel-edgelabel" textAnchor="middle">{edge.label}</text>
+                </g>
               )}
             </g>
           )
@@ -1504,6 +1508,10 @@ export function RelationWidget({ module, t, send, imageUrl }: WidgetProps & { re
           <text x={REL_W / 2} y={REL_H / 2} className="nv-rel-empty" textAnchor="middle">{t('wg.rel.empty')}</text>
         )}
       </svg>
+      <div className="nv-rel-legend">
+        <span><i className="nv-rel-dot nv-rel-dot-person" />{t('wg.rel.legend.person')}</span>
+        <span><i className="nv-rel-dot nv-rel-dot-faction" />{t('wg.rel.legend.faction')}</span>
+      </div>
       <div className="nv-rel-zoom">
         <button type="button" className="nv-rel-zoomb" aria-label={t('wg.rel.zoomOut')}
           onClick={() => setZoom(prev => Math.max(0.5, Math.round(prev / 1.2 * 10) / 10))}>−</button>
@@ -1763,7 +1771,7 @@ function MarkerForm({ t, title, marker, onSubmit, onDelete, onCancel }: {
 // ---------- 集合（设计稿 06 + collection-v2 B/C） ----------
 
 /** 集合条目字段值 → 展示文本；图片值返回 ''（卡片走 resourceId 单独渲染）。 */
-const collText = (v: CollValue | undefined): string => {
+export const collText = (v: CollValue | undefined): string => {
   if (v === undefined || v === null) return ''
   if (typeof v === 'object') return 'name' in v && typeof v.name === 'string' ? v.name : ''
   if (typeof v === 'boolean') return v ? '✓' : ''
@@ -1830,12 +1838,17 @@ export function CollectionWidget({ module, t, send, imageUrl, refTargets }: Widg
     <div className="nv-coll">
       <div className="nv-coll-bar">
         <span className="nv-coll-count">{fmt(t, 'coll.count', { count: data.items.length })}</span>
-        <span className="nv-coll-views">
+        <span className="nv-coll-barright">
+          <button type="button" className="nv-coll-add" onClick={() => {
+            void send({ kind: 'collection_add_item', moduleId: module.id, item: { name: t('coll.newItem') } })
+          }}>＋ {t('coll.add')}</button>
+          <span className="nv-coll-views">
           {VIEWS.map(v => (
             <button key={v.id} type="button"
               className={`nv-coll-view${view === v.id ? ' nv-coll-view-on' : ''}`}
               onClick={() => setView(v.id)}>{v.label}</button>
           ))}
+          </span>
         </span>
       </div>
       {data.items.length === 0 && <div className="nv-coll-empty">{t('coll.empty')}</div>}
@@ -1921,6 +1934,7 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
             <span className="nv-coll-formname">{item.name}</span>
             <span className="nv-coll-formedit">{t('coll.form.edit')}</span>
           </button>
+          <div className="nv-coll-formmain">
           {(() => {
             const avatarField = data.fields.find(field => field.type === 'image')
             const avatarValue = avatarField === undefined ? undefined : data.values[item.id]?.[avatarField.id]
@@ -1945,6 +1959,14 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
                   </div>
                 )
               }
+              if (field.name === '一句话' || field.name === '一句话背景') {
+                return (
+                  <div key={field.id} className="nv-coll-formrow nv-coll-formrow-quote">
+                    <span className="nv-coll-formlabel">{field.name}</span>
+                    <span className="nv-coll-formquote">{text === '' ? '—' : text}</span>
+                  </div>
+                )
+              }
               return (
                 <div key={field.id} className="nv-coll-formrow">
                   <span className="nv-coll-formlabel">{field.name}</span>
@@ -1953,6 +1975,7 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
               )
             })}
           </div>
+          </div>
         </section>
       ))}
     </div>
@@ -1960,7 +1983,7 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
 }
 
 /** 立场/阵营这类短标签的色阶：正道绿、魔道红、中立灰，其余中性。 */
-const chipTone = (text: string): string => {
+export const chipTone = (text: string): string => {
   if (/正道|正统|光明|秩序/.test(text)) return 'green'
   if (/魔道|邪|混乱|暗/.test(text)) return 'red'
   if (/中立|灰色/.test(text)) return 'gray'

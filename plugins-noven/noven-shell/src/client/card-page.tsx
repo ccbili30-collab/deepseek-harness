@@ -12,7 +12,7 @@ import type { CardAddr, CardBlockView, CardDocView, CardModuleDoc, CardOpResult,
 import { CardConflict, cardContentUrl, fetchCard } from './card-api.ts'
 import { findModule } from './pages/CardEditor.tsx'
 import { BlockEditor, type EditableBlock, type EditorSaveResult, type MdLabels } from './editor.tsx'
-import { CollectionWidget, MiniRelation, MiniTimeline, RelationWidget, TimelineWidget, coll, mapData, rel, tl, type RefBacklink, type RefTarget, type WidgetSend } from './widgets.tsx'
+import { CollectionWidget, MiniRelation, MiniTimeline, RelationWidget, TimelineWidget, chipTone, coll, collText, mapData, rel, tl, type RefBacklink, type RefTarget, type WidgetSend } from './widgets.tsx'
 import { MapEditor } from './map-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
@@ -330,7 +330,36 @@ function OverviewTile({ module, t, imageUrl, onOpen }: {
           <span className="nv-ov-excerpt">{excerpt.slice(0, 140)}</span>
         )}
         {widget === 'html' && <span className="nv-ov-htmlglyph">{glyph.code(26)}</span>}
-        {widget === 'collection' && <span className="nv-ov-htmlglyph">{glyph.layers(26)}</span>}
+        {widget === 'collection' && (() => {
+          const data = coll(module.widget?.data)
+          const item = data.items[0]
+          const values = item === undefined ? undefined : data.values[item.id]
+          const imageField = data.fields.find(field => field.type === 'image')
+          const thumbs = imageField === undefined ? [] : data.items
+            .map(candidate => candidate.visualKey)
+            .filter((key): key is string => key !== null)
+            .slice(0, 3)
+          const rows = data.fields.filter(field => field.type !== 'image' && field.type !== 'chips').slice(0, 3)
+          const chipField = data.fields.find(field => field.type === 'chips')
+          const chips = chipField === undefined || values === undefined ? [] : collText(values[chipField.id]).split('、').map(part => part.trim()).filter(part => part !== '').slice(0, 4)
+          return (
+            <span className="nv-ov-collpreview">
+              {thumbs.length > 0 && <span className="nv-ov-thumbs">{thumbs.map(key => <img key={key} src={imageUrl(key)} alt="" />)}</span>}
+              {rows.map(field => {
+                const value = values === undefined ? '' : collText(values[field.id])
+                return (
+                  <span key={field.id} className="nv-ov-prow">
+                    <span className="nv-ov-plabel">{field.name}</span>
+                    {field.name === '立场' && value !== ''
+                      ? <span className={`nv-coll-chip nv-coll-chip-${chipTone(value)}`}>{value}</span>
+                      : <span className="nv-ov-pvalue">{value === '' ? '—' : value}</span>}
+                  </span>
+                )
+              })}
+              {chips.length > 0 && <span className="nv-ov-pchips">{chips.map(chip => <span key={chip} className="nv-coll-chip nv-coll-chip-neutral">{chip}</span>)}</span>}
+            </span>
+          )
+        })()}
       </span>
       <span className="nv-ov-info">
         <span className="nv-ov-name">{moduleGlyph(module, 14)}{module.name}</span>
