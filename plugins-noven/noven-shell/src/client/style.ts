@@ -1469,28 +1469,36 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
    注意覆盖旧 .nv-ed-doc 的 150px 右内边距（那是老编辑器预留的空白，正文会被它截断）。 */
 .nv-ed.nv-ed-doc { position: relative; padding: 0; overflow: hidden; }
 .nv-ed-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
-/* 标题树：不开任何区域——无面板、无底色、无边框，直接浮在右侧页边。
-   闲置时树自己是虚的（半透明 + 轻微模糊），底下的正文透出来；悬停变清晰可点。 */
-.nv-doc-outline { position: absolute; top: 8px; right: 12px; z-index: 6;
-  width: 168px; max-height: min(42%, 360px); overflow-y: auto; padding: 0 0 22px; box-sizing: border-box;
-  scrollbar-width: none;
-  opacity: .38; filter: blur(.5px); pointer-events: none;
-  transition: opacity 160ms ease, filter 160ms ease;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 80%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0, #000 80%, transparent 100%); }
-.nv-doc-outline:hover { opacity: 1; filter: none; }
+/* 标题树：右下固定的一片区域，放大、下移（文档头部让出）。
+   闲置：树上的字完全不可见，只有它覆盖的正文被虚化；
+   鼠标明显浮上去：树与字一起显形。容器对点击透明，只有条目本身可交互。 */
+.nv-doc-outline { position: absolute; top: 96px; right: 16px; z-index: 6;
+  width: 236px; max-height: min(52%, 460px); overflow-y: auto; padding: 4px 0 24px; box-sizing: border-box;
+  scrollbar-width: none; pointer-events: none;
+  background: transparent; border: 0; box-shadow: none;
+  -webkit-backdrop-filter: blur(2.5px); backdrop-filter: blur(2.5px);
+  transition: backdrop-filter 180ms ease;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0, #000 82%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0, #000 82%, transparent 100%); }
+.nv-doc-outline:hover { -webkit-backdrop-filter: none; backdrop-filter: none; }
+/* 闲置时树体不可见（仍可被悬停命中）；悬停整树显形 */
+.nv-doc-outline-label, .nv-doc-outline-item, .nv-doc-outline-empty {
+  opacity: 0; transition: opacity 180ms ease; }
+.nv-doc-outline:hover .nv-doc-outline-label,
+.nv-doc-outline:hover .nv-doc-outline-item,
+.nv-doc-outline:hover .nv-doc-outline-empty { opacity: 1; }
 /* 正文滚动条让到左侧，右侧整条留给树（rtl 只改滚动条所在边，内容方向复位） */
 .nv-doc-bn { direction: rtl; }
 .nv-doc-bn > * { direction: ltr; }
-.nv-doc-outline-label { padding: 0 8px 8px; font-size: 11px; font-weight: 700; letter-spacing: .14em; color: var(--nv-secondary-text); }
-.nv-doc-outline-empty { padding: 2px 8px; font-size: 11.5px; line-height: 1.7; color: var(--nv-secondary-text); opacity: .7; }
-.nv-doc-outline-item { display: block; width: 100%; pointer-events: auto; border: 0; background: none; border-radius: 7px; padding: 5px 8px; text-align: left;
-  font-size: 12px; line-height: 1.5; color: var(--nv-secondary-text); cursor: pointer; font-family: inherit;
+.nv-doc-outline-label { padding: 2px 10px 10px; font-size: 12px; font-weight: 700; letter-spacing: .14em; color: var(--nv-secondary-text); }
+.nv-doc-outline-empty { padding: 2px 10px; font-size: 12.5px; line-height: 1.8; color: var(--nv-secondary-text); }
+.nv-doc-outline-item { display: block; width: 100%; pointer-events: auto; border: 0; background: none; border-radius: 8px; padding: 7px 10px; text-align: left;
+  font-size: 13.5px; line-height: 1.7; color: var(--nv-secondary-text); cursor: pointer; font-family: inherit;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nv-doc-outline-item:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
 .nv-doc-outline-item-on { color: var(--nv-accent-deep); font-weight: 600; }
-.nv-doc-outline-item[data-level='2'] { padding-left: 20px; }
-.nv-doc-outline-item[data-level='3'] { padding-left: 32px; }
+.nv-doc-outline-item[data-level='2'] { padding-left: 24px; }
+.nv-doc-outline-item[data-level='3'] { padding-left: 38px; }
 .nv-doc-bn { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--nv-surface); font-family: inherit; }
 .nv-doc-bn .bn-container { min-height: 100%; width: 100%; }
 .nv-doc-bn .bn-container .bn-editor { width: 100%; max-width: none; }
