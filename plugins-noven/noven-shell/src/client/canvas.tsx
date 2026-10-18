@@ -570,20 +570,11 @@ function StartTab({ t, empty, noProject, onPreset, onStart }: {
   readonly onPreset: (preset: 'world' | 'character' | 'manual') => void
   readonly onStart: () => void
 }) {
-  if (noProject) {
-    return (
-      <div className="nv-canvas-start">
-        <div className="nv-start-center">
-          <div className="nv-start-title">{t('canvas.start.noProject')}</div>
-          <div className="nv-start-sub">{t('canvas.start.noProjectSub')}</div>
-        </div>
-      </div>
-    )
-  }
   return (
     <div className="nv-desk">
       <div className="nv-desk-inner">
         <p className="nv-desk-lead">{t('canvas.desk.lead')}</p>
+        {noProject && <p className="nv-desk-note">{t('canvas.desk.noProject')}</p>}
         <section className="nv-desk-section">
           <h3 className="nv-desk-label">{t('canvas.desk.preset')}</h3>
           <div className="nv-desk-row">

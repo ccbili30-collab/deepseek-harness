@@ -1218,16 +1218,11 @@ div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !impo
   background: rgba(255, 255, 255, 0.8); color: var(--nv-secondary-text); font-size: 10px; font-family: inherit; pointer-events: none; }
 .nv-tree-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 8px; }
 .nv-tree-empty { padding: 56px 12px; text-align: center; color: var(--nv-secondary-text); font-size: 12px; }
-/* 无项目态的中部新建球（设计稿立项手势）：圆形大钮，项目落地后同族回到底部
-   长成 .nv-tree-new 长条——变形动画尚未做，先让两态共享语义与视觉语言。 */
-.nv-tree-orbwrap { display: flex; align-items: center; justify-content: center; min-height: 100%; }
-.nv-tree-orb { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
-  width: 92px; height: 92px; border: 1px solid var(--nv-divider); border-radius: 50%; padding: 0;
-  background: var(--nv-surface); color: var(--nv-primary-text); font-size: 13px; cursor: pointer;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
-  transition: transform var(--nv-dur-micro) ease, box-shadow var(--nv-dur-micro) ease, border-color var(--nv-dur-micro) ease; }
-.nv-tree-orb:hover { transform: translateY(-2px); border-color: var(--nv-accent); box-shadow: 0 10px 24px rgba(0, 0, 0, 0.09); }
-.nv-tree-orbplus { font-size: 24px; font-weight: 300; line-height: 1; color: var(--nv-accent-deep); }
+.nv-tree-newrowwrap { padding: 6px 10px 2px; }
+.nv-tree-newrow { width: 100%; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 0; border-radius: 8px;
+  background: none; color: var(--nv-primary-text); font-size: 12.5px; cursor: pointer; text-align: left; font-family: inherit; }
+.nv-tree-newrow:hover { background: var(--nv-accent-soft); }
+.nv-tree-newrowplus { color: var(--nv-accent-deep); font-size: 14px; }
 /* 分组头 = 纯灰小标签（设计稿 02/03），不折叠；行尾「＋」悬停才显。 */
 .nv-tree-grouprow { display: flex; align-items: center; gap: 4px; width: 100%;
   padding: 12px 6px 3px; font-size: 11px; color: var(--nv-secondary-text); }
@@ -1402,6 +1397,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-desk { flex: 1; min-height: 0; overflow-y: auto; display: flex; justify-content: center; }
 .nv-desk-inner { width: min(640px, calc(100% - 48px)); margin: auto 0; padding: 40px 0; }
 .nv-desk-lead { margin: 0 0 34px; font-size: 15px; line-height: 1.8; color: var(--nv-secondary-text); text-align: center; }
+.nv-desk-note { margin: -22px 0 28px; font-size: 12px; line-height: 1.7; color: var(--nv-secondary-text); text-align: center; opacity: .8; }
 .nv-desk-section { margin-bottom: 26px; }
 .nv-desk-label { margin: 0 0 12px; font-size: 11px; font-weight: 700; letter-spacing: .16em; color: var(--nv-accent-deep); }
 .nv-desk-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
@@ -2439,25 +2435,13 @@ table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 12.5px;
   transform-origin: center top;
   margin-bottom: 2px;
 }
-[data-unit-side='left'] [data-center-col] [class*='heroWorkspaceRow'] {
-  margin-top: 2px;
-}
 [data-unit-side='left'] [data-center-col] [data-composer-card] {
   border-radius: 14px;
 }
-[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-create-guide {
-  gap: 10px;
-}
-[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-guide-label {
-  display: none;
-}
-[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-guide-continue {
-  display: none;
-}
-[data-unit-side='left'] [data-center-col] [data-content-phase='hero'] .nv-guide-ideas {
-  grid-template-columns: 1fr 1fr;
-}
-/* 副对话里手作入口没有意义（已经在 IDE）——BlankDock 自身按 ide 隐藏，这里兜底。 */
+/* 副对话卸妆（IDE 侧翼）：只留消息流与输入卡——品牌、标语、工作区行、点子卡退出。 */
+[data-unit-side='left'] [data-center-col] [data-conversation-hero-shell],
+[data-unit-side='left'] [data-center-col] [class*='heroWorkspaceRow'],
+[data-unit-side='left'] [data-center-col] .nv-create-guide,
 [data-unit-side='left'] [data-center-col] .nv-handcraft-chip { display: none; }
 
 /* ——— 创作空白页引导（挂在真实输入框上方的 conversation.input.dock）——— */
