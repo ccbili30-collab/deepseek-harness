@@ -1506,6 +1506,10 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-doc-panel-item[data-level='3'] { padding-left: 36px; }
 .nv-doc-bn { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--nv-surface); font-family: inherit; }
 .nv-doc-bn .bn-container { min-height: 100%; width: 100%; }
+/* 纯文本编辑面（代码/配置）：等宽、原样进出 */
+.nv-doc-plain { flex: 1; min-height: 0; border: 0; resize: none; padding: 16px 28px 80px; box-sizing: border-box;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.7;
+  background: var(--nv-surface); color: var(--nv-primary-text); outline: none; white-space: pre; overflow: auto; }
 .nv-doc-bn .bn-container .bn-editor { width: 100%; max-width: none; }
 /* 标题字号收敛：满幅纸上 3em 的 H1 会一行只容五六字 */
 .nv-doc-bn .bn-block-content[data-content-type='heading'][data-level='1'] { font-size: 2em !important; }

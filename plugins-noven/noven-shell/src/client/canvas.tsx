@@ -16,8 +16,8 @@ import type { CardAddr, CardOp, CardOpResult, CardState } from './card-api.ts'
 import type { ImportReport } from './tree-api.ts'
 
 import { CardPage } from './card-page.tsx'
-import { BlockEditor, metaOf, wordCount, type EditableBlock, type MdLabels } from './editor.tsx'
-import { BlockNoteDocEditor, type OutlineItem, type OutlineMark } from './doc-editor.tsx'
+import { metaOf, wordCount, type MdLabels } from './editor.tsx'
+import { BlockNoteDocEditor, PlainTextDocEditor, type OutlineItem, type OutlineMark } from './doc-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { pagePending, type NovenTree, type TreeModuleRow } from './tree-api.ts'
 import { CreateDialog, type CreateKind, type CreateRequest } from './creation.tsx'
@@ -32,7 +32,7 @@ import { collectDeltas, foldArchive, DELTA_WINDOW } from './stage-archive.ts'
 import { useSessionSettings } from './session-settings.tsx'
 
 /** markdown 文稿走富编辑器（BlockNote）；其余文本（json/yaml/代码…）保留纯文本块编辑。 */
-const RICH_TEXT_PATH = /\.(md|markdown)$/i
+const RICH_TEXT_PATH = /\.(md|markdown|mdx|txt)$/i
 /** 文稿缩放记忆（全局，跨页签/重启保留）。 */
 const DOC_ZOOM_KEY = 'noven.doc.zoom'
 /** 大纲浮窗尺寸记忆（全局）。 */
@@ -719,12 +719,6 @@ function CardTab({ tab, t, loadCard, op, ask, readFile, onOpenFile, onOpenCard, 
   )
 }
 
-/** 把文稿正文按空行切成伪块（id 携带原文，保存时整文重拼）。 */
-function docBlocks(text: string): EditableBlock[] {
-  if (text === '') return []
-  return text.split(/\n{2,}/).map((chunk, i) => ({ id: `p${i}`, kind: 'text' as const, text: chunk }))
-}
-
 /** 文稿体：通用编辑器 + /api/noven-doc 乐观锁保存；内容走温层——重挂先渲缓存不闪 loading。 */
 function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, renameFile, deleteFile }: {
   readonly tab: CanvasTab
@@ -810,14 +804,6 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   }, [panelOpen, pinned])
   const state = entry === undefined || entry.state === 'loading' ? 'loading' : entry.state
   const base = entry?.content
-  const mdLabels = useMemo<MdLabels>(() => ({
-    code: {
-      copyLabel: t('editor.md.copy'),
-      copiedLabel: t('editor.md.copied'),
-      toolbarLabels: { codeLabel: t('editor.md.code'), wrapLabel: t('editor.md.wrap'), unwrapLabel: t('editor.md.unwrap') },
-    },
-    footnotes: '',
-  }), [t])
   const saveText = useCallback(async (text: string): Promise<'ok' | 'conflict' | 'error'> => {
     // 注入的 saveDoc 在 'ok' 时把新内容写回温层——base 的推进由缓存承担。
     setStatus(tab.key, 'working', true)
@@ -826,14 +812,6 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
     setStatus(tab.key, 'error', result !== 'ok')
     return result
   }, [sessionId, saveDoc, path, base, tab.key, setStatus])
-  const saveBlock = useCallback(async (blockId: string, text: string): Promise<'ok' | 'conflict' | 'error'> => {
-    if (base === undefined) return 'error'
-    const chunks = docBlocks(base)
-    const index = Number(blockId.slice(1))
-    const next = chunks.map((c, i) => i === index ? text : c.text ?? '').join('\n\n')
-    return saveText(next)
-  }, [base, saveText])
-  const addBlock = useCallback(async (text: string) => saveText(`${base ?? ''}\n\n${text}`), [base, saveText])
   if (state === 'missing' || base === undefined) {
     return <div className="nv-canvas-missing">{t(state === 'missing' ? 'canvas.doc.missing' : 'canvas.files.loading')}</div>
   }
@@ -974,7 +952,7 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
         ? <BlockNoteDocEditor markdown={base} onChange={text => { void saveText(text) }}
             onOutline={setOutline} onActive={setActiveHeading} onWordCount={setLiveCount} onMarks={setMarks}
             zoom={zoom} onZoom={setZoom} />
-        : <BlockEditor blocks={docBlocks(base)} labels={mdLabels} t={t} onSaveBlock={saveBlock} onAdd={addBlock} />}
+        : <PlainTextDocEditor text={base} onChange={text => { void saveText(text) }} />}
       </div>
       {RICH_TEXT_PATH.test(path) && (
         <>

@@ -183,3 +183,29 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
     </div>
   )
 }
+
+/**
+ * 纯文本编辑面（代码/配置等非文稿文件）：不改写内容，原样进出。
+ * markdown 文稿一律走上面的 BlockNote；这里只服务 json/yaml/代码类文件。
+ */
+export function PlainTextDocEditor({ text, onChange }: {
+  readonly text: string
+  readonly onChange: (text: string) => void
+}) {
+  const timer = useRef<number | undefined>(undefined)
+  const last = useRef(text)
+  useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
+  return (
+    <textarea className="nv-doc-plain" defaultValue={text} spellCheck={false}
+      onChange={event => {
+        const value = event.currentTarget.value
+        if (timer.current !== undefined) window.clearTimeout(timer.current)
+        timer.current = window.setTimeout(() => {
+          timer.current = undefined
+          if (value === last.current) return
+          last.current = value
+          onChange(value)
+        }, 600)
+      }} />
+  )
+}
