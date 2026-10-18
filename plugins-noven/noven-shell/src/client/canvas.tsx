@@ -747,6 +747,30 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   useEffect(() => { ensureDoc(sessionId, path) }, [sessionId, path, ensureDoc])
   // 挂载即清上一任留下的旗标——本页自己产的状态点由本页续写。
   useEffect(() => { setStatus(tab.key, 'working', false); setStatus(tab.key, 'error', false) }, [tab.key, setStatus])
+  useEffect(() => () => {
+    if (closeTimer.current !== undefined) window.clearTimeout(closeTimer.current)
+  }, [])
+  useEffect(() => {
+    if (!panelOpen) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      setPinned(false)
+      setPanelOpen(false)
+    }
+    const onDown = (event: PointerEvent): void => {
+      if (pinned) return
+      const target = event.target
+      if (!(target instanceof Element)) return
+      if (target.closest('.nv-doc-panel') !== null || target.closest('.nv-doc-rail') !== null) return
+      setPanelOpen(false)
+    }
+    window.addEventListener('keydown', onKey)
+    document.addEventListener('pointerdown', onDown)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onDown)
+    }
+  }, [panelOpen, pinned])
   const state = entry === undefined || entry.state === 'loading' ? 'loading' : entry.state
   const base = entry?.content
   const mdLabels = useMemo<MdLabels>(() => ({
@@ -795,30 +819,6 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
       setPanelOpen(false)
     }, 300)
   }
-  useEffect(() => () => {
-    if (closeTimer.current !== undefined) window.clearTimeout(closeTimer.current)
-  }, [])
-  useEffect(() => {
-    if (!panelOpen) return
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      setPinned(false)
-      setPanelOpen(false)
-    }
-    const onDown = (event: PointerEvent): void => {
-      if (pinned) return
-      const target = event.target
-      if (!(target instanceof Element)) return
-      if (target.closest('.nv-doc-panel') !== null || target.closest('.nv-doc-rail') !== null) return
-      setPanelOpen(false)
-    }
-    window.addEventListener('keydown', onKey)
-    document.addEventListener('pointerdown', onDown)
-    return () => {
-      window.removeEventListener('keydown', onKey)
-      document.removeEventListener('pointerdown', onDown)
-    }
-  }, [panelOpen, pinned])
   return (
     <div className={RICH_TEXT_PATH.test(path) ? 'nv-ed nv-ed-doc' : 'nv-ed'}>
       <div className="nv-ed-main">
