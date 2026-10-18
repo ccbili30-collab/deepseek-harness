@@ -350,8 +350,8 @@ export interface CollectionItem {
 }
 
 export type CollectionValue = string | number | boolean | null | { readonly resourceId: string }
-export type CollectionView = 'list' | 'cards' | 'timeline' | 'map'
-const VIEWS = new Set<CollectionView>(['list', 'cards', 'timeline', 'map'])
+export type CollectionView = 'list' | 'cards' | 'form' | 'timeline' | 'map'
+const VIEWS = new Set<CollectionView>(['list', 'cards', 'form', 'timeline', 'map'])
 
 export interface CollectionData {
   readonly version: 2

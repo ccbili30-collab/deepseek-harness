@@ -1753,13 +1753,14 @@ const collSections = (data: CollData, ungrouped: string): { readonly field: Coll
  */
 export function CollectionWidget({ module, t, send, imageUrl }: WidgetProps & { readonly imageUrl: (resourceId: string) => string }) {
   const data = coll(module.widget?.data)
-  const view = data.view === 'cards' || data.view === 'timeline' ? data.view : 'list'
+  const view = data.view === 'cards' || data.view === 'form' || data.view === 'timeline' ? data.view : 'list'
   const [openId, setOpenId] = useState<string | null>(null)
   const openItem = data.items.find(item => item.id === openId)
   const setView = (next: string): void => { void send({ kind: 'collection_set_view', moduleId: module.id, view: next }) }
   const VIEWS: readonly { readonly id: string, readonly label: string }[] = [
     { id: 'list', label: t('coll.view.list') },
     { id: 'cards', label: t('coll.view.cards') },
+    { id: 'form', label: t('coll.view.form') },
     { id: 'timeline', label: t('coll.view.timeline') },
   ]
   return (
@@ -1777,6 +1778,7 @@ export function CollectionWidget({ module, t, send, imageUrl }: WidgetProps & { 
       {data.items.length === 0 && <div className="nv-coll-empty">{t('coll.empty')}</div>}
       {view === 'list' && <CollList data={data} t={t} />}
       {view === 'cards' && <CollCards data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
+      {view === 'form' && <CollForm data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
       {view === 'timeline' && <CollScroll data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
       {openItem !== undefined && (
         <CollDetail data={data} item={openItem} t={t} moduleId={module.id} imageUrl={imageUrl}
@@ -1825,6 +1827,51 @@ function CollCards({ data, t, imageUrl, openId, onOpen }: {
                   {statText !== '' && <span className="nv-coll-cardstat">{statText}</span>}
                   {item.summary !== '' && <span className="nv-coll-cardsum">{item.summary}</span>}
                 </button>
+              )
+            })}
+          </div>
+        </section>
+      ))}
+    </div>
+  )
+}
+
+/** 表单视图：一条一张表单卡，字段按「标签—值」逐行排；点卡头打开完整编辑。 */
+function CollForm({ data, t, imageUrl, openId, onOpen }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly imageUrl: (resourceId: string) => string
+  readonly openId: string | null
+  readonly onOpen: (id: string | null) => void
+}) {
+  return (
+    <div className="nv-coll-forms">
+      {data.items.map(item => (
+        <section key={item.id} className={`nv-coll-formcard${openId === item.id ? ' nv-coll-formcard-on' : ''}`}>
+          <button type="button" className="nv-coll-formhead" onClick={() => onOpen(openId === item.id ? null : item.id)}>
+            <span className="nv-coll-formname">{item.name}</span>
+            <span className="nv-coll-formedit">{t('coll.form.edit')}</span>
+          </button>
+          <div className="nv-coll-formrows">
+            {data.fields.map(field => {
+              const raw = data.values[item.id]?.[field.id]
+              if (field.type === 'image') {
+                const resourceId = typeof raw === 'object' && raw !== null && 'resourceId' in raw ? raw.resourceId : undefined
+                return (
+                  <div key={field.id} className="nv-coll-formrow">
+                    <span className="nv-coll-formlabel">{field.name}</span>
+                    {resourceId === undefined
+                      ? <span className="nv-coll-formvalue nv-coll-formempty">—</span>
+                      : <img className="nv-coll-formimg" src={imageUrl(resourceId)} alt="" />}
+                  </div>
+                )
+              }
+              const text = collText(raw)
+              return (
+                <div key={field.id} className="nv-coll-formrow">
+                  <span className="nv-coll-formlabel">{field.name}</span>
+                  <span className={`nv-coll-formvalue${text === '' ? ' nv-coll-formempty' : ''}`}>{text === '' ? '—' : text}</span>
+                </div>
               )
             })}
           </div>

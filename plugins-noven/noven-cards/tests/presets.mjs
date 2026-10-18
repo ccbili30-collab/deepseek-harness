@@ -63,6 +63,13 @@ for (const file of files) {
   if (id === 'character') {
     check(built.document.resources.length === 3, `character: 三张立绘资源落盘（${built.document.resources.length}）`)
     check(built.document.resources.every(r => r.mediaType === 'image/jpeg'), 'character: 资源媒体类型正确')
+    const forms = all.find(m => m.name === '基本信息')
+    const formData = forms === undefined ? undefined : JSON.parse(String(forms.blocks[0]?.content ?? '{}'))
+    check(formData?.noven?.view === 'form', 'character: 基本信息默认表单视图')
+    const gallery = all.find(m => m.name === '多形态')
+    const galleryData = gallery === undefined ? undefined : JSON.parse(String(gallery.blocks[0]?.content ?? '{}'))
+    check(galleryData?.noven?.view === 'cards', 'character: 多形态默认图鉴视图')
+    check(galleryData?.items?.every(item => typeof item.visualKey === 'string'), 'character: 形态条目带主图（visualKey）')
   }
 }
 

@@ -49,6 +49,8 @@ export interface PresetModuleNode {
   readonly fields?: readonly PresetField[]
   /** 集合模块的样例行。 */
   readonly rows?: readonly PresetRow[]
+  /** 集合模块的默认视图（list/cards/form/timeline/map）。 */
+  readonly view?: string
   /** 时间线模块的样例纪元与事件。 */
   readonly timeline?: PresetTimeline
   /** 单模块预设：落卡后直接打开这个模块页。 */
@@ -77,6 +79,7 @@ export interface PresetIo {
 
 const FIELD_TYPES = new Set<string>(['text', 'longtext', 'date', 'person', 'image', 'place', 'link', 'number', 'time'])
 const WIDGETS = new Set<string>(['overview', 'timeline', 'map', 'collection', 'relation', 'html'])
+const COLLECTION_VIEWS = new Set<string>(['list', 'cards', 'form', 'timeline', 'map'])
 const ERA_COLORS = new Set(['purple', 'blue', 'pink', 'green', 'amber', 'gray'])
 
 const defaultCalendar: TimelineCalendar = {
@@ -134,6 +137,7 @@ function normalizeNode(raw: unknown): PresetModuleNode | undefined {
   if (record.widget !== undefined && (typeof record.widget !== 'string' || !WIDGETS.has(record.widget))) return undefined
   if (record.sample !== undefined && typeof record.sample !== 'string') return undefined
   if (record.focus !== undefined && typeof record.focus !== 'boolean') return undefined
+  if (record.view !== undefined && (typeof record.view !== 'string' || !COLLECTION_VIEWS.has(record.view))) return undefined
   const fields = record.fields === undefined ? undefined : (record.fields as unknown[]).map(field => {
     if (typeof field !== 'object' || field === null) return undefined
     const source = field as Record<string, unknown>
@@ -153,6 +157,7 @@ function normalizeNode(raw: unknown): PresetModuleNode | undefined {
     ...(record.sample === undefined ? {} : { sample: record.sample as string }),
     ...(fields === undefined ? {} : { fields: fields as PresetField[] }),
     ...(rows === undefined ? {} : { rows: rows as PresetRow[] }),
+    ...(record.view === undefined ? {} : { view: record.view as string }),
     ...(timeline === undefined ? {} : { timeline }),
     ...(record.focus === undefined ? {} : { focus: record.focus as boolean }),
     ...(children === undefined ? {} : { children: children as PresetModuleNode[] }),
@@ -213,7 +218,7 @@ export async function buildPresetDocument(
       }
       if (node.widget === 'collection') {
         const fields = (node.fields ?? []).map(field => ({ id: mintId(), name: field.name, type: field.type as CollectionFieldType }))
-        const items: { id: string, name: string, summary: string, description: string, visualKey: null }[] = []
+        const items: { id: string, name: string, summary: string, description: string, visualKey: string | null }[] = []
         const values: Record<string, Record<string, CollectionValue>> = {}
         for (const row of node.rows ?? []) {
           const itemId = mintId()
@@ -231,13 +236,14 @@ export async function buildPresetDocument(
               const resourceId = mintId()
               document.resources.push({ id: resourceId, content: await io.writePayload(bytes, mediaType), mediaType })
               cells[field.id] = { resourceId }
+              if (items[items.length - 1]?.visualKey === null) items[items.length - 1] = { ...items[items.length - 1], visualKey: resourceId }
               continue
             }
             cells[field.id] = raw as CollectionValue
           }
           if (Object.keys(cells).length > 0) values[itemId] = cells
         }
-        const encoded = encodeCollection({ version: 2, fields, items, values, view: 'list', artStyle: '' })
+        const encoded = encodeCollection({ version: 2, fields, items, values, view: (node.view ?? 'list') as import('./formats.ts').CollectionView, artStyle: '' })
         module.blocks.push({ kind: 'text', id: mintId(), content: await io.writeText(encoded) })
       } else if (node.widget === 'timeline') {
         const data: TimelineData = {

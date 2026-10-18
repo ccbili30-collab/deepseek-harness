@@ -1458,6 +1458,21 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-manual > * { max-width: 720px; margin-left: auto; margin-right: auto; }
 .nv-manual-note { padding: 40px 0; text-align: center; font-size: 12.5px; color: var(--nv-secondary-text); }
 
+
+/* 集合 · 表单视图：一条一张表单卡，标签—值逐行（填表的阅读面） */
+.nv-coll-forms { display: flex; flex-direction: column; gap: 12px; padding: 14px 0; }
+.nv-coll-formcard { border: 1px solid var(--nv-divider); border-radius: 14px; background: var(--nv-surface); overflow: hidden; }
+.nv-coll-formcard-on { border-color: rgba(14,159,110,.34); }
+.nv-coll-formhead { width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 14px;
+  border: 0; background: none; cursor: pointer; font: inherit; color: var(--nv-primary-text); }
+.nv-coll-formname { font-size: 13px; font-weight: 650; }
+.nv-coll-formedit { font-size: 11.5px; color: var(--nv-accent-deep); }
+.nv-coll-formrows { display: flex; flex-direction: column; }
+.nv-coll-formrow { display: flex; align-items: baseline; gap: 14px; padding: 8px 14px; border-top: 1px solid var(--nv-divider); font-size: 12.5px; }
+.nv-coll-formlabel { flex: none; width: 88px; color: var(--nv-secondary-text); }
+.nv-coll-formvalue { flex: 1; min-width: 0; line-height: 1.7; white-space: pre-wrap; color: var(--nv-primary-text); }
+.nv-coll-formempty { color: var(--nv-secondary-text); opacity: .55; }
+.nv-coll-formimg { max-width: 160px; border-radius: 8px; display: block; }
 /* 文稿体 */
 .nv-canvas-docbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .nv-canvas-docedit { flex: 1; min-height: 0; border: 0; resize: none; padding: 24px 28px; font-size: 14px; line-height: 1.8;
