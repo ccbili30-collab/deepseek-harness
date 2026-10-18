@@ -1465,7 +1465,8 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-canvas-docstatus { padding: 6px 14px; font-size: 11px; color: var(--nv-secondary-text); border-top: 1px solid var(--nv-divider); }
 /* 文稿富编辑器（BlockNote）：左侧标题树 + 一页文档的版心；主题色换成本站调色板 */
 /* 文稿页签：正文一列 + 右上角标题树（从最顶上开始、2/3 高、白底渐隐） */
-.nv-ed-doc { flex-direction: row; }
+/* 复合选择器：必须压过后面 .nv-ed 的 column（同级单类会被文件顺序反杀） */
+.nv-ed.nv-ed-doc { flex-direction: row; }
 .nv-ed-main { flex: 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
 .nv-doc-outline { width: 196px; flex: none; align-self: flex-start; height: 66.666%; overflow-y: auto; padding: 14px 8px 48px;
   border-left: 1px solid var(--nv-divider); background: var(--nv-surface); scrollbar-width: none;
