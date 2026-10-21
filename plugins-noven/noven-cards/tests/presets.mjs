@@ -43,8 +43,9 @@ for (const file of files) {
   const all = collect(built.document.modules)
   check(all.length > 0, `${file}: 落出模块（${all.length}）`)
   check(new Set(all.map(m => m.id)).size === all.length, `${file}: 模块 id 唯一`)
-  const emptyLeaves = all.filter(m => m.children.length === 0 && m.blocks.length === 0)
-  check(emptyLeaves.length === 0, `${file}: 无空模块（${emptyLeaves.map(m => m.name).join('/') || '全部有内容'}）`)
+  const emptyLeaves = all.filter(m => m.children.length === 0 && m.blocks.length === 0 && m.widget?.type !== 'overview')
+  check(emptyLeaves.length === 0, `${file}: 除总览外无空模块（${emptyLeaves.map(m => m.name).join('/') || '全部有内容'}）`)
+  check(!JSON.stringify(built.document).match(/玄天大陆|沈青梧|玄天宗|血刀门|北境|东海|南疆/), `${file}: 不含测试世界/角色数据`)
   for (const module of all) {
     if (module.widget?.type === 'collection') {
       const block = module.blocks.find(b => b.kind === 'text')
@@ -57,46 +58,56 @@ for (const file of files) {
     }
   }
   if (id === 'world') {
-    const fields = all.find(m => m.name === '势力名录')?.blocks[0]
-    check(fields !== undefined, 'world: 势力名录存在')
-    check(all.some(m => m.name === '时间线' && m.widget?.type === 'timeline'), 'world: 时间线模块存在')
-    const mapModule = all.find(m => m.name === '地图' && m.widget?.type === 'map')
-    check(mapModule !== undefined, 'world: 地图模块存在（可编辑地图工具）')
-    check(mapModule?.blocks.some(b => b.kind === 'image') === true, 'world: 地图带虚构世界底图')
-    const mapPayload = JSON.parse(String(mapModule?.blocks.find(b => b.kind === 'text')?.content ?? '{}'))
-    check(mapPayload.noven?.markers?.length === 6, `world: 地图 6 个标记（${mapPayload.noven?.markers?.length ?? 0}）`)
-    const relModule = all.find(m => m.name === '关系图' && m.widget?.type === 'relation')
-    const relPayload = JSON.parse(String(relModule?.blocks[0]?.content ?? '{}'))
-    check(relPayload.noven?.nodes?.length === 4 && relPayload.noven?.edges?.length === 5, 'world: 关系图 4 节点 5 边')
-    check(built.document.resources.length === 1, `world: 地图底图资源落盘（${built.document.resources.length}）`)
-    const collectCells = (moduleName, fieldName) => {
-      const module = all.find(m => m.name === moduleName)
-      const payload = JSON.parse(String(module?.blocks[0]?.content ?? '{}'))
-      const field = payload.noven?.fields?.find(f => f.name === fieldName)
-      return { field, items: payload.items ?? [], values: payload.noven?.values ?? {} }
+    const payloadOf = name => {
+      const module = all.find(candidate => candidate.name === name)
+      return module === undefined ? undefined : JSON.parse(String(module.blocks[0]?.content ?? '{}'))
     }
-    const station = collectCells('势力名录', '驻地')
-    const refs = station.items.map(item => station.values[item.id]?.[station.field?.id])
-    check(station.field?.type === 'place', 'world: 驻地字段类型 = place')
-    check(refs.length === 4 && refs.every(v => typeof v === 'object' && v !== null && typeof v.cardId === 'string' && typeof v.itemId === 'string'), `world: 驻地落成同卡引用（${refs.filter(v => typeof v === 'object').length}/4）`)
-    const dist = collectCells('种族名录', '分布')
-    check(Object.values(dist.values).every(cells => { const v = cells[dist.field?.id ?? '']; return typeof v !== 'string' || v === '' }), 'world: 分布全部落成引用')
+    check(all.length === 10, `world: 九页内容 + 总览（${all.length}）`)
+    const profile = payloadOf('世界档案')
+    check(profile?.noven?.view === 'profile' && profile?.noven?.presentation?.contract === 'worldProfile', 'world: 世界档案带窗口契约')
+    check((profile?.items?.length ?? 0) === 0, 'world: 世界档案默认空白')
+    check(profile?.noven?.fields?.some(field => field.name === '世界类型') === true, 'world: 世界档案有世界类型字段')
+    check(!profile?.noven?.fields?.some(field => ['年龄', '阵营', '出身', '性格关键词'].includes(field.name)), 'world: 世界档案不含角色字段')
+    for (const [name, view, aspect] of [['地理', 'cards', 'landscape'], ['势力', 'cards', 'square'], ['种族', 'cards', 'portrait'], ['文化', 'cards', 'landscape']]) {
+      const payload = payloadOf(name)
+      check(payload?.noven?.view === view && payload?.noven?.cardAspect === aspect && (payload?.items?.length ?? 0) === 0, `world: ${name} 默认空白`)
+    }
+    const rulesModule = all.find(module => module.name === '规则')
+    check(rulesModule !== undefined && rulesModule.widget === undefined && rulesModule.blocks.length > 0, 'world: 规则是文稿模块')
+    const relation = payloadOf('关系')
+    check(relation?.noven?.view === 'graph' && (relation?.items?.length ?? 0) === 0, 'world: 关系默认空白')
+    const timeline = all.find(module => module.name === '时间线' && module.widget?.type === 'timeline')
+    const timelinePayload = JSON.parse(String(timeline?.blocks[0]?.content ?? '{}'))
+    check(timeline !== undefined && (timelinePayload.noven?.events?.length ?? 0) === 0, 'world: 时间线默认空白')
+    const mapModule = all.find(module => module.name === '地图' && module.widget?.type === 'map')
+    check(mapModule !== undefined, 'world: 默认带地图')
+    check(built.document.resources.length === 0, `world: 默认不带图片资源（${built.document.resources.length}）`)
   }
   if (id === 'character') {
-    check(built.document.resources.length === 9, `character: 立绘/表单头像/关系头像资源落盘（${built.document.resources.length}）`)
-    check(built.document.resources.every(r => r.mediaType === 'image/jpeg'), 'character: 资源媒体类型正确')
-    const forms = all.find(m => m.name === '基本信息')
-    const formData = forms === undefined ? undefined : JSON.parse(String(forms.blocks[0]?.content ?? '{}'))
-    check(formData?.noven?.view === 'form', 'character: 基本信息默认表单视图')
-    check(formData?.noven?.fields?.some(f => f.name === '性格关键词' && f.type === 'chips') === true, 'character: 性格关键词是 chips 字段')
+    check(all.length === 9, `character: 八页内容 + 总览（${all.length}）`)
+    check(all.every(m => m.children.length === 0), 'character: 章节不再拆成子模块')
+    check(built.document.resources.length === 0, `character: 默认不带图片资源（${built.document.resources.length}）`)
+    const profile = all.find(m => m.name === '角色档案')
+    const profileData = profile === undefined ? undefined : JSON.parse(String(profile.blocks[0]?.content ?? '{}'))
+    check(profileData?.noven?.view === 'profile' && profileData?.noven?.presentation?.contract === 'profile', 'character: 角色档案使用档案视图并带契约')
+    check((profileData?.items?.length ?? 0) === 0, 'character: 角色档案默认空白')
+    check(profileData?.noven?.fields?.some(f => f.name === '性格关键词' && f.type === 'chips') === true, 'character: 性格关键词是 chips 字段')
+    const graph = all.find(m => m.name === '关系')
+    const graphData = graph === undefined ? undefined : JSON.parse(String(graph.blocks[0]?.content ?? '{}'))
+    check(graphData?.noven?.view === 'graph' && (graphData?.items?.length ?? 0) === 0, 'character: 关系默认空白')
+    const diary = all.find(m => m.name === '行动轨迹')
+    const diaryData = diary === undefined ? undefined : JSON.parse(String(diary.blocks[0]?.content ?? '{}'))
+    check(diaryData?.noven?.view === 'diary' && diaryData?.noven?.calendar?.unit === '岁', 'character: 行动轨迹是纵向日记')
     const gallery = all.find(m => m.name === '多形态')
     const galleryData = gallery === undefined ? undefined : JSON.parse(String(gallery.blocks[0]?.content ?? '{}'))
-    check(galleryData?.noven?.view === 'cards', 'character: 多形态默认图鉴视图')
-    check(galleryData?.items?.every(item => typeof item.visualKey === 'string'), 'character: 形态条目带主图（visualKey）')
-    const relModule = all.find(m => m.name === '关系图' && m.widget?.type === 'relation')
-    const relPayload = JSON.parse(String(relModule?.blocks[0]?.content ?? '{}'))
-    check(relPayload.noven?.nodes?.length === 5 && relPayload.noven?.edges?.length === 5, 'character: 关系图 5 节点 5 边')
-    check(relPayload.noven?.nodes?.every(node => typeof node.avatar === 'string'), 'character: 关系节点带头像资源')
+    check(galleryData?.noven?.view === 'cards' && (galleryData?.items?.length ?? 0) === 0, 'character: 多形态默认空白')
+    check(galleryData?.noven?.source?.moduleName === '角色档案' && galleryData?.noven?.presentation?.contract === 'multiForm', 'character: 多形态直接引用角色档案并带契约')
+    check(['身份', '年龄', '阵营', '出身'].every(name => galleryData?.noven?.fields?.some(field => field.name === name)), 'character: 多形态带覆写字段')
+    for (const name of ['语录', '能力', '装备', '图集']) {
+      const module = all.find(m => m.name === name)
+      const data = module === undefined ? undefined : JSON.parse(String(module.blocks[0]?.content ?? '{}'))
+      check(module !== undefined && (data?.items?.length ?? 0) === 0, `character: ${name} 默认空白`)
+    }
   }
 }
 

@@ -11,8 +11,10 @@ import { Fragment, useMemo, useRef, useState, useEffect, type PointerEvent as Re
 import { MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardAddr, CardBlockView, CardDocView, CardModuleDoc, CardOp, CardOpResult, CardState } from '../card-api.ts'
 import { cardContentUrl } from '../card-api.ts'
-import type { CardEditorProps } from './CardEditor.tsx'
-import { findModule, flatten } from './CardEditor.tsx'
+import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { ShellT } from './Home.tsx'
+import { findModule, flatten } from './card-tree.ts'
 import { fmt } from './Home.tsx'
 import { notifyUndo, useArmedPress } from '../ui/interact.tsx'
 import { useRetainedCard } from '../ui/retain.ts'
@@ -20,6 +22,17 @@ import { useRetainedCard } from '../ui/retain.ts'
 /** localStorage key remembering which editor layout the user last used. */
 const VIEW_KEY = 'noven.editor.view'
 const SPREAD_KEY = 'noven.editor.hspread'
+
+/** Props shared by the whole-card editor page. */
+interface CardEditorProps {
+  readonly t: ShellT
+  readonly useStore: SnapshotSelectorHook<{ card: { cardId: string; sessionId?: SessionId; root: string } | null }>
+  readonly loadCard: (addr: CardAddr, cardId: string) => Promise<CardState | undefined>
+  readonly op: (addr: CardAddr, op: CardOp) => Promise<CardOpResult>
+  readonly workspaceRoot: (addr: CardAddr) => string
+  /** Breadcrumb navigation back to 我的 on the matching catalog tab. */
+  readonly back: (tab: 'worlds' | 'characters') => void
+}
 
 type ViewMode = 'doc' | 'split'
 

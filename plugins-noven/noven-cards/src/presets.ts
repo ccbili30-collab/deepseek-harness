@@ -7,10 +7,11 @@
  * landed card opens as a browsable example, not a blank form.
  * @module noven-cards/presets
  */
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
 import { emptyCardDocument, mintId, type ContentBlock, type ContentDocument, type ContentModule } from './model.ts'
+import { contractFor } from './collection-contracts.ts'
 import {
   encodeCollection, encodeMap, encodeRelation, encodeTimeline,
   type CollectionData, type CollectionFieldType, type CollectionValue, type TimelineCalendar, type TimelineData, type TimelineEra, type TimelineEvent,
@@ -43,6 +44,10 @@ export interface PresetMap {
 
 /** 预设里的时间线样例：纪元与事件。 */
 export interface PresetTimeline {
+  /** 日历单位（角色日记用「岁」，世界史默认「年」）。 */
+  readonly unit?: string
+  /** 版式：横向年表或竖向日记。 */
+  readonly view?: string
   readonly eras?: readonly {
     readonly name: string
     readonly from: number | null
@@ -50,7 +55,7 @@ export interface PresetTimeline {
     readonly color?: string
     readonly description?: string
   }[]
-  readonly events?: readonly { readonly at: number, readonly title: string, readonly description?: string }[]
+  readonly events?: readonly { readonly at: number, readonly title: string, readonly description?: string, readonly characters?: readonly string[] }[]
 }
 
 /** 预设里的一个模块节点；children 递归。 */
@@ -65,6 +70,14 @@ export interface PresetModuleNode {
   readonly rows?: readonly PresetRow[]
   /** 集合模块的默认视图（list/cards/form/timeline/map）。 */
   readonly view?: string
+  /** 图鉴卡的图片比例（portrait/landscape/square）。 */
+  readonly cardAspect?: string
+  /** 记录编辑器标签（可存 i18n 键或字面文案）。 */
+  readonly form?: { readonly labels?: { readonly primary?: string, readonly add?: string, readonly empty?: string } }
+  /** 窗口契约 id；省略时按模块名解析。 */
+  readonly contract?: string
+  /** 直接引用：多形态 → 角色档案这类同卡/跨卡来源。 */
+  readonly source?: { readonly cardId?: string, readonly moduleId?: string, readonly moduleName?: string, readonly itemId?: string, readonly label?: string }
   /** 时间线模块的样例纪元与事件。 */
   readonly timeline?: PresetTimeline
   /** 关系图模块的样例节点与连线。 */
@@ -97,7 +110,7 @@ export interface PresetIo {
 
 const FIELD_TYPES = new Set<string>(['text', 'longtext', 'chips', 'date', 'person', 'image', 'place', 'link', 'number', 'time'])
 const WIDGETS = new Set<string>(['overview', 'timeline', 'map', 'collection', 'relation', 'html'])
-const COLLECTION_VIEWS = new Set<string>(['list', 'cards', 'form', 'timeline', 'map'])
+const COLLECTION_VIEWS = new Set<string>(['list', 'cards', 'form', 'timeline', 'map', 'profile', 'graph'])
 const ERA_COLORS = new Set(['purple', 'blue', 'pink', 'green', 'amber', 'gray'])
 
 const defaultCalendar: TimelineCalendar = {
@@ -131,6 +144,22 @@ export async function loadPreset(id: string): Promise<Preset | undefined> {
   return preset
 }
 
+/**
+ * List every shipped preset. Malformed files are skipped, matching loadPreset.
+ * @returns the valid presets in filename order.
+ */
+export async function listPresets(): Promise<readonly Preset[]> {
+  let files: string[]
+  try {
+    files = await readdir(PRESETS_DIR)
+  } catch {
+    return []
+  }
+  const ids = files.filter(name => name.endsWith('.json')).map(name => name.slice(0, -'.json'.length)).sort()
+  const presets = await Promise.all(ids.map(id => loadPreset(id)))
+  return presets.filter((preset): preset is Preset => preset !== undefined)
+}
+
 /** Validate one parsed preset; invalid files are ignored rather than half-applied. */
 function normalizePreset(raw: unknown): Preset | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined
@@ -148,6 +177,34 @@ function normalizePreset(raw: unknown): Preset | undefined {
   }
 }
 
+function normalizeForm(raw: unknown): NonNullable<PresetModuleNode['form']> | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const record = raw as Record<string, unknown>
+  const labelsRaw = record.labels
+  if (labelsRaw === undefined) return {}
+  if (typeof labelsRaw !== 'object' || labelsRaw === null) return undefined
+  const labels = labelsRaw as Record<string, unknown>
+  const primary = labels.primary
+  const add = labels.add
+  const empty = labels.empty
+  if ((primary !== undefined && typeof primary !== 'string')
+    || (add !== undefined && typeof add !== 'string')
+    || (empty !== undefined && typeof empty !== 'string')) return undefined
+  return { labels: { ...(primary === undefined ? {} : { primary }), ...(add === undefined ? {} : { add }), ...(empty === undefined ? {} : { empty }) } }
+}
+
+function normalizeSource(raw: unknown): NonNullable<PresetModuleNode['source']> | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const record = raw as Record<string, unknown>
+  const out: { cardId?: string, moduleId?: string, moduleName?: string, itemId?: string, label?: string } = {}
+  for (const key of ['cardId', 'moduleId', 'moduleName', 'itemId', 'label'] as const) {
+    const value = record[key]
+    if (value !== undefined && typeof value !== 'string') return undefined
+    if (typeof value === 'string' && value !== '') out[key] = value
+  }
+  return Object.keys(out).length === 0 ? undefined : out
+}
+
 function normalizeNode(raw: unknown): PresetModuleNode | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined
   const record = raw as Record<string, unknown>
@@ -156,6 +213,11 @@ function normalizeNode(raw: unknown): PresetModuleNode | undefined {
   if (record.sample !== undefined && typeof record.sample !== 'string') return undefined
   if (record.focus !== undefined && typeof record.focus !== 'boolean') return undefined
   if (record.view !== undefined && (typeof record.view !== 'string' || !COLLECTION_VIEWS.has(record.view))) return undefined
+  if (record.cardAspect !== undefined && !['portrait', 'landscape', 'square'].includes(String(record.cardAspect))) return undefined
+  const form = record.form === undefined ? undefined : normalizeForm(record.form)
+  if (record.form !== undefined && form === undefined) return undefined
+  const source = record.source === undefined ? undefined : normalizeSource(record.source)
+  if (record.source !== undefined && source === undefined) return undefined
   const fields = record.fields === undefined ? undefined : (record.fields as unknown[]).map(field => {
     if (typeof field !== 'object' || field === null) return undefined
     const source = field as Record<string, unknown>
@@ -180,6 +242,9 @@ function normalizeNode(raw: unknown): PresetModuleNode | undefined {
     ...(fields === undefined ? {} : { fields: fields as PresetField[] }),
     ...(rows === undefined ? {} : { rows: rows as PresetRow[] }),
     ...(record.view === undefined ? {} : { view: record.view as string }),
+    ...(record.cardAspect === undefined ? {} : { cardAspect: record.cardAspect as string }),
+    ...(form === undefined ? {} : { form }),
+    ...(source === undefined ? {} : { source }),
     ...(timeline === undefined ? {} : { timeline }),
     ...(relation === undefined ? {} : { relation }),
     ...(map === undefined ? {} : { map }),
@@ -239,6 +304,8 @@ function normalizeMap(raw: unknown): PresetMap | undefined {
 function normalizeTimeline(raw: unknown): PresetTimeline | undefined {
   if (typeof raw !== 'object' || raw === null) return undefined
   const record = raw as Record<string, unknown>
+  const unit = typeof record.unit === 'string' && record.unit.length > 0 ? record.unit : undefined
+  const view = record.view === 'diary' ? 'diary' as const : record.view === 'horizontal' ? 'horizontal' as const : undefined
   const eras = record.eras === undefined ? undefined : (record.eras as unknown[]).map(era => {
     if (typeof era !== 'object' || era === null) return undefined
     const source = era as Record<string, unknown>
@@ -258,13 +325,20 @@ function normalizeTimeline(raw: unknown): PresetTimeline | undefined {
     if (typeof event !== 'object' || event === null) return undefined
     const source = event as Record<string, unknown>
     if (typeof source.title !== 'string' || !Number.isFinite(Number(source.at))) return undefined
+    const characters = Array.isArray(source.characters) ? source.characters.filter((name): name is string => typeof name === 'string') : undefined
     return {
       at: Number(source.at), title: source.title,
       ...(typeof source.description === 'string' ? { description: source.description } : {}),
+      ...(characters === undefined ? {} : { characters }),
     }
   })
   if (events !== undefined && events.some(event => event === undefined)) return undefined
-  return { ...(eras === undefined ? {} : { eras: eras as NonNullable<PresetTimeline['eras']> }), ...(events === undefined ? {} : { events: events as NonNullable<PresetTimeline['events']> }) }
+  return {
+    ...(unit === undefined ? {} : { unit }),
+    ...(view === undefined ? {} : { view }),
+    ...(eras === undefined ? {} : { eras: eras as NonNullable<PresetTimeline['eras']> }),
+    ...(events === undefined ? {} : { events: events as NonNullable<PresetTimeline['events']> }),
+  }
 }
 
 /**
@@ -317,7 +391,13 @@ export async function buildPresetDocument(
           }
           if (Object.keys(cells).length > 0) values[itemId] = cells
         }
-        const data: CollectionData = { version: 2, fields, items, values, view: (node.view ?? 'list') as import('./formats.ts').CollectionView, artStyle: '' }
+        const data: CollectionData = {
+          version: 2, fields, items, values, view: (node.view ?? 'list') as import('./formats.ts').CollectionView, artStyle: '',
+          ...(node.cardAspect === 'portrait' || node.cardAspect === 'landscape' || node.cardAspect === 'square' ? { cardAspect: node.cardAspect } : {}),
+          ...(node.form === undefined ? {} : { form: node.form }),
+          ...(node.source === undefined ? {} : { source: node.source }),
+          ...(contractFor(node.contract ?? node.name) === undefined ? {} : { presentation: contractFor(node.contract ?? node.name) }),
+        }
         const block = { kind: 'text' as const, id: mintId(), content: await io.writeText(encodeCollection(data)) }
         module.blocks.push(block)
         collections.push({ module, blockId: block.id, data })
@@ -370,15 +450,17 @@ export async function buildPresetDocument(
           })),
         })
       } else if (node.widget === 'timeline') {
+        const unit = node.timeline?.unit ?? '年'
         const data: TimelineData = {
           version: 2,
-          calendar: defaultCalendar,
+          ...(node.timeline?.view === 'diary' ? { view: 'diary' as const } : {}),
+          calendar: { ...defaultCalendar, units: [{ name: unit, per: 1 }], unit },
           views: [],
           eras: (node.timeline?.eras ?? []).map((era): TimelineEra => ({
             id: mintId(), name: era.name, from: era.from, to: era.to, color: era.color ?? 'blue', description: era.description ?? '',
           })),
           events: (node.timeline?.events ?? []).map((event): TimelineEvent => ({
-            id: mintId(), at: event.at, until: null, title: event.title, description: event.description ?? '', characters: [],
+            id: mintId(), at: event.at, until: null, title: event.title, description: event.description ?? '', characters: [...(event.characters ?? [])],
           })),
           marks: [],
         }

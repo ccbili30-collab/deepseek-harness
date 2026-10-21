@@ -1,6 +1,9 @@
 packages:
   - '*'
 
+allowBuilds:
+  esbuild: set this to true or false
+
 # 本地联调：noven 插件直接吃仓库源码构建的 ui-primitives（不经过发布的 rc 包）。
 overrides:
   '@deepseek-ai/dsh-client-ui-primitives': 'link:../packages/client/ui-primitives'

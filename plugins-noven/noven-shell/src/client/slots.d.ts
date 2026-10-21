@@ -53,6 +53,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
 
 declare module '@deepseek-ai/dsh-client-ui-layout/client' {
   interface ILayout {
+    /** Collapse/expand the navigation column; absent on older published builds. */
+    setSidebarCollapsed?(collapsed: boolean): void
     /** Move the drawer+canvas unit to a side of the conversation; absent on older published builds. */
     setUnitSide?(side: 'left' | 'right'): void
     /**

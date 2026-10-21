@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>世界档案空态 · 目标稿</title>
+<link rel="stylesheet" href="base.css">
+<style>
+  .profile-cover { height: 232px; display: grid; place-items: center; background: linear-gradient(160deg, #F6FBF7, #EAF4EE); }
+  .cover-add { color: #6DAF8B; font-size: 12px; letter-spacing: .02em; }
+  .cover-add::before { content: ""; position: absolute; inset: 12px; border: 1px dashed #CFE3D7; border-radius: 12px; pointer-events: none; }
+  .profile-cover { position: relative; }
+  .profile-name.is-empty { color: var(--faint); }
+  .profile-quote.is-empty { color: var(--faint); }
+  .profile-fact .value.is-empty { color: var(--faint); border-bottom: 1px solid var(--divider); padding-bottom: 2px; }
+  .profile-tags.is-empty { color: var(--faint); }
+  .profile-body.is-empty { color: var(--faint); }
+  .profile-body.is-empty h3 { color: var(--faint); }
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="crumb"><b>‹</b><span>玄天大陆</span></div>
+
+  <header class="pagehead">
+    <div>
+      <h1>世界档案</h1>
+      <div class="sub">世界 · 档案</div>
+    </div>
+    <div class="headmeta">
+      <span class="count">刚刚创建</span>
+      <button class="addlink" type="button">⋯</button>
+    </div>
+  </header>
+
+  <section class="profile-cover" aria-label="世界封面">
+    <span class="cover-add">＋ 封面</span>
+  </section>
+
+  <div class="profile-main">
+    <div class="profile-kicker">世界</div>
+    <h2 class="profile-name is-empty">世界名称<span class="caret"></span></h2>
+    <p class="profile-quote is-empty">一句话记住这个世界</p>
+
+    <div class="profile-facts">
+      <div class="profile-fact">
+        <div class="label">世界类型</div>
+        <div class="value is-empty">仙侠 / 奇幻 / 科幻</div>
+      </div>
+      <div class="profile-fact">
+        <div class="label">尺度</div>
+        <div class="value is-empty">一洲 / 一城 / 一界</div>
+      </div>
+      <div class="profile-fact">
+        <div class="label">规则</div>
+        <div class="value is-empty">这个世界最不能破的规则</div>
+      </div>
+      <div class="profile-fact">
+        <div class="label">历法</div>
+        <div class="value is-empty">年 / 季 / 纪元</div>
+      </div>
+    </div>
+
+    <div class="profile-tags is-empty"><small>关键词</small><span>＋ 关键词</span></div>
+
+    <div class="profile-body is-empty">
+      <h3>天地</h3>
+      <p>写一段这个世界的来历、气息，和一条不能破的规则。</p>
+    </div>
+  </div>
+</main>
+</body>
+</html>

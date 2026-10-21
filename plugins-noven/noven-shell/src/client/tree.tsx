@@ -15,7 +15,7 @@ import type { NovenTree, TreeCardRow, TreeModuleRow, TreeSectionRow, TreeWorkRow
 import type { ProjectFocus, SimRow } from './canvas.tsx'
 import type { CreateKind } from './creation.tsx'
 import type { SidebarRightGuideBox } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type { ShellT } from './pages/Home.tsx'
+import { fmt, type ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
 import { askConfirm, InlineRename, useArmedMenu } from './ui/interact.tsx'
 
@@ -54,7 +54,7 @@ export interface TreeInjected {
   readonly toggleBottomPanel?: () => void
   /** 散文件原地改名/删除——树行与页内菜单共用同一对。 */
   readonly renameFile: (path: string, name: string) => void
-  readonly deleteFile: (path: string) => void
+  readonly deleteFile: (path: string, workId?: string) => void
   /** 呈现轴：'hidden' 隐藏节点 / 'file' 恢复默认展示。 */
   readonly present: (path: string, view: 'hidden' | 'file') => void
   /** 用户分组删除（rmdir 递归；UI 侧已确认）。 */
@@ -227,7 +227,7 @@ function ModuleRow({ module, depth, cardId, current, pending, t, onOpen, ops }: 
           {pending && <span className="nv-tree-pending" title={t('tree.pending')} />}
         </button>
       )}
-      <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
+      <Menu portal open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
         onClose={() => { arm.reset(); setMenuOpen(false) }}
         onSelect={id => {
           if (arm.select(id) === 'armed') return
@@ -301,12 +301,24 @@ function flatTreeModules(modules: readonly TreeModuleRow[]): readonly TreeModule
   return modules.flatMap(module => [module, ...flatTreeModules(module.children)])
 }
 
+/** 多选集的操作面：行菜单在多选时改走整组，而不是只动当前行。 */
+interface RowBatch {
+  readonly count: number
+  /** 选集里可删的行数（目录不删）。 */
+  readonly deletable: number
+  readonly hide: () => void
+  readonly unhide: () => void
+  readonly delete: () => void
+}
+
 /** 行选择柄：`pick` 处理 Shift 区间/⌘ 离散的修饰键点击；`on` 是选中态；
     `clear` 由普通点击调用——打开行的同时把选择清掉。 */
 interface RowSel {
   readonly on: boolean
   readonly pick: (e: ReactMouseEvent) => void
   readonly clear: () => void
+  /** 该行属于 >1 的多选集时给整组操作；未选/单选为 undefined。 */
+  readonly batch?: RowBatch
 }
 
 /** 同级列表里可选的一行：`key` 在同层内唯一，`path` 是呈现轴写面用的项目
@@ -334,7 +346,7 @@ type SelFor = (scope: string, order: readonly SelItem[], item: SelItem) => RowSe
     复制链接与呈现轴（隐藏/恢复）。`dir` 行不拖拽不内嵌（是目录占位）。
     `renameTitle` 给了才出「修改模块名」——登记实体（作品/文稿）的展示名
     走清单账本，与真实文件名是两件事。 */
-function FileRow({ path, title, dir, hidden, indent = 0, current, fileView, sel, renameTitle, t, onOpen, embedTargets, onEmbed, fileOps, present }: {
+function FileRow({ path, title, dir, hidden, indent = 0, current, fileView, sel, renameTitle, workId, t, onOpen, embedTargets, onEmbed, fileOps, present }: {
   readonly path: string
   readonly title: string
   readonly dir?: boolean
@@ -346,6 +358,8 @@ function FileRow({ path, title, dir, hidden, indent = 0, current, fileView, sel,
   readonly sel?: RowSel
   /** 展示名写面（作品清单标题）；散文件没有展示名，不出菜单项。 */
   readonly renameTitle?: (name: string) => void
+  /** 登记进作品清单的行带 workId——删文件时顺手摘掉清单项。 */
+  readonly workId?: string
   /** 架层内的额外缩进层级。 */
   readonly indent?: number
   readonly t: ShellT
@@ -353,7 +367,7 @@ function FileRow({ path, title, dir, hidden, indent = 0, current, fileView, sel,
   /** 放入模块的二级菜单项；id 形如 `embed:<cardId>:<moduleId|''>`。 */
   readonly embedTargets: readonly { readonly id: string; readonly label: string }[]
   readonly onEmbed: (id: string) => void
-  readonly fileOps: { readonly rename: (path: string, name: string) => void; readonly delete: (path: string) => void }
+  readonly fileOps: { readonly rename: (path: string, name: string) => void; readonly delete: (path: string, workId?: string) => void }
   readonly present: (path: string, view: 'hidden' | 'file') => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
@@ -362,6 +376,7 @@ function FileRow({ path, title, dir, hidden, indent = 0, current, fileView, sel,
   const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const fileName = path.split('/').pop() ?? path
   const isDir = dir === true
+  const batch = sel?.batch
   return (
     <div className={`nv-tree-row nv-tree-module${hidden === true ? ' nv-tree-hidden' : ''}`} style={{ paddingLeft: 28 + indent * 14 }}
       data-current={current || undefined}
@@ -387,28 +402,45 @@ function FileRow({ path, title, dir, hidden, indent = 0, current, fileView, sel,
           <span className="nv-tree-name">{fileView === true ? fileName : title}</span>
         </button>
       )}
-      <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
+      <Menu portal open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
         onClose={() => { arm.reset(); setMenuOpen(false) }}
         onSelect={id => {
-          if (arm.select(id) === 'armed') return
+          if (batch === undefined && arm.select(id) === 'armed') return
           setMenuOpen(false)
           if (id === 'link') { void writeClipboard(`[${title}](${encodeURI(path)})`); return }
           if (id === 'rename') { setRenaming('file'); return }
           if (id === 'rename-title' && renameTitle !== undefined) { setRenaming('title'); return }
-          if (id === 'hide' || id === 'unhide') { present(path, id === 'hide' ? 'hidden' : 'file'); return }
-          if (id === 'delete') { fileOps.delete(path); return }
+          if (id === 'hide' || id === 'unhide') {
+            if (batch !== undefined) { if (id === 'hide') batch.hide(); else batch.unhide(); return }
+            present(path, id === 'hide' ? 'hidden' : 'file'); return
+          }
+          if (id === 'delete') {
+            if (batch !== undefined) { batch.delete(); return }
+            fileOps.delete(path, workId); return
+          }
           if (id.startsWith('embed:')) onEmbed(id)
         }}
         items={arm.decorate([
-          ...(!isDir ? [
+          ...(batch === undefined && !isDir ? [
             { id: 'embed', label: t('tree.file.embed'), submenu: embedTargets },
             { id: 'link', label: t('tree.mod.copyLink') },
             { type: 'separator' as const, id: 'file-sep' },
           ] : []),
-          { id: 'rename', label: t('tree.file.renameFile') },
-          ...(renameTitle !== undefined ? [{ id: 'rename-title', label: t('tree.file.renameTitle') }] : []),
-          ...(!isDir ? [{ id: 'delete', label: t('canvas.doc.delete'), danger: true as const }] : []),
-          { id: hidden === true ? 'unhide' : 'hide', label: t(hidden === true ? 'tree.unhide' : 'tree.hide') },
+          ...(batch === undefined ? [
+            { id: 'rename', label: t('tree.file.renameFile') },
+            ...(renameTitle !== undefined ? [{ id: 'rename-title', label: t('tree.file.renameTitle') }] : []),
+          ] : []),
+          ...((batch === undefined ? !isDir : batch.deletable > 0) ? [{
+            id: 'delete',
+            label: batch === undefined ? t('canvas.doc.delete') : fmt(t, 'tree.sel.deleteN', { n: batch.deletable }),
+            danger: true as const,
+          }] : []),
+          {
+            id: hidden === true ? 'unhide' : 'hide',
+            label: batch === undefined
+              ? t(hidden === true ? 'tree.unhide' : 'tree.hide')
+              : fmt(t, hidden === true ? 'tree.sel.unhideN' : 'tree.sel.hideN', { n: batch.count }),
+          },
         ])}
         anchor={(
           <button type="button" className="nv-tree-more" aria-label={t('tree.file.more')}
@@ -427,7 +459,7 @@ function WorkRow({ work, current, fileView, sel, t, onOpen, fileOps, present, re
   readonly sel?: RowSel
   readonly t: ShellT
   readonly onOpen: (path: string, title: string) => void
-  readonly fileOps: { readonly rename: (path: string, name: string) => void; readonly delete: (path: string) => void }
+  readonly fileOps: { readonly rename: (path: string, name: string) => void; readonly delete: (path: string, workId?: string) => void }
   readonly present: (path: string, view: 'hidden' | 'file') => void
   /** 改清单里的展示名（账本轴，不动文件名）。 */
   readonly renameWork: (workId: string, title: string) => void
@@ -441,6 +473,7 @@ function WorkRow({ work, current, fileView, sel, t, onOpen, fileOps, present, re
     { id: 'delete', confirmLabel: t('ui.armed.delete') },
   ], [t]))
   const fileName = work.path.split('/').pop() ?? work.path
+  const batch = sel?.batch
   return (
     <div className={`nv-tree-row nv-tree-module${work.hidden === true ? ' nv-tree-hidden' : ''}`} style={{ paddingLeft: 28 }}
       data-current={current || undefined}
@@ -464,24 +497,41 @@ function WorkRow({ work, current, fileView, sel, t, onOpen, fileOps, present, re
           <span className="nv-tree-name">{fileView === true ? fileName : work.title}</span>
         </button>
       )}
-      <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
+      <Menu portal open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
         onClose={() => { arm.reset(); setMenuOpen(false) }}
         onSelect={id => {
-          if (arm.select(id) === 'armed') return
+          if (batch === undefined && arm.select(id) === 'armed') return
           setMenuOpen(false)
           if (id === 'rename') { setRenaming('file'); return }
           if (id === 'rename-title') { setRenaming('title'); return }
           if (id === 'drop') { dropWork(work.id, work.title); return }
-          if (id === 'hide' || id === 'unhide') { present(work.path, id === 'hide' ? 'hidden' : 'file'); return }
-          if (id === 'delete') fileOps.delete(work.path)
+          if (id === 'hide' || id === 'unhide') {
+            if (batch !== undefined) { if (id === 'hide') batch.hide(); else batch.unhide(); return }
+            present(work.path, id === 'hide' ? 'hidden' : 'file'); return
+          }
+          if (id === 'delete') {
+            if (batch !== undefined) { batch.delete(); return }
+            fileOps.delete(work.path, work.id)
+          }
         }}
         items={arm.decorate([
-          { id: 'rename-title', label: t('tree.file.renameTitle') },
-          { id: 'rename', label: t('tree.file.renameFile') },
-          { id: 'drop', label: t('tree.work.drop') },
-          { type: 'separator' as const, id: 'work-sep' },
-          { id: work.hidden === true ? 'unhide' : 'hide', label: t(work.hidden === true ? 'tree.unhide' : 'tree.hide') },
-          { id: 'delete', label: t('canvas.doc.delete'), danger: true as const },
+          ...(batch === undefined ? [
+            { id: 'rename-title', label: t('tree.file.renameTitle') },
+            { id: 'rename', label: t('tree.file.renameFile') },
+            { id: 'drop', label: t('tree.work.drop') },
+            { type: 'separator' as const, id: 'work-sep' },
+          ] : []),
+          {
+            id: work.hidden === true ? 'unhide' : 'hide',
+            label: batch === undefined
+              ? t(work.hidden === true ? 'tree.unhide' : 'tree.hide')
+              : fmt(t, work.hidden === true ? 'tree.sel.unhideN' : 'tree.sel.hideN', { n: batch.count }),
+          },
+          {
+            id: 'delete',
+            label: batch === undefined ? t('canvas.doc.delete') : fmt(t, 'tree.sel.deleteN', { n: batch.deletable }),
+            danger: true as const,
+          },
         ])}
         anchor={(
           <button type="button" className="nv-tree-more" aria-label={t('tree.file.more')}
@@ -519,6 +569,7 @@ function CardBranch({ card, depth, currentKey, fileView, sel, t, onOpen, onAdd, 
   const [menuOpen, setMenuOpen] = useState(false)
   const [renaming, setRenaming] = useState(false)
   const arm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
+  const batch = sel?.batch
   const indent = 4 + depth * 14
   return (
     <div>
@@ -542,23 +593,41 @@ function CardBranch({ card, depth, currentKey, fileView, sel, t, onOpen, onAdd, 
             {card.pending && <span className="nv-tree-pending" title={t('tree.pending')} />}
           </button>
         )}
-        <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
+        <Menu portal open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => { arm.reset(); setMenuOpen(false) }}
           onSelect={id => {
-            if (arm.select(id) === 'armed') return
+            if (batch === undefined && arm.select(id) === 'armed') return
             setMenuOpen(false)
             if (id === 'rename') setRenaming(true)
             if (id === 'link') void writeClipboard(`[${card.name}](noven://card/${card.cardId})`)
             if (id === 'source') cardOps.showSource(`卡/${card.dir}/card.json`)
-            if (id === 'hide' || id === 'unhide') cardOps.present(`卡/${card.dir}`, id === 'hide' ? 'hidden' : 'file')
-            if (id === 'delete') cardOps.delete(card.cardId, card.name)
+            if (id === 'hide' || id === 'unhide') {
+              if (batch !== undefined) { if (id === 'hide') batch.hide(); else batch.unhide(); return }
+              cardOps.present(`卡/${card.dir}`, id === 'hide' ? 'hidden' : 'file')
+              return
+            }
+            if (id === 'delete') {
+              if (batch !== undefined) { batch.delete(); return }
+              cardOps.delete(card.cardId, card.name)
+            }
           }}
           items={arm.decorate([
-            { id: 'rename', label: t('tree.card.rename') },
-            { id: 'source', label: t('tree.card.showSource') },
-            { id: 'link', label: t('tree.card.copyLink') },
-            { id: card.hidden === true ? 'unhide' : 'hide', label: t(card.hidden === true ? 'tree.unhide' : 'tree.hide') },
-            { id: 'delete', label: t('tree.card.delete'), danger: true },
+            ...(batch === undefined ? [
+              { id: 'rename', label: t('tree.card.rename') },
+              { id: 'source', label: t('tree.card.showSource') },
+              { id: 'link', label: t('tree.card.copyLink') },
+            ] : []),
+            {
+              id: card.hidden === true ? 'unhide' : 'hide',
+              label: batch === undefined
+                ? t(card.hidden === true ? 'tree.unhide' : 'tree.hide')
+                : fmt(t, card.hidden === true ? 'tree.sel.unhideN' : 'tree.sel.hideN', { n: batch.count }),
+            },
+            {
+              id: 'delete',
+              label: batch === undefined ? t('tree.card.delete') : fmt(t, 'tree.sel.deleteN', { n: batch.deletable }),
+              danger: true,
+            },
           ])}
           anchor={(
             <button type="button" className="nv-tree-more" aria-label={t('tree.card.more')}
@@ -658,7 +727,7 @@ interface FileOps {
   readonly embedTargets: readonly { readonly id: string; readonly label: string }[]
   readonly embed: (id: string, path: string) => void
   readonly rename: (path: string, name: string) => void
-  readonly delete: (path: string) => void
+  readonly delete: (path: string, workId?: string) => void
   readonly present: (path: string, view: 'hidden' | 'file') => void
 }
 
@@ -692,7 +761,7 @@ function ShelfBranch({ node, depth, currentKey, fileView, selFor, t, onOpen, onA
           <span className="nv-tree-glyph">{glyph.folder(13)}</span>
           <span className="nv-tree-name">{node.name}</span>
         </button>
-        <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
+        <Menu portal open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => setMenuOpen(false)}
           onSelect={id => {
             setMenuOpen(false)
@@ -890,12 +959,42 @@ export function ContentTree(props: TreeProps) {
     }
     setSel({ scope, anchor: item.key, items: new Map([[item.key, item]]) })
   }
+  /** 整组动作：工具条与行菜单共用同一套，避免两处口径漂移。 */
+  const hideSelection = (view: 'hidden' | 'file'): void => {
+    if (sel === null) return
+    props.presentAll([...sel.items.values()].map(item => item.path), view)
+    setSel(null)
+  }
+  const deleteSelection = (): void => {
+    if (sel === null) return
+    const items = [...sel.items.values()]
+      .filter(item => item.kind !== 'dir')
+      .map(item => ({ path: item.path, cardId: item.cardId, workId: item.workId }))
+    if (items.length === 0) return
+    void askConfirm({
+      title: t('ui.confirm.selTitle').replace('{n}', String(items.length)),
+      body: t('ui.confirm.selBody'),
+      confirm: t('ui.delete'), cancel: t('ui.cancel'), danger: true,
+    }).then(ok => { if (!ok) return; props.deleteSel(items); setSel(null) })
+  }
   /** 行组件拿的选择柄：scope 是父列表标识，order 是该层渲染顺序。 */
-  const selFor: SelFor = (scope, order, item) => ({
-    on: sel?.items.has(item.key) === true,
-    pick: e => pickSel(e, scope, order, item),
-    clear: () => { if (sel !== null) setSel(null) },
-  })
+  const selFor: SelFor = (scope, order, item) => {
+    const batch = sel !== null && sel.scope === scope && sel.items.size > 1 && sel.items.has(item.key)
+      ? {
+        count: sel.items.size,
+        deletable: [...sel.items.values()].filter(entry => entry.kind !== 'dir').length,
+        hide: () => hideSelection('hidden'),
+        unhide: () => hideSelection('file'),
+        delete: deleteSelection,
+      }
+      : undefined
+    return {
+      on: sel?.items.has(item.key) === true,
+      pick: e => pickSel(e, scope, order, item),
+      clear: () => { if (sel !== null) setSel(null) },
+      ...(batch === undefined ? {} : { batch }),
+    }
+  }
 
   /* 顶层分组：折叠态 + 排序 + 视图档按项目根落 localStorage；拖动用专用
      type，与文件拖入模块（FILE_DROP_TYPE）互不干扰。 */
@@ -1152,19 +1251,10 @@ export function ContentTree(props: TreeProps) {
       {sel !== null && (
         <div className="nv-tree-selbar">
           <span className="nv-tree-selcount">{t('tree.sel.count').replace('{n}', String(sel.items.size))}</span>
-          <button type="button" className="nv-tree-selbtn" onClick={() => { props.presentAll([...sel.items.values()].map(i => i.path), 'hidden'); setSel(null) }}>{t('tree.hide')}</button>
-          <button type="button" className="nv-tree-selbtn" onClick={() => { props.presentAll([...sel.items.values()].map(i => i.path), 'file'); setSel(null) }}>{t('tree.unhide')}</button>
+          <button type="button" className="nv-tree-selbtn" onClick={() => hideSelection('hidden')}>{t('tree.hide')}</button>
+          <button type="button" className="nv-tree-selbtn" onClick={() => hideSelection('file')}>{t('tree.unhide')}</button>
           <button type="button" className="nv-tree-selbtn nv-tree-selbtn-danger" disabled={deletable === 0}
-            onClick={() => {
-              const items = [...sel.items.values()]
-                .filter(i => i.kind !== 'dir')
-                .map(i => ({ path: i.path, cardId: i.cardId, workId: i.workId }))
-              void askConfirm({
-                title: t('ui.confirm.selTitle').replace('{n}', String(deletable)),
-                body: t('ui.confirm.selBody'),
-                confirm: t('ui.delete'), cancel: t('ui.cancel'), danger: true,
-              }).then(ok => { if (!ok) return; props.deleteSel(items); setSel(null) })
-            }}>{t('canvas.doc.delete')}</button>
+            onClick={deleteSelection}>{t('canvas.doc.delete')}</button>
           <button type="button" className="nv-tree-selbtn" title={t('tree.sel.clear')} onClick={() => setSel(null)}>✕</button>
         </div>
       )}
@@ -1181,7 +1271,7 @@ export function ContentTree(props: TreeProps) {
           // 空抽屉只说一件事：这里能新建。文案与案头同一口径——"没有项目"
           // 只在案头解释一次，抽屉不再复读。
           <div className="nv-tree-newrowwrap">
-            <button type="button" className="nv-tree-newrow" onClick={() => props.openCreate('world')}>
+            <button type="button" className="nv-tree-newrow" onClick={() => props.openCreate('card')}>
               <span className="nv-tree-newrowplus" aria-hidden="true">＋</span>
               <span>{t('tree.new')}</span>
             </button>
@@ -1197,7 +1287,7 @@ export function ContentTree(props: TreeProps) {
           }
           if (key === 'cards') return groupSlot('cards', (
             <Group title={t('tree.cards')} count={visible?.cards.length ?? 0} always={hasDir('卡')}
-              onAdd={() => props.openCreate('world')} addTitle={t('create.world.title')} {...shared}>
+              onAdd={() => props.openCreate('card')} addTitle={t('create.card.title')} {...shared}>
               {shelfRoot.shelves.map(shelf => (
                 <ShelfBranch key={shelf.path} node={shelf} depth={0} currentKey={currentKey} t={t}
                   fileView={viewFile} selFor={selFor}
@@ -1233,6 +1323,7 @@ export function ContentTree(props: TreeProps) {
                   fileView={viewFile}
                   sel={selFor('docs', docOrder, { key: `f:${doc.path}`, path: doc.path, kind: 'file', workId: doc.id ?? undefined })}
                   renameTitle={doc.id === null ? undefined : name => props.renameWork(doc.id ?? '', name)}
+                  workId={doc.id ?? undefined}
                   onOpen={props.openDoc} embedTargets={embedTargets} onEmbed={id => embedFromId(id, doc.path)}
                   fileOps={fileOps} present={props.present} />
               ))}
@@ -1292,7 +1383,7 @@ export function ContentTree(props: TreeProps) {
       </div>
       {!noProject && (
       <div className="nv-tree-foot">
-        <Menu open={menuOpen} side="top" align="start" selection="fill" listClassName="nv-tree-newmenu"
+        <Menu portal open={menuOpen} side="top" align="start" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => setMenuOpen(false)}
           onSelect={createMenuSelect}
           selectedIds={studioOn ? ['studio'] : []}
@@ -1303,7 +1394,7 @@ export function ContentTree(props: TreeProps) {
               <span>{t('tree.new')}</span>
             </button>
           )} />
-        <Menu open={toolsOpen} side="top" align="start" selection="fill" listClassName="nv-tree-newmenu"
+        <Menu portal open={toolsOpen} side="top" align="start" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => setToolsOpen(false)}
           onSelect={toolMenuSelect}
           selectedIds={[...(dockOpen ? ['dock'] : []), ...(bottomOpen ? ['bottom'] : [])]}

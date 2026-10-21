@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>NOVEN · 墨宇宙 — 交互样片 01</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<canvas id="dust" aria-hidden="true"></canvas>
+<div id="aurora" aria-hidden="true"></div>
+<div id="grain" aria-hidden="true"></div>
+<div id="vignette" aria-hidden="true"></div>
+
+<header id="topbar">
+  <div class="brand">
+    <span class="brand-mark">N</span>
+    <div class="brand-text"><b>NOVEN</b><span>墨宇宙 · 交互样片</span></div>
+  </div>
+  <nav id="chapters" aria-label="七幕"></nav>
+  <div class="controls">
+    <span class="clock" id="sceneClock">01 / 07</span>
+    <button id="soundBtn" class="chip" aria-pressed="false">声音 · 关</button>
+    <button id="slowBtn" class="chip" aria-pressed="false">慢放 ×3</button>
+  </div>
+</header>
+<div id="progress" aria-hidden="true"><i></i></div>
+
+<main id="scenes">
+
+  <!-- 01 · 冷启动 -->
+  <section class="scene scene-cosmos is-active" data-scene="0" aria-label="第一幕 冷启动">
+    <div class="cosmos-copy">
+      <p class="eyebrow"><span>01</span>冷启动</p>
+      <h1>从一粒墨<br><em>开始。</em></h1>
+      <p class="lede">六张卡从尘埃里聚拢。移动鼠标，让它们看见你；点一张，再点一次。</p>
+    </div>
+    <div class="card-space" id="cardSpace">
+      <button class="paper-card" data-title="沈青梧" style="--rz:-2.4deg;--z:30px;--hue:164" data-cursor>
+        <span class="card-art"><span class="glyph">梧</span><span class="seal">青</span></span>
+        <span class="card-text">
+          <span class="card-kicker">角色 · 主角</span>
+          <strong>沈青梧</strong>
+          <span class="card-meta">三段往事 · 七个关系</span>
+        </span>
+      </button>
+      <button class="paper-card" data-title="顾长风" style="--rz:2deg;--z:70px;--hue:38" data-cursor>
+        <span class="card-art"><span class="glyph">顾</span><span class="seal">风</span></span>
+        <span class="card-text">
+          <span class="card-kicker">角色 · 对手</span>
+          <strong>顾长风</strong>
+          <span class="card-meta">北境来客 · 旧盟新敌</span>
+        </span>
+      </button>
+      <button class="paper-card" data-title="听雨楼" style="--rz:-1.2deg;--z:10px;--hue:198" data-cursor>
+        <span class="card-art"><span class="glyph">听</span><span class="seal">雨</span></span>
+        <span class="card-text">
+          <span class="card-kicker">势力 · 江南</span>
+          <strong>听雨楼</strong>
+          <span class="card-meta">十七人 · 三处暗桩</span>
+        </span>
+      </button>
+      <button class="paper-card" data-title="北境" style="--rz:1.6deg;--z:50px;--hue:210" data-cursor>
+        <span class="card-art"><span class="glyph">北</span><span class="seal">境</span></span>
+        <span class="card-text">
+          <span class="card-kicker">地域 · 长夜</span>
+          <strong>北境</strong>
+          <span class="card-meta">四座哨塔 · 一条冻河</span>
+        </span>
+      </button>
+      <button class="paper-card" data-title="旧案卷" style="--rz:-2deg;--z:20px;--hue:346" data-cursor>
+        <span class="card-art"><span class="glyph">案</span><span class="seal">旧</span></span>
+        <span class="card-text">
+          <span class="card-kicker">事件 · 未结</span>
+          <strong>旧案卷</strong>
+          <span class="card-meta">十一年前 · 一场大火</span>
+        </span>
+      </button>
+      <button class="paper-card" data-title="青梧记" style="--rz:2.6deg;--z:0px;--hue:96" data-cursor>
+        <span class="card-art"><span class="glyph">记</span><span class="seal">梧</span></span>
+        <span class="card-text">
+          <span class="card-kicker">文稿 · 进行中</span>
+          <strong>青梧记</strong>
+          <span class="card-meta">四十二章 · 未定稿</span>
+        </span>
+      </button>
+    </div>
+  </section>
+
+  <!-- 02 · 卡内空间 -->
+  <section class="scene scene-modules" data-scene="1" aria-label="第二幕 卡内空间">
+    <header class="scene-head">
+      <p class="eyebrow"><span>02</span>卡内空间</p>
+      <h2>一张卡，<em>七层空间</em></h2>
+      <p class="lede">模块不是滚动长文，是沿景深排开的抽屉。选一个，它向前。</p>
+    </header>
+    <div class="module-stage">
+      <nav class="module-nav" id="moduleNav" aria-label="卡内模块">
+        <button class="is-active" data-name="角色档案"><i>01</i><span><b>角色档案</b><small>身份 · 引语 · 事实</small></span></button>
+        <button data-name="多形态"><i>02</i><span><b>多形态</b><small>三种形象 · 同一人</small></span></button>
+        <button data-name="关系"><i>03</i><span><b>关系</b><small>七个名字 · 四条线</small></span></button>
+        <button data-name="时间线"><i>04</i><span><b>时间线</b><small>九个事件 · 三段纪元</small></span></button>
+        <button data-name="势力"><i>05</i><span><b>势力</b><small>听雨楼 · 十七人</small></span></button>
+        <button data-name="物件"><i>06</i><span><b>物件</b><small>六件随身物</small></span></button>
+        <button data-name="规则"><i>07</i><span><b>规则</b><small>三条世界律</small></span></button>
+      </nav>
+      <div class="module-deck" id="moduleDeck">
+        <article class="module-plane is-active" data-plane="0">
+          <header class="plane-head">
+            <p class="plane-kicker">PROFILE / 01</p>
+            <h3>沈青梧</h3>
+            <p class="plane-sub">记录者 · 青梧记主人 · 二十七岁</p>
+          </header>
+          <blockquote class="plane-quote">“我把每一场雨都记下来，免得它们白下。”</blockquote>
+          <div class="facts">
+            <div><span>出身</span><b>江南 · 苍梧</b></div>
+            <div><span>身份</span><b>听雨楼 · 录事</b></div>
+            <div><span>惯用</span><b>一支秃笔</b></div>
+            <div><span>软肋</span><b>旧案卷第三页</b></div>
+          </div>
+          <footer class="plane-foot"><span>今天 02:17 修改</span><span>3 个引用</span></footer>
+        </article>
+
+        <article class="module-plane" data-plane="1">
+          <header class="plane-head">
+            <p class="plane-kicker">FORMS / 02</p>
+            <h3>多形态</h3>
+            <p class="plane-sub">三种形象，同一个人；点击任意一帧可换主形象。</p>
+          </header>
+          <div class="forms-row">
+            <figure class="form-frame" style="--h:164"><span class="form-art">雨</span><figcaption><b>纸本</b><small>常服 · 苍梧</small></figcaption></figure>
+            <figure class="form-frame" style="--h:198"><span class="form-art">夜</span><figcaption><b>雨夜</b><small>夜行 · 听雨楼</small></figcaption></figure>
+            <figure class="form-frame" style="--h:210"><span class="form-art">北</span><figcaption><b>北境</b><small>冬装 · 哨塔</small></figcaption></figure>
+          </div>
+          <footer class="plane-foot"><span>主形象 · 纸本</span><span>3 / 3 已填</span></footer>
+        </article>
+
+        <article class="module-plane" data-plane="2">
+          <header class="plane-head">
+            <p class="plane-kicker">RELATIONS / 03</p>
+            <h3>关系</h3>
+            <p class="plane-sub">名字不是标签，是线头。点一个，跳去他的卡。</p>
+          </header>
+          <ul class="relation-rows">
+            <li><span class="rel-dot" style="--h:38"></span><b>顾长风</b><small>旧盟 · 现在站对面</small><em>→</em></li>
+            <li><span class="rel-dot" style="--h:198"></span><b>听雨楼主</b><small>授业 · 半个师父</small><em>→</em></li>
+            <li><span class="rel-dot" style="--h:346"></span><b>沈砚</b><small>兄长 · 十一年前失踪</small><em>→</em></li>
+            <li><span class="rel-dot" style="--h:210"></span><b>阿凛</b><small>哨塔信使 · 欠一条命</small><em>→</em></li>
+          </ul>
+          <footer class="plane-foot"><span>4 条强关系</span><span>图视图见第四幕</span></footer>
+        </article>
+
+        <article class="module-plane" data-plane="3">
+          <header class="plane-head">
+            <p class="plane-kicker">TIMELINE / 04</p>
+            <h3>时间线</h3>
+            <p class="plane-sub">同一段时间，三种读法：纪元、事件、日记。</p>
+          </header>
+          <ul class="mini-time">
+            <li><span>旧历 37</span><b>苍梧大火</b><small>沈砚失踪；案卷从此缺三页。</small></li>
+            <li><span>旧历 41</span><b>第一次进听雨楼</b><small>抄书换饭；楼主给了她一支笔。</small></li>
+            <li><span>青梧 02</span><b>北境来信</b><small>阿凛带来一枚冻硬的铜扣。</small></li>
+            <li><span>青梧 03</span><b>雨夜对峙</b><small>顾长风承认自己撒了十一年的谎。</small></li>
+          </ul>
+          <footer class="plane-foot"><span>滚动查看全部九条</span><span>编辑态同稿纸</span></footer>
+        </article>
+
+        <article class="module-plane" data-plane="4">
+          <header class="plane-head">
+            <p class="plane-kicker">FACTION / 05</p>
+            <h3>听雨楼</h3>
+            <p class="plane-sub">江南最大的消息铺子，也卖伞。</p>
+          </header>
+          <div class="faction-hero">
+            <span class="crest">听</span>
+            <div><b>十七人 · 三处暗桩</b><p>不问来路，只问价钱；雨天打八折。</p></div>
+          </div>
+          <div class="chips">
+            <span>楼主 · 未署名</span><span>驻点 · 苍梧</span><span>旗号 · 听雨</span><span>暗桩 · 三</span>
+          </div>
+          <footer class="plane-foot"><span>与沈青梧：授业</span><span>与顾长风：旧盟</span></footer>
+        </article>
+
+        <article class="module-plane" data-plane="5">
+          <header class="plane-head">
+            <p class="plane-kicker">ITEMS / 06</p>
+            <h3>物件</h3>
+            <p class="plane-sub">物比人诚实；它们不会改口。</p>
+          </header>
+          <div class="item-grid">
+            <span class="item"><i>笔</i><b>秃笔</b><small>楼主所赠</small></span>
+            <span class="item"><i>扣</i><b>铜扣</b><small>北境来信</small></span>
+            <span class="item"><i>伞</i><b>油纸伞</b><small>听雨楼制</small></span>
+            <span class="item"><i>册</i><b>旧案卷</b><small>缺第三页</small></span>
+            <span class="item"><i>灯</i><b>纸灯</b><small>雨夜用</small></span>
+            <span class="item"><i>印</i><b>私印</b><small>只有半个字</small></span>
+          </div>
+          <footer class="plane-foot"><span>6 件 · 2 件有线索</span><span>点击物件看注脚</span></footer>
+        </article>
+
+        <article class="module-plane" data-plane="6">
+          <header class="plane-head">
+            <p class="plane-kicker">RULES / 07</p>
+            <h3>世界律</h3>
+            <p class="plane-sub">规则不是设定集，是每次写作都要遵守的物理。</p>
+          </header>
+          <ol class="rule-list">
+            <li><span>一</span><p><b>雨会记事。</b>被雨淋过的字，第二天会自己多出一行。</p></li>
+            <li><span>二</span><p><b>名字有重量。</b>叫出全名的人，必须为对方做一件事。</p></li>
+            <li><span>三</span><p><b>旧案不结。</b>所有烧掉的纸，都会在别处重新出现一次。</p></li>
+          </ol>
+          <footer class="plane-foot"><span>规则文档 · 3 条</span><span>AI 写作时强制注入</span></footer>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- 03 · 合集形态 -->
+  <section class="scene scene-collection" data-scene="2" aria-label="第三幕 合集形态">
+    <header class="scene-head row">
+      <div>
+        <p class="eyebrow"><span>03</span>合集</p>
+        <h2>同一条目，<em>五种形态</em></h2>
+        <p class="lede">切形态不是换页面，是同一批纸在桌上重新摊开。</p>
+      </div>
+      <div class="view-switch" id="viewSwitch" role="tablist" aria-label="合集视图"></div>
+    </header>
+    <div class="collection" id="collection" data-view="gallery"></div>
+    <aside class="entry-detail" id="entryDetail" aria-live="polite"></aside>
+  </section>
+
+  <!-- 04 · 关系 -->
+  <section class="scene scene-graph" data-scene="3" aria-label="第四幕 关系">
+    <canvas id="graphCanvas"></canvas>
+    <header class="scene-head overlay">
+      <p class="eyebrow"><span>04</span>关系</p>
+      <h2>谁与谁<em>同谋</em></h2>
+      <p class="lede">拖动节点，关系会自己收紧；滚轮缩放，点空白处松手。</p>
+    </header>
+    <aside class="graph-panel">
+      <p class="panel-kicker">FOCUS</p>
+      <h3 id="graphFocus">未选择</h3>
+      <p id="graphHint">悬停或拖动一个节点；滚轮缩放。</p>
+      <ul id="graphList"></ul>
+    </aside>
+    <div class="graph-legend" id="graphLegend"></div>
+  </section>
+
+  <!-- 05 · 时间线 -->
+  <section class="scene scene-timeline" data-scene="4" aria-label="第五幕 时间线">
+    <canvas id="timeFlow" aria-hidden="true"></canvas>
+    <header class="scene-head overlay">
+      <p class="eyebrow"><span>05</span>时间线</p>
+      <h2>一条河，<em>九次涨潮</em></h2>
+      <p class="lede">拖拽时间轴，松手会滑一小段；点一个事件，读它的注脚。</p>
+    </header>
+    <div class="timeline-viewport" id="timelineViewport">
+      <div class="timeline-world" id="timelineWorld"></div>
+      <div class="timeline-now" aria-hidden="true"><span>此刻</span></div>
+    </div>
+    <aside class="timeline-detail" id="timelineDetail"></aside>
+  </section>
+
+  <!-- 06 · 地图 -->
+  <section class="scene scene-map" data-scene="5" aria-label="第六幕 地图">
+    <canvas id="mapCanvas"></canvas>
+    <header class="scene-head overlay">
+      <p class="eyebrow"><span>06</span>地图</p>
+      <h2>在墨里<em>落一枚钉</em></h2>
+      <p class="lede">拖动平移，滚轮缩放；点空地放置标记，点标记读取地名。</p>
+    </header>
+    <div class="map-tools">
+      <button id="mapIn" aria-label="放大">＋</button>
+      <button id="mapOut" aria-label="缩小">－</button>
+      <button id="mapReset" class="wide">归位</button>
+    </div>
+    <div class="map-readout" id="mapReadout">N 31.2° · E 122.4°</div>
+    <div class="map-legend" aria-hidden="true">
+      <span><i class="dot mint"></i>水系</span>
+      <span><i class="dot gold"></i>高地</span>
+      <span><i class="dot rose"></i>标记</span>
+    </div>
+    <div class="compass" aria-hidden="true"><i></i><b>N</b></div>
+  </section>
+
+  <!-- 07 · AI 协作 -->
+  <section class="scene scene-ai" data-scene="6" aria-label="第七幕 AI 协作">
+    <div class="ai-room">
+      <aside class="ai-preview">
+        <p class="panel-kicker">CARD PREVIEW</p>
+        <div class="mini-card" id="miniCard">
+          <header>
+            <span class="mini-kicker">角色 · 主角</span>
+            <h3>沈青梧</h3>
+            <p>记录者 · 青梧记主人</p>
+          </header>
+          <div class="mini-mods" id="miniMods"></div>
+        </div>
+        <p class="mini-note" id="miniNote">接受提案后，模块会飞进这张卡。</p>
+      </aside>
+      <div class="ai-panel">
+        <p class="eyebrow"><span>07</span>协作</p>
+        <h2>让 AI <em>落一个模块</em></h2>
+        <p class="lede">它写、你拍板。注意提案卡是纸，不是弹窗。</p>
+        <div class="ai-log" id="aiLog"></div>
+        <div class="ai-actions" id="aiActions"></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div class="pager">
+  <button id="prevScene" aria-label="上一幕">←</button>
+  <span id="pagerName">冷启动</span>
+  <button id="nextScene" aria-label="下一幕">→</button>
+</div>
+
+<div id="status" role="status" aria-live="polite"></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<div id="start" class="start">
+  <div class="start-inner">
+    <div class="start-seal"><span>诺</span><i></i></div>
+    <p class="start-kicker">NOVEN · INTERACTION STUDY 01</p>
+    <h1>墨宇宙</h1>
+    <p class="start-sub">七幕关于卡、模块与关系的交互样片</p>
+    <div class="start-actions">
+      <button id="startSound" class="btn-primary">带声音进入</button>
+      <button id="startSilent" class="btn-ghost">静音进入</button>
+    </div>
+    <p class="start-note">建议全屏 · 戴耳机 · 可随时静音或慢放</p>
+  </div>
+</div>
+
+<div id="wipe" aria-hidden="true"></div>
+<div id="c-dot" aria-hidden="true"></div>
+<div id="c-ring" aria-hidden="true"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

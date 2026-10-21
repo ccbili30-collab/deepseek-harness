@@ -16,11 +16,15 @@ import { expandShape, bboxOf as geomBBox, padBBox, clipPolygonRect, clipPolyline
 import { resolvePngHeightmap } from './heightmap-png.ts'
 import { resolveNamebase } from './namebase.ts'
 import { generateWorld, resampleWorld, rasterizeDraft, guessDraftLevel, getGridDims, type HeightmapInput } from 'noven-fmg/world'
-import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type MapData, type TimelineCalendar } from './formats.ts'
+import { collectionPreset, isModulePreset, mapPreset, MODULE_PRESETS, timelinePreset } from './module-presets.ts'
+import { customCollection, customMap, customTimeline, normalizeCustomModule } from './custom-modules.ts'
+import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeScene, encodeScene, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type MapData, type SceneData, type TimelineCalendar } from './formats.ts'
 
 /** 编辑命令全集（工具与未来的人工界面共用）。 */
 export type EditorCommand =
-  | { kind: 'add_module', name: string, parentId?: string | null, layout?: ModuleLayout, widget?: string }
+  | { kind: 'add_module', name: string, parentId?: string | null, layout?: ModuleLayout, widget?: string, preset?: string }
+  | { kind: 'add_module_ref', name: string, parentId?: string | null, sourceCardId: string, sourceModuleId: string, view?: string, filter?: { characters?: readonly string[] }, overrides?: Record<string, unknown> }
+  | { kind: 'add_module_custom', name: string, parentId?: string | null, definition: unknown }
   | { kind: 'rename_module', moduleId: string, name: string }
   | { kind: 'rename_card', name: string }
   | { kind: 'write_text', moduleId: string, blockId?: string | null, moduleName: string, text: string, expectedContent?: string }
@@ -49,13 +53,15 @@ export type EditorCommand =
   | { kind: 'copy_character', source: ContentDocument }
   | { kind: 'remove_character', characterId: string }
   // ---------- 预制模块的结构化命令（契约 C2）：人、AI、提案共用 ----------
-  | { kind: 'set_widget_data', moduleId: string, widget: 'timeline' | 'collection' | 'map' | 'relation', data: unknown }
+  | { kind: 'set_widget_data', moduleId: string, widget: 'timeline' | 'collection' | 'map' | 'relation' | 'scene', data: unknown }
   /** 从地图模块生一个局部视图子模块：裁取景框内的对象与草稿、重归一化、复用底图 + window 取景框，并记 parent 溯源。 */
   | { kind: 'map_spawn_view', moduleId: string, name?: string, objectId?: string, bbox?: readonly [number, number, number, number], aspect?: number }
+  | { kind: 'map_add_marker', moduleId: string, marker: { id?: string, label: string, x: number, y: number, description?: string, color?: string } }
   | { kind: 'timeline_set_calendar', moduleId: string, calendar: TimelineCalendar }
+  | { kind: 'timeline_set_window', moduleId: string, window: { from?: number, to?: number } }
   | { kind: 'timeline_switch_view', moduleId: string, name: string }
-  | { kind: 'timeline_add_event', moduleId: string, event: { id?: string, at: number | null, until?: number | null, ongoing?: boolean, title: string, description?: string, characters?: string[], color?: string } }
-  | { kind: 'timeline_update_event', moduleId: string, id: string, patch: { at?: number | null, until?: number | null, ongoing?: boolean, title?: string, description?: string, characters?: string[], color?: string | null } }
+  | { kind: 'timeline_add_event', moduleId: string, event: { id?: string, at: number | null, until?: number | null, ongoing?: boolean, title: string, description?: string, characters?: string[], relations?: string[], color?: string, place?: { mapModuleId: string, markerId: string, label?: string } } }
+  | { kind: 'timeline_update_event', moduleId: string, id: string, patch: { at?: number | null, until?: number | null, ongoing?: boolean, title?: string, description?: string, characters?: string[], relations?: string[], color?: string | null, place?: { mapModuleId: string, markerId: string, label?: string } | null } }
   | { kind: 'timeline_move_event', moduleId: string, id: string, at: number | null, until?: number | null }
   | { kind: 'timeline_remove_event', moduleId: string, id: string }
   | { kind: 'timeline_add_era', moduleId: string, era: { id?: string, name: string, from: number | null, to: number | null, color: string, description?: string } }
@@ -67,9 +73,11 @@ export type EditorCommand =
   | { kind: 'collection_add_field', moduleId: string, field: { id?: string, name: string, type?: CollectionFieldType } }
   | { kind: 'collection_update_field', moduleId: string, id: string, patch: { name?: string, type?: CollectionFieldType } }
   | { kind: 'collection_remove_field', moduleId: string, id: string }
-  | { kind: 'collection_add_item', moduleId: string, item: { id?: string, name: string, summary?: string, description?: string }, values?: Record<string, CollectionValue> }
+  | { kind: 'collection_move_field', moduleId: string, id: string, beforeId?: string | null }
+  | { kind: 'collection_add_item', moduleId: string, item: { id?: string, name: string, summary?: string, description?: string }, values?: Record<string, CollectionValue>, imageBase64?: string, imageMediaType?: string }
   | { kind: 'collection_update_item', moduleId: string, id: string, patch: { name?: string, summary?: string, description?: string, visualKey?: string | null } }
   | { kind: 'collection_remove_item', moduleId: string, id: string }
+  | { kind: 'collection_move_item', moduleId: string, id: string }
   | { kind: 'collection_set_value', moduleId: string, itemId: string, fieldId: string, value: CollectionValue }
   | { kind: 'collection_set_item_image', moduleId: string, itemId: string, resourceId?: string, bytes?: Uint8Array, mediaType?: string }
   | { kind: 'collection_set_style', moduleId: string, artStyle: string }
@@ -263,6 +271,67 @@ async function transformDocument(
   switch (command.kind) {
     case 'add_module': {
       const created: ContentModule = { id: mintId(), name: command.name, blocks: [], tags: [], children: [], layout: command.layout ?? 'VERTICAL', characterIds: [], ...(command.widget !== undefined ? { widget: { type: command.widget } } : {}) }
+      if (command.preset !== undefined) {
+        if (!isModulePreset(command.preset)) throw new Error(`未知模块预设：${command.preset}`)
+        const spec = MODULE_PRESETS[command.preset]!
+        if (spec.widget !== undefined) created.widget = { type: spec.widget }
+        if (spec.widget === 'collection') {
+          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(collectionPreset(spec)) })
+        } else if (spec.widget === 'timeline') {
+          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(timelinePreset(spec)) })
+        } else if (spec.widget === 'map') {
+          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(mapPreset()) })
+        } else if (spec.widget === 'html' && spec.sample !== undefined) {
+          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(spec.sample) })
+        } else if (spec.widget === 'scene') {
+          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(encodeScene(spec.scene ?? { version: 1, objects: [], camera: { yaw: -18, pitch: 12, zoom: 1 } })) })
+        } else if (spec.sample !== undefined) {
+          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(spec.sample) })
+        }
+      }
+      next = put({ ...card, modules: insertModule(card.modules, command.parentId ?? null, created, null) })
+      createdModules.push(created.id)
+      break
+    }
+    case 'add_module_custom': {
+      const definition = normalizeCustomModule(command.definition)
+      if (typeof definition === 'string') throw new Error(`用户模块定义无效：${definition}`)
+      const created: ContentModule = { id: mintId(), name: command.name, blocks: [], tags: [], children: [], layout: 'VERTICAL', characterIds: [] }
+      if (definition.shape === 'collection') {
+        created.widget = { type: 'collection' }
+        created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(customCollection(definition)) })
+      } else if (definition.shape === 'timeline') {
+        created.widget = { type: 'timeline' }
+        created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(customTimeline(definition)) })
+      } else if (definition.shape === 'map') {
+        created.widget = { type: 'map' }
+        created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(customMap()) })
+      } else if (definition.sample !== undefined) {
+        created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(definition.sample) })
+      }
+      next = put({ ...card, modules: insertModule(card.modules, command.parentId ?? null, created, null) })
+      createdModules.push(created.id)
+      break
+    }
+    case 'add_module_ref': {
+      if (command.sourceCardId === card.id) {
+        const found = flattenModules(card.modules).find(candidate => candidate.id === command.sourceModuleId)
+        if (found === undefined) throw new Error('被引用的模块不存在')
+      } else {
+        const source = await store.open(command.sourceCardId)
+        if (source === undefined) throw new Error('被引用的卡不在当前项目；跨项目引用默认禁止（可先复制源卡或导出快照）')
+        const found = flattenModules(source.document.modules).find(candidate => candidate.id === command.sourceModuleId)
+        if (found === undefined) throw new Error('被引用的模块不存在')
+      }
+      const created: ContentModule = {
+        id: mintId(), name: command.name, blocks: [], tags: [], children: [], layout: 'VERTICAL', characterIds: [],
+        widget: {
+          type: 'ref', source: { cardId: command.sourceCardId, moduleId: command.sourceModuleId },
+          ...(command.view === undefined ? {} : { view: command.view }),
+          ...(command.filter === undefined ? {} : { filter: command.filter }),
+          ...(command.overrides === undefined ? {} : { overrides: command.overrides }),
+        },
+      }
       next = put({ ...card, modules: insertModule(card.modules, command.parentId ?? null, created, null) })
       createdModules.push(created.id)
       break
@@ -385,10 +454,11 @@ async function transformDocument(
       next = put({ ...card, ...editBlocks(card, [{ kind: 'move', blockId: command.blockId, moduleId: command.moduleId, beforeBlockId: command.beforeBlockId ?? null }]) })
       break
     }
-    case 'remove_module':
+    case 'remove_module': {
       module(command.moduleId)
       next = put({ ...card, modules: removeModule(card.modules, command.moduleId) })
       break
+    }
     case 'remove_block': {
       const owner = module(command.moduleId)
       if (!owner.blocks.some(block => block.id === command.blockId)) throw new Error('内容块不属于目标模块')
@@ -556,8 +626,28 @@ async function transformDocument(
           ? await mutateWidget(command.moduleId, 'map', decodeMap, encodeMap, () => decodeMap(prepared))
           : command.widget === 'relation'
             ? await mutateWidget(command.moduleId, 'relation', decodeRelation, encodeRelation, () => decodeRelation(prepared))
-            : await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, () => decodeTimeline(prepared))
+            : command.widget === 'scene'
+              ? await mutateWidget(command.moduleId, 'scene', decodeScene, encodeScene, () => decodeScene(prepared))
+              : await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, () => decodeTimeline(prepared))
       next = put({ ...card, modules })
+      break
+    }
+    case 'map_add_marker': {
+      const target = widgetModule(command.moduleId, 'map')
+      const data = decodeMap(await widgetJson(target))
+      const id = command.marker.id ?? mintPayloadId()
+      const label = command.marker.label.trim()
+      if (label === '') throw new Error('标记名称不能为空')
+      const x = Math.max(0, Math.min(1, command.marker.x))
+      const y = Math.max(0, Math.min(1, command.marker.y))
+      const description = command.marker.description ?? ''
+      const marker = { id, x, y, label, description }
+      const object = { id, type: 'mark' as const, layer: 'marks', name: label, color: command.marker.color ?? '#34d399', pos: [x, y] as const, description }
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'map', decodeMap, encodeMap, current => ({
+        ...current,
+        markers: [...current.markers, marker],
+        objects: [...current.objects, object],
+      })) })
       break
     }
     case 'map_spawn_view': {
@@ -661,6 +751,12 @@ async function transformDocument(
       next = put({ ...card, modules: insertModule(card.modules, parentId, child, beforeId) })
       break
     }
+    case 'timeline_set_window':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => {
+        const window = Object.keys(command.window).length === 0 ? undefined : command.window
+        return { ...data, ...(window === undefined ? { window: undefined } : { window }) }
+      }) })
+      break
     case 'timeline_set_calendar':
       next = put({ ...card, modules: await mutateWidget(command.moduleId, 'timeline', decodeTimeline, encodeTimeline, data => {
         const calendar = calendarOf(command.calendar)
@@ -686,6 +782,8 @@ async function transformDocument(
           ...(command.event.ongoing === true ? { ongoing: true as const } : {}),
           title: command.event.title, description: command.event.description ?? '',
           characters: command.event.characters ?? [],
+          ...(command.event.relations === undefined || command.event.relations.length === 0 ? {} : { relations: command.event.relations }),
+          ...(command.event.place === undefined ? {} : { place: command.event.place }),
           ...(command.event.color !== undefined ? { color: command.event.color } : {}),
         }],
       })) })
@@ -696,8 +794,12 @@ async function transformDocument(
         // patch.color === null 表示「跟随纪元」——摘掉字段而不是存 null。
         events: data.events.map(event => {
           if (event.id !== command.id) return event
-          const { color, ...rest } = { ...event, ...command.patch, id: event.id }
-          return color === null || color === undefined ? rest : { ...rest, color }
+          const { color, place, ...rest } = { ...event, ...command.patch, id: event.id }
+          return {
+            ...rest,
+            ...(place === null || place === undefined ? {} : { place }),
+            ...(color === null || color === undefined ? {} : { color }),
+          }
         }),
       })) })
       break
@@ -776,20 +878,44 @@ async function transformDocument(
         })),
       })) })
       break
-    case 'collection_add_item':
+    case 'collection_move_field':
       next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => {
+        const moved = data.fields.find(field => field.id === command.id)
+        if (moved === undefined) throw new Error('字段不存在')
+        const rest = data.fields.filter(field => field.id !== command.id)
+        const at = command.beforeId == null ? rest.length : rest.findIndex(field => field.id === command.beforeId)
+        if (at < 0) throw new Error('目标字段不存在')
+        return { ...data, fields: [...rest.slice(0, at), moved, ...rest.slice(at)] }
+      }) })
+      break
+    case 'collection_add_item': {
+      let resources = card.resources
+      let imageResourceId: string | undefined
+      if (command.imageBase64 !== undefined && command.imageMediaType !== undefined) {
+        const bytes = Uint8Array.from(Buffer.from(command.imageBase64, 'base64'))
+        const ref = await store.receivePayload(cardId, bytes)
+        imageResourceId = mintId()
+        resources = [...resources, { id: imageResourceId, content: ref, mediaType: command.imageMediaType }]
+      }
+      const modules = await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => {
         const itemId = command.item.id ?? mintPayloadId()
-        const items = [...data.items, { id: itemId, name: command.item.name, summary: command.item.summary ?? '', description: command.item.description ?? '', visualKey: null }]
+        const items = [...data.items, { id: itemId, name: command.item.name, summary: command.item.summary ?? '', description: command.item.description ?? '', visualKey: imageResourceId ?? null }]
         const byField: Record<string, CollectionValue> = {}
         for (const [key, value] of Object.entries(command.values ?? {})) {
           const field = data.fields.find(candidate => candidate.id === key || candidate.name === key)
           if (field === undefined) throw new Error(`字段不存在：${key}`)
           byField[field.id] = value
         }
+        if (imageResourceId !== undefined) {
+          const imageField = data.fields.find(field => field.type === 'image')
+          if (imageField !== undefined) byField[imageField.id] = { resourceId: imageResourceId }
+        }
         const values = Object.keys(byField).length > 0 ? { ...data.values, [itemId]: byField } : data.values
         return { ...data, items, values }
-      }) })
+      })
+      next = put({ ...card, resources, modules })
       break
+    }
     case 'collection_update_item':
       next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => ({
         ...data,
@@ -802,6 +928,13 @@ async function transformDocument(
         items: data.items.filter(item => item.id !== command.id),
         values: Object.fromEntries(Object.entries(data.values).filter(([itemId]) => itemId !== command.id)),
       })) })
+      break
+    case 'collection_move_item':
+      next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => {
+        const item = data.items.find(candidate => candidate.id === command.id)
+        if (item === undefined) throw new Error('条目不存在')
+        return { ...data, items: [item, ...data.items.filter(candidate => candidate.id !== command.id)] }
+      }) })
       break
     case 'collection_set_value':
       next = put({ ...card, modules: await mutateWidget(command.moduleId, 'collection', decodeCollection, encodeCollection, data => {

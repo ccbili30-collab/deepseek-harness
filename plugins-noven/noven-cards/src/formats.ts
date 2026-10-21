@@ -57,6 +57,13 @@ export interface TimelineEra {
   readonly description: string
 }
 
+/** A timeline event can point at a map marker in the same card/project. */
+export interface TimelinePlace {
+  readonly mapModuleId: string
+  readonly markerId: string
+  readonly label?: string
+}
+
 export interface TimelineEvent {
   readonly id: string
   /** 轴上位置；null = 未放置。 */
@@ -68,6 +75,10 @@ export interface TimelineEvent {
   readonly title: string
   readonly description: string
   readonly characters: string[]
+  /** 关联的关系名（关系集合里的「关系」值）；可选，旧载荷缺省为空。 */
+  readonly relations?: string[]
+  /** 事件地点：地图模块 + 标记；用于时间线↔地图双向定位。 */
+  readonly place?: TimelinePlace
   /** 事件级颜色覆盖；缺省跟随所属纪元。 */
   readonly color?: string
 }
@@ -79,8 +90,17 @@ export interface TimelineMark {
   readonly label: string
 }
 
+export interface TimelineWindow {
+  readonly from?: number
+  readonly to?: number
+}
+
 export interface TimelineData {
   readonly version: 2
+  /** 版式：横向年表（世界史）或竖向日记（个人史）。缺省横向。 */
+  readonly view?: 'horizontal' | 'diary'
+  /** 当前视图的起止跨度；缺省 = 自动覆盖全部事件。 */
+  readonly window?: TimelineWindow
   /** 当前显示的历法视图。 */
   readonly calendar: TimelineCalendar
   /** 已存的命名历法视图（name 非空），工具栏历法 chip 里可切换。 */
@@ -239,6 +259,18 @@ function markOf(raw: unknown, index: number): TimelineMark | null {
   return at === null ? null : { id: str(source.id) || `mark-${String(index)}`, at, label: str(source.label) }
 }
 
+function placeOf(raw: unknown): TimelinePlace | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const source = raw as Record<string, unknown>
+  if (typeof source.mapModuleId !== 'string' || source.mapModuleId === '') return undefined
+  if (typeof source.markerId !== 'string' || source.markerId === '') return undefined
+  return {
+    mapModuleId: source.mapModuleId,
+    markerId: source.markerId,
+    ...(typeof source.label === 'string' && source.label !== '' ? { label: source.label } : {}),
+  }
+}
+
 function eventOf(raw: unknown, index: number): TimelineEvent {
   const source = record(raw)
   const at = numOrNull(source.at)
@@ -252,6 +284,8 @@ function eventOf(raw: unknown, index: number): TimelineEvent {
     title: str(source.title),
     description: str(source.description),
     characters: Array.isArray(source.characters) ? source.characters.map(String) : [],
+    ...(Array.isArray(source.relations) && source.relations.length > 0 ? { relations: source.relations.map(String) } : {}),
+    ...(placeOf(source.place) === undefined ? {} : { place: placeOf(source.place) }),
     ...(ERA_COLORS.has(color) ? { color } : {}),
   }
 }
@@ -279,13 +313,20 @@ export function decodeTimeline(raw: string | undefined): TimelineData {
   const eras = Array.isArray(noven.eras) ? noven.eras.map(eraOf) : []
   const marks = (Array.isArray(noven.marks) ? noven.marks : []).map(markOf).filter((m): m is TimelineMark => m !== null)
   const events = Array.isArray(noven.events) ? noven.events.map(eventOf) : null
+  const view = noven.view === 'diary' ? 'diary' as const : undefined
+  const rawWindow = record(noven.window)
+  const window = {
+    ...(Number.isFinite(Number(rawWindow.from)) && rawWindow.from !== null && rawWindow.from !== '' ? { from: Number(rawWindow.from) } : {}),
+    ...(Number.isFinite(Number(rawWindow.to)) && rawWindow.to !== null && rawWindow.to !== '' ? { to: Number(rawWindow.to) } : {}),
+  }
+  const withWindow = Object.keys(window).length === 0 ? {} : { window }
   if (events !== null) {
-    return { version: 2, calendar, views, eras, marks, events: reconcileNodes(events, payload.nodes) }
+    return { version: 2, ...(view === undefined ? {} : { view }), ...withWindow, calendar, views, eras, marks, events: reconcileNodes(events, payload.nodes) }
   }
   // v1 / 无 noven：nodes 是唯一来源，事件全部未放置。
   const nodes = Array.isArray(payload.nodes) ? payload.nodes : []
   return {
-    version: 2, calendar, views, eras, marks,
+    version: 2, ...(view === undefined ? {} : { view }), ...withWindow, calendar, views, eras, marks,
     events: nodes.map((node, index) => {
       const source = record(node)
       return { id: `ev-${String(index)}`, at: null, until: null, title: str(source.title), description: str(source.description), characters: [] }
@@ -326,7 +367,7 @@ export function encodeTimeline(data: TimelineData): string {
     version: 2,
     kind: 'timeline',
     nodes,
-    noven: { calendar: data.calendar, views: data.views, eras: data.eras, events: data.events, marks: data.marks },
+    noven: { ...(data.view === undefined ? {} : { view: data.view }), ...(data.window === undefined ? {} : { window: data.window }), calendar: data.calendar, views: data.views, eras: data.eras, events: data.events, marks: data.marks },
   }, null, 2)}\n`
 }
 
@@ -357,8 +398,53 @@ export interface CollectionItem {
 }
 
 export type CollectionValue = string | number | boolean | null | { readonly resourceId: string } | CardRefValue
-export type CollectionView = 'list' | 'cards' | 'form' | 'timeline' | 'map'
-const VIEWS = new Set<CollectionView>(['list', 'cards', 'form', 'timeline', 'map'])
+export type CollectionView = 'list' | 'cards' | 'form' | 'timeline' | 'map' | 'profile' | 'graph'
+const VIEWS = new Set<CollectionView>(['list', 'cards', 'form', 'timeline', 'map', 'profile', 'graph'])
+
+export interface CollectionFormConfig {
+  /** Literal labels, or `i18n:<shell locale key>` references for built-ins. */
+  readonly labels?: {
+    readonly primary?: string
+    readonly add?: string
+    readonly empty?: string
+  }
+}
+
+export interface CollectionSource {
+  readonly cardId?: string
+  readonly moduleId?: string
+  readonly moduleName?: string
+  readonly itemId?: string
+  /** Human-readable source label supplied by the preset. */
+  readonly label?: string
+}
+
+/** Declarative window contract shipped with a collection module; AI and UI read the same spec. */
+export interface CollectionAssetSpec {
+  readonly id: string
+  readonly role: string
+  readonly ratio: string
+  readonly render: string
+  readonly export: string
+}
+
+/** One detail section, ordered by the module contract. */
+export interface CollectionDetailSection {
+  readonly title: string
+  readonly fields: readonly string[]
+}
+
+/** Reading/detail/editor/asset/link contract for one collection module. */
+export interface CollectionPresentation {
+  readonly contract: string
+  readonly layout: string
+  readonly core: readonly string[]
+  readonly optional: readonly string[]
+  readonly detail: readonly CollectionDetailSection[]
+  readonly editor: { readonly create: readonly string[], readonly detail: readonly string[] }
+  readonly assets: readonly CollectionAssetSpec[]
+  readonly links: readonly string[]
+}
 
 export interface CollectionData {
   readonly version: 2
@@ -369,6 +455,14 @@ export interface CollectionData {
   readonly view: CollectionView
   /** 本模块条目配图的统一画风提示词：生图工具每次都在它前面拼条目描述，保证一排卡是同一系列。 */
   readonly artStyle: string
+  /** 图鉴卡的图片比例：人物立绘 portrait，场景 landscape，徽记 square。 */
+  readonly cardAspect?: 'portrait' | 'landscape' | 'square'
+  /** Record editor labels and presentation overrides supplied by the module preset. */
+  readonly form?: CollectionFormConfig
+  /** Same-card or cross-card source this collection references (e.g. 多形态 → 角色档案). */
+  readonly source?: CollectionSource
+  /** Window contract: reading layout, detail order, editor fields, asset sizes, links. */
+  readonly presentation?: CollectionPresentation
 }
 
 function itemOf(raw: unknown, index: number): CollectionItem {
@@ -413,7 +507,54 @@ export function decodeCollection(raw: string | undefined): CollectionData {
     if (Object.keys(cleaned).length > 0) values[itemId] = cleaned
   }
   const view = str(noven.view, 'list')
-  return { version: 2, fields, items, values, view: (VIEWS as Set<string>).has(view) ? view as CollectionView : 'list', artStyle: str(noven.artStyle) }
+  const aspect = str(noven.cardAspect)
+  const rawSource = record(noven.source)
+  const sourceText = (key: string): string | undefined => typeof rawSource[key] === 'string' && rawSource[key] !== '' ? rawSource[key] as string : undefined
+  const source = {
+    ...(sourceText('cardId') === undefined ? {} : { cardId: sourceText('cardId') }),
+    ...(sourceText('moduleId') === undefined ? {} : { moduleId: sourceText('moduleId') }),
+    ...(sourceText('moduleName') === undefined ? {} : { moduleName: sourceText('moduleName') }),
+    ...(sourceText('itemId') === undefined ? {} : { itemId: sourceText('itemId') }),
+    ...(sourceText('label') === undefined ? {} : { label: sourceText('label') }),
+  }
+  const rawForm = record(noven.form)
+  const rawLabels = record(rawForm.labels)
+  const labels = {
+    ...(typeof rawLabels.primary === 'string' && rawLabels.primary !== '' ? { primary: rawLabels.primary } : {}),
+    ...(typeof rawLabels.add === 'string' && rawLabels.add !== '' ? { add: rawLabels.add } : {}),
+    ...(typeof rawLabels.empty === 'string' && rawLabels.empty !== '' ? { empty: rawLabels.empty } : {}),
+  }
+  const rawPresentation = record(noven.presentation)
+  const stringList = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
+  const presentation = typeof rawPresentation.contract === 'string' && rawPresentation.contract !== ''
+    ? {
+      contract: rawPresentation.contract as string,
+      layout: typeof rawPresentation.layout === 'string' ? rawPresentation.layout : 'list',
+      core: stringList(rawPresentation.core),
+      optional: stringList(rawPresentation.optional),
+      detail: Array.isArray(rawPresentation.detail) ? rawPresentation.detail.flatMap(section => {
+        const item = record(section)
+        return typeof item.title === 'string' ? [{ title: item.title, fields: stringList(item.fields) }] : []
+      }) : [],
+      editor: { create: stringList(record(rawPresentation.editor).create), detail: stringList(record(rawPresentation.editor).detail) },
+      assets: Array.isArray(rawPresentation.assets) ? rawPresentation.assets.flatMap(asset => {
+        const item = record(asset)
+        return typeof item.id === 'string' && typeof item.role === 'string' && typeof item.ratio === 'string' && typeof item.render === 'string' && typeof item.export === 'string'
+          ? [{ id: item.id, role: item.role, ratio: item.ratio, render: item.render, export: item.export }]
+          : []
+      }) : [],
+      links: stringList(rawPresentation.links),
+    } satisfies CollectionPresentation
+    : undefined
+  return {
+    version: 2, fields, items, values,
+    view: (VIEWS as Set<string>).has(view) ? view as CollectionView : 'list',
+    artStyle: str(noven.artStyle),
+    ...(aspect === 'portrait' || aspect === 'landscape' || aspect === 'square' ? { cardAspect: aspect } : {}),
+    ...(Object.keys(labels).length === 0 ? {} : { form: { labels } }),
+    ...(Object.keys(source).length === 0 ? {} : { source }),
+    ...(presentation === undefined ? {} : { presentation }),
+  }
 }
 
 /** 编码集合：items 保持手机端可读的四字段投影，真数据进 `noven`。 */
@@ -422,8 +563,76 @@ export function encodeCollection(data: CollectionData): string {
     version: 2,
     kind: 'collection',
     items: data.items.map(item => ({ id: item.id, name: item.name, summary: item.summary, description: item.description, visualKey: item.visualKey })),
-    noven: { fields: data.fields, values: data.values, view: data.view, artStyle: data.artStyle },
+    noven: { fields: data.fields, values: data.values, view: data.view, artStyle: data.artStyle, ...(data.cardAspect === undefined ? {} : { cardAspect: data.cardAspect }), ...(data.form === undefined ? {} : { form: data.form }), ...(data.source === undefined ? {} : { source: data.source }), ...(data.presentation === undefined ? {} : { presentation: data.presentation }) },
   }, null, 2)}\n`
+}
+
+// ---------- 3D 场景 ----------
+
+/** One object in the generic scene runtime; transforms are scene pixels/degrees. */
+export interface SceneObject {
+  readonly id: string
+  readonly name: string
+  readonly color: string
+  readonly imageResourceId?: string
+  readonly description: string
+  readonly x: number
+  readonly y: number
+  readonly z: number
+  readonly rx: number
+  readonly ry: number
+  readonly rz: number
+  readonly scale: number
+}
+
+export interface SceneCamera {
+  readonly yaw: number
+  readonly pitch: number
+  readonly zoom: number
+}
+
+export interface SceneData {
+  readonly version: 1
+  readonly objects: readonly SceneObject[]
+  readonly camera: SceneCamera
+}
+
+const defaultSceneCamera: SceneCamera = { yaw: -18, pitch: 12, zoom: 1 }
+
+/** Decode a scene payload; malformed objects are skipped. */
+export function decodeScene(raw: string | undefined): SceneData {
+  if (raw === undefined || raw.trim() === '') return { version: 1, objects: [], camera: defaultSceneCamera }
+  let payload: Record<string, unknown>
+  try { payload = record(JSON.parse(raw)) } catch { return { version: 1, objects: [], camera: defaultSceneCamera } }
+  const noven = record(payload.noven)
+  const objects = (Array.isArray(noven.objects) ? noven.objects : []).flatMap((item, index): SceneObject[] => {
+    const source = record(item)
+    const id = str(source.id) || `scene-${String(index)}`
+    const name = str(source.name)
+    return [{
+      id, name,
+      color: str(source.color) || '#34D399',
+      ...(str(source.imageResourceId) === '' ? {} : { imageResourceId: str(source.imageResourceId) }),
+      description: str(source.description),
+      x: num(source.x, 0), y: num(source.y, 0), z: num(source.z, 0),
+      rx: num(source.rx, 0), ry: num(source.ry, 0), rz: num(source.rz, 0),
+      scale: Number.isFinite(Number(source.scale)) && Number(source.scale) > 0 ? Number(source.scale) : 1,
+    }]
+  })
+  const camera = record(noven.camera)
+  return {
+    version: 1, objects,
+    camera: {
+      yaw: num(camera.yaw, defaultSceneCamera.yaw),
+      pitch: num(camera.pitch, defaultSceneCamera.pitch),
+      zoom: Number.isFinite(Number(camera.zoom)) && Number(camera.zoom) > 0 ? Number(camera.zoom) : 1,
+    },
+  }
+}
+
+/** Encode a scene payload. */
+export function encodeScene(data: SceneData): string {
+  return `${JSON.stringify({ version: 1, kind: 'scene', noven: data }, null, 2)}\n`
 }
 
 // ---------- 地图 ----------
@@ -1005,6 +1214,63 @@ export function encodeRelation(data: RelationData): string {
     edges: data.edges.map(edge => ({ from: edge.from, to: edge.to, label: edge.label })),
     noven: { nodes, edges },
   }, null, 2)}\n`
+}
+
+// ---------- 自由界面工程 ----------
+
+/** Manifest for a free surface: the launcher and the runtime contract. */
+export interface SurfaceManifest {
+  readonly name: string
+  readonly description: string
+  /** Card image resource id, data URL, or ordinary URL. */
+  readonly cover?: string
+  readonly fullscreen: boolean
+}
+
+/** A free surface project: one entry file plus its file map and manifest. */
+export interface SurfaceData {
+  readonly version: 1
+  readonly entry: string
+  readonly files: Record<string, string>
+  readonly manifest: SurfaceManifest
+}
+
+const surfacePath = (path: string): string => path.replace(/^\.?\//, '')
+
+/** Decode a surface project from its text block; raw HTML is not a surface. */
+export function decodeSurface(raw: string | undefined): SurfaceData | undefined {
+  if (raw === undefined || !raw.trim().startsWith('{')) return undefined
+  let parsed: unknown
+  try { parsed = JSON.parse(raw) } catch { return undefined }
+  const outer = record(parsed)
+  const source = outer.kind === 'surface' && outer.noven !== null && typeof outer.noven === 'object'
+    ? record(outer.noven)
+    : outer
+  if (typeof source.entry !== 'string' || source.files === null || typeof source.files !== 'object') return undefined
+  const files: Record<string, string> = {}
+  for (const [path, content] of Object.entries(record(source.files))) {
+    if (typeof content === 'string') files[surfacePath(path)] = content
+  }
+  if (Object.keys(files).length === 0) return undefined
+  const manifest = record(source.manifest)
+  const entry = surfacePath(source.entry)
+  return {
+    version: 1,
+    entry: files[entry] === undefined ? (files['index.html'] === undefined ? Object.keys(files)[0]! : 'index.html') : entry,
+    files,
+    manifest: {
+      name: typeof manifest.name === 'string' && manifest.name !== '' ? manifest.name : 'Free surface',
+      description: typeof manifest.description === 'string' ? manifest.description : '',
+      ...(typeof manifest.cover === 'string' && manifest.cover !== '' ? { cover: manifest.cover } : {}),
+      fullscreen: manifest.fullscreen === true,
+    },
+  }
+}
+
+/** Encode a surface project into the module's text block. */
+export function encodeSurface(data: SurfaceData): string {
+  if (data.files[data.entry] === undefined) throw new Error('surface entry 不在 files 中')
+  return `${JSON.stringify({ version: 1, kind: 'surface', noven: data }, null, 2)}\n`
 }
 
 // ---------- 总览布局 ----------

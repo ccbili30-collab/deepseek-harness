@@ -125,7 +125,7 @@ try {
       { id: 'era-2', name: '未竟之世', from: 400, to: null, color: 'blue', description: '向未来开放' },
     ],
     events: [
-      { id: 'ev-1', at: 42, until: null, title: '大雪', description: '纪元的开端', characters: [] },
+      { id: 'ev-1', at: 42, until: null, title: '大雪', description: '纪元的开端', characters: ['沈青梧'], relations: ['师徒'] },
       { id: 'ev-2', at: null, until: null, title: '未定', description: '', characters: [] },
       { id: 'ev-3', at: 500, until: null, ongoing: true, title: '进行中的革命', description: '', characters: [], color: 'pink' },
     ],
@@ -135,6 +135,7 @@ try {
   check(decoded.events.length === 3 && decoded.eras.length === 2 && decoded.calendar.step === 1, '时间线 v2 往返一致')
   check(decoded.events[1].at === null && decoded.eras[1].to === null, 'null 端点/未放置不被解码成 0')
   check(decoded.events[2].ongoing === true && decoded.events[2].color === 'pink', 'ongoing 与事件色往返一致')
+  check(decoded.events[0].relations?.[0] === '师徒', '事件关联关系往返一致')
   check(decoded.calendar.unit === '年' && decoded.calendar.units[0].per === 1, '历法单位链与兼容 unit 往返一致')
   check(decoded.views.length === 1 && decoded.views[0].name === '公元纪年' && decoded.views[0].units[0].per === 360, '命名历法视图往返、无名视图丢弃')
   const projection = JSON.parse(encoded)

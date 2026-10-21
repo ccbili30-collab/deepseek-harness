@@ -2,204 +2,91 @@
   "id": "character",
   "kind": "CHARACTER",
   "title": "角色卡",
-  "summary": "档案、内在、关系、轨迹、多形态——一张能直接开演的角色卡",
-  "defaultName": "沈青梧",
+  "summary": "一张空白角色卡：档案、关系、经历、形态、语录、能力、装备与图集模块已就位，等待填写。",
+  "defaultName": "未命名角色",
   "modules": [
     {
-      "name": "基础档案",
-      "sample": "玄天宗内门弟子，十九岁，性情清冷、护短，背着一段不愿提起的旧事。",
-      "children": [
+      "name": "设定总览",
+      "widget": "overview"
+    },
+    {
+      "name": "角色档案",
+      "widget": "collection",
+      "view": "profile",
+      "fields": [
         {
-          "name": "基本信息",
-          "widget": "collection",
-          "fields": [
-            {
-              "name": "姓名",
-              "type": "text"
-            },
-            {
-              "name": "形象",
-              "type": "image"
-            },
-            {
-              "name": "身份",
-              "type": "text"
-            },
-            {
-              "name": "年龄",
-              "type": "number"
-            },
-            {
-              "name": "阵营",
-              "type": "text"
-            },
-            {
-              "name": "出身",
-              "type": "text"
-            },
-            {
-              "name": "一句话",
-              "type": "text"
-            },
-            {
-              "name": "性格关键词",
-              "type": "chips"
-            }
-          ],
-          "rows": [
-            {
-              "姓名": "沈青梧",
-              "身份": "玄天宗内门弟子",
-              "年龄": 19,
-              "阵营": "玄天宗",
-              "出身": "北境",
-              "形象": {
-                "asset": "assets/portrait-1.jpg"
-              },
-              "一句话": "玄天宗内门弟子，十九岁，性冷护短。",
-              "性格关键词": "清冷、护短、口是心非"
-            }
-          ],
-          "view": "form"
+          "name": "姓名",
+          "type": "text"
         },
         {
-          "name": "外貌与气质",
-          "sample": "身量偏瘦，惯穿白衣，左手虎口有一道旧疤。不笑的时候像在下雪。"
+          "name": "形象",
+          "type": "image"
         },
         {
-          "name": "性格与习惯",
-          "sample": "话少，护短，口是心非。想事情时会用指节轻轻敲桌沿。"
+          "name": "身份",
+          "type": "text"
         },
         {
-          "name": "兴趣爱好",
-          "sample": "雪夜煮茶；收集各地的刀币。"
+          "name": "年龄",
+          "type": "number"
+        },
+        {
+          "name": "阵营",
+          "type": "text"
+        },
+        {
+          "name": "出身",
+          "type": "text"
+        },
+        {
+          "name": "一句话",
+          "type": "text"
+        },
+        {
+          "name": "性格关键词",
+          "type": "chips"
+        },
+        {
+          "name": "档案",
+          "type": "longtext"
         }
       ]
     },
     {
-      "name": "内在",
-      "children": [
+      "name": "关系",
+      "widget": "collection",
+      "view": "graph",
+      "fields": [
         {
-          "name": "动机与欲望",
-          "sample": "想查清师父之死的真相，又怕真相伤到还在的人。"
+          "name": "从",
+          "type": "text"
         },
         {
-          "name": "恐惧与软肋",
-          "sample": "最怕被留下。看上去冷淡，其实是先伸手的那个人。"
+          "name": "到",
+          "type": "text"
         },
         {
-          "name": "价值观与底线",
-          "sample": "不杀已认输的人；不拿同门当筹码。"
-        }
-      ]
-    },
-    {
-      "name": "角色关系",
-      "children": [
+          "name": "关系",
+          "type": "text"
+        },
         {
-          "name": "关系图",
-          "widget": "relation",
-          "relation": {
-            "nodes": [
-              {
-                "name": "沈青梧",
-                "note": "玄天宗内门弟子",
-                "avatar": "assets/portrait-1.jpg",
-                "x": 0.5,
-                "y": 0.5
-              },
-              {
-                "name": "玄尘子",
-                "note": "师父，玄天宗长老",
-                "avatar": "assets/avatar-xuan.jpg",
-                "x": 0.2,
-                "y": 0.52
-              },
-              {
-                "name": "裴照",
-                "note": "宿敌，玄天宗长老之子",
-                "avatar": "assets/avatar-pei.jpg",
-                "x": 0.82,
-                "y": 0.5
-              },
-              {
-                "name": "林小满",
-                "note": "同门师妹",
-                "avatar": "assets/avatar-lin.jpg",
-                "x": 0.5,
-                "y": 0.16
-              },
-              {
-                "name": "沈砚",
-                "note": "兄长，失踪多年",
-                "avatar": "assets/avatar-shen.jpg",
-                "x": 0.5,
-                "y": 0.86
-              }
-            ],
-            "edges": [
-              {
-                "from": "玄尘子",
-                "to": "沈青梧",
-                "label": "师徒"
-              },
-              {
-                "from": "沈青梧",
-                "to": "裴照",
-                "label": "宿敌"
-              },
-              {
-                "from": "林小满",
-                "to": "沈青梧",
-                "label": "同门"
-              },
-              {
-                "from": "沈砚",
-                "to": "沈青梧",
-                "label": "兄妹"
-              },
-              {
-                "from": "裴照",
-                "to": "玄尘子",
-                "label": "父子"
-              }
-            ]
-          }
+          "name": "说明",
+          "type": "longtext"
         }
       ]
     },
     {
       "name": "行动轨迹",
-      "children": [
-        {
-          "name": "时间线",
-          "widget": "timeline",
-          "timeline": {
-            "eras": [],
-            "events": [
-              {
-                "at": -12,
-                "title": "入门",
-                "description": "十四岁拜入玄天宗，成为玄尘子的关门弟子。"
-              },
-              {
-                "at": -3,
-                "title": "下山",
-                "description": "第一次独自下山，在北境边城卷入一场械斗。"
-              },
-              {
-                "at": 0,
-                "title": "北境",
-                "description": "奉师命重返北境，调查灵潮异动。"
-              }
-            ]
-          }
-        }
-      ]
+      "widget": "timeline",
+      "timeline": {
+        "unit": "岁",
+        "view": "diary"
+      }
     },
     {
       "name": "多形态",
       "widget": "collection",
+      "view": "cards",
       "fields": [
         {
           "name": "名称",
@@ -211,171 +98,137 @@
         },
         {
           "name": "说明",
+          "type": "longtext"
+        },
+        {
+          "name": "身份",
+          "type": "text"
+        },
+        {
+          "name": "年龄",
+          "type": "number"
+        },
+        {
+          "name": "阵营",
+          "type": "text"
+        },
+        {
+          "name": "出身",
           "type": "text"
         }
       ],
-      "rows": [
-        {
-          "名称": "常态",
-          "形象": {
-            "asset": "assets/portrait-1.jpg"
-          },
-          "说明": "玄天宗日常"
-        },
-        {
-          "名称": "剑修",
-          "形象": {
-            "asset": "assets/portrait-2.jpg"
-          },
-          "说明": "持剑形态"
-        },
-        {
-          "名称": "战损",
-          "形象": {
-            "asset": "assets/portrait-3.jpg"
-          },
-          "说明": "衣衫染血"
+      "form": {
+        "labels": {
+          "primary": "i18n:coll.primary",
+          "add": "i18n:coll.gallery.add"
         }
-      ],
-      "view": "cards"
+      },
+      "source": {
+        "moduleName": "角色档案",
+        "label": "i18n:coll.profile.kicker"
+      }
     },
     {
       "name": "语录",
       "widget": "collection",
+      "view": "cards",
       "fields": [
+        {
+          "name": "语录",
+          "type": "text"
+        },
         {
           "name": "场景",
           "type": "text"
         },
         {
-          "name": "台词",
-          "type": "longtext"
-        }
-      ],
-      "rows": [
-        {
-          "场景": "拒婚",
-          "台词": "「我自有要守的人，便再难，也不会退。」"
+          "name": "情绪",
+          "type": "text"
         },
         {
-          "场景": "雪夜",
-          "台词": "「有些事，不必问，也不必提。」"
-        },
-        {
-          "场景": "告别",
-          "台词": "「你走的时候，别回头。」"
+          "name": "对象",
+          "type": "text"
         }
       ]
     },
     {
-      "name": "属性面板",
+      "name": "能力",
       "widget": "collection",
-      "fields": [
-        {
-          "name": "属性",
-          "type": "text"
-        },
-        {
-          "name": "数值",
-          "type": "number"
-        },
-        {
-          "name": "说明",
-          "type": "text"
-        }
-      ],
-      "rows": [
-        {
-          "属性": "修为",
-          "数值": 42,
-          "说明": "筑基后期"
-        },
-        {
-          "属性": "刀法",
-          "数值": 18,
-          "说明": "入门"
-        },
-        {
-          "属性": "心性",
-          "数值": 77,
-          "说明": "极稳"
-        },
-        {
-          "属性": "轻功",
-          "数值": 35,
-          "说明": "身法灵巧"
-        }
-      ],
-      "view": "form"
-    },
-    {
-      "name": "随身装备",
-      "widget": "collection",
+      "view": "list",
       "fields": [
         {
           "name": "名称",
           "type": "text"
         },
         {
-          "name": "品级",
+          "name": "类型",
           "type": "text"
         },
         {
           "name": "效果",
           "type": "longtext"
-        }
-      ],
-      "rows": [
-        {
-          "名称": "断雪",
-          "品级": "地阶",
-          "效果": "出鞘三尺内落雪不化。"
         },
         {
-          "名称": "玄天令",
-          "品级": "宗门信物",
-          "效果": "可调北境三处驿站。"
-        },
-        {
-          "名称": "旧铜铃",
-          "品级": "无",
-          "效果": "师父留下的，响一声就有人来。"
-        }
-      ]
-    },
-    {
-      "name": "天赋技能",
-      "widget": "collection",
-      "fields": [
-        {
-          "name": "名称",
-          "type": "text"
-        },
-        {
-          "name": "效果",
+          "name": "详细说明",
           "type": "longtext"
         },
         {
           "name": "代价",
-          "type": "longtext"
-        }
-      ],
-      "rows": [
-        {
-          "名称": "雪落无声",
-          "效果": "十步之内隐匿气息。",
-          "代价": "每次发动耗三日寿元。"
-        },
-        {
-          "名称": "听雪",
-          "效果": "方圆百步的脚步声可辨。",
-          "代价": "雪天之后三日耳鸣。"
+          "type": "text"
         }
       ]
     },
     {
-      "name": "世界背景",
-      "sample": "出身北境雪村；十四岁那年村子被血刀门屠尽，被玄尘子带回山门。世界与势力的脉络见同项目的世界卡。"
+      "name": "装备",
+      "widget": "collection",
+      "view": "cards",
+      "cardAspect": "square",
+      "fields": [
+        {
+          "name": "名称",
+          "type": "text"
+        },
+        {
+          "name": "图片",
+          "type": "image"
+        },
+        {
+          "name": "类型",
+          "type": "text"
+        },
+        {
+          "name": "效果",
+          "type": "longtext"
+        },
+        {
+          "name": "归属",
+          "type": "text"
+        },
+        {
+          "name": "详细说明",
+          "type": "longtext"
+        }
+      ]
+    },
+    {
+      "name": "图集",
+      "widget": "collection",
+      "view": "cards",
+      "cardAspect": "portrait",
+      "fields": [
+        {
+          "name": "图片",
+          "type": "image"
+        },
+        {
+          "name": "标题",
+          "type": "text"
+        },
+        {
+          "name": "说明",
+          "type": "longtext"
+        }
+      ]
     }
   ]
 }

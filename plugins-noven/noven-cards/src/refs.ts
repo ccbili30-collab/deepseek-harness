@@ -29,10 +29,28 @@ export interface RefEntry {
   readonly itemName: string
 }
 
-/** Picker targets plus per-card backlinks. */
+/** One module mount referencing another module (same or cross card). */
+export interface ModuleRefBacklink {
+  readonly fromCardId: string
+  readonly fromCardName: string
+  readonly fromKind: string
+  readonly refModuleId: string
+  readonly refModuleName: string
+  readonly sourceCardId: string
+  readonly sourceModuleId: string
+}
+
+/** Picker targets plus per-card field backlinks and per-module mount backlinks. */
 export interface ReferenceIndex {
-  readonly targets: readonly { readonly cardId: string, readonly name: string, readonly kind: string }[]
+  readonly targets: readonly {
+    readonly cardId: string
+    readonly name: string
+    readonly kind: string
+    readonly modules: readonly { readonly id: string, readonly name: string, readonly type: string }[]
+  }[]
   readonly backlinks: Record<string, RefEntry[]>
+  /** key = `${sourceCardId}:${sourceModuleId}`. */
+  readonly moduleBacklinks: Record<string, ModuleRefBacklink[]>
 }
 
 const REF_FIELDS = new Set(['person', 'place'])
@@ -74,15 +92,41 @@ const flatten = (modules: readonly ContentModule[], out: ContentModule[] = []): 
  */
 export async function buildReferenceIndex(store: CardStore): Promise<ReferenceIndex> {
   const ids = await store.list()
-  const targets: { cardId: string, name: string, kind: string }[] = []
+  const targets: { cardId: string, name: string, kind: string, modules: { id: string, name: string, type: string }[] }[] = []
   const backlinks: Record<string, RefEntry[]> = {}
+  const moduleBacklinks: Record<string, ModuleRefBacklink[]> = {}
   for (const cardId of ids) {
     const card = await store.open(cardId)
     if (card === undefined) continue
-    targets.push({ cardId, name: card.document.name, kind: card.document.kind })
-    for (const module of flatten(card.document.modules)) {
+    const modules = flatten(card.document.modules)
+    targets.push({
+      cardId, name: card.document.name, kind: card.document.kind,
+      modules: modules.map(module => ({ id: module.id, name: module.name, type: module.widget?.type ?? 'document' })),
+    })
+    const addMount = (sourceCardId: string, sourceModuleId: string, module: ContentModule): void => {
+      const key = `${sourceCardId}:${sourceModuleId}`
+      const list = moduleBacklinks[key] ?? []
+      list.push({
+        fromCardId: cardId, fromCardName: card.document.name, fromKind: card.document.kind,
+        refModuleId: module.id, refModuleName: module.name,
+        sourceCardId, sourceModuleId,
+      })
+      moduleBacklinks[key] = list
+    }
+    for (const module of modules) {
+      if (module.widget?.type === 'ref' && module.widget.source !== undefined) {
+        addMount(module.widget.source.cardId, module.widget.source.moduleId, module)
+      }
       const data = await collectionData(store, cardId, module)
-      if (data === undefined) continue
+      if (data === undefined) {
+        continue
+      }
+      if (data.source !== undefined) {
+        const sourceCardId = data.source.cardId ?? cardId
+        const sourceModuleId = data.source.moduleId
+          ?? (data.source.moduleName === undefined ? undefined : modules.find(candidate => candidate.name === data.source?.moduleName)?.id)
+        if (sourceModuleId !== undefined) addMount(sourceCardId, sourceModuleId, module)
+      }
       for (const item of data.items) {
         const values = data.values[item.id]
         if (values === undefined) continue
@@ -106,5 +150,5 @@ export async function buildReferenceIndex(store: CardStore): Promise<ReferenceIn
       }
     }
   }
-  return { targets, backlinks }
+  return { targets, backlinks, moduleBacklinks }
 }

@@ -44,6 +44,21 @@ export interface ModuleWidget {
   height?: number
   /** 'html' 模块的项目内文件活引用：渲染时实时读这份文件，文件更新模块跟着变。 */
   path?: string
+  /** 'ref' 模块：同项目跨卡引用一个源模块。 */
+  source?: { readonly cardId: string, readonly moduleId: string }
+  /** 引用挂载的本卡视图（diary/horizontal/cards/profile/...）。 */
+  view?: string
+  /** 引用挂载的本卡过滤。 */
+  filter?: { readonly characters?: readonly string[] }
+  /** 引用挂载的本卡展示覆盖（浅合并到源数据）。 */
+  overrides?: Record<string, unknown>
+  /** 导出时内联的源模块快照；源卡/源模块不可用时渲染它。 */
+  snapshot?: {
+    readonly cardName: string
+    readonly moduleName: string
+    readonly widget: { readonly type: string, readonly data?: unknown }
+    readonly resources?: Record<string, { readonly base64: string, readonly mediaType: string }>
+  }
 }
 
 /** 图片扩展名 → mediaType（embed_file / save_conversation_image 共用）。 */

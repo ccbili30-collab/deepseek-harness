@@ -9,11 +9,13 @@
  */
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { Buffer } from 'node:buffer'
 import { inflateRawSync } from 'node:zlib'
 import { dirname, join } from 'node:path'
 import { mintId, flattenModules, type ContentDocument, type ContentModule, type ContentRef } from './model.ts'
 import { CardStore } from './store.ts'
 import { readZip, writeZip, type ZipEntry } from './zip.ts'
+import { decodeCollection, decodeMap, decodeRelation, decodeTimeline } from './formats.ts'
 
 const EXPERIMENT = 'novex-content-exchange'
 const SUPPORTED_VERSIONS = [1, 2] as const
@@ -64,12 +66,81 @@ export async function exportCard(store: CardStore, cardId: string, outputPath: s
   return { path: outputPath, entries: built.entries, sha256: built.sha256 }
 }
 
+const WIDGET_DECODERS: Record<string, (raw: string | undefined) => unknown> = {
+  collection: decodeCollection,
+  timeline: decodeTimeline,
+  map: decodeMap,
+  relation: decodeRelation,
+}
+
+/**
+ * Inline source-module snapshots into ref widgets for export. A snapshot keeps
+ * the exported card readable when the source card/module is absent; live refs
+ * remain when the source is available.
+ */
+async function inlineRefSnapshots(store: CardStore, cardId: string, document: ContentDocument): Promise<ContentDocument> {
+  const exported = JSON.parse(JSON.stringify(document)) as ContentDocument
+  for (const module of flattenModules(exported.modules)) {
+    const widget = module.widget
+    if (widget?.type !== 'ref' || widget.source === undefined) continue
+    const sourceDoc = widget.source.cardId === cardId
+      ? document
+      : (await store.open(widget.source.cardId).catch(() => undefined))?.document
+    if (sourceDoc === undefined) continue
+    const sourceModule = flattenModules(sourceDoc.modules).find(candidate => candidate.id === widget.source?.moduleId)
+    if (sourceModule === undefined || sourceModule.widget === undefined) continue
+    const sourceType = sourceModule.widget.type
+    if (sourceType === 'ref') continue
+    const decode = WIDGET_DECODERS[sourceType]
+    const textBlock = sourceModule.blocks.find(block => block.kind === 'text')
+    let data: unknown
+    if (decode !== undefined && textBlock !== undefined && textBlock.kind === 'text') {
+      try {
+        data = decode(new TextDecoder().decode(await store.readPayload(widget.source.cardId, textBlock.content)))
+      } catch {
+        data = undefined
+      }
+    }
+    const used = new Set<string>()
+    const scan = (value: unknown): void => {
+      if (Array.isArray(value)) { value.forEach(scan); return }
+      if (typeof value !== 'object' || value === null) return
+      const record = value as Record<string, unknown>
+      if (typeof record.resourceId === 'string') used.add(record.resourceId)
+      if (typeof record.visualKey === 'string') used.add(record.visualKey)
+      for (const nested of Object.values(record)) scan(nested)
+    }
+    scan(data)
+    for (const block of sourceModule.blocks) {
+      if (block.kind === 'image' && block.resourceId !== undefined) used.add(block.resourceId)
+    }
+    const resources: Record<string, { base64: string, mediaType: string }> = {}
+    for (const resource of sourceDoc.resources) {
+      if (!used.has(resource.id)) continue
+      try {
+        const bytes = await store.readPayload(widget.source.cardId, resource.content)
+        resources[resource.id] = { base64: Buffer.from(bytes).toString('base64'), mediaType: resource.mediaType }
+      } catch {
+        // A missing source resource only drops that image from the snapshot.
+      }
+    }
+    widget.snapshot = {
+      cardName: sourceDoc.name,
+      moduleName: sourceModule.name,
+      widget: { type: sourceType, ...(data === undefined ? {} : { data }) },
+      ...(Object.keys(resources).length === 0 ? {} : { resources }),
+    }
+  }
+  return exported
+}
+
 /** 打包一张卡的交换包到内存 —— HTTP 导出与写盘导出共用同一份载荷。 */
 export async function buildExportPackage(store: CardStore, cardId: string): Promise<{ bytes: Uint8Array, name: string, entries: number, sha256: Record<string, string> }> {
   if (await store.draft(cardId) !== undefined) throw new Error('卡上有未提交草稿；先提交（commit_import / 保存）再导出')
   const saved = await store.open(cardId)
   if (saved === undefined) throw new Error('卡不存在或已删除')
-  const refs = [...collectRefs(saved.document)].sort()
+  const exported = await inlineRefSnapshots(store, cardId, saved.document)
+  const refs = [...collectRefs(exported)].sort()
   const entries: ZipEntry[] = [{ name: 'structure.json', data: new TextEncoder().encode(JSON.stringify({ experiment: EXPERIMENT, version: 2, card: saved.document, contents: {} }, null, 2)) }]
   void entries.pop()
   const contents: Record<string, ManifestEntry> = {}
@@ -92,7 +163,7 @@ export async function buildExportPackage(store: CardStore, cardId: string): Prom
     sha256s[ref] = sha256
     packageEntries.push({ name: path, data: bytes })
   }
-  const structure: ExchangeStructure = { experiment: EXPERIMENT, version: 2, card: saved.document as unknown as Record<string, unknown>, contents }
+  const structure: ExchangeStructure = { experiment: EXPERIMENT, version: 2, card: exported as unknown as Record<string, unknown>, contents }
   const all: ZipEntry[] = [
     { name: 'structure.json', data: new TextEncoder().encode(`${JSON.stringify(structure, null, 2)}\n`) },
     ...packageEntries,

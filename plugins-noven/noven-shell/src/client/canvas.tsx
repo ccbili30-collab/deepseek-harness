@@ -676,12 +676,13 @@ function ManualTab({ tab, t }: { readonly tab: CanvasTab; readonly t: ShellT }) 
 /**
  * 卡体：卡页（设定总览 + 分页模块）。
  */
-function CardTab({ tab, t, loadCard, op, ask, readFile, onOpenFile, onOpenCard, close, consumeAddModule }: {
+function CardTab({ tab, t, loadCard, op, ask, seedComposer, readFile, onOpenFile, onOpenCard, close, consumeAddModule }: {
   readonly tab: CanvasTab
   readonly t: ShellT
   readonly loadCard: CanvasInjected['loadCard']
   readonly op: CanvasInjected['cardOp']
   readonly ask: CanvasInjected['ask']
+  readonly seedComposer: (text: string) => void
   /** 读项目内文件文本（html 活引用 / markdown 文件链接）。 */
   readonly readFile: (path: string) => Promise<string | undefined>
   readonly onOpenFile: (path: string) => void
@@ -691,12 +692,14 @@ function CardTab({ tab, t, loadCard, op, ask, readFile, onOpenFile, onOpenCard, 
   /** 清掉标签上的 addModule 信号（一次性）。 */
   readonly consumeAddModule: () => void
 }) {
-  const [autoLib, setAutoLib] = useState(false)
+  // 每个页签自己的开库信号序号：页签体复用、addModule 清掉后，下一次＋仍能+1。
+  const [autoSignals, setAutoSignals] = useState<Record<string, number>>({})
   useEffect(() => {
     if (tab.addModule !== true) return
-    setAutoLib(true)
+    setAutoSignals(current => ({ ...current, [tab.key]: (current[tab.key] ?? 0) + 1 }))
     consumeAddModule()
-  }, [tab.addModule, consumeAddModule])
+  }, [tab.key, tab.addModule, consumeAddModule])
+  const autoLibrary = autoSignals[tab.key] ?? 0
   const addr: CardAddr = tab.cardAddr ?? {}
   if (tab.cardId === undefined) return null
   return (
@@ -706,12 +709,13 @@ function CardTab({ tab, t, loadCard, op, ask, readFile, onOpenFile, onOpenCard, 
         cardId={tab.cardId}
         pageModuleId={tab.moduleId}
         owner={tab.owner}
-        autoLibrary={autoLib}
+        autoLibrary={autoLibrary}
         scrollKey={`${tab.owner}|${tab.key}`}
         t={t}
         loadCard={loadCard}
         op={op}
         ask={ask}
+        seedComposer={seedComposer}
         readFile={readFile}
         onOpenFile={onOpenFile}
         onOpenCard={onOpenCard}
@@ -923,7 +927,7 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
           fmt(t, 'editor.wordcount', { count: liveCount ?? wordCount(base) }),
           zoom === 1 ? undefined : `${String(Math.round(zoom * 100))}%`,
         ])}</div>
-        <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
+        <Menu portal open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => { arm.reset(); setMenuOpen(false) }}
           onSelect={id => {
             if (arm.select(id) === 'armed') return
@@ -1174,7 +1178,7 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
           onBack={() => setRoute('list')}
           topActions={(
             <>
-              <Menu open={modelsOpen} side="bottom" align="end" selection="fill"
+              <Menu portal open={modelsOpen} side="bottom" align="end" selection="fill"
                 onClose={() => setModelsOpen(false)}
                 onSelect={id => {
                   setModelsOpen(false)
@@ -1194,7 +1198,7 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
                       else setModelsOpen(v => !v)
                     }}>⌁</button>
                 )} />
-              <Menu open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-menu-pop"
+              <Menu portal open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-menu-pop"
                 onClose={() => { simArm.reset(); setMenuOpen(false) }}
                 onSelect={id => {
                   if (simArm.select(id) === 'armed') return
@@ -1618,7 +1622,7 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
           <button type="button" className={device === 'phone' ? 'nv-seg-on' : ''}
             onClick={() => switchDevice('phone')}>{t('work.device.phone')}</button>
         </div>
-        <Menu open={verOpen} side="bottom" align="start" selection="check" selectedId={ver ?? 'current'}
+        <Menu portal open={verOpen} side="bottom" align="start" selection="check" selectedId={ver ?? 'current'}
           onClose={() => setVerOpen(false)}
           onSelect={id => { setVerOpen(false); setVer(id === 'current' ? null : id) }}
           items={[
@@ -1656,7 +1660,7 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
             {fmt(t, 'sim.env.webview', { v: wvMode === 'real' ? realWebview() : WEBVIEW_BASELINE })}
           </button>
         )}
-        <Menu open={adoptOpen} side="bottom" align="end" selection="fill"
+        <Menu portal open={adoptOpen} side="bottom" align="end" selection="fill"
           onClose={() => setAdoptOpen(false)}
           onSelect={id => {
             setAdoptOpen(false)
@@ -1809,6 +1813,14 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
   const consumeAddModule = useCallback(() => actions.open({ ...tab, addModule: undefined }), [actions, tab])
   /** 本项目 simOpen 绑定的模拟器会话——作品页签的戏台数据源。 */
   const simOpenId = useStore(s => project === undefined ? undefined : s.simOpen[project.root])
+  const composerDraft = props.useInput(state => state.draft)
+  const seedComposer = useCallback((text: string) => {
+    const existing = composerDraft.trimEnd()
+    props.inputActions.setDraft(existing === '' ? text : `${existing}\n\n${text}`)
+    window.requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>('[data-composer-seat] [contenteditable="true"]')?.focus()
+    })
+  }, [composerDraft, props.inputActions])
   return (
     <>
       {tab.kind === 'chat' && (
@@ -1860,7 +1872,7 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
           }} />
       )}
       {tab.kind === 'card' && (
-        <CardTab tab={tab} t={t} loadCard={props.loadCard} op={props.cardOp} ask={props.ask}
+        <CardTab tab={tab} t={t} loadCard={props.loadCard} op={props.cardOp} ask={props.ask} seedComposer={seedComposer}
           readFile={readCardFile}
           onOpenFile={path => openDoc(path, path.split('/').pop() ?? path)}
           onOpenCard={(cardId, moduleId) => actions.open({

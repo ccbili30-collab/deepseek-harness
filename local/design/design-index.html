@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Noven 设计稿 · 模块成品与空态</title>
+<style>
+  :root { color-scheme: light; --ink:#16181a; --muted:#8a8f94; --line:#eceeef; --paper:#f4f5f4; --accent:#34d399; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--paper); color:var(--ink); font:14px/1.6 -apple-system,BlinkMacSystemFont,"PingFang SC","Segoe UI",sans-serif; }
+  header { max-width:1240px; margin:0 auto; padding:52px 28px 20px; }
+  h1 { margin:0 0 8px; font-size:30px; letter-spacing:-.02em; }
+  header p { margin:0; max-width:820px; color:var(--muted); }
+  main { max-width:1240px; margin:0 auto; padding:0 28px 90px; }
+  section { margin-top:46px; }
+  h2 { margin:0 0 4px; font-size:20px; }
+  .note { margin:0 0 18px; color:var(--muted); font-size:12.5px; }
+  .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:20px; }
+  figure { margin:0; background:#fff; border:1px solid var(--line); border-radius:14px; overflow:hidden; }
+  figure.wide { grid-column:1 / -1; }
+  figure img { display:block; width:100%; height:auto; background:#fff; }
+  figcaption { display:flex; align-items:baseline; justify-content:space-between; gap:12px; padding:11px 14px; border-top:1px solid var(--line); }
+  figcaption b { font-size:13px; font-weight:600; }
+  figcaption span { color:var(--muted); font-size:11.5px; text-align:right; }
+  .links { margin-top:12px; padding:16px 18px; border:1px solid var(--line); border-radius:12px; background:#fff; font-size:13px; }
+  .links a { color:#0e9f6e; text-decoration:none; margin-right:18px; }
+  .links a:hover { text-decoration:underline; }
+  @media (max-width:820px) { .grid { grid-template-columns:1fr; } header, main { padding-left:16px; padding-right:16px; } }
+</style>
+<header>
+  <h1>Noven 设计稿</h1>
+  <p>上半是模块成品设计（modules-v2），下半是空态设计（empty-states-v2）。成品图里的世界、角色、条目是视觉参考，不进入产品默认内容；空态图才是默认首屏。</p>
+</header>
+<main>
+  <section>
+    <h2>模块成品</h2>
+    <p class="note">重点看规则、语录、势力、地理：它们决定了落库后的最终几何，而不是空态卡。</p>
+    <div class="grid">
+      <figure class="wide"><img src="modules-v2/overview.png" alt="世界总览成品"><figcaption><b>世界总览</b><span>全部模块骨架 · 模块索引</span></figcaption></figure>
+      <figure><img src="modules-v2/rules.png" alt="规则成品"><figcaption><b>规则</b><span>左分类栏 + 编号条目 + 展开 · 无表格</span></figcaption></figure>
+      <figure><img src="modules-v2/quotes.png" alt="语录成品"><figcaption><b>语录</b><span>双列引文墙 + 筛选项 · 无表格</span></figcaption></figure>
+      <figure><img src="modules-v2/factions.png" alt="势力成品"><figcaption><b>势力</b><span>横版徽记卡 + 立场标签 + 实力条</span></figcaption></figure>
+      <figure><img src="modules-v2/geography.png" alt="地理成品"><figcaption><b>地理</b><span>地图横幅 + 地点卡 + 在地图上看</span></figcaption></figure>
+      <figure><img src="modules-v2/races.png" alt="种族成品"><figcaption><b>种族</b><span>肖像 + 寿命/分布/特征</span></figcaption></figure>
+      <figure><img src="modules-v2/culture.png" alt="文化成品"><figcaption><b>文化</b><span>封面 + 类别/场合/说明</span></figcaption></figure>
+      <figure><img src="modules-v2/abilities.png" alt="能力成品"><figcaption><b>能力</b><span>技能条目 + 类型/效果/代价</span></figcaption></figure>
+      <figure><img src="modules-v2/equipment.png" alt="装备成品"><figcaption><b>装备</b><span>器物卡 + 类型/归属/效果</span></figcaption></figure>
+      <figure><img src="modules-v2/gallery.png" alt="图集成品"><figcaption><b>图集</b><span>图片墙 + 灯箱</span></figcaption></figure>
+      <figure><img src="modules-v2/collection.png" alt="通用集合成品"><figcaption><b>通用集合</b><span>自由字段的最终形态</span></figcaption></figure>
+    </div>
+  </section>
+
+  <section>
+    <h2>空态</h2>
+    <p class="note">空态必须是上面对应模块的同一张纸，只是内容为空；不是另一个表单，也不是“空集合 + 添加块”。</p>
+    <div class="grid">
+      <figure><img src="empty-states-v2/02-world-overview.png" alt="世界总览空态"><figcaption><b>世界总览</b><span>全部模块在册</span></figcaption></figure>
+      <figure><img src="empty-states-v2/03-world-profile.png" alt="世界档案空态"><figcaption><b>世界档案</b><span>封面 + 事实 + 一句话 + 档案</span></figcaption></figure>
+      <figure><img src="empty-states-v2/04-world-geography.png" alt="地理空态"><figcaption><b>地理</b><span>地图横幅 + 第一张地点卡</span></figcaption></figure>
+      <figure><img src="empty-states-v2/05-world-factions.png" alt="势力空态"><figcaption><b>势力</b><span>第一张徽记卡</span></figcaption></figure>
+      <figure><img src="empty-states-v2/06-world-races.png" alt="种族空态"><figcaption><b>种族</b><span>第一张肖像卡</span></figcaption></figure>
+      <figure><img src="empty-states-v2/01-world-culture.png" alt="文化空态"><figcaption><b>文化</b><span>第一张场景卡</span></figcaption></figure>
+      <figure><img src="empty-states-v2/09-world-rules.png" alt="规则空态"><figcaption><b>规则</b><span>分类栏 + 第一条规则</span></figcaption></figure>
+      <figure><img src="empty-states-v2/10-world-map.png" alt="地图空态"><figcaption><b>地图</b><span>空白画布 + 落点</span></figcaption></figure>
+      <figure><img src="empty-states-v2/11-world-timeline.png" alt="时间线空态"><figcaption><b>时间线</b><span>横轴 + 第一张事件</span></figcaption></figure>
+      <figure><img src="empty-states-v2/07-character-overview.png" alt="角色总览空态"><figcaption><b>角色总览</b><span>全部模块在册</span></figcaption></figure>
+      <figure><img src="empty-states-v2/08-character-profile.png" alt="角色档案空态"><figcaption><b>角色档案</b><span>肖像 + 事实 + 一句话 + 档案</span></figcaption></figure>
+    </div>
+  </section>
+
+  <div class="links">
+    <a href="../empty-states/index.html">19 页空态全量图册（含语录、能力、装备、关系等）</a>
+    <a href="modules-v2/factions.png">势力成品原图</a>
+    <a href="modules-v2/rules.png">规则成品原图</a>
+    <a href="modules-v2/quotes.png">语录成品原图</a>
+  </div>
+</main>
+</html>

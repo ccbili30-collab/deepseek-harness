@@ -1,7 +1,7 @@
 /**
  * 新建流程：左列「＋ 新建」与起点页动作共用的对象创建面板
- * （设计稿 J01/J06）。世界与角色先给名字再选起手方式；角色的「放进
- * 哪个世界」从内容树的 WORLD 卡里挑；文稿只问名字，落在 `文稿/`。
+ * （设计稿 J01/J06）。卡只有世界与角色两种，选中、命名、创建；
+ * 文稿只问名字，落在 `文稿/`。
  * @module noven-shell/client/creation
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react'
@@ -38,32 +38,6 @@ export interface CreateDialogProps {
   readonly onCancel: () => void
 }
 
-/** 起手三选（J01）：图标横排卡片——空白 / 让 AI 问几个问题 / 选模板（模板库未建，置灰）。 */
-function StarterPick({ t, value, onChange }: { t: CreateDialogProps['t']; value: 'blank' | 'interview'; onChange: (v: 'blank' | 'interview') => void }) {
-  const rows: readonly { id: 'blank' | 'interview'; label: string; hint: string; icon: ReactNode }[] = [
-    { id: 'blank', label: t('create.starter.blank'), hint: t('create.starter.blank.hint'), icon: glyph.file(20) },
-    { id: 'interview', label: t('create.starter.interview'), hint: t('create.starter.interview.hint'), icon: glyph.sparkle(20) },
-  ]
-  return (
-    <div className="nv-create-starters" role="radiogroup">
-      {rows.map(row => (
-        <button key={row.id} type="button" role="radio" aria-checked={value === row.id} title={row.hint}
-          className={`nv-create-starter${value === row.id ? ' nv-create-starter-on' : ''}`}
-          onClick={() => onChange(row.id)}>
-          {value === row.id && <span className="nv-create-check" aria-hidden="true">{glyph.check(11)}</span>}
-          <span className="nv-create-starter-icon">{row.icon}</span>
-          <span className="nv-create-starter-label">{row.label}</span>
-        </button>
-      ))}
-      <button type="button" className="nv-create-starter" disabled
-        title={t('create.starter.template.disabled')}>
-        <span className="nv-create-starter-icon">{glyph.grid(20)}</span>
-        <span className="nv-create-starter-label">{t('create.starter.template')}</span>
-      </button>
-    </div>
-  )
-}
-
 /**
  * 新建面板：固定在画布上的居中卡片。Esc/遮罩点击取消，Enter 提交。
  * @param props - 种类、文案、世界候选与提交回调。
@@ -71,11 +45,9 @@ function StarterPick({ t, value, onChange }: { t: CreateDialogProps['t']; value:
  */
 export function CreateDialog({ kind, t, dir, worlds, onSubmit, onCancel }: CreateDialogProps): ReactNode {
   const [name, setName] = useState('')
-  const [starter, setStarter] = useState<'blank' | 'interview'>('blank')
-  const [worldCardId, setWorldCardId] = useState('')
-  // 「卡」面板内部再选种类——世界/角色本质都是卡（cardOp.create 的 kind）。
-  const [cardKind, setCardKind] = useState<'world' | 'character'>('world')
-  const resolved = kind === 'card' ? cardKind : kind
+  // 「卡」面板内部再选种类：世界 / 角色。没有第三种自由卡。
+  const [cardKind, setCardKind] = useState<'world' | 'character' | null>(null)
+  const resolved = kind === 'card' ? cardKind ?? 'world' : kind
   const inputRef = useRef<HTMLInputElement | null>(null)
   useEffect(() => { inputRef.current?.focus() }, [])
   useEffect(() => {
@@ -89,11 +61,14 @@ export function CreateDialog({ kind, t, dir, worlds, onSubmit, onCancel }: Creat
   const submit = (): void => {
     const trimmed = name.trim()
     if (trimmed === '') return
+    if (kind === 'card' && cardKind === null) return
+    const starter: Starter = resolved === 'world'
+      ? 'template:world'
+      : resolved === 'character' ? 'template:character' : 'blank'
     onSubmit({
       kind: resolved,
       name: trimmed,
       starter,
-      worldCardId: resolved === 'character' && worldCardId !== '' ? worldCardId : undefined,
       dir: resolved === 'doc' ? dir : undefined,
     })
   }
@@ -121,12 +96,6 @@ export function CreateDialog({ kind, t, dir, worlds, onSubmit, onCancel }: Creat
         <div className="nv-create-label">{t('create.field.name')}</div>
         <input ref={inputRef} className="nv-create-name" value={name}
           placeholder={t('create.name.placeholder')} onChange={e => setName(e.target.value)} />
-        {resolved === 'character' && (
-          <select className="nv-create-world" value={worldCardId} onChange={e => setWorldCardId(e.target.value)}>
-            <option value="">{t('create.character.noWorld')}</option>
-            {worlds.map(world => <option key={world.cardId} value={world.cardId}>{world.name}</option>)}
-          </select>
-        )}
         {kind === 'group' && (
           <div className="nv-create-egs">
             <span className="nv-create-eglabel">{t('create.group.eg')}</span>
@@ -134,15 +103,9 @@ export function CreateDialog({ kind, t, dir, worlds, onSubmit, onCancel }: Creat
             <button type="button" className="nv-create-eg" onClick={() => setName(t('create.group.eg.2'))}>{t('create.group.eg.2')}</button>
           </div>
         )}
-        {(resolved === 'world' || resolved === 'character') && (
-          <>
-            <div className="nv-create-label">{t('create.starter.label')}</div>
-            <StarterPick t={t} value={starter} onChange={setStarter} />
-          </>
-        )}
         <div className="nv-create-actions">
           <button type="button" className="nv-create-cancel" onClick={onCancel}>{t('create.cancel')}</button>
-          <button type="button" className="nv-create-ok" disabled={name.trim() === ''} onClick={submit}>{t('create.ok')}</button>
+          <button type="button" className="nv-create-ok" disabled={name.trim() === '' || (kind === 'card' && cardKind === null)} onClick={submit}>{t('create.ok')}</button>
         </div>
       </div>
     </div>

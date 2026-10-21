@@ -23,7 +23,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node tests/round-trip.mjs && node tests/proposals.mjs && node tests/selection.mjs && node tests/routes.mjs && node tests/map.mjs && node tests/presets.mjs && node tests/image-width.mjs"
+    "test": "node tests/round-trip.mjs && node tests/proposals.mjs && node tests/selection.mjs && node tests/routes.mjs && node tests/map.mjs && node tests/presets.mjs && node tests/module-presets.mjs && node tests/image-width.mjs && node tests/ai-interface.mjs"
   },
   "engines": {
     "node": ">=20"

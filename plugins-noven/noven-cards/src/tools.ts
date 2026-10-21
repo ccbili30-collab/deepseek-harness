@@ -20,13 +20,16 @@ import { flattenModules, organizeFolders, assertValid, findTarget, emptyCardDocu
 import { BindingStore } from './bindings.ts'
 import { CardStore, cardsRoot, type SavedCard } from './store.ts'
 import { applyAndCommit, resolveWorldHeightmap, type EditorCommand } from './editor.ts'
-import { calendarOf, decodeMap } from './formats.ts'
+import { calendarOf, decodeCollection, decodeMap, decodeRelation, decodeTimeline } from './formats.ts'
+import { buildPresetDocument, listPresets, loadPreset } from './presets.ts'
+import { MODULE_PRESETS } from './module-presets.ts'
 import { generateWorld, applyWorldEdits } from 'noven-fmg/world'
 import { proposeEdit, proposeTransform, proposalChanges, proposalPreview } from './proposals.ts'
 import { aiTrustOf } from './trust.ts'
 import { buildBulkModules, parseBulkTree } from './bulk.ts'
 import { exportCard, importExchange, importForeignFile, readProjectFile } from './exchange.ts'
 import { dirExists, loadRegistry, normalizeRoot } from 'noven-ledger'
+import { listCustomModules, saveCustomModule } from './custom-modules.ts'
 
 /** 模型给新建块惯用的伪编号——一律按"新建"处理而不是报错（实测高频翻车点）。 */
 const NEW_BLOCK_HINTS = new Set(['new', 'create', 'new_block', 'newblock', 'new text block', 'auto', 'null', 'none', 'todo', '新建'])
@@ -105,6 +108,21 @@ export function registerCardTools(ctx: Context): void {
     }
   }
 
+  /**
+   * Read the JSON payload behind a structured widget. Collection, timeline,
+   * relation, map and scene modules keep their payload in the first text block;
+   * this helper gives the describe tools one validated path to it.
+   */
+  async function widgetPayload(store: CardStore, rootId: string, card: ContentDocument, moduleId: string, type: string): Promise<{ module: ContentModule, raw: string }> {
+    const module = flattenModules(card.modules).find(candidate => candidate.id === moduleId)
+    if (module === undefined) throw new Error('目标模块不存在或不属于当前卡片')
+    if (module.widget?.type !== type) throw new Error(`目标模块不是 ${type} 类型`)
+    const block = module.blocks.find(candidate => candidate.kind === 'text')
+    if (block === undefined) throw new Error('模块没有数据块')
+    const raw = new TextDecoder().decode(await store.readPayload(rootId, block.content))
+    return { module, raw }
+  }
+
   // ---------- 读 ----------
   tools.register(defineTool({
     name: 'list_projects',
@@ -120,6 +138,20 @@ export function registerCardTools(ctx: Context): void {
         card_count: (await new CardStore(project.root).list().catch(() => [] as string[])).length,
       })))
       return { status: 'read', projects: rows }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'save_user_module',
+    description: '把一个声明式模块定义保存到本项目的用户模块库（.noven/modules），之后用户可以在“新建模块 → 我的模块”里预览并添加到任意卡。用于用户要求“做一个可复用的门派名册/图鉴/年表模块”时。definition 必须包含 name、shape（collection/timeline/map/doc）；collection 还要 fields[{name,type}]，可选 view、cardAspect、labels，以及 presentation 窗口契约（contract、layout、core、optional、detail、editor、assets、links）；缺省时服务端会从 fields 生成 presentation。timeline 可选 unit、timelineView。只保存定义，不直接改卡。',
+    parameters: {
+      definition: { type: 'json', required: true, description: '完整模块定义 JSON；示例：{"name":"门派名册","shape":"collection","fields":[{"name":"名称","type":"text"},{"name":"徽记","type":"image"},{"name":"立场","type":"chips"}],"view":"cards","cardAspect":"square","labels":{"add":"添加门派"},"presentation":{"contract":"sect-roster","layout":"heraldry","core":["名称","徽记"],"optional":["立场"],"detail":[{"title":"立场","fields":["立场"]}],"editor":{"create":["名称","徽记"],"detail":["立场"]},"assets":[{"id":"emblem","role":"徽记","ratio":"1:1","render":"96x96","export":"192x192"}],"links":["place"]}}' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const saved = await saveCustomModule(sessionCwd(exec), args.definition)
+      if (typeof saved === 'string') throw new Error(`用户模块定义无效：${saved}`)
+      return { status: 'saved', module: JSON.parse(JSON.stringify(saved)) }
     },
   }))
 
@@ -147,14 +179,14 @@ export function registerCardTools(ctx: Context): void {
         ...(mounted.length > 0 ? { mounted } : {}),
         ...(rows.length === 0 ? { hint: mounted.length > 0
           ? '本项目卡库为空；挂载的卡见 mounted（引用卡可读写，跨项目也可用 list_projects + project 参数）。'
-          : '还没有卡。用 create_card_bulk 一次成型整张卡；跨项目找卡用 list_projects。' } : {}),
+          : '还没有卡。标准角色/世界卡用 create_card_from_preset（先 list_card_presets）；纯文档树才用 create_card_bulk；跨项目找卡用 list_projects。' } : {}),
       }
     },
   }))
 
   tools.register(defineTool({
     name: 'read_card',
-    description: '读取目标卡最新模块结构、编辑版本和修改来源，不读取全部正文，也不新建草稿。修改前先读取。卡在本项目、会话挂载引用或其他项目都能找到（project 可显式指定），跨项目卡照常读写。',
+    description: '读取目标卡最新模块结构、编辑版本和修改来源，不读取全部正文，也不新建草稿。修改前先读取。卡在本项目、会话挂载引用或其他项目都能找到（project 可显式指定），跨项目卡照常读写。集合/时间线/关系图的结构化数据分别用 collection_describe / timeline_describe / relation_describe 读。',
     parameters: {
       root_id: TARGET_PARAMS.root_id,
       target_id: { type: 'string', required: true, description: '目标卡编号' },
@@ -307,10 +339,143 @@ export function registerCardTools(ctx: Context): void {
     },
   }))
 
+  tools.register(defineTool({
+    name: 'list_card_presets',
+    description: '列出内置整卡模板（character/world 等）。需要标准角色卡或世界卡时先用它选模板，再用 create_card_from_preset 落卡；不要用 create_card_bulk 猜标准模块。',
+    parameters: {},
+    output: { schema: RESULT_SCHEMA, render },
+    async execute() {
+      const presets = await listPresets()
+      return {
+        status: 'read',
+        presets: presets.map(preset => ({
+          id: preset.id, kind: preset.kind, title: preset.title, summary: preset.summary,
+          ...(preset.defaultName === undefined ? {} : { default_name: preset.defaultName }),
+          module_count: preset.modules.length,
+          modules: preset.modules.map(module => module.name),
+        })),
+      }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'list_module_presets',
+    description: '列出模块库的内置模块预设（规则/语录/势力/种族/文化/能力/装备/图鉴/时间线/地图/HTML 等），含 id、widget、字段、默认视图和呈现契约。先用它选 preset，再用 add_module_preset 落模块；不要手写同样的字段表。',
+    parameters: {},
+    output: { schema: RESULT_SCHEMA, render },
+    async execute() {
+      return {
+        status: 'read',
+        presets: Object.entries(MODULE_PRESETS).map(([id, spec]) => ({
+          id,
+          widget: spec.widget ?? 'document',
+          ...(spec.fields === undefined ? {} : { fields: spec.fields.map(field => ({ name: field.name, type: field.type })) }),
+          ...(spec.view === undefined ? {} : { view: spec.view }),
+          ...(spec.cardAspect === undefined ? {} : { card_aspect: spec.cardAspect }),
+          ...(spec.timelineView === undefined ? {} : { timeline_view: spec.timelineView }),
+          ...(spec.unit === undefined ? {} : { unit: spec.unit }),
+          ...(spec.presentation === undefined ? {} : {
+            contract: spec.presentation.contract, layout: spec.presentation.layout, links: [...spec.presentation.links],
+          }),
+          has_sample: spec.sample !== undefined,
+        })),
+      }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'list_user_modules',
+    description: '列出本项目用户模块库（.noven/modules）里的声明式模块定义。要复用“门派名册”这类自定义模块时，先读定义，再用 add_module_custom 落到卡上。',
+    parameters: { project: TARGET_PARAMS.project },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const root = await resolveProjectRoot(sessionCwd(exec), args.project)
+      return { status: 'read', project_root: root, modules: JSON.parse(JSON.stringify(await listCustomModules(root))) }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'collection_describe',
+    description: '读取集合模块的字段、条目、每格的值、默认视图、呈现契约和 source。改集合前先读；item_id 省略返回全部条目，给出时只返回该条目，values 也随之收窄。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '集合模块编号' },
+      item_id: { type: 'string', description: '只读取这个条目；省略读全部' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const cwd = sessionCwd(exec)
+      const root = String(args.root_id)
+      const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, root)
+      const target = locate(card, String(args.target_id))
+      const { module, raw } = await widgetPayload(resolved.store, root, target, String(args.module_id), 'collection')
+      const data = decodeCollection(raw)
+      const itemId = optionalId(args.item_id) ?? undefined
+      const items = itemId === undefined ? data.items : data.items.filter(item => item.id === itemId)
+      const values = itemId === undefined
+        ? data.values
+        : { [itemId]: data.values[itemId] ?? {} }
+      return JSON.parse(JSON.stringify({
+        status: 'read', module_id: module.id, version: data.version, view: data.view,
+        fields: data.fields, items, values,
+        ...(data.cardAspect === undefined ? {} : { card_aspect: data.cardAspect }),
+        ...(data.artStyle === '' ? {} : { art_style: data.artStyle }),
+        ...(data.presentation === undefined ? {} : { presentation: data.presentation }),
+        ...(data.source === undefined ? {} : { source: data.source }),
+      }))
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'timeline_describe',
+    description: '读取时间线模块的历法、视图、事件、时代和刻度标记（含编号）。改事件/历法前先读；view=diary 表示纵向日记。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '时间线模块编号' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const cwd = sessionCwd(exec)
+      const root = String(args.root_id)
+      const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, root)
+      const target = locate(card, String(args.target_id))
+      const { module, raw } = await widgetPayload(resolved.store, root, target, String(args.module_id), 'timeline')
+      const data = decodeTimeline(raw)
+      return JSON.parse(JSON.stringify({
+        status: 'read', module_id: module.id, version: data.version,
+        ...(data.view === undefined ? {} : { view: data.view }),
+        ...(data.window === undefined ? {} : { window: data.window }),
+        calendar: data.calendar, views: data.views, eras: data.eras, events: data.events, marks: data.marks,
+      }))
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'relation_describe',
+    description: '读取关系图模块的节点和连线（含编号、位置、标签）。改关系图前先读，再用 widget_set_data 整体写回。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: 'relation 模块编号' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const cwd = sessionCwd(exec)
+      const root = String(args.root_id)
+      const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, root)
+      const target = locate(card, String(args.target_id))
+      const { module, raw } = await widgetPayload(resolved.store, root, target, String(args.module_id), 'relation')
+      const data = decodeRelation(raw)
+      return JSON.parse(JSON.stringify({ status: 'read', module_id: module.id, version: data.version, nodes: data.nodes, edges: data.edges }))
+    },
+  }))
+
   // ---------- 建 / 宏通道 ----------
   tools.register(defineTool({
     name: 'create_card',
-    description: '新建一张空世界或角色并保存。只接受 kind（WORLD 世界／CHARACTER 角色）和 name。新建不代表正文完成。缺省建在本会话项目，project 可建到别的项目。',
+    description: '新建一张空世界或角色并保存。只接受 kind（WORLD 世界／CHARACTER 角色）和 name。标准角色卡/世界卡不要用它，改用 create_card_from_preset（先 list_card_presets）。新建不代表正文完成。缺省建在本会话项目，project 可建到别的项目。',
     parameters: {
       kind: { type: 'string', required: true, description: 'WORLD 或 CHARACTER' },
       name: { type: 'string', required: true, description: '卡名' },
@@ -330,8 +495,45 @@ export function registerCardTools(ctx: Context): void {
   }))
 
   tools.register(defineTool({
+    name: 'create_card_from_preset',
+    description: '按内置整卡模板建卡（标准角色卡/世界卡首选）：模板自带模块树、集合字段、时间线日记、多形态 source 和呈现契约。先用 list_card_presets 选 template；name 省略时用模板默认名。只建卡，不继续填内容。',
+    parameters: {
+      template: { type: 'string', required: true, description: '整卡模板 id（如 character/world）' },
+      name: { type: 'string', description: '卡名；省略=模板默认名' },
+      project: TARGET_PARAMS.project,
+    },
+    output: WRITE_OUTPUT,
+    async execute(args, exec) {
+      const template = String(args.template)
+      const preset = await loadPreset(template)
+      if (preset === undefined) throw new Error(`整卡模板不存在：${template}（先 list_card_presets）`)
+      const name = optionalId(args.name) ?? preset.defaultName ?? preset.title
+      const cwd = sessionCwd(exec)
+      const projectRoot = await resolveProjectRoot(cwd, args.project)
+      const store = new CardStore(projectRoot)
+      let focusModuleId: string | undefined
+      const saved = await store.create(name, 'AI', async receive => {
+        const built = await buildPresetDocument(preset, name, {
+          writeText: text => receive(new TextEncoder().encode(text)),
+          writePayload: bytes => receive(bytes),
+        })
+        focusModuleId = built.focusModuleId
+        return built.document
+      })
+      await bindManaged(cwd, exec, saved.cardId, projectRoot)
+      return {
+        ...savedResult(saved.cardId, saved, undefined, saved.document),
+        project_root: projectRoot,
+        template,
+        kind: preset.kind,
+        ...(focusModuleId === undefined ? {} : { focus_module_id: focusModuleId }),
+      }
+    },
+  }))
+
+  tools.register(defineTool({
     name: 'create_card_bulk',
-    description: '一次成型整张卡（宏通道，建卡首选）：kind + name + modules_json（模块树的 JSON 数组文本，每项 {name, text, routing, temporality, children}，name 必填，数组顺序即排序，最多四层）。先整包校验再一次性写入：任何节点不合法都不会写入半张卡，错误信息带 JSON 路径。成功返回全部新模块/块编号与 next_draft_version，后续微调用精确工具直接引用。建整卡或大批量内容必须用它，不要逐个 add_module。',
+    description: '一次成型一张“文档树卡”：kind + name + modules_json（模块树 JSON 数组文本，每项 {name, text, routing, temporality, children}，name 必填，数组顺序即排序，最多四层）。先整包校验再一次性写入：任何节点不合法都不会写入半张卡，错误信息带 JSON 路径。只建文档树，不能建 collection/timeline/relation/map/html 等结构化模块；标准角色/世界卡先用 create_card_from_preset。成功返回全部新模块/块编号与 next_draft_version，后续微调用精确工具直接引用。',
     parameters: {
       kind: { type: 'string', required: true, description: 'WORLD 或 CHARACTER' },
       name: { type: 'string', required: true, description: '卡名' },
@@ -363,7 +565,7 @@ export function registerCardTools(ctx: Context): void {
 
   tools.register(defineTool({
     name: 'add_module_bulk',
-    description: '一次向已有卡插入整棵模块子树（宏通道）：module_json 是与 create_card_bulk 相同的节点结构（含 children）；before_id 为空插到根模块末尾，否则插到该根级模块之前。整包校验失败不写入。批量补充内容必须用它。',
+    description: '一次向已有卡插入整棵“文档子树”（宏通道）：module_json 是与 create_card_bulk 相同的节点结构（含 children）；before_id 为空插到根模块末尾，否则插到该根级模块之前。整包校验失败不写入。只支持文档模块；集合/时间线/地图/HTML 用 add_module_preset、add_module_custom 或 add_child_module 的 widget。',
     parameters: {
       ...TARGET_PARAMS,
       module_json: { type: 'string', required: true, description: '单个节点（含 children）的 JSON 对象文本，例如 {"name":"章节","text":"...","children":[]}' },
@@ -471,7 +673,7 @@ export function registerCardTools(ctx: Context): void {
     { name: { type: 'string', required: true, description: '模块名称' } },
     args => ({ kind: 'add_module', name: String(args.name) }))
 
-  registerEditTool(tools, 'add_child_module', '在指定父级末尾创建真实子模块并保存（可独立打开、移动和修改；不要用正文标题冒充子模块）。',
+  registerEditTool(tools, 'add_child_module', '在指定父级末尾创建真实子模块并保存（可独立打开、移动和修改；不要用正文标题冒充子模块）。HTML 模块可用 NOVEN_FRAME.openCard/openModule/navigate 做跳转，详见 widget 参数。',
     {
       name: { type: 'string', required: true, description: '模块名称' },
       parent_id: { type: 'string', description: '父模块编号；空/省略为卡根部' },
@@ -483,10 +685,65 @@ export function registerCardTools(ctx: Context): void {
           '这两类建好后**必须**用 timeline_*/collection_* 专用工具填数据，不要手写 JSON；' +
           'relation=人物关系图（用 widget_set_data 写 nodes/edges，节点带 x/y 摆位 0..1）；' +
           'map=地图模块（世界生成：widget_set_data 写 world 源；语义草稿：写 draft+palette 后把 heightmap 置 draft 重算）；' +
-          'html=自定义小组件（正文块直接写 HTML 源码，沙箱渲染，适合 vibecode 的交互组件）',
+          'html=自定义小组件（正文块直接写 HTML 源码，沙箱渲染）；' +
+          'HTML 里可调 NOVEN_FRAME.openCard(cardId)、NOVEN_FRAME.openModule(moduleId,itemId)、NOVEN_FRAME.navigate({cardId,moduleId,itemId}) 做跳转，' +
+          '目标编号从 read_card / collection_describe / timeline_describe 取；' +
+          '例：<button onclick="NOVEN_FRAME.navigate({moduleId: \'模块编号\'})">打开</button>；' +
+          'scene=3D 场景（优先用 add_module_preset 的 scene 预设落对象和相机）',
       },
     },
     args => ({ kind: 'add_module', name: String(args.name), parentId: optionalId(args.parent_id), layout: layoutOf(args.layout) ?? 'VERTICAL', ...(args.widget !== undefined ? { widget: String(args.widget) } : {}) }))
+
+  registerEditTool(tools, 'add_module_preset',
+    '按模块库内置预设新建模块（规则/语录/势力/种族/文化/能力/装备/图鉴/时间线/地图/HTML 等）。preset 用 list_module_presets 的 id；name 是落卡后的模块名。预设会带字段、默认视图、呈现契约和样例，不要再用 collection_add_field 重造。',
+    {
+      name: { type: 'string', required: true, description: '模块名称' },
+      preset: { type: 'string', required: true, description: '模块预设 id（先 list_module_presets）' },
+      parent_id: { type: 'string', description: '父模块编号；空/省略为卡根部' },
+      layout: { type: 'string', description: 'VERTICAL（竖向）或 HORIZONTAL（横向），缺省 VERTICAL' },
+    },
+    args => ({
+      kind: 'add_module', name: String(args.name), preset: String(args.preset),
+      parentId: optionalId(args.parent_id), layout: layoutOf(args.layout) ?? 'VERTICAL',
+    }))
+
+  registerEditTool(tools, 'add_module_custom',
+    '按声明式定义新建模块（可直接落 presentation 窗口契约、字段、视图和 labels；不必先存进用户模块库）。definition 为 list_user_modules/save_user_module 同款 JSON；name 可覆盖定义里的名称。要复用项目里已保存的模块，用 list_user_modules 读 definition 后传入。',
+    {
+      name: { type: 'string', required: true, description: '模块名称' },
+      parent_id: { type: 'string', description: '父模块编号；空/省略为卡根部' },
+      definition: { type: 'json', required: true, description: '完整模块定义 JSON（name/shape/fields/view/presentation 等）' },
+    },
+    args => {
+      const definition = typeof args.definition === 'string' ? JSON.parse(String(args.definition)) : args.definition
+      return {
+        kind: 'add_module_custom', name: String(args.name),
+        parentId: optionalId(args.parent_id), definition,
+      }
+    })
+
+  registerEditTool(tools, 'add_module_ref',
+    '新建引用模块：把另一张卡（或同卡）的一个模块只读挂到当前卡，可带 view/filter/overrides。用于“引用角色卡的力量体系”“挂载世界地图”这类关系；source_card_id/source_module_id 先用 read_card 取。',
+    {
+      name: { type: 'string', required: true, description: '引用模块的名称' },
+      parent_id: { type: 'string', description: '父模块编号；空/省略为卡根部' },
+      source_card_id: { type: 'string', required: true, description: '来源卡编号' },
+      source_module_id: { type: 'string', required: true, description: '来源模块编号' },
+      view: { type: 'string', description: '可选的视图覆盖（如 cards/list/timeline）' },
+      filter_json: { type: 'json', description: '可选的条目过滤 JSON（如 {"characters":["..."]}）' },
+      overrides_json: { type: 'json', description: '可选的模块数据覆写 JSON' },
+    },
+    args => {
+      const filter = typeof args.filter_json === 'string' ? JSON.parse(String(args.filter_json)) : args.filter_json
+      const overrides = typeof args.overrides_json === 'string' ? JSON.parse(String(args.overrides_json)) : args.overrides_json
+      return {
+        kind: 'add_module_ref', name: String(args.name), parentId: optionalId(args.parent_id),
+        sourceCardId: String(args.source_card_id), sourceModuleId: String(args.source_module_id),
+        ...(args.view === undefined ? {} : { view: String(args.view) }),
+        ...(filter === undefined ? {} : { filter }),
+        ...(overrides === undefined ? {} : { overrides }),
+      }
+    })
 
   registerEditTool(tools, 'rename_module', '只修改模块名称并保存，不改模块正文。',
     { module_id: { type: 'string', required: true, description: '模块编号' }, name: { type: 'string', required: true, description: '新名称' } },
@@ -713,7 +970,7 @@ export function registerCardTools(ctx: Context): void {
   const ITEM_ID = { module_id: { type: 'string' as const, required: true as const, description: '集合模块编号' }, id: { type: 'string' as const, required: true as const, description: '条目/字段编号' } }
 
   registerEditTool(tools, 'collection_add_field',
-    '给集合模块加一个自定义字段。type：text/longtext/date/person（值为角色编号）/image（值为 {"resourceId":...}）/place/link/number（数值，供图表与体量排版）/time（时间点，数值，与时间线历法同轴，供长卷视图定位）。',
+    '给集合模块加一个自定义字段。type：text/longtext/date/person（引用角色卡，值是 {"cardId":"...","name":"..."}）/image（值为 {"resourceId":...}）/place（引用世界卡，同样是 cardId+name）/number（数值，供图表与体量排版）/time（时间点，数值，与时间线历法同轴，供长卷视图定位）。link 类型目前只是文本占位、不会生成跳转；要做可点击跳转请用 HTML 模块的 NOVEN_FRAME.navigate 或等待 link 字段落地。',
     {
       module_id: { type: 'string', required: true, description: '集合模块编号' },
       name: { type: 'string', required: true, description: '字段名' },
@@ -769,7 +1026,7 @@ export function registerCardTools(ctx: Context): void {
     args => ({ kind: 'collection_remove_item', moduleId: String(args.module_id), id: String(args.id) }))
 
   registerEditTool(tools, 'collection_set_value',
-    '给某条目的某字段写值。value_json：文本字段传 "字符串"（含引号的 JSON），图片字段传 {"resourceId":"资源编号"}。',
+    '给某条目的某字段写值。value_json：文本字段传 "字符串"（含引号的 JSON），图片字段传 {"resourceId":"资源编号"}，person/place 引用字段传 {"cardId":"卡编号","name":"显示名"}（可带 itemId）。',
     {
       ...ITEM_ID,
       item_id: { type: 'string', required: true, description: '条目编号' },

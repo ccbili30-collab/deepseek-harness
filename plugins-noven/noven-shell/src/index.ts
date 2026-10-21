@@ -14,6 +14,9 @@ export const name = 'noven-shell'
 export const inject = ['connection']
 
 const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets')
+/** 自由 3D 沙箱的本地 three.js 运行时（与 standalone 导出同一份源码）。 */
+const THREE_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'three-runtime.js')
+let threeBody: Promise<Buffer> | undefined
 const ASSET_NAME = /^[a-z0-9-]+\.(webp|png|jpg|svg)$/
 const TYPES: Record<string, string> = {
   webp: 'image/webp', png: 'image/png', jpg: 'image/jpeg', svg: 'image/svg+xml',
@@ -42,6 +45,23 @@ function sniffType(body: Buffer): string | undefined {
   return undefined
 }
 
+/** Serve the local three.js ESM build to the sandbox; CORS is required because srcdoc iframes have an opaque origin. */
+async function serveThree(request: Request): Promise<Response> {
+  try {
+    threeBody ??= readFile(THREE_PATH)
+    const body = await threeBody
+    return new Response(request.method === 'HEAD' ? null : new Uint8Array(body), {
+      headers: {
+        'content-type': 'text/javascript; charset=utf-8',
+        'access-control-allow-origin': '*',
+        'cache-control': 'public, max-age=60',
+      },
+    })
+  } catch (error) {
+    return new Response(error instanceof Error ? error.message : 'three runtime unavailable', { status: 500 })
+  }
+}
+
 /** Register the read-only asset route; all presentation ships through ./client. */
 export function apply(ctx: Context): void {
   ctx.effect(() => ctx.connection.fetch.register({
@@ -50,4 +70,10 @@ export function apply(ctx: Context): void {
     requestBody: 'buffered',
     fetch: request => serveAsset(request),
   }), 'noven-shell: /api/noven-assets')
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/noven-three',
+    methods: ['GET', 'HEAD'],
+    requestBody: 'buffered',
+    fetch: request => serveThree(request),
+  }), 'noven-shell: /api/noven-three')
 }

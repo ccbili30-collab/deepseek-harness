@@ -30,7 +30,22 @@ export interface CardModuleDoc {
   /** Special-module renderer: 'html' renders block text inside a sandboxed iframe.
       path 是项目内文件活引用（html 模块实时读这份文件渲染）；
       data 是首个文字块 JSON 按 type 解码后的结构（timeline/collection/map/relation）。 */
-  readonly widget?: { readonly type: string; readonly height?: number; readonly path?: string; readonly data?: unknown }
+  readonly widget?: {
+    readonly type: string
+    readonly height?: number
+    readonly path?: string
+    readonly data?: unknown
+    readonly source?: { readonly cardId: string, readonly moduleId: string }
+    readonly view?: string
+    readonly filter?: { readonly characters?: readonly string[] }
+    readonly overrides?: Record<string, unknown>
+    readonly snapshot?: {
+      readonly cardName: string
+      readonly moduleName: string
+      readonly widget: { readonly type: string, readonly data?: unknown }
+      readonly resources?: Record<string, { readonly base64: string, readonly mediaType: string }>
+    }
+  }
   /** `module_options` 的回填字段：命令整体覆盖，改一项要带齐现状。 */
   readonly tags: readonly string[]
   readonly use?: { readonly kind: string; readonly words?: readonly string[]; readonly caseSensitive?: boolean; readonly requireAll?: boolean }
@@ -159,9 +174,16 @@ export interface CardOpResult {
   readonly interview?: boolean
   /** 单模块模板（时间线/地图/集合）：落卡后直接打开这个模块页。 */
   readonly focusModuleId?: string
+  /** apply 新建的模块/块：调用方据此直接打开新页，而不是停在总览。 */
+  readonly createdModuleIds?: readonly string[]
+  readonly createdBlockIds?: readonly string[]
 }
 
-/** Apply one card op; throws CardConflict on a stale version so callers can refetch. */
+/**
+ * Apply one card op; throws CardConflict on a stale version so callers can refetch.
+ * A 409 may also carry a plain-text refusal (e.g. the delete guard); that is an
+ * ordinary Error whose message is the route's explanation, not a conflict.
+ */
 export async function cardOp(addr: CardAddr, op: CardOp): Promise<CardOpResult> {
   const response = await fetch(api(addr), {
     method: 'POST',
@@ -170,8 +192,16 @@ export async function cardOp(addr: CardAddr, op: CardOp): Promise<CardOpResult> 
   })
   const text = await response.text()
   if (response.status === 409) {
-    const parsed = JSON.parse(text) as { version?: string }
-    throw new CardConflict(parsed.version ?? '')
+    let body: unknown = undefined
+    try {
+      body = JSON.parse(text)
+    } catch {
+      // SyntaxError: plain-text refusals are not version-conflict JSON.
+    }
+    if (typeof body === 'object' && body !== null) {
+      throw new CardConflict('version' in body && typeof body.version === 'string' ? body.version : '')
+    }
+    throw new Error(text || 'card op failed (409)')
   }
   if (!response.ok) throw new Error(text || `card op failed (${response.status})`)
   return JSON.parse(text) as CardOpResult
@@ -196,4 +226,37 @@ export async function exportCardPackage(addr: CardAddr, cardId: string, name: st
 /** `/api/file` URL for one card content payload (`c5` style refs) under the visible `卡/<dir>/` tree. */
 export function cardContentUrl(workspaceRoot: string, dir: string, ref: string): string {
   return `/api/file?path=${encodeURIComponent(`${workspaceRoot}/卡/${dir}/contents/${ref}`)}`
+}
+
+/** One declarative module saved in the project's user module library. */
+export interface UserModuleDefinition {
+  readonly id: string
+  readonly name: string
+  readonly shape: 'collection' | 'timeline' | 'map' | 'doc'
+  readonly summary?: string
+  readonly fields?: readonly { readonly name: string, readonly type: string }[]
+  readonly view?: string
+  readonly cardAspect?: 'portrait' | 'landscape' | 'square'
+  readonly labels?: { readonly primary?: string, readonly add?: string, readonly empty?: string }
+  readonly unit?: string
+  readonly timelineView?: 'diary' | 'horizontal'
+  readonly sample?: string
+  readonly createdAt: string
+}
+
+/** List the current project's declarative user modules. */
+export async function fetchUserModules(addr: CardAddr): Promise<UserModuleDefinition[]> {
+  const response = await fetch(`${api(addr)}&modules=1`).catch(() => undefined)
+  if (response === undefined || !response.ok) return []
+  const payload = await response.json().catch(() => undefined) as { modules?: UserModuleDefinition[] } | undefined
+  return Array.isArray(payload?.modules) ? payload.modules : []
+}
+
+/** Delete one user module definition. */
+export async function deleteUserModule(addr: CardAddr, id: string): Promise<boolean> {
+  const response = await fetch(api(addr), {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'delete_user_module', id }),
+  }).catch(() => undefined)
+  return response?.ok === true
 }

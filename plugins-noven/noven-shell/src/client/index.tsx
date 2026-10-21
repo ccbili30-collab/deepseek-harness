@@ -1377,8 +1377,18 @@ export function apply(ctx: ClientContext): void {
     return enterHandcraftScene(source, async () => {
       // 场景内的提交：转场归外层手作场景所有。
       ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { transition?: 'none' }) => void)(sessionId, { transition: 'none' })
+      // openSession 的绑定在提交后才完成；立刻 seed 会被会话载入的旧几何盖掉。
+      // 等一拍再落排布，旧会话也能稳定切成案头。
+      await new Promise<void>(resolve => { window.setTimeout(resolve, 250) })
       applyArrangement(arrangementDeps(), sessionId, 'ide')
+      // 可见会话的结构直接落一次：种子在部分发布版/恢复路径会被旧几何盖掉，
+      // 这里再按入口意图收轨、把抽屉+画布放到对话左侧。
+      ctx.layout.setSidebarCollapsed?.(true)
+      ctx.layout.setUnitSide?.('left')
       setCanvasParked(sessionId, false)
+      // 创作页的「手作」落点是通用案头：复用会话时也把画布切回起点页，
+      // 不能停在会话上次打开的对话或卡页上。
+      canvasInstance.actions.select(sessionId, 'start')
       return true
     })
   }
@@ -1595,7 +1605,10 @@ export function apply(ctx: ClientContext): void {
       })
       .catch((reason: unknown) => {
         console.warn('noven-shell: delete card failed:', reason)
-        notifyUndo({ text: fmt(t, 'ui.receipt.failed', { name }) })
+        const detail = reason instanceof Error ? reason.message : String(reason)
+        notifyUndo({ text: detail === ''
+          ? fmt(t, 'ui.receipt.failed', { name })
+          : fmt(t, 'ui.receipt.failedReason', { name, reason: detail }) })
       })
   }
 
@@ -2016,17 +2029,29 @@ export function apply(ctx: ClientContext): void {
       },
       renameFile: (path, name) => {
         void fileOp({ sessionId, root: focusSnapshot?.root }, { op: 'rename', path, name })
-          .then(ok => { if (ok) treeSource.refresh() })
+          .then(result => { if (result.ok) treeSource.refresh() })
           .catch((reason: unknown) => { console.warn('noven-shell: file rename failed:', reason) })
       },
-      deleteFile: path => {
+      deleteFile: (path, workId) => {
         const name = path.split('/').pop() ?? path
-        void fileOp({ sessionId, root: focusSnapshot?.root }, { op: 'rm', path })
-          .then(ok => {
-            if (ok) treeSource.refresh()
-            notifyUndo({ text: fmt(t, ok ? 'ui.receipt.fileDeleted' : 'ui.receipt.failed', { name }) })
-          })
-          .catch((reason: unknown) => { console.warn('noven-shell: file rm failed:', reason); notifyUndo({ text: fmt(t, 'ui.receipt.failed', { name }) }) })
+        const addr = { sessionId, root: focusSnapshot?.root }
+        void (async () => {
+          const result = await fileOp(addr, { op: 'rm', path })
+          // 404 = 文件已不在磁盘，删除目标已经达成；照样摘作品登记并刷新，
+          // 否则清单里会留下永远删不掉的死行。
+          if (!result.ok && result.status !== 404) {
+            notifyUndo({ text: result.error === undefined
+              ? fmt(t, 'ui.receipt.failed', { name })
+              : fmt(t, 'ui.receipt.failedReason', { name, reason: result.error }) })
+            return
+          }
+          if (workId !== undefined) await libraryOp(addr, { op: 'unregister', workId }).catch(() => undefined)
+          canvasInstance.actions.close(sessionId, `doc:${path}`)
+          canvasInstance.actions.close(sessionId, `work:${path}`)
+          treeSource.refresh()
+          library.refresh()
+          notifyUndo({ text: fmt(t, result.ok ? 'ui.receipt.fileDeleted' : 'ui.receipt.fileGone', { name }) })
+        })()
       },
       present: (path, view) => {
         void presentNode({ sessionId, root: focusSnapshot?.root }, path, view)
@@ -2034,7 +2059,22 @@ export function apply(ctx: ClientContext): void {
           .catch((reason: unknown) => { console.warn('noven-shell: present failed:', reason) })
       },
       openCard: (cardId, moduleId, title) => openCanvasCard(cardId, { sessionId, root: focusSnapshot?.root }, moduleId, sessionId, false, title),
-      addModule: cardId => openCanvasCard(cardId, { sessionId, root: focusSnapshot?.root }, undefined, sessionId, true),
+      addModule: cardId => {
+        // 「＋ 新模块」是当前卡上的动作：若这张卡/它的模块页已经在画布上，就在
+        // 那个页签原地弹库，不另开总览把用户从正在看的模块上赶走。
+        const state = canvasInstance.getSnapshot()
+        const active = state.tabs.find(tab => tab.owner === sessionId && tab.key === activeKey(state, sessionId))
+        const cardTabs = state.tabs.filter(tab => tab.owner === sessionId && tab.kind === 'card' && tab.cardId === cardId)
+        const open = active?.kind === 'card' && active.cardId === cardId
+          ? active
+          : cardTabs.find(tab => tab.moduleId !== undefined) ?? cardTabs[0]
+        if (open !== undefined) {
+          canvasInstance.actions.open({ ...open, addModule: true })
+          raiseCanvas()
+          return
+        }
+        openCanvasCard(cardId, { sessionId, root: focusSnapshot?.root }, undefined, sessionId, true)
+      },
       renameModule: (cardId, moduleId, name) => {
         void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'rename_module', moduleId, name }))
       },
@@ -2117,24 +2157,39 @@ export function apply(ctx: ClientContext): void {
       deleteSel: (items) => {
         void (async () => {
           const addr = { sessionId, root: focusSnapshot?.root }
+          const failed = new Set<string>()
           for (const it of items) {
             try {
-              if (it.cardId !== undefined) { await cardOp(addr, { op: 'delete', cardId: it.cardId }); cardCache.put(addr, it.cardId, undefined) }
-              else await fileOp(addr, { op: 'rm', path: it.path })
+              if (it.cardId !== undefined) {
+                await cardOp(addr, { op: 'delete', cardId: it.cardId })
+                cardCache.put(addr, it.cardId, undefined)
+              } else {
+                const result = await fileOp(addr, { op: 'rm', path: it.path })
+                // 404 = 文件已不在磁盘，按删除成功处理；其他拒绝不收尾，避免清单项先丢。
+                if (!result.ok && result.status !== 404) { failed.add(it.path); continue }
+              }
               if (it.workId !== undefined) await libraryOp(addr, { op: 'unregister', workId: it.workId })
-            } catch (reason) { console.warn('noven-shell: batch delete failed:', it.path, reason) }
+            } catch (reason) {
+              failed.add(it.path)
+              console.warn('noven-shell: batch delete failed:', it.path, reason)
+            }
           }
+          const done = items.filter(it => !failed.has(it.path))
           for (const row of canvasInstance.getSnapshot().tabs) {
-            if (items.some(i => i.cardId !== undefined && i.cardId === row.cardId) && row.owner === sessionId) {
+            if (done.some(i => i.cardId !== undefined && i.cardId === row.cardId) && row.owner === sessionId) {
               canvasInstance.actions.close(sessionId, row.key)
             }
-            if (items.some(i => i.cardId === undefined && (`doc:${i.path}` === row.key || `work:${i.path}` === row.key)) && row.owner === sessionId) {
+            if (done.some(i => i.cardId === undefined && (`doc:${i.path}` === row.key || `work:${i.path}` === row.key)) && row.owner === sessionId) {
               canvasInstance.actions.close(sessionId, row.key)
             }
           }
           treeSource.refresh()
           library.refresh()
-          notifyUndo({ text: fmt(t, 'ui.receipt.selDeleted', { n: items.length }) })
+          notifyUndo({
+            text: failed.size === 0
+              ? fmt(t, 'ui.receipt.selDeleted', { n: items.length })
+              : fmt(t, 'ui.receipt.selDeletePartial', { ok: items.length - failed.size, failed: failed.size }),
+          })
         })()
       },
       expandDrawer: () => ctx.sidebarRight.toggleExpanded(),
@@ -2179,7 +2234,7 @@ export function apply(ctx: ClientContext): void {
       // 散文件写面走 /api/noven-tree：改名等于换实体键——旧页签收掉、
       // 新路径按扩展名重判 kind 重开；删除同时收掉 doc/work 两种页签。
       renameFile: async (path, name) => {
-        if (!(await fileOp({ sessionId, root: focusSnapshot?.root }, { op: 'rename', path, name }))) return undefined
+        if (!(await fileOp({ sessionId, root: focusSnapshot?.root }, { op: 'rename', path, name })).ok) return undefined
         const dir = path.split('/').slice(0, -1).join('/')
         const next = dir === '' ? name : `${dir}/${name}`
         const kind = fileTabKind(next)
@@ -2190,7 +2245,8 @@ export function apply(ctx: ClientContext): void {
         return next
       },
       deleteFile: async path => {
-        if (!(await fileOp({ sessionId, root: focusSnapshot?.root }, { op: 'rm', path }))) return false
+        const result = await fileOp({ sessionId, root: focusSnapshot?.root }, { op: 'rm', path })
+        if (!result.ok && result.status !== 404) return false
         canvasInstance.actions.close(sessionId, `doc:${path}`)
         canvasInstance.actions.close(sessionId, `work:${path}`)
         treeSource.refresh()

@@ -17,7 +17,9 @@ import { CardStore, DraftConflict, EditConflict, type CardDraft, type SavedCard 
 import { buildPresetDocument, loadPreset } from './presets.ts'
 import { buildReferenceIndex } from './refs.ts'
 import { applyAndCommit, type EditorCommand } from './editor.ts'
-import { decodeCollection, decodeMap, decodeRelation, decodeTimeline } from './formats.ts'
+import { isModulePreset } from './module-presets.ts'
+import { deleteCustomModule, listCustomModules, normalizeCustomModule, saveCustomModule } from './custom-modules.ts'
+import { decodeCollection, decodeMap, decodeRelation, decodeScene, decodeTimeline } from './formats.ts'
 import { buildExportPackage, importExchange, importForeignFile } from './exchange.ts'
 import { acceptProposal, proposalChanges, proposalPreview, rejectProposal } from './proposals.ts'
 import { aiTrustOf, setAiTrust, type AiTrust } from './trust.ts'
@@ -97,7 +99,16 @@ interface HydratedModule {
   readonly characterIds: readonly string[]
   readonly layout: string
   /** 预制模块：type 决定渲染器；data 是首个文字块 JSON 按类型解码后的结构。 */
-  readonly widget?: { readonly type: string, readonly height?: number, readonly data?: unknown }
+  readonly widget?: {
+    readonly type: string
+    readonly height?: number
+    readonly data?: unknown
+    readonly source?: { readonly cardId: string, readonly moduleId: string }
+    readonly view?: string
+    readonly filter?: { readonly characters?: readonly string[] }
+    readonly overrides?: Record<string, unknown>
+    readonly snapshot?: { readonly cardName: string, readonly moduleName: string, readonly widget: { readonly type: string, readonly data?: unknown }, readonly resources?: Record<string, { readonly base64: string, readonly mediaType: string }> }
+  }
   /** Options round-trip fields: `module_options` rewrites them wholesale, so the client must echo the current values back. */
   readonly tags: readonly string[]
   readonly use?: ContentModule['use']
@@ -111,6 +122,7 @@ const WIDGET_DECODERS: Record<string, (raw: string | undefined) => unknown> = {
   collection: decodeCollection,
   map: decodeMap,
   relation: decodeRelation,
+  scene: decodeScene,
 }
 
 /** Resolve one module tree's text payloads and captions to plain text. */
@@ -133,6 +145,11 @@ async function hydrateModules(store: CardStore, cardId: string, modules: readonl
           type: module.widget.type,
           ...(module.widget.height !== undefined ? { height: module.widget.height } : {}),
           ...(module.widget.path !== undefined ? { path: module.widget.path } : {}),
+          ...(module.widget.source !== undefined ? { source: module.widget.source } : {}),
+          ...(module.widget.view !== undefined ? { view: module.widget.view } : {}),
+          ...(module.widget.filter !== undefined ? { filter: module.widget.filter } : {}),
+          ...(module.widget.overrides !== undefined ? { overrides: module.widget.overrides } : {}),
+          ...(module.widget.snapshot !== undefined ? { snapshot: module.widget.snapshot } : {}),
           ...(decode !== undefined ? { data: decode(blocks.find(b => b.kind === 'text')?.text) } : {}),
         },
       } : {}),
@@ -313,20 +330,21 @@ async function cardList(store: CardStore): Promise<Record<string, unknown>[]> {
 
 /** EditorCommand kinds the UI may send; byte-carrying commands stay tool-only. */
 const APPLY_COMMANDS = new Set([
-  'add_module', 'rename_module', 'rename_card', 'write_text', 'write_markdown', 'write_caption',
+  'add_module', 'add_module_ref', 'add_module_custom', 'rename_module', 'rename_card', 'write_text', 'write_markdown', 'write_caption',
   'move_module', 'place_module', 'copy_module', 'merge_child', 'set_module_layout', 'set_reading_layout', 'move_block',
   'remove_module', 'remove_block', 'module_options', 'appearance', 'insert_owned_image',
   'replace_block_image', 'remove_resource', 'place_character', 'add_character', 'remove_character',
   'set_widget_data',
-  'timeline_set_calendar', 'timeline_switch_view', 'timeline_add_event', 'timeline_update_event', 'timeline_move_event', 'timeline_remove_event',
+  'timeline_set_calendar', 'timeline_set_window', 'timeline_switch_view', 'timeline_add_event', 'timeline_update_event', 'timeline_move_event', 'timeline_remove_event',
   'timeline_add_era', 'timeline_update_era', 'timeline_remove_era',
   'timeline_add_mark', 'timeline_update_mark', 'timeline_remove_mark',
   'collection_add_field', 'collection_update_field', 'collection_remove_field',
-  'collection_add_item', 'collection_update_item', 'collection_remove_item', 'collection_set_value', 'collection_set_view',
+  'collection_add_item', 'collection_update_item', 'collection_remove_item', 'collection_move_item', 'collection_set_value', 'collection_set_view',
+  'collection_set_item_image',
   'collection_set_style',
   'embed_file',
   'set_layout',
-  'map_spawn_view',
+  'map_spawn_view', 'map_add_marker',
 ])
 
 /** Reject malformed commands before applyEdit interprets them. */
@@ -336,7 +354,27 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
   const needs = (fields: readonly string[]): string | undefined =>
     fields.some(f => typeof command[f] !== 'string') ? `missing field for ${kind}` : undefined
   switch (kind) {
-    case 'add_module': case 'rename_card': case 'add_character': return needs(['name'])
+    case 'add_module_custom': {
+      const invalid = needs(['name'])
+      if (invalid !== undefined) return invalid
+      if (!('definition' in command)) return 'missing definition'
+      const normalized = normalizeCustomModule(command.definition)
+      return typeof normalized === 'string' ? normalized : undefined
+    }
+    case 'add_module_ref': {
+      const invalid = needs(['name', 'sourceCardId', 'sourceModuleId'])
+      if (invalid !== undefined) return invalid
+      if (command.view !== undefined && typeof command.view !== 'string') return 'invalid view'
+      if (command.filter !== undefined && (typeof command.filter !== 'object' || command.filter === null)) return 'invalid filter'
+      return undefined
+    }
+    case 'add_module': {
+      const invalid = needs(['name'])
+      if (invalid !== undefined) return invalid
+      if (command.preset !== undefined && (typeof command.preset !== 'string' || !isModulePreset(command.preset))) return 'invalid preset'
+      return undefined
+    }
+    case 'rename_card': case 'add_character': return needs(['name'])
     case 'rename_module': case 'set_module_layout': case 'move_module': case 'remove_module': return needs(['moduleId'])
     case 'place_module': case 'copy_module': case 'merge_child': return needs(['moduleId'])
     case 'write_text': return needs(['moduleId', 'moduleName', 'text'])
@@ -350,8 +388,10 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
     case 'set_reading_layout': return needs(['layout'])
     case 'module_options': return needs(['moduleId'])
     case 'set_widget_data': return needs(['moduleId', 'widget']) ?? ('data' in command ? undefined : 'missing data')
+    case 'map_add_marker': return needs(['moduleId']) ?? ('marker' in command ? undefined : 'missing marker')
     case 'map_spawn_view': return needs(['moduleId'])
     case 'timeline_set_calendar': return needs(['moduleId']) ?? ('calendar' in command ? undefined : 'missing calendar')
+    case 'timeline_set_window': return needs(['moduleId']) ?? ('window' in command ? undefined : 'missing window')
     case 'timeline_switch_view': return needs(['moduleId', 'name'])
     case 'timeline_add_event': return needs(['moduleId']) ?? ('event' in command ? undefined : 'missing event')
     case 'timeline_update_event': case 'timeline_remove_event':
@@ -361,10 +401,13 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
     case 'timeline_add_mark': return needs(['moduleId']) ?? ('mark' in command ? undefined : 'missing mark')
     case 'timeline_update_mark': case 'timeline_remove_mark': return needs(['moduleId', 'id'])
     case 'collection_add_field': return needs(['moduleId']) ?? ('field' in command ? undefined : 'missing field')
-    case 'collection_update_field': case 'collection_remove_field':
-    case 'collection_update_item': case 'collection_remove_item': return needs(['moduleId', 'id'])
+    case 'collection_update_field': case 'collection_remove_field': case 'collection_move_field':
+    case 'collection_update_item': case 'collection_remove_item': case 'collection_move_item': return needs(['moduleId', 'id'])
     case 'collection_add_item': return needs(['moduleId']) ?? ('item' in command ? undefined : 'missing item')
     case 'collection_set_value': return needs(['moduleId', 'itemId', 'fieldId'])
+    case 'collection_set_item_image':
+      return needs(['moduleId', 'itemId'])
+        ?? (typeof command.resourceId === 'string' || (typeof command.imageBase64 === 'string' && typeof command.mediaType === 'string') ? undefined : 'missing image')
     case 'collection_set_view': return needs(['moduleId', 'view'])
     case 'embed_file': return needs(['path'])
     case 'collection_set_style': return needs(['moduleId', 'artStyle'])
@@ -380,6 +423,10 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
   const store = new CardStore(resolved.root)
 
   if (request.method === 'GET' || request.method === 'HEAD') {
+    if (url.searchParams.get('modules') === '1') {
+      const modules = await listCustomModules(resolved.root)
+      return new Response(request.method === 'HEAD' ? null : JSON.stringify({ modules }), { headers: JSON_HEADERS })
+    }
     if (url.searchParams.get('refs') === '1') {
       const index = await buildReferenceIndex(store)
       return new Response(request.method === 'HEAD' ? null : JSON.stringify(index), { headers: JSON_HEADERS })
@@ -424,7 +471,7 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
           // 预设是数据文件（presets/<id>.json）：落树、种样例、集合列就绪。
           const preset = await loadPreset(starter.slice('template:'.length))
           if (preset === undefined || preset.kind !== kind) return bad('invalid template')
-          const cardName = preset.defaultName ?? name
+          const cardName = name.length > 0 ? name : (preset.defaultName ?? name)
           let focusModuleId: string | undefined
           const saved: SavedCard = await store.create(cardName, 'HUMAN', async receive => {
             const built = await buildPresetDocument(preset, cardName, {
@@ -451,13 +498,32 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
           ...(starter === 'interview' ? { interview: true } : {}),
         }), { headers: JSON_HEADERS })
       }
+      case 'save_user_module': {
+        const saved = await saveCustomModule(resolved.root, body.definition)
+        if (typeof saved === 'string') return bad(saved)
+        return new Response(JSON.stringify({ ok: true, module: saved }), { headers: JSON_HEADERS })
+      }
+      case 'delete_user_module': {
+        const id = String(body.id ?? '')
+        if (id === '') return bad('missing id')
+        await deleteCustomModule(resolved.root, id)
+        return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS })
+      }
       case 'apply': {
-        const command = body.command
-        if (typeof command !== 'object' || command === null) return bad('missing command')
-        const invalid = validateCommand(command as Record<string, unknown>)
+        const raw = body.command
+        if (typeof raw !== 'object' || raw === null) return bad('missing command')
+        const command = { ...(raw as Record<string, unknown>) }
+        const invalid = validateCommand(command)
         if (invalid !== undefined) return bad(invalid)
-        const { saved } = await applyAndCommit(store, cardId, String(body.targetId ?? cardId), command as unknown as EditorCommand, 'HUMAN')
-        return new Response(JSON.stringify({ ok: true, revision: saved.revision, version: saved.version }), { headers: JSON_HEADERS })
+        if (command.kind === 'collection_set_item_image' && typeof command.imageBase64 === 'string' && typeof command.mediaType === 'string') {
+          command.bytes = new Uint8Array(Buffer.from(command.imageBase64, 'base64'))
+          delete command.imageBase64
+        }
+        const { outcome, saved } = await applyAndCommit(store, cardId, String(body.targetId ?? cardId), command as unknown as EditorCommand, 'HUMAN')
+        return new Response(JSON.stringify({
+          ok: true, revision: saved.revision, version: saved.version,
+          createdModuleIds: outcome.createdModuleIds, createdBlockIds: outcome.createdBlockIds,
+        }), { headers: JSON_HEADERS })
       }
       case 'undo': {
         const saved = await store.undo(cardId)
@@ -559,6 +625,9 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
     }
     if (error instanceof EditConflict) {
       return new Response(JSON.stringify({ error: 'conflict', scope: 'block', moduleId: error.moduleId, blockId: error.blockId, message: error.message }), { status: 409, headers: JSON_HEADERS })
+    }
+    if (error instanceof Error && error.message.includes('跨项目引用默认禁止')) {
+      return new Response(error.message, { status: 403, headers: JSON_HEADERS })
     }
     return new Response(error instanceof Error ? error.message : 'card op failed', { status: 500, headers: JSON_HEADERS })
   }

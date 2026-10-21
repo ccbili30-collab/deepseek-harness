@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>理想模块 · 目标稿</title>
+<style>
+  :root { --canvas:#F4F5F4; --primary:#16181A; --secondary:#8A8F94; --faint:#B3B9B4; --accent:#0E9F6E; --divider:#ECEEEF; }
+  * { box-sizing: border-box; }
+  body { margin:0; background: radial-gradient(900px 460px at 18% -8%, rgba(255,255,255,.92), transparent 62%), var(--canvas); color:var(--primary); font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif; -webkit-font-smoothing:antialiased; }
+  .page { width:1120px; margin:0 auto; padding:40px 0 70px; }
+  .crumb { color:var(--secondary); font-size:12px; margin-bottom:22px; }
+  h1 { margin:0; font-size:34px; letter-spacing:-.025em; }
+  .lede { max-width:760px; margin:12px 0 0; color:#444A46; font-size:14px; line-height:1.9; }
+  .note { max-width:760px; margin:10px 0 0; color:var(--secondary); font-size:12px; line-height:1.8; }
+  .grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:26px 22px; margin-top:36px; }
+  .card { display:block; color:inherit; text-decoration:none; }
+  .shot { display:block; width:100%; aspect-ratio:16/10; object-fit:cover; object-position:top center; border:1px solid var(--divider); border-radius:14px; background:#fff; box-shadow:0 10px 30px rgba(22,24,26,.05); }
+  .cap { display:flex; align-items:baseline; gap:10px; margin-top:10px; }
+  .cap b { font-size:13.5px; font-weight:600; }
+  .cap span { color:var(--secondary); font-size:11.5px; }
+  .pair { display:flex; gap:8px; margin-top:10px; color:var(--accent); font-size:11.5px; }
+  .pair a { color:var(--accent); text-decoration:none; border-bottom:1px solid #CFE9DB; }
+  footer { margin-top:40px; padding-top:18px; border-top:1px solid var(--divider); color:var(--faint); font-size:11.5px; line-height:1.8; }
+</style>
+</head>
+<body>
+<main class="page">
+  <div class="crumb">诺文 · 设计目标稿</div>
+  <h1>理想模块</h1>
+  <p class="lede">这组稿只回答一件事：空态、填写、落库后是同一张纸。所有字段都在纸上，没有表格、字段面板和第二个编辑器。</p>
+  <p class="note">下面每一页都可以单独打开；点击图片看 HTML 稿。</p>
+
+  <div class="grid">
+    <a class="card" href="rules.html">
+      <img class="shot" src="rules.png" alt="规则目标稿">
+      <div class="cap"><b>规则</b><span>一张规则纸 · 空态就是最后那条空白规则</span></div>
+    </a>
+    <a class="card" href="quotes.html">
+      <img class="shot" src="quotes.png" alt="语录目标稿">
+      <div class="cap"><b>语录</b><span>引文墙 · 填写后不再变成表格</span></div>
+    </a>
+    <a class="card" href="forms.html">
+      <img class="shot" src="forms.png" alt="多形态目标稿">
+      <div class="cap"><b>多形态</b><span>继承与覆写都在卡上 · 空态同一张卡</span></div>
+    </a>
+    <a class="card" href="factions.html">
+      <img class="shot" src="factions.png" alt="势力目标稿">
+      <div class="cap"><b>势力</b><span>徽记、立场、实力、驻地、首领、说明都在卡上</span></div>
+    </a>
+    <a class="card" href="faction-detail.html">
+      <img class="shot" src="faction-detail.png" alt="势力详情目标稿">
+      <div class="cap"><b>势力详情</b><span>点徽章进入档案 · 不是一个通用大表单</span></div>
+    </a>
+    <a class="card" href="profile.html">
+      <img class="shot" src="profile.png" alt="世界档案目标稿">
+      <div class="cap"><b>世界档案</b><span>规则是事实行 · 编辑在纸面上</span></div>
+    </a>
+    <a class="card" href="profile-empty.html">
+      <img class="shot" src="profile-empty.png" alt="世界档案空态目标稿">
+      <div class="cap"><b>世界档案 · 空态</b><span>与填写后同一几何，只换内容</span></div>
+    </a>
+  </div>
+
+  <footer>
+    共同规则：空态即最终几何；一个模块一条几何；字段在纸上就地编辑；不提供“切表格”的逃生口；徽记、肖像、封面从空白卡开始就能上传。
+  </footer>
+</main>
+</body>
+</html>

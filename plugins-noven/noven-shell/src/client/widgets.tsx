@@ -5,13 +5,17 @@
  * （timeline_* 逐条命令 / set_widget_data 整份覆盖）。
  * @module noven-shell/client/widgets
  */
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type FocusEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { clearPlaceFocus, setPlaceFocus, usePlaceFocus, type PlaceFocus } from './place-link.ts'
+import { clearCollectionFocus, setCollectionFocus, useCollectionFocus } from './collection-focus.ts'
+import { clearModuleLinkFocus, setModuleLinkFocus, useModuleLinkFocus } from './module-link.ts'
 import type { CardCommand, CardModuleDoc } from './card-api.ts'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
 
 /** 渲染器拿到的写入面：一条编辑命令 → apply。 */
-export type WidgetSend = (command: CardCommand) => Promise<void>
+export type WidgetSend = (command: CardCommand) => Promise<boolean>
 
 interface WidgetProps {
   readonly module: CardModuleDoc
@@ -36,25 +40,52 @@ interface TlCalendar {
 }
 interface TlMark { readonly id: string, readonly at: number, readonly label: string }
 interface TlEra { readonly id: string, readonly name: string, readonly from: number | null, readonly to: number | null, readonly color: string, readonly description?: string }
-interface TlEvent { readonly id: string, readonly at: number | null, readonly until: number | null, readonly ongoing?: boolean, readonly title: string, readonly description: string, readonly color?: string }
-interface TlData { readonly calendar: TlCalendar, readonly views: readonly TlCalendar[], readonly eras: readonly TlEra[], readonly events: readonly TlEvent[], readonly marks: readonly TlMark[] }
+export interface TlPlace { readonly mapModuleId: string, readonly markerId: string, readonly label?: string }
+interface TimelineLinks { readonly characterTarget?: string, readonly relationTarget?: string, readonly characters?: readonly string[], readonly relations?: readonly string[], readonly onOpenCharacter?: () => void, readonly onOpenRelation?: () => void, readonly onCreateCharacter?: () => void, readonly onCreateRelation?: () => void }
+interface TlEvent { readonly id: string, readonly at: number | null, readonly until: number | null, readonly ongoing?: boolean, readonly title: string, readonly description: string, readonly characters?: readonly string[], readonly relations?: readonly string[], readonly place?: TlPlace, readonly color?: string }
+interface TlWindow { readonly from?: number, readonly to?: number }
+interface TlData { readonly view?: 'horizontal' | 'diary', readonly window?: TlWindow, readonly calendar: TlCalendar, readonly views: readonly TlCalendar[], readonly eras: readonly TlEra[], readonly events: readonly TlEvent[], readonly marks: readonly TlMark[] }
 
 interface RelNode { readonly id: string, readonly name: string, readonly note: string, readonly x: number | null, readonly y: number | null, readonly avatar?: string }
 interface RelEdge { readonly id: string, readonly from: string, readonly to: string, readonly label: string }
 interface RelData { readonly nodes: readonly RelNode[], readonly edges: readonly RelEdge[] }
 
-interface MapMarker { readonly id: string, readonly x: number, readonly y: number, readonly label: string, readonly description: string }
-interface MapData { readonly description: string, readonly markers: readonly MapMarker[] }
-
 /** 解码器同时服务详情页与设定总览的缩略图——导出给 card-page 复用。 */
 export const tl = (data: unknown): TlData => {
   const d = (data ?? {}) as Partial<TlData>
+  const window = d.window === undefined ? undefined : {
+    ...(typeof d.window.from === 'number' ? { from: d.window.from } : {}),
+    ...(typeof d.window.to === 'number' ? { to: d.window.to } : {}),
+  }
   return {
+    ...(d.view === 'diary' ? { view: 'diary' as const } : {}),
+    ...(window === undefined || Object.keys(window).length === 0 ? {} : { window }),
     calendar: tlCalendar(d.calendar),
     views: (d.views ?? []).map(tlCalendar).filter(v => v.name !== ''),
     eras: d.eras ?? [],
     events: d.events ?? [],
     marks: d.marks ?? [],
+  }
+}
+
+/** 时间跨度：只裁剪视图，不改数据；未放置事件保留。 */
+/** 地点过滤：只留指向该 marker 的事件。 */
+const withTimelinePlace = (data: TlData, markerId: string | undefined): TlData => markerId === undefined
+  ? data
+  : { ...data, events: data.events.filter(event => event.place?.markerId === markerId) }
+
+const withTimelineWindow = (data: TlData): TlData => {
+  const from = data.window?.from
+  const to = data.window?.to
+  if (from === undefined && to === undefined) return data
+  const within = (at: number | null): boolean => at === null
+    || ((from === undefined || at >= from) && (to === undefined || at <= to))
+  return {
+    ...data,
+    events: data.events.filter(event => within(event.at)),
+    eras: data.eras.filter(era => era.from === null || era.to === null
+      || ((from === undefined || era.to >= from) && (to === undefined || era.from <= to))),
+    marks: data.marks.filter(mark => within(mark.at)),
   }
 }
 
@@ -85,11 +116,6 @@ export const rel = (data: unknown): RelData => {
   return { nodes: d.nodes ?? [], edges: d.edges ?? [] }
 }
 
-export const mapData = (data: unknown): MapData => {
-  const d = (data ?? {}) as Partial<MapData>
-  return { description: d.description ?? '', markers: d.markers ?? [] }
-}
-
 interface CollField { readonly id: string, readonly name: string, readonly type: string }
 interface CollItem { readonly id: string, readonly name: string, readonly summary: string, readonly description: string, readonly visualKey: string | null }
 type CollValue = string | number | boolean | null
@@ -97,7 +123,12 @@ type CollValue = string | number | boolean | null
   | { readonly cardId?: string, readonly name?: string, readonly itemId?: string }
 
 /** 引用选择器的目标：项目内一张卡。 */
-export interface RefTarget { readonly cardId: string, readonly name: string, readonly kind: string }
+export interface RefTarget {
+  readonly cardId: string
+  readonly name: string
+  readonly kind: string
+  readonly modules?: readonly { readonly id: string, readonly name: string, readonly type: string }[]
+}
 
 /** 反查索引里的一条：某张卡在哪个模块/字段引用了我。 */
 export interface RefBacklink {
@@ -116,6 +147,19 @@ interface CollData {
   readonly values: Readonly<Record<string, Readonly<Record<string, CollValue>>>>
   readonly view: string
   readonly artStyle: string
+  readonly cardAspect?: 'portrait' | 'landscape' | 'square'
+  readonly form?: { readonly labels?: { readonly primary?: string, readonly add?: string, readonly empty?: string } }
+  readonly source?: { readonly cardId?: string, readonly moduleId?: string, readonly moduleName?: string, readonly itemId?: string, readonly label?: string }
+  readonly presentation?: {
+    readonly contract: string
+    readonly layout: string
+    readonly core: readonly string[]
+    readonly optional: readonly string[]
+    readonly detail: readonly { readonly title: string, readonly fields: readonly string[] }[]
+    readonly editor: { readonly create: readonly string[], readonly detail: readonly string[] }
+    readonly assets: readonly { readonly id: string, readonly role: string, readonly ratio: string, readonly render: string, readonly export: string }[]
+    readonly links: readonly string[]
+  }
 }
 
 /** 集合解码（noven-cards decodeCollection 的镜像）：缺省回空表 + list 视图。 */
@@ -127,6 +171,41 @@ export const coll = (data: unknown): CollData => {
     values: (d.values ?? {}) as CollData['values'],
     view: typeof d.view === 'string' ? d.view : 'list',
     artStyle: typeof d.artStyle === 'string' ? d.artStyle : '',
+    ...(d.cardAspect === 'portrait' || d.cardAspect === 'landscape' || d.cardAspect === 'square' ? { cardAspect: d.cardAspect } : {}),
+    ...(d.form === undefined ? {} : { form: d.form }),
+    ...(d.source === undefined ? {} : { source: d.source }),
+    ...(d.presentation === undefined ? {} : { presentation: d.presentation }),
+  }
+}
+
+/** 老卡里的模块没有内嵌 presentation；按模块名补最小契约，避免旧数据继续落到通用表格。 */
+const PRESENTATION_FALLBACKS: Readonly<Record<string, { readonly contract: string, readonly layout: string, readonly links: readonly string[] }>> = {
+  基本信息: { contract: 'profile', layout: 'profile', links: ['relation', 'timeline'] },
+  角色档案: { contract: 'profile', layout: 'profile', links: ['relation', 'timeline'] },
+  世界档案: { contract: 'worldProfile', layout: 'profile', links: ['map', 'timeline'] },
+  规则: { contract: 'rules', layout: 'rulebook', links: ['relation'] },
+  语录: { contract: 'quotes', layout: 'quoteWall', links: ['character', 'timeline'] },
+  势力: { contract: 'factions', layout: 'heraldry', links: ['place', 'relation'] },
+  种族: { contract: 'races', layout: 'bestiary', links: ['place', 'relation'] },
+  文化: { contract: 'culture', layout: 'magazine', links: ['place', 'timeline'] },
+  地理: { contract: 'geography', layout: 'atlas', links: ['map', 'timeline'] },
+  地区: { contract: 'geography', layout: 'atlas', links: ['map', 'timeline'] },
+  能力: { contract: 'abilities', layout: 'skillSheet', links: ['character'] },
+  装备: { contract: 'equipment', layout: 'armory', links: ['character'] },
+  图集: { contract: 'gallery', layout: 'gallery', links: ['character'] },
+  角色图集: { contract: 'gallery', layout: 'gallery', links: ['character'] },
+  多形态: { contract: 'multiForm', layout: 'multiForm', links: ['profile'] },
+  关系: { contract: 'relations', layout: 'graph', links: ['character', 'place'] },
+}
+
+const presentationFallback = (name: string): NonNullable<CollData['presentation']> | undefined => {
+  const spec = PRESENTATION_FALLBACKS[name]
+  if (spec === undefined) return undefined
+  return {
+    contract: spec.contract, layout: spec.layout,
+    core: [], optional: [], detail: [],
+    editor: { create: [], detail: [] },
+    assets: [], links: spec.links,
   }
 }
 
@@ -350,7 +429,7 @@ function BodyField({ text, placeholder, clamp, onSave }: {
 }
 
 /** 一条事件的「文章」：标题（可点编）+ 灰字元信息 + 正文长文。元信息点开才是日期输入。 */
-function TlArticle({ event, era, calendar, moduleId, focused, near, onFocus, onUnfocus, t, send }: {
+function TlArticle({ event, era, calendar, moduleId, focused, near, onFocus, onUnfocus, t, send, places, onOpenPlace, links }: {
   readonly event: TlEvent
   readonly era: TlEra | undefined
   readonly calendar: TlCalendar
@@ -362,6 +441,9 @@ function TlArticle({ event, era, calendar, moduleId, focused, near, onFocus, onU
   readonly onUnfocus?: () => void
   readonly t: ShellT
   readonly send: WidgetSend
+  readonly places?: readonly TlPlace[]
+  readonly onOpenPlace?: (place: TlPlace) => void
+  readonly links?: TimelineLinks
 }) {
   const [title, setTitle] = useState(event.title)
   const [metaOpen, setMetaOpen] = useState(false)
@@ -405,6 +487,16 @@ function TlArticle({ event, era, calendar, moduleId, focused, near, onFocus, onU
               className={`nv-tld-ongoing${event.ongoing === true ? ' nv-tld-ongoing-on' : ''}`}
               title={t('tl.ongoingTip')}
               onClick={() => patch({ ongoing: event.ongoing !== true })}>{t('tl.ongoing')}</button>
+            {places !== undefined && places.length > 0 && (
+              <select className="nv-tld-placepick" value={event.place?.markerId ?? ''}
+                onChange={e => {
+                  const place = places.find(candidate => candidate.markerId === e.target.value)
+                  patch({ place: place === undefined ? null : place })
+                }}>
+                <option value="">{t('tl.place.none')}</option>
+                {places.map(place => <option key={`${place.mapModuleId}:${place.markerId}`} value={place.markerId}>{place.label ?? place.markerId}</option>)}
+              </select>
+            )}
             <span className="nv-wg-colors">
               <button type="button" aria-label={t('tl.ctx.inherit')} title={t('tl.ctx.inherit')}
                 className={`nv-wg-color nv-wg-color-inherit${event.color === undefined ? ' nv-wg-color-on' : ''}`}
@@ -427,7 +519,21 @@ function TlArticle({ event, era, calendar, moduleId, focused, near, onFocus, onU
             {meta}{era !== undefined ? ` · ${era.name}` : ''}
           </button>
         )}
+        {event.place !== undefined && (
+          <button type="button" className="nv-tld-place" onClick={e => { e.stopPropagation(); onOpenPlace?.(event.place!) }}>
+            ⌖ {event.place.label ?? event.place.markerId}
+          </button>
+        )}
       </div>
+      {((event.characters?.length ?? 0) > 0 || (event.relations?.length ?? 0) > 0 || links?.onOpenRelation !== undefined || links?.onCreateCharacter !== undefined || links?.onCreateRelation !== undefined) && (
+        <div className="nv-tld-links">
+          {event.characters?.map(name => <button key={name} type="button" onClick={e => { e.stopPropagation(); links?.onOpenCharacter?.() }}>{name} →</button>)}
+          {event.relations?.map(name => <button key={name} type="button" onClick={e => { e.stopPropagation(); links?.onOpenRelation?.() }}>{name} →</button>)}
+          {links?.onOpenRelation !== undefined && (event.relations?.length ?? 0) === 0 && <button type="button" onClick={e => { e.stopPropagation(); links.onOpenRelation?.() }}>关系 →</button>}
+          {links?.onCreateCharacter !== undefined && (event.characters?.length ?? 0) > 0 && <button type="button" onClick={e => { e.stopPropagation(); links.onCreateCharacter?.() }}>角色（未找到，点击创建）</button>}
+          {links?.onCreateRelation !== undefined && <button type="button" onClick={e => { e.stopPropagation(); links.onCreateRelation?.() }}>关系（未找到，点击创建）</button>}
+        </div>
+      )}
       <BodyField text={event.description} placeholder={t('tl.bodyPh')} clamp={focused ? 0 : 3}
         onSave={v => patch({ description: v })} />
     </article>
@@ -550,8 +656,223 @@ function tlSteps(ppu: number): { major: number, minor: number } {
  * 滑——拖动/滚轮平移、停手吸附到最近的可见刻度。
  * 右键插刻度标记/建事件/纪元入点出点；编辑本体在下半的文章流里。
  */
-export function TimelineWidget({ module, t, send }: WidgetProps) {
-  const data = useMemo(() => tl(module.widget?.data), [module.widget?.data])
+/** 时间线的两种读法：世界史横着排，个人史像日记往下长。 */
+export function TimelineWidget(props: WidgetProps & {
+  readonly cardId?: string
+  readonly places?: readonly TlPlace[]
+  readonly onOpenPlace?: (place: TlPlace) => void
+  readonly links?: TimelineLinks
+}) {
+  const focus = usePlaceFocus()
+  const active = focus !== undefined && (focus.cardId === undefined || props.cardId === undefined || focus.cardId === props.cardId)
+    ? focus : undefined
+  const data = withTimelinePlace(withTimelineWindow(tl(props.module.widget?.data)), active?.markerId)
+  return data.view === 'diary'
+    ? <TimelineDiary {...props} data={data} placeFilter={active} onClearPlace={clearPlaceFocus} places={props.places} onOpenPlace={props.onOpenPlace} links={props.links} />
+    : <TimelineEditor {...props} placeFilter={active?.markerId} placeFilterLabel={active?.label ?? active?.markerId} onClearPlace={clearPlaceFocus} places={props.places} onOpenPlace={props.onOpenPlace} links={props.links} />
+}
+
+/** 时间线的单位/历法/跨度设置：只改 calendar 与 window，不改事件本身。 */
+function TimelineSettings({ moduleId, send, data, t }: {
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly data: TlData
+  readonly t: ShellT
+}) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState(data.calendar.name)
+  const [unit, setUnit] = useState(data.calendar.unit)
+  const [from, setFrom] = useState(data.window?.from === undefined ? '' : String(data.window.from))
+  const [to, setTo] = useState(data.window?.to === undefined ? '' : String(data.window.to))
+  useEffect(() => {
+    if (!open) return
+    setName(data.calendar.name)
+    setUnit(data.calendar.unit)
+    setFrom(data.window?.from === undefined ? '' : String(data.window.from))
+    setTo(data.window?.to === undefined ? '' : String(data.window.to))
+  }, [open, data.calendar.name, data.calendar.unit, data.window?.from, data.window?.to])
+  const apply = (): void => {
+    const nextUnit = unit.trim() === '' ? data.calendar.unit : unit.trim()
+    const calendar: TlCalendar = {
+      ...data.calendar, name: name.trim(), unit: nextUnit,
+      units: [{ name: nextUnit, per: 1 }],
+    }
+    const window: TlWindow = {
+      ...(from.trim() !== '' && Number.isFinite(Number(from)) ? { from: Number(from) } : {}),
+      ...(to.trim() !== '' && Number.isFinite(Number(to)) ? { to: Number(to) } : {}),
+    }
+    void send({ kind: 'timeline_set_calendar', moduleId, calendar })
+    void send({ kind: 'timeline_set_window', moduleId, window })
+    setOpen(false)
+  }
+  return (
+    <span className="nv-tlset">
+      <button type="button" className="nv-tlset-button" onClick={() => setOpen(value => !value)}>{t('tl.settings')}</button>
+      {open && (
+        <div className="nv-tlset-pop" onClick={event => event.stopPropagation()}>
+          <label><span>{t('tl.calName')}</span><input value={name} placeholder={t('tl.calUntitled')} onChange={event => setName(event.target.value)} /></label>
+          <label><span>{t('tl.unit')}</span><input value={unit} placeholder="年 / 月 / 日 / 岁" onChange={event => setUnit(event.target.value)} /></label>
+          <div className="nv-tlset-range">
+            <label><span>{t('tl.from')}</span><input type="number" value={from} placeholder="—" onChange={event => setFrom(event.target.value)} /></label>
+            <label><span>{t('tl.to')}</span><input type="number" value={to} placeholder="—" onChange={event => setTo(event.target.value)} /></label>
+          </div>
+          <small>{t('tl.spanHint')}</small>
+          <div className="nv-tlset-actions">
+            <button type="button" onClick={() => setOpen(false)}>{t('tl.cancel')}</button>
+            <button type="button" className="nv-tlset-apply" onClick={apply}>{t('tl.apply')}</button>
+          </div>
+        </div>
+      )}
+    </span>
+  )
+}
+
+/** 竖向个人史：一条线往下，每笔可点开改标题/正文；关系人挂在条目下。 */
+/** 空行动轨迹：第一条记录直接以年谱条目的形状出现。 */
+function TimelineDiaryFirst({ moduleId, send, t, unit, links }: {
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly t: ShellT
+  readonly unit: string
+  readonly links?: TimelineLinks
+}) {
+  const [age, setAge] = useState('0')
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [character, setCharacter] = useState('')
+  const [relation, setRelation] = useState('')
+  const save = (): void => {
+    const name = title.trim()
+    if (name === '') return
+    const value = Number(age)
+    const id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `ev-${String(Date.now())}`
+    void send({
+      kind: 'timeline_add_event', moduleId,
+      event: { id, at: Number.isFinite(value) ? value : 0, title: name, description,
+        ...(character === '' ? {} : { characters: [character] }),
+        ...(relation === '' ? {} : { relations: [relation] }) },
+    })
+    setAge('0'); setTitle(''); setDescription(''); setCharacter(''); setRelation('')
+  }
+  return (
+    <article className="nv-tldiary-entry nv-tldiary-first">
+      <div className="nv-tldiary-body">
+        <div className="nv-tldiary-firsthead">
+          <input className="nv-tldiary-firstage" type="number" value={age}
+            onChange={event => setAge(event.target.value)} aria-label={t('tl.first.time')} />
+          <span>{unit}</span>
+          <input className="nv-tldiary-firsttitle" value={title} placeholder={t('wg.tl.diary.newTitle')}
+            onChange={event => setTitle(event.target.value)} />
+        </div>
+        <textarea rows={2} value={description} placeholder={t('wg.tl.diary.write')}
+          onChange={event => setDescription(event.target.value)} />
+        <div className="nv-tldiary-firstlinks">
+          <label>
+            <span>{t('tl.first.character')}</span>
+            <select value={character} onChange={event => setCharacter(event.target.value)}>
+              <option value="">{t('tl.first.none')}</option>
+              {(links?.characters ?? []).map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </label>
+          <label>
+            <span>{t('tl.first.relation')}</span>
+            <select value={relation} onChange={event => setRelation(event.target.value)}>
+              <option value="">{t('tl.first.none')}</option>
+              {(links?.relations ?? []).map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+          </label>
+        </div>
+        <button type="button" className="nv-tldiary-firstsave" disabled={title.trim() === ''} onClick={save}>{t('coll.draftSave')}</button>
+      </div>
+    </article>
+  )
+}
+
+function TimelineDiary({ module, t, send, data, placeFilter, onClearPlace, places, onOpenPlace, links }: WidgetProps & {
+  readonly data: TlData
+  readonly placeFilter?: PlaceFocus
+  readonly onClearPlace?: () => void
+  readonly places?: readonly TlPlace[]
+  readonly onOpenPlace?: (place: TlPlace) => void
+  readonly links?: TimelineLinks
+}) {
+  const unit = data.calendar.units[0]?.name ?? t('wg.tl.diary.unit')
+  const events = [...data.events]
+    .filter(event => event.at !== null)
+    .sort((a, b) => (a.at ?? 0) - (b.at ?? 0))
+  const commit = (id: string, patch: { title?: string, description?: string }): void => {
+    void send({ kind: 'timeline_update_event', moduleId: module.id, id, patch })
+  }
+  const add = (): void => {
+    const at = events.reduce((max, event) => Math.max(max, event.at ?? 0), 0) + 1
+    void send({ kind: 'timeline_add_event', moduleId: module.id, event: { at, title: '', description: '', characters: [] } })
+  }
+  return (
+    <div className="nv-tldiary">
+      <div className="nv-tldiary-head">
+        <span>{t('wg.tl.diary.label')}</span>
+        <span className="nv-tldiary-actions">
+          {placeFilter !== undefined && (
+            <button type="button" className="nv-tldiary-placefilter" onClick={onClearPlace}>
+              ⌖ {placeFilter.label ?? placeFilter.markerId} ×
+            </button>
+          )}
+          <TimelineSettings moduleId={module.id} send={send} data={data} t={t} />
+          <button type="button" className="nv-tldiary-add" onClick={add}>{t('wg.tl.diary.add')}</button>
+        </span>
+      </div>
+      {events.length === 0 && <TimelineDiaryFirst moduleId={module.id} send={send} t={t} unit={unit} links={links} />}
+      <div className="nv-tldiary-list">
+        {events.map(event => (
+          <article key={event.id} className="nv-tldiary-entry">
+            <div className="nv-tldiary-date"><b>{event.at}{unit}</b></div>
+            <div className="nv-tldiary-body">
+              <h3 contentEditable suppressContentEditableWarning spellCheck={false}
+                data-placeholder={t('wg.tl.diary.newTitle')}
+                onBlur={e => {
+                  const title = e.currentTarget.textContent?.trim() ?? ''
+                  if (title !== event.title) commit(event.id, { title })
+                }}>{event.title}</h3>
+              <p contentEditable suppressContentEditableWarning spellCheck={false}
+                data-placeholder={t('wg.tl.diary.write')}
+                onBlur={e => {
+                  const description = e.currentTarget.textContent ?? ''
+                  if (description !== event.description) commit(event.id, { description })
+                }}>{event.description}</p>
+              {(event.characters !== undefined && event.characters.length > 0) || (event.relations !== undefined && event.relations.length > 0) || event.place !== undefined ? (
+                <div className="nv-tldiary-chips">
+                  {event.characters?.map(name => <button key={name} type="button" className="nv-coll-chip nv-coll-chip-neutral"
+                    onClick={() => links?.onOpenCharacter?.()}>{name} →</button>)}
+                  {event.relations?.map(name => <button key={name} type="button" className="nv-coll-chip nv-coll-chip-neutral"
+                    onClick={() => links?.onOpenRelation?.()}>{name} →</button>)}
+                  {links?.onOpenRelation !== undefined && (event.relations?.length ?? 0) === 0 && <button type="button" className="nv-coll-chip nv-coll-chip-neutral" onClick={() => links.onOpenRelation?.()}>关系 →</button>}
+                  {links?.onCreateCharacter !== undefined && (event.characters?.length ?? 0) > 0 && <button type="button" className="nv-coll-chip nv-coll-chip-neutral" onClick={() => links.onCreateCharacter?.()}>角色（未找到，点击创建）</button>}
+                  {links?.onCreateRelation !== undefined && <button type="button" className="nv-coll-chip nv-coll-chip-neutral" onClick={() => links.onCreateRelation?.()}>关系（未找到，点击创建）</button>}
+                  {event.place !== undefined && (
+                    <button type="button" className="nv-tldiary-place" onClick={() => onOpenPlace?.(event.place!)}>
+                      ⌖ {event.place.label ?? event.place.markerId}
+                    </button>
+                  )}
+                </div>
+              ) : null}
+            </div>
+          </article>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function TimelineEditor({ module, t, send, placeFilter, placeFilterLabel, onClearPlace, places, onOpenPlace, links }: WidgetProps & {
+  readonly placeFilter?: string
+  readonly placeFilterLabel?: string
+  readonly onClearPlace?: () => void
+  readonly places?: readonly TlPlace[]
+  readonly onOpenPlace?: (place: TlPlace) => void
+  readonly links?: TimelineLinks
+}) {
+  const rawData = useMemo(() => tl(module.widget?.data), [module.widget?.data])
+  const data = useMemo(() => withTimelinePlace(withTimelineWindow(rawData), placeFilter), [placeFilter, rawData])
   const stageRef = useRef<HTMLDivElement | null>(null)
   const trackRef = useRef<HTMLDivElement | null>(null)
   const [stageW, setStageW] = useState(0)
@@ -1028,14 +1349,15 @@ export function TimelineWidget({ module, t, send }: WidgetProps) {
         <span className="nv-tlp-count">
           {fmt(t, 'tl.summary', { eras: data.eras.length, events: data.events.length })}
         </span>
-        <button type="button" className="nv-tlp-cal"
-          onClick={e => { e.stopPropagation(); setCalOpen(v => !v) }}
-          title={t('tl.calChip')}>
-          {data.calendar.name !== '' ? data.calendar.name : data.calendar.unit}
-        </button>
-        <span className="nv-tlp-hint">{pendingEra !== null ? t('tl.pendingEra') : t('tl.hint')}</span>
+        <span className="nv-tlp-hint">{pendingEra !== null ? t('tl.pendingEra') : (data.events.length === 0 && data.eras.length === 0 ? '' : t('tl.hint'))}</span>
         <span className="nv-tlp-spacer" />
-        <button type="button" className="nv-wg-add" onClick={startEra}>＋ {t('tl.newEra')}</button>
+        <TimelineSettings moduleId={module.id} send={send} data={data} t={t} />
+        {placeFilter !== undefined && (
+          <button type="button" className="nv-tldiary-placefilter" onClick={onClearPlace}>⌖ {placeFilterLabel ?? placeFilter} ×</button>
+        )}
+        {(data.eras.length > 0 || data.events.length > 0) && (
+          <button type="button" className="nv-wg-add" onClick={startEra}>＋ {t('tl.newEra')}</button>
+        )}
         <button type="button" className="nv-wg-add nv-tlp-addpri" onClick={() => addEvent(undefined)}>＋ {t('tl.newEvent')}</button>
         {calOpen && (
           <div className="nv-tlp-calpop" onClick={e => e.stopPropagation()}>
@@ -1060,6 +1382,8 @@ export function TimelineWidget({ module, t, send }: WidgetProps) {
         )}
       </div>
       <div className="nv-tlg" ref={stageRef} style={{ height: graphH }} onMouseDown={onMouseDown} onContextMenu={onContextMenu}>
+        <div className="nv-tlg-band" aria-hidden="true"
+          style={{ top: rulerH + eraLane.rows * eraRowH + 4, height: Math.max(1, evLane.rows) * evRowH }} />
         <div className="nv-tlg-track" ref={trackRef}
           style={{ transform: `translateX(${stageW / 2 - pxOf(cur ?? lay.lo)}px)` }}>
           {lay.ticks.map(tk => tk.major ? (
@@ -1267,7 +1591,8 @@ export function TimelineWidget({ module, t, send }: WidgetProps) {
               {events.map(event => (
                 <TlArticle key={event.id} event={event} era={era} calendar={data.calendar}
                   moduleId={module.id} focused={focusId === event.id} near={nearId === event.id}
-                  onFocus={() => setFocusId(event.id)} onUnfocus={() => setFocusId(null)} t={t} send={send} />
+                  onFocus={() => setFocusId(event.id)} onUnfocus={() => setFocusId(null)} t={t} send={send}
+                  places={places} onOpenPlace={onOpenPlace} links={links} />
               ))}
               <button type="button" className="nv-tld-add" onClick={() => addEvent(era)}>
                 {fmt(t, 'tl.addInEra', { name: era.name === '' ? t('tl.eraUntitled') : era.name })}
@@ -1286,7 +1611,8 @@ export function TimelineWidget({ module, t, send }: WidgetProps) {
             {unfiled.map(event => (
               <TlArticle key={event.id} event={event} era={undefined} calendar={data.calendar}
                 moduleId={module.id} focused={focusId === event.id} near={nearId === event.id}
-                onFocus={() => setFocusId(event.id)} onUnfocus={() => setFocusId(null)} t={t} send={send} />
+                onFocus={() => setFocusId(event.id)} onUnfocus={() => setFocusId(null)} t={t} send={send}
+                places={places} onOpenPlace={onOpenPlace} links={links} />
             ))}
             {data.eras.length > 0 && (
               <button type="button" className="nv-tld-add" onClick={() => addEvent(undefined)}>＋ {t('tl.newEvent')}</button>
@@ -1294,9 +1620,60 @@ export function TimelineWidget({ module, t, send }: WidgetProps) {
           </section>
         )}
         {data.eras.length === 0 && data.events.length === 0 && (
-          <div className="nv-tld-emptyhint">{t('tl.empty')}</div>
+          <TimelineFirstEvent moduleId={module.id} send={send} t={t} calendar={data.calendar}
+            places={places} onOpenPlace={onOpenPlace} />
         )}
       </div>
+    </div>
+  )
+}
+
+/** 空时间线的第一条事件：直接落在轴上，不是弹窗或空文案。 */
+function TimelineFirstEvent({ moduleId, send, t, places }: {
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly t: ShellT
+  readonly calendar: TlCalendar
+  readonly places?: readonly TlPlace[]
+  readonly onOpenPlace?: (place: TlPlace) => void
+}) {
+  const [at, setAt] = useState('0')
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [placeKey, setPlaceKey] = useState('')
+  const place = (places ?? []).find(candidate => `${candidate.mapModuleId}:${candidate.markerId}` === placeKey)
+  const save = (): void => {
+    const name = title.trim()
+    if (name === '') return
+    const value = Number(at)
+    const id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `ev-${String(Date.now())}`
+    void send({
+      kind: 'timeline_add_event', moduleId,
+      event: {
+        id, at: Number.isFinite(value) ? value : 0, title: name, description,
+        ...(place === undefined ? {} : { place }),
+      },
+    })
+    setAt('0'); setTitle(''); setDescription(''); setPlaceKey('')
+  }
+  return (
+    <div className="nv-tl-first">
+      <label><span>{t('tl.first.time')}</span><input type="number" value={at} onChange={event => setAt(event.target.value)} /></label>
+      <label><span>{t('tl.first.title')}</span><input value={title} onChange={event => setTitle(event.target.value)} /></label>
+      <label><span>{t('tl.first.place')}</span>
+        <select value={placeKey} onChange={event => setPlaceKey(event.target.value)}>
+          <option value="">{t('tl.first.placeEmpty')}</option>
+          {(places ?? []).map(candidate => (
+            <option key={`${candidate.mapModuleId}:${candidate.markerId}`} value={`${candidate.mapModuleId}:${candidate.markerId}`}>
+              {candidate.label ?? candidate.markerId}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label className="nv-tl-firstbody"><span>{t('tl.first.body')}</span>
+        <textarea rows={2} value={description} onChange={event => setDescription(event.target.value)} />
+      </label>
+      <button type="button" className="nv-tl-firstsave" disabled={title.trim() === ''} onClick={save}>{t('tl.first.save')}</button>
     </div>
   )
 }
@@ -1338,6 +1715,138 @@ export function MiniRelation({ data }: { readonly data: RelData }) {
         </span>
       ))}
     </span>
+  )
+}
+
+// ---------- 3D 场景 ----------
+
+interface SceneObject {
+  readonly id: string
+  readonly name: string
+  readonly color: string
+  readonly imageResourceId?: string
+  readonly description: string
+  readonly x: number
+  readonly y: number
+  readonly z: number
+  readonly rx: number
+  readonly ry: number
+  readonly rz: number
+  readonly scale: number
+}
+interface SceneData { readonly version: 1, readonly objects: readonly SceneObject[], readonly camera: { readonly yaw: number, readonly pitch: number, readonly zoom: number } }
+
+const sceneNum = (value: unknown, fallback: number): number => Number.isFinite(Number(value)) ? Number(value) : fallback
+
+/** 3D 场景解码（noven-cards decodeScene 的镜像）。 */
+export const scene = (raw: unknown): SceneData => {
+  const source = (raw ?? {}) as Partial<SceneData>
+  const camera = (source.camera ?? {}) as Partial<SceneData['camera']>
+  const objects = (Array.isArray(source.objects) ? source.objects : []).map((item, index): SceneObject => {
+    const object = (item ?? {}) as Partial<SceneObject>
+    return {
+      id: typeof object.id === 'string' && object.id !== '' ? object.id : `scene-${String(index)}`,
+      name: typeof object.name === 'string' ? object.name : '',
+      color: typeof object.color === 'string' && object.color !== '' ? object.color : '#34D399',
+      ...(typeof object.imageResourceId === 'string' && object.imageResourceId !== '' ? { imageResourceId: object.imageResourceId } : {}),
+      description: typeof object.description === 'string' ? object.description : '',
+      x: sceneNum(object.x, 0), y: sceneNum(object.y, 0), z: sceneNum(object.z, 0),
+      rx: sceneNum(object.rx, 0), ry: sceneNum(object.ry, 0), rz: sceneNum(object.rz, 0),
+      scale: Number.isFinite(Number(object.scale)) && Number(object.scale) > 0 ? Number(object.scale) : 1,
+    }
+  })
+  return { version: 1, objects, camera: { yaw: sceneNum(camera.yaw, -18), pitch: sceneNum(camera.pitch, 12), zoom: Number(camera.zoom) > 0 ? Number(camera.zoom) : 1 } }
+}
+
+/** 通用 3D 视口：CSS 3D 变换、拖拽旋转、滚轮缩放；对象检查器复用表单控件。 */
+export function SceneWidget({ module, t, send, imageUrl }: WidgetProps & { readonly imageUrl: (resourceId: string) => string }) {
+  const initial = useMemo(() => scene(module.widget?.data), [module.widget?.data])
+  const [data, setData] = useState(initial)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [view, setView] = useState({ yaw: initial.camera.yaw, pitch: initial.camera.pitch, zoom: initial.camera.zoom })
+  const drag = useRef<{ x: number, y: number, yaw: number, pitch: number } | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  useEffect(() => { setData(initial); setView({ yaw: initial.camera.yaw, pitch: initial.camera.pitch, zoom: initial.camera.zoom }) }, [initial])
+  const selected = data.objects.find(object => object.id === selectedId)
+  const commit = (next: SceneData): void => {
+    setData(next)
+    void send({ kind: 'set_widget_data', moduleId: module.id, widget: 'scene', data: { version: 1, kind: 'scene', noven: next } })
+  }
+  const patch = (objectId: string, change: Partial<SceneObject>): void => {
+    commit({ ...data, objects: data.objects.map(object => object.id === objectId ? { ...object, ...change } : object) })
+  }
+  const add = (): void => {
+    const object: SceneObject = {
+      id: typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `scene-${String(Date.now())}`,
+      name: '', color: '#34D399', description: '', x: 0, y: 0, z: 0, rx: 0, ry: 0, rz: 0, scale: 1,
+    }
+    setSelectedId(object.id)
+    commit({ ...data, objects: [...data.objects, object] })
+  }
+  const remove = (objectId: string): void => {
+    setSelectedId(null)
+    commit({ ...data, objects: data.objects.filter(object => object.id !== objectId) })
+  }
+  const pointerDown = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if ((event.target as HTMLElement).closest('.nv-scene-card') !== null) return
+    drag.current = { x: event.clientX, y: event.clientY, yaw: view.yaw, pitch: view.pitch }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+  const pointerMove = (event: React.PointerEvent<HTMLDivElement>): void => {
+    if (drag.current === null) return
+    setView({
+      ...view,
+      yaw: drag.current.yaw + (event.clientX - drag.current.x) * .35,
+      pitch: Math.max(-75, Math.min(75, drag.current.pitch - (event.clientY - drag.current.y) * .3)),
+    })
+  }
+  const pointerUp = (): void => { drag.current = null }
+  return (
+    <div className="nv-scene" ref={rootRef}>
+      <div className="nv-scene-toolbar">
+        <span>{fmt(t, 'scene.count', { n: data.objects.length })}</span>
+        <span className="nv-scene-hint">{t('scene.hint')}</span>
+        <button type="button" onClick={() => setView({ yaw: -18, pitch: 12, zoom: 1 })}>{t('scene.reset')}</button>
+        <button type="button" onClick={() => { const root = rootRef.current; if (root === null) return; void (document.fullscreenElement === null ? root.requestFullscreen() : document.exitFullscreen()) }}>{t('scene.fullscreen')}</button>
+        <button type="button" className="nv-scene-add" onClick={add}>＋ {t('scene.add')}</button>
+      </div>
+      <div className="nv-scene-canvas" onPointerDown={pointerDown} onPointerMove={pointerMove}
+        onPointerUp={pointerUp} onPointerCancel={pointerUp} onClick={() => setSelectedId(null)}
+        onWheel={event => { event.preventDefault(); setView(current => ({ ...current, zoom: Math.max(.45, Math.min(2.2, current.zoom - event.deltaY * .0015)) })) }}>
+        <div className="nv-scene-stage" style={{ transform: `rotateX(${String(view.pitch)}deg) rotateY(${String(view.yaw)}deg) scale(${String(view.zoom)})` }}>
+          {data.objects.map(object => (
+            <button key={object.id} type="button"
+              className={`nv-scene-card${selectedId === object.id ? ' is-on' : ''}`}
+              style={{
+                background: object.color,
+                transform: `translate(-50%,-50%) translate3d(${String(object.x)}px,${String(object.y)}px,${String(object.z)}px) rotateX(${String(object.rx)}deg) rotateY(${String(object.ry)}deg) rotateZ(${String(object.rz)}deg) scale(${String(object.scale)})`,
+              }}
+              onClick={event => { event.stopPropagation(); setSelectedId(object.id) }}>
+              {object.imageResourceId !== undefined ? <img src={imageUrl(object.imageResourceId)} alt="" /> : null}
+              <b>{object.name === '' ? t('scene.unnamed') : object.name}</b>
+              {object.description !== '' && <small>{object.description}</small>}
+            </button>
+          ))}
+          {data.objects.length === 0 && <div className="nv-scene-empty">{t('scene.empty')}</div>}
+        </div>
+      </div>
+      {selected !== undefined && (
+        <div className="nv-scene-inspector">
+          <div className="nv-scene-inspectorhead">
+            <b>{selected.name === '' ? t('scene.unnamed') : selected.name}</b>
+            <button type="button" onClick={() => remove(selected.id)}>{t('scene.delete')}</button>
+          </div>
+          <div className="nv-scene-fields">
+            <label><span>{t('scene.name')}</span><CollFieldInput value={selected.name} onCommit={value => patch(selected.id, { name: value })} /></label>
+            {(['x', 'y', 'z', 'rx', 'ry', 'rz', 'scale'] as const).map(key => (
+              <label key={key}><span>{key}</span><CollFieldInput value={String(selected[key])} numeric onCommit={value => patch(selected.id, { [key]: Number(value) || 0 })} /></label>
+            ))}
+            <label><span>{t('scene.color')}</span><input type="color" value={selected.color} onChange={event => patch(selected.id, { color: event.target.value })} /></label>
+          </div>
+          <label className="nv-scene-desc"><span>{t('scene.description')}</span><CollFieldArea value={selected.description} onCommit={value => patch(selected.id, { description: value })} /></label>
+        </div>
+      )}
+    </div>
   )
 }
 
@@ -1418,6 +1927,10 @@ export function RelationWidget({ module, t, send, imageUrl }: WidgetProps & { re
           <clipPath id="nv-rel-avatar-clip">
             <circle cx={0} cy={REL_AVATAR_TOP + REL_AVATAR / 2} r={REL_AVATAR / 2} />
           </clipPath>
+          <marker id={`nv-rel-arrow-${module.id}`} viewBox="0 0 10 10" refX="5" refY="5"
+            markerWidth="4.5" markerHeight="4.5" orient="auto" markerUnits="strokeWidth">
+            <path d="M 0 0 L 10 5 L 0 10 Z" className="nv-rel-arrowshape" />
+          </marker>
         </defs>
         {data.edges.map(edge => {
           const a = positions.get(edge.from)
@@ -1425,10 +1938,11 @@ export function RelationWidget({ module, t, send, imageUrl }: WidgetProps & { re
           if (a === undefined || b === undefined) return null
           const x1 = a.x * REL_W; const y1 = a.y * REL_H
           const x2 = b.x * REL_W; const y2 = b.y * REL_H
-          const mx = (x1 + x2) / 2; const my = (y1 + y2) / 2
+          const mx = x1 + (x2 - x1) * 0.58; const my = y1 + (y2 - y1) * 0.58
           return (
             <g key={edge.id} className="nv-rel-edge" onClick={e => { e.stopPropagation(); setPanel({ kind: 'edge', id: edge.id }); setLinking(null) }}>
-              <line x1={x1} y1={y1} x2={x2} y2={y2} className="nv-rel-line" />
+              <polyline points={`${String(x1)},${String(y1)} ${String(mx)},${String(my)} ${String(x2)},${String(y2)}`}
+                className="nv-rel-line" markerMid={`url(#nv-rel-arrow-${module.id})`} />
               <line x1={x1} y1={y1} x2={x2} y2={y2} className="nv-rel-linehit" />
               {edge.label !== '' && (
                 <g className="nv-rel-edgebadge">
@@ -1598,159 +2112,6 @@ function EdgeForm({ t, edge, onSubmit, onDelete, onCancel }: {
   )
 }
 
-// ---------- 地图 ----------
-
-/** 地图：模块的图片块是底图；点空白放标记、点标记编辑、拖动改位。 */
-export function MapWidget({ module, t, send, imageUrl, imageResources }: WidgetProps & {
-  readonly imageUrl: (resourceId: string) => string
-  readonly imageResources: readonly { readonly id: string }[]
-}) {
-  const data = useMemo(() => mapData(module.widget?.data), [module.widget?.data])
-  const image = module.blocks.find(b => b.kind === 'image')
-  const wrapRef = useRef<HTMLDivElement | null>(null)
-  const [pending, setPending] = useState<{ x: number, y: number } | null>(null)
-  const [editing, setEditing] = useState<MapMarker | null>(null)
-  const [picking, setPicking] = useState(false)
-  const [drag, setDrag] = useState<{ id: string, x: number, y: number } | null>(null)
-  const [zoom, setZoom] = useState(1)
-  const movedRef = useRef(false)
-
-  const point = (e: { clientX: number, clientY: number }): { x: number, y: number } => {
-    const rect = wrapRef.current?.getBoundingClientRect()
-    if (rect === undefined || rect.width === 0) return { x: 0.5, y: 0.5 }
-    return {
-      x: Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width)),
-      y: Math.min(1, Math.max(0, (e.clientY - rect.top) / rect.height)),
-    }
-  }
-
-  const commit = (markers: MapMarker[], description = data.description): Promise<void> =>
-    send({ kind: 'set_widget_data', moduleId: module.id, widget: 'map', data: { description, markers } })
-
-  useEffect(() => {
-    if (drag === null) return
-    const move = (e: MouseEvent): void => { const p = point(e); setDrag({ id: drag.id, x: p.x, y: p.y }); movedRef.current = true }
-    const up = (e: MouseEvent): void => {
-      const p = point(e)
-      const id = drag.id
-      setDrag(null)
-      if (movedRef.current) {
-        void commit(data.markers.map(mk => mk.id === id ? { ...mk, x: p.x, y: p.y } : mk))
-      }
-    }
-    window.addEventListener('mousemove', move)
-    window.addEventListener('mouseup', up)
-    return () => { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up) }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [drag, data.markers])
-
-  if (image === undefined || image.resourceId === undefined) {
-    return (
-      <div className="nv-wg nv-map">
-        <div className="nv-map-empty">
-          <span className="nv-map-emptyicon">{glyph.map(26)}</span>
-          <span>{t('wg.map.noImage')}</span>
-          {imageResources.length > 0 && (
-            <button type="button" className="nv-wg-add" onClick={() => setPicking(v => !v)}>{t('wg.map.pick')}</button>
-          )}
-        </div>
-        {picking && (
-          <div className="nv-map-picker">
-            {imageResources.map(resource => (
-              <button key={resource.id} type="button" className="nv-map-pick"
-                onClick={() => {
-                  setPicking(false)
-                  void send({ kind: 'insert_owned_image', moduleId: module.id, resourceId: resource.id })
-                }}>
-                <img src={imageUrl(resource.id)} alt="" />
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
-    )
-  }
-
-  return (
-    <div className="nv-wg nv-map">
-      <div className="nv-map-stage" ref={wrapRef}
-        onClick={e => {
-          if ((e.target as HTMLElement).closest('.nv-map-pin') !== null) return
-          if (editing !== null || pending !== null) return
-          setPending(point(e))
-        }}>
-        <img className="nv-map-img" src={imageUrl(image.resourceId)} alt="" draggable={false} />
-        {data.markers.map(marker => {
-          const p = drag?.id === marker.id ? drag : marker
-          return (
-            <button key={marker.id} type="button" className="nv-map-pin"
-              style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}
-              onMouseDown={e => { e.preventDefault(); e.stopPropagation(); setDrag({ id: marker.id, x: marker.x, y: marker.y }); movedRef.current = false }}
-              onClick={e => { e.stopPropagation(); if (!movedRef.current) { setEditing(marker); setPending(null) } }}>
-              <span className="nv-map-pindot" />
-              {marker.label !== '' && <span className="nv-map-pinlabel">{marker.label}</span>}
-            </button>
-          )
-        })}
-        {pending !== null && (
-          <span className="nv-map-pin nv-map-pin-new" style={{ left: `${pending.x * 100}%`, top: `${pending.y * 100}%` }}>
-            <span className="nv-map-pindot" />
-          </span>
-        )}
-      </div>
-      <div className="nv-wg-actions">
-        <span className="nv-wg-hint">{t('wg.map.hint')}</span>
-      </div>
-      {pending !== null && (
-        <MarkerForm t={t} title={t('wg.map.newMarker')}
-          onCancel={() => setPending(null)}
-          onSubmit={async ({ label, description }) => {
-            await commit([...data.markers, { id: mint(), x: pending.x, y: pending.y, label, description }])
-            setPending(null)
-          }} />
-      )}
-      {editing !== null && (
-        <MarkerForm t={t} title={t('wg.map.marker')} marker={editing}
-          onCancel={() => setEditing(null)}
-          onDelete={async () => {
-            await commit(data.markers.filter(mk => mk.id !== editing.id))
-            setEditing(null)
-          }}
-          onSubmit={async ({ label, description }) => {
-            await commit(data.markers.map(mk => mk.id === editing.id ? { ...mk, label, description } : mk))
-            setEditing(null)
-          }} />
-      )}
-    </div>
-  )
-}
-
-function MarkerForm({ t, title, marker, onSubmit, onDelete, onCancel }: {
-  readonly t: ShellT
-  readonly title: string
-  readonly marker?: MapMarker
-  readonly onSubmit: (v: { label: string, description: string }) => Promise<void>
-  readonly onDelete?: () => Promise<void>
-  readonly onCancel: () => void
-}) {
-  const [label, setLabel] = useState(marker?.label ?? '')
-  const [desc, setDesc] = useState(marker?.description ?? '')
-  return (
-    <EditPanel title={title} onClose={onCancel}>
-      <input className="nv-wg-input" value={label} placeholder={t('wg.field.title')} autoFocus
-        onChange={e => setLabel(e.target.value)} />
-      <textarea className="nv-wg-input nv-wg-area" value={desc} placeholder={t('wg.field.desc')}
-        onChange={e => setDesc(e.target.value)} />
-      <div className="nv-wg-actions">
-        {onDelete !== undefined && <button type="button" className="nv-wg-del" onClick={() => void onDelete()}>{t('wg.del')}</button>}
-        <span className="nv-wg-spacer" />
-        <button type="button" className="nv-wg-ok" disabled={label.trim() === ''}
-          onClick={() => void onSubmit({ label: label.trim(), description: desc })}>{t('wg.save')}</button>
-      </div>
-    </EditPanel>
-  )
-}
-
 // ---------- 集合（设计稿 06 + collection-v2 B/C） ----------
 
 /** 集合条目字段值 → 展示文本；图片值返回 ''（卡片走 resourceId 单独渲染）。 */
@@ -1761,7 +2122,11 @@ export const collText = (v: CollValue | undefined): string => {
   return String(v)
 }
 
-/** 引用单元格的完整值（无引用返回 undefined）。 */
+const formLabel = (value: string | undefined, t: ShellT, fallback: string): string => {
+  if (value === undefined || value === '') return fallback
+  return value.startsWith('i18n:') ? t(value.slice(5) as Parameters<ShellT>[0]) : value
+}
+
 const refValueOf = (v: CollValue | undefined): { cardId: string, name: string, itemId?: string } | undefined =>
   typeof v === 'object' && v !== null && 'cardId' in v && typeof v.cardId === 'string' && 'name' in v && typeof v.name === 'string'
     ? { cardId: v.cardId, name: v.name, ...('itemId' in v && typeof v.itemId === 'string' ? { itemId: v.itemId } : {}) }
@@ -1773,15 +2138,8 @@ const refCardId = (v: CollValue | undefined): string | undefined =>
 
 /** 分组字段：优先惯用名（类别/分类…），否则取第一个取值在 2..8 种的 text 字段。 */
 const GROUP_NAMES = new Set(['类别', '分类', '分组', '类型', 'category', 'type', 'group'])
-const collGroupField = (data: CollData): CollField | undefined => {
-  const named = data.fields.find(f => f.type === 'text' && GROUP_NAMES.has(f.name.toLowerCase()))
-  if (named !== undefined) return named
-  return data.fields.find(f => {
-    if (f.type !== 'text') return false
-    const distinct = new Set(data.items.map(item => collText(data.values[item.id]?.[f.id])).filter(v => v !== ''))
-    return distinct.size >= 2 && distinct.size <= 8 && distinct.size < data.items.length
-  })
-}
+const collGroupField = (data: CollData): CollField | undefined =>
+  data.fields.find(f => f.type === 'text' && GROUP_NAMES.has(f.name.toLowerCase()))
 
 /** 分区配色环：图鉴分节小圆点用。 */
 const COLL_DOTS = ['#34D399', '#60A5FA', '#F59E0B', '#A78BFA', '#F472B6', '#38BDF8', '#FB923C', '#94A3B8']
@@ -1805,11 +2163,771 @@ const collSections = (data: CollData, ungrouped: string): { readonly field: Coll
  * 集合渲染器：list 表格 / cards 图鉴卡 / timeline 编年长卷。
  * 前端按数据规则定版式（分组字段、关键数字、时间轴位置），AI 只供素材与值。
  */
-export function CollectionWidget({ module, t, send, imageUrl, refTargets }: WidgetProps & { readonly imageUrl: (resourceId: string) => string, readonly refTargets?: readonly RefTarget[] }) {
-  const data = coll(module.widget?.data)
-  const view = data.view === 'cards' || data.view === 'form' || data.view === 'timeline' ? data.view : 'list'
+/** 档案视图：同一张纸的编辑态与渲染态；空白时直接是编辑态。 */
+function CollProfile({ data, t, imageUrl, moduleId, send, world, ownerName }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly imageUrl: (resourceId: string) => string
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly world?: boolean
+  readonly ownerName?: string
+}) {
+  const item = data.items[0]
+  const currentValues = item === undefined ? {} : data.values[item.id] ?? {}
+  const imageField = data.fields.find(field => field.type === 'image')
+  const chipsField = data.fields.find(field => field.type === 'chips')
+  const quoteField = data.fields.find(field => field.name === '一句话' || field.name === '一句话背景')
+  const sectionsField = data.fields.find(field => field.name === '档案' || field.name === '小节')
+    ?? data.fields.find(field => field.type === 'longtext' && field.name !== quoteField?.name)
+  const factNames = world === true ? ['世界类型', '尺度', '规则', '历法'] : ['身份', '年龄', '阵营', '出身']
+  const factFields = factNames.flatMap(name => data.fields.filter(field => field.name === name))
+  const imageOf = (values: Record<string, CollValue>): string | undefined => {
+    const raw = imageField === undefined ? undefined : values[imageField.id]
+    return typeof raw === 'object' && raw !== null && 'resourceId' in raw && typeof raw.resourceId === 'string' ? raw.resourceId : undefined
+  }
+  const initialHasContent = item !== undefined && (
+    data.fields.some(field => field.type !== 'image' && collText(currentValues[field.id]).trim() !== '')
+    || imageOf(currentValues) !== undefined || item.visualKey !== null
+  )
+  const draftId = useRef(typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `profile-${String(Date.now())}`)
+  const createdId = useRef<string | undefined>(undefined)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [pendingValues, setPendingValues] = useState<Record<string, CollValue> | undefined>(undefined)
+  const [pendingImage, setPendingImage] = useState<string | undefined>(undefined)
+  const [draft, setDraft] = useState<Record<string, CollValue>>(() => ({ ...currentValues }))
+  const [draftImage, setDraftImage] = useState<{ readonly bytes: Uint8Array, readonly base64: string, readonly mediaType: string, readonly preview: string } | undefined>(undefined)
+  const [editing, setEditing] = useState(() => item === undefined || !initialHasContent)
+  const [saving, setSaving] = useState(false)
+  const displayValues = editing ? draft : (pendingValues ?? currentValues)
+  const savedImageId = imageOf(displayValues) ?? (item?.visualKey ?? undefined)
+  const shownImage = editing ? (draftImage?.preview ?? (savedImageId === undefined ? undefined : imageUrl(savedImageId))) : (pendingImage ?? (savedImageId === undefined ? undefined : imageUrl(savedImageId)))
+  const textOf = (field: CollField | undefined, values: Record<string, CollValue>): string => field === undefined ? '' : collText(values[field.id])
+  const source = textOf(sectionsField, displayValues)
+  const chips = textOf(chipsField, displayValues)
+  const quote = textOf(quoteField, displayValues)
+  const chipList = chips.split('、').map(part => part.trim()).filter(part => part !== '')
+  const sections = parseProfileSections(source)
+  const beginEdit = (): void => {
+    setDraft({ ...(pendingValues ?? currentValues) })
+    setDraftImage(undefined)
+    setEditing(true)
+  }
+  const commitRef = useRef<() => Promise<void>>(async () => undefined)
+  const commit = async (): Promise<void> => {
+    if (!editing || saving) return
+    const hasContent = data.fields.some(field => field.type !== 'image' && collText(draft[field.id]).trim() !== '') || draftImage !== undefined || shownImage !== undefined
+    if (!hasContent) return
+    setSaving(true)
+    const targetId = item?.id ?? createdId.current
+    let ok = true
+    if (targetId === undefined) {
+      ok = await send({
+        kind: 'collection_add_item', moduleId,
+        item: { id: draftId.current, name: ownerName ?? '' },
+        values: draft,
+        ...(draftImage === undefined ? {} : { imageBase64: draftImage.base64, imageMediaType: draftImage.mediaType }),
+      })
+      if (ok) createdId.current = draftId.current
+    } else {
+      const base = pendingValues ?? currentValues
+      for (const field of data.fields) {
+        if (field.type === 'image') continue
+        const next = collText(draft[field.id])
+        if (next === collText(base[field.id])) continue
+        ok = await send({ kind: 'collection_set_value', moduleId, itemId: targetId, fieldId: field.id, value: draft[field.id] ?? '' })
+        if (!ok) break
+      }
+      if (ok && draftImage !== undefined) {
+        ok = await send({ kind: 'collection_set_item_image', moduleId, itemId: targetId, imageBase64: draftImage.base64, mediaType: draftImage.mediaType })
+      }
+    }
+    if (ok) {
+      setPendingValues(draft)
+      setPendingImage(draftImage?.preview)
+      setEditing(false)
+    }
+    setSaving(false)
+  }
+  commitRef.current = commit
+  useEffect(() => {
+    if (!editing) return
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target
+      if (target instanceof Node && rootRef.current?.contains(target) === true) return
+      void commitRef.current()
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => { document.removeEventListener('pointerdown', onPointerDown, true) }
+  }, [editing])
+  useEffect(() => {
+    if (editing || pendingValues === undefined || item === undefined) return
+    const same = data.fields.every(field => collText(pendingValues[field.id]) === collText(currentValues[field.id]))
+    const dataImage = imageOf(currentValues) ?? item.visualKey
+    if (same && (pendingImage === undefined || dataImage !== undefined)) { setPendingValues(undefined); setPendingImage(undefined) }
+  }, [editing, pendingValues, item, data, currentValues])
+  const commitOnBlur = (event: FocusEvent<HTMLDivElement>): void => {
+    const next = event.relatedTarget
+    if (next instanceof Node && event.currentTarget.contains(next)) return
+    void commit()
+  }
+  const facts = factFields.map(field => ({ field, value: textOf(field, displayValues).trim() })).filter(entry => entry.value !== '')
+  return (
+    <div ref={rootRef}
+      className={`nv-prof${world === true ? ' nv-prof-world' : ''}${editing ? ' is-editing' : ' is-rendered'}${saving ? ' is-saving' : ''}`}
+      role={editing ? undefined : 'button'}
+      tabIndex={editing ? undefined : 0}
+      onClick={editing ? undefined : beginEdit}
+      onKeyDown={editing ? undefined : event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); beginEdit() } }}
+      onBlur={editing ? commitOnBlur : undefined}>
+      <div className="nv-prof-head">
+        {editing ? (
+          <label className={`nv-prof-portrait${shownImage === undefined ? ' is-empty' : ''}`}>
+            {shownImage === undefined ? <span>＋ {t(world === true ? 'coll.world.noCover' : 'coll.profile.noImage')}</span> : <img src={shownImage} alt="" />}
+            <input type="file" accept="image/*" disabled={saving} onChange={event => {
+              const file = event.target.files?.[0]
+              event.currentTarget.value = ''
+              if (file === undefined) return
+              void (async () => {
+                const bytes = new Uint8Array(await file.arrayBuffer())
+                const reader = new FileReader()
+                reader.onload = () => {
+                  const preview = typeof reader.result === 'string' ? reader.result : ''
+                  const comma = preview.indexOf(',')
+                  if (comma < 0) return
+                  setDraftImage({ bytes, base64: preview.slice(comma + 1), mediaType: file.type === '' ? 'image/png' : file.type, preview })
+                }
+                reader.readAsDataURL(file)
+              })()
+            }} />
+          </label>
+        ) : (
+          <div className={`nv-prof-portrait${shownImage === undefined ? ' is-empty' : ''}`}>
+            {shownImage === undefined ? <span>{t(world === true ? 'coll.world.noCover' : 'coll.profile.noImage')}</span> : <img src={shownImage} alt="" />}
+          </div>
+        )}
+        <div className="nv-prof-main">
+          <div className="nv-prof-kicker">{t(world === true ? 'coll.profile.world' : 'coll.profile.character')}</div>
+          <h2 className="nv-prof-name">{((item?.name ?? ownerName ?? '').trim()) || t('coll.unnamed')}</h2>
+          {editing && quoteField !== undefined && (
+            <textarea className="nv-prof-editquote" rows={2} value={textOf(quoteField, draft)} disabled={saving}
+              placeholder={t('coll.profile.quotePh')} aria-label={quoteField.name}
+              onChange={event => setDraft(prev => ({ ...prev, [quoteField.id]: event.target.value }))} />
+          )}
+          {!editing && quote !== '' && <div className="nv-prof-quote">{quote}</div>}
+          {editing ? (
+            <div className="nv-prof-facts">
+              {factFields.map(field => (
+                <label key={field.id} className="nv-prof-factedit">
+                  <span>{field.name}</span>
+                  <input className="nv-prof-editinput" value={textOf(field, draft)} placeholder={t('coll.profile.fill')} disabled={saving}
+                    aria-label={field.name}
+                    onChange={event => setDraft(prev => ({ ...prev, [field.id]: event.target.value }))} />
+                </label>
+              ))}
+            </div>
+          ) : facts.length > 0 && (
+            <div className="nv-prof-facts">
+              {facts.map(({ field, value }) => <span key={field.id} className="nv-prof-fact"><span>{field.name}</span><b>{value}</b></span>)}
+            </div>
+          )}
+          {editing && chipsField !== undefined && (
+            <ProfileChips t={t} value={textOf(chipsField, draft)}
+              onCommit={value => setDraft(prev => ({ ...prev, [chipsField.id]: value }))} />
+          )}
+          {!editing && chipList.length > 0 && (
+            <div className="nv-prof-chips-read">{chipList.map((chip, index) => <span key={`${chip}:${String(index)}`} className="nv-prof-chip">{chip}</span>)}</div>
+          )}
+        </div>
+      </div>
+      {editing && sectionsField !== undefined && (
+        <textarea className="nv-prof-editbody" value={textOf(sectionsField, draft)} disabled={saving}
+          placeholder={t('coll.profile.write')} aria-label={sectionsField.name}
+          onChange={event => setDraft(prev => ({ ...prev, [sectionsField.id]: event.target.value }))} />
+      )}
+      {!editing && sections.length > 0 && (
+        <div className="nv-prof-sections">
+          {sections.map((section, index) => (
+            <section key={`${section.title}:${String(index)}`} className="nv-prof-section">
+              {section.title !== '' && <h3>{section.title}</h3>}
+              {section.body.trim() !== '' && <p>{section.body}</p>}
+            </section>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** 词条编辑器：点击词条改名，行尾删除，加号新增；值以「、」分隔。 */
+function ChipsEditor({ value, placeholder, onCommit }: {
+  readonly value: string
+  readonly placeholder: string
+  readonly onCommit: (value: string) => void
+}) {
+  const chips = value.split('、').map(part => part.trim()).filter(part => part !== '')
+  const [editing, setEditing] = useState<number | null>(null)
+  const [draft, setDraft] = useState('')
+  const [adding, setAdding] = useState(false)
+  const [fresh, setFresh] = useState('')
+  const save = (next: readonly string[]): void => {
+    const text = next.join('、')
+    if (text !== value) onCommit(text)
+  }
+  const commitEdit = (index: number): void => {
+    const next = draft.trim()
+    const rest = chips.filter((_, i) => i !== index)
+    if (next === '' || rest.includes(next)) save(rest)
+    else save([...rest.slice(0, index), next, ...rest.slice(index)])
+    setEditing(null)
+    setDraft('')
+  }
+  const commitNew = (): void => {
+    const next = fresh.trim()
+    if (next !== '' && !chips.includes(next)) save([...chips, next])
+    setFresh('')
+    setAdding(false)
+  }
+  return (
+    <span className="nv-coll-chips">
+      {chips.map((chip, index) => editing === index ? (
+        <input key={`edit:${String(index)}`} className="nv-coll-chip-edit" value={draft} autoFocus
+          onChange={event => setDraft(event.target.value)}
+          onBlur={() => commitEdit(index)}
+          onKeyDown={event => {
+            if (event.key === 'Enter') event.currentTarget.blur()
+            else if (event.key === 'Escape') { setEditing(null); setDraft('') }
+          }} />
+      ) : (
+        <span key={`${chip}:${String(index)}`} className="nv-coll-chip nv-coll-chip-neutral">
+          <button type="button" className="nv-coll-chipname" title={chip}
+            onClick={() => { setDraft(chip); setEditing(index) }}>{chip}</button>
+          <button type="button" className="nv-coll-chipx" aria-label="remove"
+            onClick={() => save(chips.filter((_, i) => i !== index))}>×</button>
+        </span>
+      ))}
+      {adding ? (
+        <input className="nv-coll-chipinput" value={fresh} autoFocus placeholder={placeholder}
+          onChange={event => setFresh(event.target.value)}
+          onBlur={commitNew}
+          onKeyDown={event => {
+            if (event.key === 'Enter') event.currentTarget.blur()
+            else if (event.key === 'Escape') { setAdding(false); setFresh('') }
+          }} />
+      ) : (
+        <button type="button" className="nv-coll-chipadd" aria-label={placeholder}
+          onClick={() => { setFresh(''); setAdding(true) }}>＋</button>
+      )}
+    </span>
+  )
+}
+
+/** 档案页的关键词行：直接复用词条编辑器。 */
+function ProfileChips({ value, t, onCommit }: { readonly value: string, readonly t: ShellT, readonly onCommit: (value: string) => void }) {
+  return <ChipsEditor value={value} placeholder={t('coll.chips.add')} onCommit={onCommit} />
+}
+
+interface ProfSection { readonly title: string, readonly body: string }
+
+/** 档案正文：`## 小节` 分段，段内保留换行。 */
+function parseProfileSections(markdown: string): ProfSection[] {
+  const sections: ProfSection[] = []
+  let current: { title: string, body: string } | undefined
+  for (const line of markdown.split(/\r?\n/)) {
+    const heading = /^#{2,3}\s*(.*)$/.exec(line)
+    if (heading !== null) {
+      if (current !== undefined) sections.push(current)
+      current = { title: heading[1]?.trim() ?? '', body: '' }
+      continue
+    }
+    if (current === undefined) current = { title: '', body: '' }
+    current.body = current.body === '' ? line : `${current.body}\n${line}`
+  }
+  if (current !== undefined) sections.push(current)
+  return sections.filter(section => section.title !== '' || section.body.trim() !== '')
+}
+
+interface GraphPoint { readonly x: number, readonly y: number }
+
+/** 关系图布局：环形起步，斥力 + 连边弹簧 + 向心；坐标是画布的百分比。 */
+function layoutGraph(nodes: readonly string[], edges: readonly { readonly from: string, readonly to: string }[], compact: boolean): Map<string, GraphPoint> {
+  const points = nodes.map((name, index) => {
+    const angle = nodes.length === 1 ? 0 : (Math.PI * 2 * index) / nodes.length - Math.PI / 2
+    const radius = compact ? 34 : nodes.length <= 4 ? 22 : 30
+    return { name, x: 50 + Math.cos(angle) * radius, y: 46 + Math.sin(angle) * radius * 0.92, vx: 0, vy: 0 }
+  })
+  const byName = new Map(points.map(point => [point.name, point]))
+  const pairs = edges.flatMap(edge => {
+    const a = byName.get(edge.from); const b = byName.get(edge.to)
+    return a === undefined || b === undefined || a === b ? [] : [{ a, b }]
+  })
+  const repulsion = compact ? 150 : nodes.length > 8 ? 190 : 170
+  for (let step = 0; step < 220; step += 1) {
+    for (let i = 0; i < points.length; i += 1) {
+      for (let j = i + 1; j < points.length; j += 1) {
+        const a = points[i]!; const b = points[j]!
+        let dx = a.x - b.x; let dy = a.y - b.y
+        let dist = Math.hypot(dx, dy)
+        if (dist < 0.01) { dx = 0.1; dy = 0.1; dist = 0.14 }
+        const push = repulsion / (dist * dist)
+        a.vx += (dx / dist) * push; a.vy += (dy / dist) * push
+        b.vx -= (dx / dist) * push; b.vy -= (dy / dist) * push
+      }
+    }
+    for (const { a, b } of pairs) {
+      const dx = b.x - a.x; const dy = b.y - a.y
+      const dist = Math.max(0.01, Math.hypot(dx, dy))
+      const pull = (dist - (compact ? 19 : 32)) * 0.015
+      a.vx += (dx / dist) * pull; a.vy += (dy / dist) * pull
+      b.vx -= (dx / dist) * pull; b.vy -= (dy / dist) * pull
+    }
+    for (const point of points) {
+      point.vx += (50 - point.x) * 0.004; point.vy += (46 - point.y) * 0.004
+      point.vx *= 0.82; point.vy *= 0.82
+      point.x = Math.min(compact ? 90 : 84, Math.max(compact ? 10 : 16, point.x + point.vx))
+      point.y = Math.min(compact ? 88 : 82, Math.max(compact ? 12 : 18, point.y + point.vy))
+    }
+  }
+  if (compact) {
+    // 紧凑胶囊：按近似尺寸做碰撞松弛，几十个人时不叠成一张网。
+    const padX = 17
+    const padY = 9
+    for (let step = 0; step < 60; step += 1) {
+      for (let i = 0; i < points.length; i += 1) {
+        for (let j = i + 1; j < points.length; j += 1) {
+          const a = points[i]!; const b = points[j]!
+          const dx = b.x - a.x; const dy = b.y - a.y
+          const ox = padX - Math.abs(dx); const oy = padY - Math.abs(dy)
+          if (ox <= 0 || oy <= 0) continue
+          if (ox / padX > oy / padY) {
+            const push = (ox / 2 + 0.05) * (dx < 0 ? -1 : 1)
+            a.x = Math.min(90, Math.max(10, a.x - push)); b.x = Math.min(90, Math.max(10, b.x + push))
+          } else {
+            const push = (oy / 2 + 0.05) * (dy < 0 ? -1 : 1)
+            a.y = Math.min(88, Math.max(12, a.y - push)); b.y = Math.min(88, Math.max(12, b.y + push))
+          }
+        }
+      }
+    }
+  }
+  return new Map(points.map(point => [point.name, { x: point.x, y: point.y }]))
+}
+
+interface PersonCandidate { readonly name: string, readonly source: string }
+
+/** 关系端点：一个输入框同时承担输入和选择，候选按来源标注。 */
+function PersonPicker({ value, candidates, placeholder, t, onChange, onCommit }: {
+  readonly value: string
+  readonly candidates: readonly PersonCandidate[]
+  readonly placeholder: string
+  readonly t: ShellT
+  readonly onChange: (name: string) => void
+  readonly onCommit: (name: string) => void
+}) {
+  const [query, setQuery] = useState(value)
+  const [open, setOpen] = useState(false)
+  const [active, setActive] = useState(0)
+  const [anchor, setAnchor] = useState<DOMRect | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  useEffect(() => { setQuery(value) }, [value])
+  const place = useCallback(() => {
+    const rect = inputRef.current?.getBoundingClientRect()
+    setAnchor(rect ?? null)
+  }, [])
+  useEffect(() => {
+    if (!open) return
+    place()
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => {
+      window.removeEventListener('scroll', place, true)
+      window.removeEventListener('resize', place)
+    }
+  }, [open, place])
+  const filtered = useMemo(() => {
+    const needle = query.trim().toLowerCase()
+    return needle === '' ? candidates : candidates.filter(candidate => candidate.name.toLowerCase().includes(needle))
+  }, [candidates, query])
+  const choose = (name: string): void => {
+    setQuery(name)
+    setOpen(false)
+    onChange(name)
+    onCommit(name)
+  }
+  const menu = open && anchor !== null && filtered.length > 0 ? createPortal(
+    <div className={`nv-personpick-menu nv-personpick-menu-float${window.innerHeight - anchor.bottom < 220 ? ' is-up' : ''}`}
+      role="listbox"
+      style={{
+        left: anchor.left, width: Math.max(180, anchor.width),
+        top: window.innerHeight - anchor.bottom < 220 ? anchor.top - 4 : anchor.bottom + 4,
+        transform: window.innerHeight - anchor.bottom < 220 ? 'translateY(-100%)' : undefined,
+      }}>
+      {filtered.map((candidate, index) => (
+        <button key={`${candidate.source}:${candidate.name}`} type="button" role="option"
+          aria-selected={index === active}
+          className={`nv-personpick-option${index === active ? ' is-active' : ''}`}
+          onMouseDown={event => event.preventDefault()}
+          onMouseEnter={() => setActive(index)}
+          onClick={() => choose(candidate.name)}>
+          <span>{candidate.name}</span><small>{candidate.source}</small>
+        </button>
+      ))}
+    </div>,
+    document.body,
+  ) : null
+  return (
+    <div className="nv-personpick">
+      <input ref={inputRef} value={query} placeholder={placeholder} autoComplete="off"
+        onFocus={() => setOpen(true)}
+        onChange={event => { setQuery(event.target.value); setOpen(true); setActive(0); onChange(event.target.value) }}
+        onBlur={() => { window.setTimeout(() => setOpen(false), 120); onCommit(query.trim()) }}
+        onKeyDown={event => {
+          if (event.key === 'ArrowDown') {
+            event.preventDefault(); setOpen(true); setActive(index => Math.min(filtered.length - 1, index + 1))
+          } else if (event.key === 'ArrowUp') {
+            event.preventDefault(); setActive(index => Math.max(0, index - 1))
+          } else if (event.key === 'Enter') {
+            event.preventDefault()
+            const pick = filtered[active]
+            if (open && pick !== undefined) choose(pick.name)
+            else { setOpen(false); onCommit(query.trim()) }
+          } else if (event.key === 'Escape') {
+            setOpen(false); setQuery(value)
+          }
+        }} />
+      {menu}
+    </div>
+  )
+}
+
+/** 关系视图：图在上、文字行在下；行是「从—关系—到」，点人聚焦，图可缩放。 */
+function CollGraph({ data, t, ownerName, ownerId, cardKind, refTargets, moduleId, send }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly ownerName?: string
+  readonly ownerId?: string
+  readonly cardKind?: string
+  readonly refTargets?: readonly RefTarget[]
+  readonly moduleId: string
+  readonly send: WidgetSend
+}) {
+  const [hot, setHot] = useState<string | null>(null)
+  const [editing, setEditing] = useState<string | null>(null)
+  const [adding, setAdding] = useState<string | null>(null)
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [focus, setFocus] = useState<string | null>(null)
+  const [zoom, setZoom] = useState(1)
+  /** 空态的第一条关系：一行直接写完，不先开编辑面板；世界关系不把世界本身当实体。 */
+  const emptyOwner = cardKind === 'WORLD' ? undefined : ownerName
+  const [quick, setQuick] = useState({ from: emptyOwner ?? '', to: '', relation: '' })
+  useEffect(() => {
+    if (emptyOwner === undefined) return
+    setQuick(current => current.from === '' ? { ...current, from: emptyOwner } : current)
+  }, [emptyOwner])
+  const editorRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (editing !== null) editorRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [editing])
+  const fromField = data.fields.find(field => field.name === '从') ?? data.fields.find(field => field.name === '中心')
+  const toField = data.fields.find(field => field.name === '到') ?? data.fields.find(field => field.name === '对象')
+  const relationField = data.fields.find(field => field.name === '关系')
+  const noteField = data.fields.find(field => field.name === '说明' || field.type === 'longtext')
+  const rows = data.items.map(item => {
+    const values = data.values[item.id]
+    return {
+      id: item.id,
+      from: fromField === undefined ? '' : collText(values?.[fromField.id]),
+      to: toField === undefined ? '' : collText(values?.[toField.id]),
+      relation: relationField === undefined ? '' : collText(values?.[relationField.id]),
+      note: noteField === undefined ? '' : collText(values?.[noteField.id]),
+    }
+  })
+  const named = rows.filter(row => row.from !== '' && row.to !== '')
+  const nodes = [...new Set(named.flatMap(row => [row.from, row.to]))]
+  const graphCandidates: PersonCandidate[] = [...nodes]
+    .sort((a, b) => a.localeCompare(b, 'zh'))
+    .map(name => ({ name, source: t('coll.graph.source.graph') }))
+  const seen = new Set(nodes)
+  const cardSource = (kind: string): string => kind === 'WORLD'
+    ? t('coll.graph.source.worlds') : t('coll.graph.source.characters')
+  const cardCandidates: PersonCandidate[] = (refTargets ?? [])
+    .filter(target => target.cardId !== ownerId)
+    .filter(target => cardKind === 'WORLD' ? target.kind === 'WORLD' || target.kind === 'CHARACTER' : target.kind === 'CHARACTER')
+    .filter(target => { if (seen.has(target.name)) return false; seen.add(target.name); return true })
+    .sort((a, b) => a.name.localeCompare(b.name, 'zh'))
+    .map(target => ({ name: target.name, source: cardSource(target.kind) }))
+  const candidates = [...graphCandidates, ...cardCandidates]
+  const quickCandidates: PersonCandidate[] = emptyOwner === undefined || candidates.some(candidate => candidate.name === emptyOwner)
+    ? candidates
+    : [{ name: emptyOwner, source: t('coll.graph.self') }, ...candidates]
+  const compact = nodes.length > 5
+  const positions = layoutGraph(nodes, named, compact)
+  const visible = focus === null ? named : named.filter(row => row.from === focus || row.to === focus)
+  const draftRow = adding !== null && !rows.some(row => row.id === adding)
+    ? {
+        id: adding,
+        from: fromField === undefined ? '' : (draft[fromField.id] ?? ''),
+        to: toField === undefined ? '' : (draft[toField.id] ?? ''),
+        relation: relationField === undefined ? '' : (draft[relationField.id] ?? ''),
+        note: noteField === undefined ? '' : (draft[noteField.id] ?? ''),
+      }
+    : undefined
+  const listRows = draftRow === undefined ? rows : [...rows, draftRow]
+  const editorFields = [fromField, toField, relationField, noteField].filter((field): field is CollField => field !== undefined)
+  const openEditor = (id: string): void => {
+    const row = rows.find(candidate => candidate.id === id)
+    if (row === undefined) return
+    setHot(id)
+    setEditing(id)
+    setDraft({
+      ...(fromField === undefined ? {} : { [fromField.id]: row.from }),
+      ...(toField === undefined ? {} : { [toField.id]: row.to }),
+      ...(relationField === undefined ? {} : { [relationField.id]: row.relation }),
+      ...(noteField === undefined ? {} : { [noteField.id]: row.note }),
+    })
+  }
+  const add = (): void => {
+    const id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `rel-${String(Date.now())}`
+    setAdding(id); setEditing(id); setDraft({})
+  }
+  const commitQuick = (): void => {
+    const from = quick.from.trim()
+    const to = quick.to.trim()
+    const relation = quick.relation.trim()
+    if (from === '' || to === '' || relation === '') return
+    const values: Record<string, CollValue> = {}
+    if (fromField !== undefined) values[fromField.id] = from
+    if (toField !== undefined) values[toField.id] = to
+    if (relationField !== undefined) values[relationField.id] = relation
+    void send({ kind: 'collection_add_item', moduleId, item: { name: from }, values })
+    setQuick({ from: emptyOwner ?? '', to: '', relation: '' })
+  }
+  const setValue = (rowId: string, field: CollField, value: string): void => {
+    void send({ kind: 'collection_set_value', moduleId, itemId: rowId, fieldId: field.id, value })
+  }
+  const commitEditor = (): void => {
+    if (editing !== null && editing === adding) {
+      const values: Record<string, CollValue> = {}
+      for (const field of editorFields) {
+        const value = (draft[field.id] ?? '').trim()
+        if (value !== '') values[field.id] = value
+      }
+      if (Object.keys(values).length > 0) {
+        void send({
+          kind: 'collection_add_item', moduleId, item: {
+            id: editing,
+            name: fromField === undefined ? '' : (draft[fromField.id] ?? '').trim(),
+          }, values,
+        })
+      }
+      setAdding(null)
+    }
+    setEditing(null)
+  }
+  const editor = editing === null || editorFields.length === 0 ? null : (
+    <div className="nv-graphview-editor" ref={editorRef}>
+      {editorFields.map(field => {
+        const isPerson = field.id === fromField?.id || field.id === toField?.id
+        return (
+          <div key={field.id} className="nv-graphview-input">
+            <span>{field.name}</span>
+            {field.type === 'longtext'
+              ? <textarea rows={2} value={draft[field.id] ?? ''} placeholder={field.name}
+                onChange={e => setDraft(prev => ({ ...prev, [field.id]: e.target.value }))}
+                onBlur={() => {
+                  if (editing === adding) return
+                  const next = (draft[field.id] ?? '').trim()
+                  if (next === collText(data.values[editing]?.[field.id])) return
+                  setValue(editing, field, next)
+                }} />
+              : isPerson ? (
+                <PersonPicker value={draft[field.id] ?? ''} candidates={candidates} t={t} placeholder={field.name}
+                  onChange={name => setDraft(prev => ({ ...prev, [field.id]: name }))}
+                  onCommit={name => {
+                    if (editing === adding) return
+                    const next = name.trim()
+                    if (next === collText(data.values[editing]?.[field.id])) return
+                    setValue(editing, field, next)
+                  }} />
+              ) : (
+                <input value={draft[field.id] ?? ''} placeholder={field.name}
+                  onChange={e => setDraft(prev => ({ ...prev, [field.id]: e.target.value }))}
+                  onBlur={() => {
+                    if (editing === adding) return
+                    const next = (draft[field.id] ?? '').trim()
+                    if (next === collText(data.values[editing]?.[field.id])) return
+                    setValue(editing, field, next)
+                  }} />
+              )}
+          </div>
+        )
+      })}
+      <p className="nv-graphview-tip">{t('coll.graph.pick')}</p>
+      <button type="button" className="nv-graphview-done" onClick={commitEditor}>{t('coll.graph.done')}</button>
+    </div>
+  )
+  return (
+    <div className="nv-graphview">
+      <div className="nv-graphview-canvas" onClick={() => setFocus(null)}>
+        <div className="nv-graphview-stage" style={{ transform: `scale(${String(zoom)})` }}>
+          <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+            <defs>
+              <marker id={`graph-arrow-${moduleId}`} viewBox="0 0 10 10" refX="5" refY="5"
+                markerWidth="4.5" markerHeight="4.5" orient="auto" markerUnits="strokeWidth">
+                <path d="M 0 0 L 10 5 L 0 10 Z" className="nv-graphview-arrowshape" />
+              </marker>
+            </defs>
+            {visible.map(row => {
+              const a = positions.get(row.from); const b = positions.get(row.to)
+              if (a === undefined || b === undefined) return null
+              const mx = a.x + (b.x - a.x) * 0.62
+              const my = a.y + (b.y - a.y) * 0.62
+              return <polyline key={row.id} points={`${String(a.x)},${String(a.y)} ${String(mx)},${String(my)} ${String(b.x)},${String(b.y)}`}
+                markerMid={`url(#graph-arrow-${moduleId})`}
+                className={`nv-graphview-edge${hot === row.id ? ' is-hot' : ''}`}></polyline>
+            })}
+          </svg>
+          {visible.map(row => {
+            const a = positions.get(row.from); const b = positions.get(row.to)
+            if (a === undefined || b === undefined) return null
+            if (hot !== row.id) return null
+            return <span key={`l:${row.id}`} className={`nv-graphview-label${hot === row.id ? ' is-hot' : ''}`}
+              style={{ left: `${String((a.x + b.x) / 2)}%`, top: `${String((a.y + b.y) / 2)}%` }}>
+              {row.relation === '' ? '—' : row.relation}
+            </span>
+          })}
+          {nodes.map(name => {
+            const point = positions.get(name)
+            if (point === undefined) return null
+            const self = ownerName !== undefined && (ownerName === name || ownerName.startsWith(name))
+            const related = focus === null || name === focus || visible.some(row => row.from === name || row.to === name)
+            return (
+              <button key={name} type="button" className={`nv-graphview-node${compact ? ' is-compact' : ''}${self ? ' is-self' : ''}${related ? '' : ' is-dim'}${focus === name ? ' is-focus' : ''}`}
+                style={{ left: `${String(point.x)}%`, top: `${String(point.y)}%` }}
+                onClick={e => { e.stopPropagation(); setFocus(focus === name ? null : name) }}>
+                <span className="nv-graphview-mono">{name.slice(0, 1)}</span><b>{name}</b>
+                {!compact && <small>{self ? t('coll.graph.self') : t(cardKind === 'WORLD' ? 'coll.graph.faction' : 'coll.graph.person')}</small>}
+              </button>
+            )
+          })}
+          {named.length === 0 && (
+            <div className="nv-graphview-ghost" aria-hidden="true">
+              {emptyOwner === undefined ? (
+                <>
+                  <span className="nv-graphview-ghostnode"><i>？</i></span>
+                  <span className="nv-graphview-ghostline" />
+                  <span className="nv-graphview-ghostadd">＋</span>
+                  <span className="nv-graphview-ghostline" />
+                  <span className="nv-graphview-ghostnode"><i>？</i></span>
+                </>
+              ) : (
+                <>
+                  <span className="nv-graphview-ghostnode">
+                    <i>{emptyOwner.slice(0, 1)}</i>
+                    <b>{emptyOwner}</b>
+                  </span>
+                  <span className="nv-graphview-ghostline" />
+                  <span className="nv-graphview-ghostadd">＋</span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="nv-graphview-zoom" onClick={e => e.stopPropagation()}>
+          <button type="button" aria-label={t('wg.rel.zoomOut')} onClick={() => setZoom(value => Math.max(0.55, Math.round((value - 0.15) * 100) / 100))}>−</button>
+          <span>{Math.round(zoom * 100)}%</span>
+          <button type="button" aria-label={t('wg.rel.zoomIn')} onClick={() => setZoom(value => Math.min(1.8, Math.round((value + 0.15) * 100) / 100))}>＋</button>
+          <button type="button" className="nv-graphview-fit" onClick={() => setZoom(1)}>{t('wg.rel.fit')}</button>
+        </div>
+        {focus !== null && <button type="button" className="nv-graphview-clear" onClick={() => setFocus(null)}>{fmt(t, 'coll.graph.focus', { name: focus })} ×</button>}
+        {named.length > 0 && <span className="nv-graphview-hint">{t('coll.graph.hint')}</span>}
+      </div>
+      <div className="nv-graphview-list">
+        {named.length === 0 ? (
+          <div className="nv-graphview-quick">
+            <input list={`nv-rel-from-${moduleId}`} value={quick.from}
+              placeholder={t(cardKind === 'WORLD' ? 'coll.graph.pickEntity' : 'coll.graph.pickCharacter')}
+              onChange={event => setQuick(current => ({ ...current, from: event.target.value }))} />
+            <datalist id={`nv-rel-from-${moduleId}`}>
+              {quickCandidates.map(candidate => <option key={`${candidate.source}:${candidate.name}`} value={candidate.name} label={candidate.source} />)}
+            </datalist>
+            <span aria-hidden="true">→</span>
+            <input value={quick.relation} placeholder={t('coll.graph.relationPh')}
+              onChange={event => setQuick(current => ({ ...current, relation: event.target.value }))} />
+            <span aria-hidden="true">→</span>
+            <input list={`nv-rel-to-${moduleId}`} value={quick.to}
+              placeholder={t(cardKind === 'WORLD' ? 'coll.graph.pickEntity' : 'coll.graph.pickCharacter')}
+              onChange={event => setQuick(current => ({ ...current, to: event.target.value }))} />
+            <datalist id={`nv-rel-to-${moduleId}`}>
+              {quickCandidates.map(candidate => <option key={`${candidate.source}:${candidate.name}`} value={candidate.name} label={candidate.source} />)}
+            </datalist>
+            <button type="button" className="nv-graphview-quicksave"
+              disabled={quick.from === '' || quick.to === '' || quick.relation.trim() === ''}
+              onClick={commitQuick}>{t('coll.graph.save')}</button>
+          </div>
+        ) : (
+          <>
+            {listRows.map(row => (
+              <Fragment key={row.id}>
+                <button type="button" className={`nv-graphview-row${hot === row.id ? ' is-hot' : ''}`}
+                  onClick={() => openEditor(row.id)}
+                  onMouseEnter={() => setHot(row.id)} onFocus={() => setHot(row.id)}>
+                  <span className="nv-graphview-pair">
+                    <b className={row.from === '' ? 'is-ph' : undefined}>{row.from === '' ? t('coll.graph.fromPh') : row.from}</b>
+                    <i>{row.relation === '' ? t('coll.graph.pending') : row.relation}</i>
+                    <span className="nv-graphview-dir" aria-hidden="true">→</span>
+                    <b className={row.to === '' ? 'is-ph' : undefined}>{row.to === '' ? t('coll.graph.toPh') : row.to}</b>
+                    {row.id !== adding && <span className="nv-graphview-chev" aria-hidden="true">›</span>}
+                  </span>
+                  <small>{row.note === '' ? t('coll.graph.noNote') : row.note}</small>
+                </button>
+                {editing === row.id && editor}
+              </Fragment>
+            ))}
+            <button type="button" className="nv-graphview-add" onClick={add}>{t('coll.graph.add')}</button>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function CollectionWidget({ module, t, send, imageUrl, refTargets, siblings, ownerName, ownerId, cardKind, onOpenModule, places }: WidgetProps & { readonly imageUrl: (resourceId: string) => string, readonly refTargets?: readonly RefTarget[], readonly siblings?: readonly CardModuleDoc[], readonly ownerName?: string, readonly ownerId?: string, readonly cardKind?: string, readonly onOpenModule?: (moduleId: string) => void, readonly places?: readonly TlPlace[] }) {
+  const decoded = coll(module.widget?.data)
+  const presentation = decoded.presentation ?? presentationFallback(module.name)
+  const data = presentation === decoded.presentation ? decoded : { ...decoded, presentation }
+  const layout = presentation?.layout
+  const curated = layout !== undefined && layout !== 'list' && layout !== 'collection'
+  const generic = !curated
+  const view = data.view === 'cards' || data.view === 'form' || data.view === 'timeline' || data.view === 'profile' || data.view === 'graph' ? data.view : 'list'
   const [openId, setOpenId] = useState<string | null>(null)
+  const [draftOpen, setDraftOpen] = useState(false)
+  const [fieldsOpen, setFieldsOpen] = useState(false)
+  const [fieldName, setFieldName] = useState('')
+  const [fieldType, setFieldType] = useState('text')
+  const itemFocus = useCollectionFocus()
+  const moduleFocus = useModuleLinkFocus()
+  const backlink = moduleFocus !== undefined && moduleFocus.targetModuleId === module.id
+    && (moduleFocus.cardId === undefined || ownerId === undefined || moduleFocus.cardId === ownerId)
+    ? moduleFocus : undefined
+  useEffect(() => {
+    if (itemFocus === undefined || itemFocus.moduleId !== module.id) return
+    if (itemFocus.cardId !== undefined && ownerId !== undefined && itemFocus.cardId !== ownerId) return
+    setOpenId(itemFocus.itemId)
+    clearCollectionFocus()
+  }, [itemFocus, module.id, ownerId])
   const openItem = data.items.find(item => item.id === openId)
+  const sourceModule = data.source === undefined ? undefined : (siblings ?? []).find(candidate =>
+    candidate.id === data.source?.moduleId || candidate.name === data.source?.moduleName)
+  const sourceData = sourceModule?.widget?.type === 'collection' ? coll(sourceModule.widget.data) : undefined
+  const sourceItem = sourceData?.items.find(item => item.id === data.source?.itemId) ?? sourceData?.items[0]
+  const sourceLabel = data.source?.label === undefined
+    ? (sourceModule?.name ?? data.source?.moduleName)
+    : formLabel(data.source.label, t, sourceModule?.name ?? data.source?.moduleName ?? '')
+  const sourceSend = useCallback<WidgetSend>(async command => {
+    if (sourceModule === undefined) return false
+    return send({ ...command, moduleId: sourceModule.id })
+  }, [send, sourceModule])
   const setView = (next: string): void => { void send({ kind: 'collection_set_view', moduleId: module.id, view: next }) }
   const VIEWS: readonly { readonly id: string, readonly label: string }[] = [
     { id: 'list', label: t('coll.view.list') },
@@ -1819,58 +2937,1600 @@ export function CollectionWidget({ module, t, send, imageUrl, refTargets }: Widg
   ]
   const hasImages = data.fields.some(field => field.type === 'image')
   const hasTime = data.fields.some(field => field.type === 'date' || field.type === 'time')
-  // 只出现这组数据真有意义的视图；单条目集合只保留它自己的视图，不摆切换器。
-  const views = data.items.length === 1
+  const special = view === 'profile' || view === 'graph'
+  const empty = data.items.length === 0
+  // Curated layouts decide their own geometry; only the generic collection keeps the view switcher.
+  const views = generic && !special && !empty ? (data.items.length === 1
     ? VIEWS.filter(entry => entry.id === view)
     : VIEWS.filter(entry => entry.id === 'list' || entry.id === 'form'
-      || (entry.id === 'cards' && hasImages) || (entry.id === 'timeline' && hasTime))
-  const showAdd = !(view === 'form' && data.items.length === 1)
+      || (entry.id === 'cards' && hasImages) || (entry.id === 'timeline' && hasTime))) : []
+  const showAdd = generic && !special && view !== 'cards' && !(view === 'form' && data.items.length === 1)
+  const mapModule = (siblings ?? []).find(candidate => candidate.widget?.type === 'map')
+  const placeField = data.fields.find(field => field.name === '地图标记' || field.name === '地点')
+  const openPlaceFor = (item: CollItem): void => {
+    if (mapModule === undefined) return
+    const text = placeField === undefined ? '' : collText(data.values[item.id]?.[placeField.id]).trim()
+    const marker = (places ?? []).find(candidate => candidate.label === text || candidate.markerId === text)
+    if (marker !== undefined) {
+      setPlaceFocus({ ...(ownerId === undefined ? {} : { cardId: ownerId }), mapModuleId: marker.mapModuleId, markerId: marker.markerId, ...(marker.label === undefined ? {} : { label: marker.label }), sourceModuleId: module.id, sourceModuleName: module.name, sourceItemId: item.id, sourceItemName: item.name })
+    } else {
+      clearPlaceFocus()
+    }
+    onOpenModule?.(mapModule.id)
+  }
+  const bindPlaceFor = (item: CollItem, marker: TlPlace): void => {
+    if (mapModule === undefined) return
+    if (placeField !== undefined) void send({ kind: 'collection_set_value', moduleId: module.id, itemId: item.id, fieldId: placeField.id, value: marker.label ?? marker.markerId })
+    setPlaceFocus({ ...(ownerId === undefined ? {} : { cardId: ownerId }), mapModuleId: marker.mapModuleId, markerId: marker.markerId, ...(marker.label === undefined ? {} : { label: marker.label }), sourceModuleId: module.id, sourceModuleName: module.name, sourceItemId: item.id, sourceItemName: item.name })
+    onOpenModule?.(mapModule.id)
+  }
+  const createPlaceFor = (item: CollItem): void => {
+    if (mapModule === undefined) return
+    const text = placeField === undefined ? '' : collText(data.values[item.id]?.[placeField.id]).trim()
+    const label = text === '' ? (item.name.trim() === '' ? t('coll.unnamed') : item.name.trim()) : text
+    const markerId = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `mark-${String(Date.now())}`
+    const focus = { ...(ownerId === undefined ? {} : { cardId: ownerId }), mapModuleId: mapModule.id, markerId, label, sourceModuleId: module.id, sourceModuleName: module.name, sourceItemId: item.id, sourceItemName: item.name }
+    void send({ kind: 'map_add_marker', moduleId: mapModule.id, marker: { id: markerId, label, x: .5, y: .5 } }).then(() => {
+      if (placeField !== undefined) void send({ kind: 'collection_set_value', moduleId: module.id, itemId: item.id, fieldId: placeField.id, value: label })
+      setPlaceFocus(focus)
+      onOpenModule?.(mapModule.id)
+    })
+  }
+  const linkTarget = (kind: string): string | undefined => {
+    if (kind === 'map') return (siblings ?? []).find(module => module.widget?.type === 'map')?.id
+    if (kind === 'place') {
+      const collections = (siblings ?? []).filter(module => module.widget?.type === 'collection')
+      return (collections.find(module => coll(module.widget?.data).presentation?.contract === 'geography')
+        ?? collections.find(module => module.name === '地理' || module.name === '地区'))?.id
+    }
+    if (kind === 'timeline') return (siblings ?? []).find(module => module.widget?.type === 'timeline')?.id
+    if (kind === 'relation') return (siblings ?? []).find(module => module.widget?.type === 'collection' && coll(module.widget.data).view === 'graph')?.id
+    if (kind === 'character' || kind === 'profile') return (siblings ?? []).find(module => module.name === '角色档案' || module.name === '基本信息')?.id
+    return undefined
+  }
+  const linkEntries = (presentation?.links ?? []).flatMap(kind => {
+    const target = linkTarget(kind)
+    const labelKey = kind === 'map' ? 'coll.link.map' : kind === 'timeline' ? 'coll.link.timeline' : kind === 'relation' ? 'coll.link.relation' : kind === 'character' || kind === 'profile' ? 'coll.link.character' : kind === 'place' ? 'coll.link.place' : undefined
+    return labelKey === undefined ? [] : [{ kind, target, label: t(labelKey as Parameters<ShellT>[0]) }]
+  })
+  const followLink = (entry: { readonly kind: string, readonly target?: string }): void => {
+    if (entry.target === undefined) {
+      const spec = entry.kind === 'character' || entry.kind === 'profile'
+        ? { name: '角色档案', preset: 'profile' }
+        : entry.kind === 'timeline' ? { name: '时间线', preset: 'timeline' }
+          : entry.kind === 'relation' ? { name: '关系', preset: 'graph' }
+            : { name: '地图', preset: 'map' }
+      void send({ kind: 'add_module', name: spec.name, preset: spec.preset })
+      return
+    }
+    setModuleLinkFocus({ ...(ownerId === undefined ? {} : { cardId: ownerId }), targetModuleId: entry.target, sourceModuleId: module.id, sourceModuleName: module.name })
+    onOpenModule?.(entry.target)
+  }
+  const mapBanner = mapModule === undefined ? undefined : (
+    <GeographyBanner t={t} mapModule={mapModule}
+      placeCount={(places ?? []).filter(place => place.mapModuleId === mapModule.id).length}
+      onOpen={onOpenModule === undefined ? undefined : () => onOpenModule(mapModule.id)} />
+  )
+  const addItem = (result: DraftResult): Promise<boolean> => send({
+    kind: 'collection_add_item', moduleId: module.id,
+    item: { name: result.name }, values: result.values,
+    ...(result.image === undefined ? {} : {
+      imageBase64: result.image.base64, imageMediaType: result.image.mediaType,
+    }),
+  })
+  const sendItemImage = async (itemId: string, file: File): Promise<void> => {
+    const base64 = await new Promise<string>(resolve => {
+      const reader = new FileReader()
+      reader.onload = () => {
+        const dataUrl = typeof reader.result === 'string' ? reader.result : ''
+        const comma = dataUrl.indexOf(',')
+        resolve(comma < 0 ? '' : dataUrl.slice(comma + 1))
+      }
+      reader.onerror = () => resolve('')
+      reader.readAsDataURL(file)
+    })
+    if (base64 === '') return
+    await send({
+      kind: 'collection_set_item_image', moduleId: module.id, itemId, imageBase64: base64,
+      mediaType: file.type === '' ? 'image/png' : file.type,
+    })
+  }
+  const draftLayout = layout ?? 'collection'
+  const commitDraft = async (result: DraftResult): Promise<boolean> => {
+    const ok = await addItem(result)
+    if (ok) setDraftOpen(false)
+    return ok
+  }
+  const emptyDraft = <CollDraftCard layout={draftLayout} data={data} t={t} onCreate={addItem} />
+  const addDraft = <CollDraftCard layout={draftLayout} data={data} t={t} onCreate={commitDraft}
+    onCancel={() => setDraftOpen(false)} />
+  // Curated layouts always show one live blank instance at the end; it is the empty state and the add affordance.
+  const liveDraft = <CollDraftCard layout={draftLayout} data={data} t={t} onCreate={addItem} resetOnCreate requireName />
+  const dossierLayouts = new Set(['atlas', 'heraldry', 'bestiary', 'magazine', 'armory', 'skillSheet', 'gallery'])
+  const dossierImageLabel = layout === 'heraldry' ? t('coll.image.emblem')
+    : layout === 'bestiary' ? t('coll.image.portrait')
+      : layout === 'magazine' || layout === 'atlas' ? t('coll.image.scene')
+        : layout === 'armory' ? t('coll.image.item') : undefined
+  const dossier = openItem !== undefined && dossierLayouts.has(layout ?? '') ? (
+    <CollDossier data={data} item={openItem} t={t} moduleId={module.id} imageUrl={imageUrl} send={send}
+      onClose={() => setOpenId(null)} links={linkEntries} onFollowLink={followLink} onImage={sendItemImage}
+      {...(dossierImageLabel === undefined ? {} : { imageLabel: dossierImageLabel })} />
+  ) : undefined
+  const banner = openItem === undefined ? mapBanner : undefined
+  const renderCurated = (): ReactNode => {
+    if (dossier !== undefined) return dossier
+    switch (layout) {
+      case 'profile':
+        return <CollProfile data={data} t={t} imageUrl={imageUrl} moduleId={module.id} send={send} ownerName={ownerName}
+          world={cardKind === 'WORLD' || data.fields.some(field => ['世界类型', '尺度', '历法', '灵气', '规则'].includes(field.name))} />
+      case 'graph':
+        return <CollGraph data={data} t={t} ownerName={ownerName} ownerId={ownerId} cardKind={cardKind}
+          refTargets={refTargets} moduleId={module.id} send={send} />
+      case 'gallery':
+        return <CollGallery data={data} t={t} imageUrl={imageUrl} moduleId={module.id} send={send} onOpen={setOpenId} />
+      case 'atlas':
+        return <CollAtlas data={data} t={t} imageUrl={imageUrl} moduleName={module.name} onOpen={setOpenId}
+          onAdd={() => undefined} draft={<CollAtlasDraft data={data} t={t} onCreate={addItem} />}
+          places={places} onOpenPlace={mapModule === undefined ? undefined : openPlaceFor}
+          onBindPlace={mapModule === undefined ? undefined : bindPlaceFor}
+          onCreatePlace={mapModule === undefined ? undefined : createPlaceFor} />
+      case 'heraldry':
+        return <CollHeraldry data={data} t={t} imageUrl={imageUrl} moduleName={module.name} onOpen={setOpenId}
+          onAdd={() => undefined} draft={liveDraft} />
+      case 'bestiary':
+        return <CollBestiary data={data} t={t} imageUrl={imageUrl} moduleName={module.name} onOpen={setOpenId}
+          onAdd={() => undefined} draft={liveDraft} />
+      case 'magazine':
+        return <CollMagazine data={data} t={t} imageUrl={imageUrl} moduleName={module.name} onOpen={setOpenId}
+          onAdd={() => undefined} draft={liveDraft} />
+      case 'armory':
+        return <CollArmory data={data} t={t} imageUrl={imageUrl} moduleName={module.name} onOpen={setOpenId}
+          onAdd={() => undefined} draft={liveDraft} />
+      case 'skillSheet':
+        return <CollSkillSheet data={data} t={t} moduleName={module.name} onOpen={setOpenId}
+          onAdd={() => undefined} draft={liveDraft} />
+      case 'rulebook':
+        return <CollRulebook data={data} t={t} moduleId={module.id} send={send} onCreate={addItem} />
+      case 'quoteWall':
+        return <CollQuoteWall data={data} t={t} moduleId={module.id} send={send} onCreate={addItem} />
+      case 'multiForm':
+        return <CollMultiForm data={data} t={t} moduleId={module.id} send={send} imageUrl={imageUrl}
+          sourceData={sourceData} sourceItem={sourceItem} onImage={sendItemImage} onCreate={addItem}
+          {...(onOpenModule === undefined || sourceModule === undefined ? {} : { onOpenSource: () => onOpenModule(sourceModule.id) })} />
+      default:
+        return <CollCards data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId}
+          moduleId={module.id} send={send} moduleName={module.name} onAdd={() => setDraftOpen(true)} draft={liveDraft}
+          places={places} onOpenPlace={mapModule === undefined ? undefined : openPlaceFor}
+          onBindPlace={mapModule === undefined ? undefined : bindPlaceFor} onCreatePlace={mapModule === undefined ? undefined : createPlaceFor}
+          sourceData={sourceData} sourceItem={sourceItem} />
+    }
+  }
+  if (empty && generic && view !== 'graph' && view !== 'profile') {
+    return (
+      <div className={`nv-coll nv-coll-first${layout === undefined ? '' : ` nv-coll-layout-${layout}`}`} data-layout={layout}>
+        {(sourceModule !== undefined || sourceLabel !== undefined) && (
+          <div className="nv-coll-source nv-coll-firstsource">
+            <span>↳ {fmt(t, 'coll.sourceRef', { label: sourceLabel ?? '' })}</span>
+            {sourceModule !== undefined && onOpenModule !== undefined && (
+              <button type="button" onClick={() => onOpenModule(sourceModule.id)}>{t('coll.sourceOpen')}</button>
+            )}
+          </div>
+        )}
+        <div className="nv-coll-main"><div className="nv-coll-drafts">{emptyDraft}</div></div>
+      </div>
+    )
+  }
   return (
-    <div className={`nv-coll${views.length <= 1 && !showAdd ? ' nv-coll-noactions' : ''}`}>
-      {(views.length > 1 || showAdd) && (
-        <div className="nv-coll-bar">
-          {views.length > 1 && (
-            <span className="nv-coll-views">
-              {views.map(v => (
-                <button key={v.id} type="button"
-                  className={`nv-coll-view${view === v.id ? ' nv-coll-view-on' : ''}`}
-                  onClick={() => setView(v.id)}>{v.label}</button>
-              ))}
+    <div className={`nv-coll${generic && views.length <= 1 && !showAdd ? ' nv-coll-noactions' : ''}${layout === undefined ? '' : ` nv-coll-layout-${layout}`}${curated ? ' nv-coll-curated' : ''}`} data-layout={layout}>
+      {presentation?.contract === 'geography' && banner}
+      <div className="nv-coll-main">
+        {generic && !special && !empty && <div className="nv-coll-fieldbar"><button type="button" className="nv-coll-fieldtoggle" onClick={() => setFieldsOpen(value => !value)}>{t('coll.fields')}</button></div>}
+        {generic && fieldsOpen && (
+          <div className="nv-coll-fieldspanel">
+            {data.fields.map(field => (
+              <div key={field.id} className="nv-coll-fieldrow">
+                <input defaultValue={field.name} onBlur={event => {
+                  const name = event.target.value.trim()
+                  if (name !== '' && name !== field.name) void send({ kind: 'collection_update_field', moduleId: module.id, id: field.id, patch: { name } })
+                }} />
+                <select value={field.type} onChange={event => { void send({ kind: 'collection_update_field', moduleId: module.id, id: field.id, patch: { type: event.target.value } }) }}>
+                  {['text', 'longtext', 'chips', 'image', 'number', 'place', 'person', 'date', 'time', 'link'].map(type => <option key={type} value={type}>{type}</option>)}
+                </select>
+                <button type="button" onClick={() => { if (window.confirm(fmt(t, 'coll.fields.removeConfirm', { name: field.name }))) void send({ kind: 'collection_remove_field', moduleId: module.id, id: field.id }) }}>×</button>
+              </div>
+            ))}
+            <div className="nv-coll-fieldrow nv-coll-fieldadd">
+              <input value={fieldName} placeholder={t('coll.fields.namePh')} onChange={event => setFieldName(event.target.value)} />
+              <select value={fieldType} onChange={event => setFieldType(event.target.value)}>
+                {['text', 'longtext', 'chips', 'image', 'number', 'place', 'person', 'date', 'time', 'link'].map(type => <option key={type} value={type}>{type}</option>)}
+              </select>
+              <button type="button" disabled={fieldName.trim() === ''} onClick={() => { const name = fieldName.trim(); if (name === '') return; void send({ kind: 'collection_add_field', moduleId: module.id, field: { name, type: fieldType } }); setFieldName('') }}>＋</button>
+            </div>
+          </div>
+        )}
+        {generic && backlink !== undefined && (
+          <div className="nv-coll-backlink">
+            <button type="button" onClick={() => { clearModuleLinkFocus(); onOpenModule?.(backlink.sourceModuleId) }}>← {t('coll.link.back')} {backlink.sourceModuleName}</button>
+          </div>
+        )}
+        {generic && !empty && view !== 'profile' && linkEntries.length > 0 && (
+          <div className="nv-coll-links">
+            {linkEntries.map(entry => (
+              <button key={`${entry.kind}:${entry.target ?? 'missing'}`} type="button"
+                className={`nv-coll-link${entry.target === undefined ? ' is-missing' : ''}`}
+                onClick={() => followLink(entry)}>
+                {entry.target === undefined ? fmt(t, 'coll.link.missing', { label: entry.label }) : `${entry.label} →`}
+              </button>
+            ))}
+          </div>
+        )}
+        {generic && (views.length > 1 || showAdd) && (
+          <div className="nv-coll-bar">
+            {views.length > 1 && (
+              <span className="nv-coll-views">
+                {views.map(v => (
+                  <button key={v.id} type="button"
+                    className={`nv-coll-view${view === v.id ? ' nv-coll-view-on' : ''}`}
+                    onClick={() => setView(v.id)}>{v.label}</button>
+                ))}
+              </span>
+            )}
+            {showAdd && (
+              <button type="button" className="nv-coll-add" onClick={() => setDraftOpen(true)}>＋ {t('coll.add')}</button>
+            )}
+          </div>
+        )}
+        {generic && (sourceModule !== undefined || sourceLabel !== undefined) && (
+          <div className="nv-coll-source">↳ {fmt(t, 'coll.sourceRef', { label: sourceLabel ?? '' })}{sourceItem === undefined ? '' : ` · ${sourceItem.name}`}</div>
+        )}
+        {curated ? renderCurated() : (
+          <>
+            {view === 'profile' && <CollProfile data={data} t={t} imageUrl={imageUrl} moduleId={module.id} send={send}
+              ownerName={ownerName}
+              world={cardKind === 'WORLD' || data.fields.some(field => ['世界类型', '尺度', '历法', '灵气', '规则'].includes(field.name))} />}
+            {view === 'graph' && <CollGraph data={data} t={t} ownerName={ownerName} ownerId={ownerId} cardKind={cardKind}
+              refTargets={refTargets} moduleId={module.id} send={send} />}
+            {view === 'list' && <CollList data={data} t={t} moduleId={module.id} send={send} onOpen={setOpenId}
+              draftCard={draftOpen ? addDraft : undefined}
+              {...(refTargets === undefined ? {} : { refTargets })} />}
+            {view === 'cards' && <CollCards data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId}
+              moduleId={module.id} send={send} moduleName={module.name} onAdd={() => setDraftOpen(true)} draft={draftOpen ? addDraft : undefined}
+              places={places} onOpenPlace={mapModule === undefined ? undefined : openPlaceFor}
+              onBindPlace={mapModule === undefined ? undefined : bindPlaceFor} onCreatePlace={mapModule === undefined ? undefined : createPlaceFor}
+              sourceData={sourceData} sourceItem={sourceItem} />}
+            {view === 'form' && draftOpen && <div className="nv-coll-listdraft">{addDraft}</div>}
+            {view === 'form' && <CollForm data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId}
+              moduleId={module.id} send={send} refTargets={refTargets} />}
+            {view === 'timeline' && draftOpen && <div className="nv-coll-listdraft">{addDraft}</div>}
+            {view === 'timeline' && <CollScroll data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
+          </>
+        )}
+        {generic && openItem !== undefined && (
+          <CollDetail data={data} item={openItem} t={t} moduleId={module.id} imageUrl={imageUrl}
+            send={send} refTargets={refTargets} onClose={() => setOpenId(null)} presentation={data.presentation}
+            places={places} onOpenPlace={mapModule === undefined ? undefined : openPlaceFor}
+            sourceData={sourceData} sourceItem={sourceItem} sourceSend={sourceSend}
+            {...(onOpenModule === undefined || sourceModule === undefined ? {} : { onOpenSource: () => onOpenModule(sourceModule.id) })} />
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** Shared lookup helpers for the reading-family renderers. */
+const collFieldOf = (data: CollData, name: string): CollField | undefined => data.fields.find(field => field.name === name)
+const collValueOf = (data: CollData, item: CollItem, ...names: readonly string[]): string => {
+  for (const name of names) {
+    const field = collFieldOf(data, name)
+    const value = field === undefined ? '' : collText(data.values[item.id]?.[field.id]).trim()
+    if (value !== '') return value
+  }
+  return ''
+}
+const collImageOf = (data: CollData, item: CollItem): string | undefined => {
+  if (item.visualKey !== null) return item.visualKey
+  const field = data.fields.find(field => field.type === 'image')
+  const raw = field === undefined ? undefined : data.values[item.id]?.[field.id]
+  return typeof raw === 'object' && raw !== null && 'resourceId' in raw && typeof raw.resourceId === 'string' ? raw.resourceId : undefined
+}
+/** Place binding control shared by atlas/cards: view, bind, or create on map. */
+function CollPlaceAction({ data, item, t, places, onOpenPlace, onBindPlace, onCreatePlace }: {
+  readonly data: CollData; readonly item: CollItem; readonly t: ShellT
+  readonly places?: readonly TlPlace[]
+  readonly onOpenPlace?: (item: CollItem) => void
+  readonly onBindPlace?: (item: CollItem, marker: TlPlace) => void
+  readonly onCreatePlace?: (item: CollItem) => void
+}) {
+  const field = data.fields.find(candidate => candidate.name === '地图标记' || candidate.name === '地点')
+  if (field === undefined || onOpenPlace === undefined) return null
+  const text = collText(data.values[item.id]?.[field.id]).trim()
+  const marker = (places ?? []).find(place => place.label === text || place.markerId === text)
+  if (marker !== undefined) {
+    return <button type="button" className="nv-coll-placelink" onClick={event => { event.stopPropagation(); onOpenPlace(item) }}>{t('coll.map.open')}</button>
+  }
+  return <select className="nv-coll-placebind" defaultValue="" onClick={event => event.stopPropagation()}
+    onChange={event => {
+      const value = event.target.value
+      if (value === '__create__') { onCreatePlace?.(item); return }
+      const chosen = (places ?? []).find(place => place.markerId === value)
+      if (chosen !== undefined) onBindPlace?.(item, chosen)
+    }}>
+    <option value="">{text === '' ? t('coll.map.bind') : fmt(t, 'coll.map.missing', { name: text })}</option>
+    {(places ?? []).map(place => <option key={place.markerId} value={place.markerId}>{place.label ?? place.markerId}</option>)}
+    <option value="__create__">{t('coll.map.create')}</option>
+  </select>
+}
+
+const CollReadAdd = ({ t, moduleName, onAdd }: { readonly t: ShellT, readonly moduleName: string, readonly onAdd: () => void }) => (
+  <button type="button" className="nv-read-add" onClick={onAdd}>
+    <span>＋</span><b>{fmt(t, 'coll.addLabel', { name: moduleName })}</b>
+  </button>
+)
+
+/** 地理页的地图对象：显真实地图模块名与地点数，不画假地名。 */
+function GeographyBanner({ t, mapModule, placeCount, onOpen }: {
+  readonly t: ShellT
+  readonly mapModule?: CardModuleDoc
+  readonly placeCount: number
+  readonly onOpen?: () => void
+}) {
+  return <section className="nv-geo-banner" aria-label={t('coll.link.map')}>
+    <span className="nv-geo-banner-grid" aria-hidden="true" />
+    <span className="nv-geo-banner-info">
+      <span className="nv-geo-banner-icon" aria-hidden="true">{glyph.map(15)}</span>
+      <span>
+        <b>{mapModule?.name ?? t('coll.link.map')}</b>
+        <small>{mapModule === undefined ? t('coll.map.unlinked') : placeCount === 0 ? t('ov.blank') : fmt(t, 'coll.map.places', { count: placeCount })}</small>
+      </span>
+    </span>
+    {mapModule !== undefined && onOpen !== undefined && (
+      <button type="button" className="nv-geo-banner-open" onClick={onOpen}>{t('coll.map.openMap')} →</button>
+    )}
+  </section>
+}
+
+
+/** 地理空白卡：新增面和空态共用同一张最终卡；文字就地改，图片只预览，卡外失焦才整张落库。 */
+function CollAtlasDraft({ data, t, onCreate, onCancel }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly onCreate: (result: DraftResult) => Promise<boolean>
+  readonly onCancel?: () => void
+}) {
+  const [values, setValues] = useState<Record<string, CollValue>>({})
+  const [image, setImage] = useState<{ readonly base64: string, readonly mediaType: string, readonly preview: string } | undefined>(undefined)
+  const [saving, setSaving] = useState(false)
+  const created = useRef(false)
+  const cancelled = useRef(false)
+  const cardRef = useRef<HTMLElement>(null)
+  const imageField = data.fields.find(field => field.type === 'image')
+  const nameField = data.fields.find(field => field.name === '名称' && field.type === 'text')
+    ?? data.fields.find(field => field.type === 'text')
+  const metaFields = data.fields.filter(field => field.type !== 'image' && field.type !== 'longtext' && field.id !== nameField?.id).slice(0, 3)
+  const noteField = data.fields.find(field => field.type === 'longtext')
+  const text = (field: CollField): string => collText(values[field.id])
+  const create = async (): Promise<void> => {
+    const hasContent = Object.values(values).some(value => collText(value).trim() !== '') || image !== undefined
+    if (created.current || cancelled.current || saving || !hasContent) return
+    const preferred = nameField === undefined ? '' : text(nameField).trim()
+    if (nameField !== undefined && preferred === '') return
+    const firstText = data.fields.find(field => field.type === 'text' && collText(values[field.id]).trim() !== '')
+    created.current = true
+    setSaving(true)
+    const ok = await onCreate({
+      name: preferred !== '' ? preferred : firstText === undefined ? '' : collText(values[firstText.id]).trim(),
+      values,
+      ...(image === undefined ? {} : { image: { base64: image.base64, mediaType: image.mediaType } }),
+    })
+    if (!ok) { created.current = false; setSaving(false); return }
+    setValues({})
+    setImage(undefined)
+    created.current = false
+    setSaving(false)
+  }
+  const pickImage = (file: File): void => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const preview = typeof reader.result === 'string' ? reader.result : ''
+      const comma = preview.indexOf(',')
+      if (comma < 0) return
+      setImage({ base64: preview.slice(comma + 1), mediaType: file.type === '' ? 'image/jpeg' : file.type, preview })
+    }
+    reader.readAsDataURL(file)
+  }
+  const commitRef = useRef(create)
+  commitRef.current = create
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target
+      if (target instanceof Node && cardRef.current?.contains(target) === true) return
+      void commitRef.current()
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => { document.removeEventListener('pointerdown', onPointerDown, true) }
+  }, [])
+  return <article ref={cardRef} className="nv-atlas-card nv-atlas-edit"
+    onBlur={event => {
+      const next = event.relatedTarget
+      if (next instanceof Node && event.currentTarget.contains(next)) return
+      void create()
+    }}>
+    <label className="nv-atlas-visual nv-atlas-edit-visual">
+      {image === undefined ? <span>＋ {imageField?.name ?? t('coll.image.scene')}</span> : <img src={image.preview} alt="" />}
+      <input type="file" accept="image/*" disabled={saving} onChange={event => {
+        const file = event.target.files?.[0]
+        event.currentTarget.value = ''
+        if (file !== undefined) pickImage(file)
+      }} />
+    </label>
+    <div className="nv-atlas-body">
+      <input className="nv-atlas-edit-name" value={nameField === undefined ? '' : text(nameField)} disabled={saving}
+        aria-label={nameField?.name ?? t('coll.unnamed')}
+        placeholder={t('coll.geo.namePh')}
+        onChange={event => { if (nameField !== undefined) setValues(prev => ({ ...prev, [nameField.id]: event.target.value })) }} />
+      {metaFields.length > 0 && <div className="nv-atlas-meta nv-atlas-edit-meta">
+        {metaFields.map(field => (
+          <label key={field.id}>
+            <span>{field.name}</span>
+            <input value={text(field)} aria-label={field.name} placeholder="—" disabled={saving}
+              onChange={event => setValues(prev => ({ ...prev, [field.id]: event.target.value }))} />
+          </label>
+        ))}
+      </div>}
+      {noteField !== undefined && <textarea className="nv-atlas-edit-note" rows={2} value={text(noteField)} disabled={saving}
+        aria-label={noteField.name}
+        placeholder={t('coll.geo.notePh')}
+        onChange={event => setValues(prev => ({ ...prev, [noteField.id]: event.target.value }))} />}
+    </div>
+    {onCancel !== undefined && (
+      <button type="button" className="nv-atlas-edit-cancel" aria-label={t('create.cancel')}
+        onClick={() => { cancelled.current = true; onCancel() }}>×</button>
+    )}
+  </article>
+}
+
+
+/** 集合草稿的共享生命周期：本地值/图片、卡外 pointerdown 提交、失败可重试。 */
+function useCollDraft({ data, onCreate, onCancel, seed, resetOnCreate, requireName, contentFields, nameFallback }: {
+  readonly data: CollData
+  readonly onCreate: (result: DraftResult) => Promise<boolean>
+  readonly onCancel?: () => void
+  /** 新草稿的初始字段值；分类筛选下新增规则时预填当前分类。 */
+  readonly seed?: Record<string, CollValue>
+  /** 常驻空白条目（规则/语录）提交成功后清空自身，继续等下一条。 */
+  readonly resetOnCreate?: boolean
+  /** 标题/语录为空时不落库，避免把分类或场景当成条目名。 */
+  readonly requireName?: boolean
+  /** 只有这些字段算“有内容”；分类预填不算，避免空白规则被误创建。 */
+  readonly contentFields?: readonly (string | undefined)[]
+  /** 标题为空时从正文取的兜底名（规则允许先写正文）。 */
+  readonly nameFallback?: (values: Record<string, CollValue>) => string
+}) {
+  const [values, setValues] = useState<Record<string, CollValue>>(() => ({ ...(seed ?? {}) }))
+  const [image, setImage] = useState<{ readonly base64: string, readonly mediaType: string, readonly preview: string } | undefined>(undefined)
+  const [saving, setSaving] = useState(false)
+  const created = useRef(false)
+  const cancelled = useRef(false)
+  const cardRef = useRef<HTMLElement>(null)
+  const nameField = data.fields.find(field => ['名称', '姓名', '语录'].includes(field.name) && field.type === 'text')
+    ?? data.fields.find(field => field.type === 'text')
+  const text = (field: CollField | undefined): string => field === undefined ? '' : collText(values[field.id])
+  const submit = async (): Promise<void> => {
+    const relevant = contentFields === undefined
+      ? Object.values(values)
+      : contentFields.flatMap(id => id === undefined ? [] : [values[id]])
+    const hasContent = relevant.some(value => collText(value).trim() !== '') || image !== undefined
+    if (created.current || cancelled.current || saving || !hasContent) return
+    const preferred = text(nameField).trim()
+    if (requireName === true && nameField !== undefined && preferred === '') return
+    const fallback = nameFallback?.(values).trim() ?? ''
+    const firstText = data.fields.find(field => field.type === 'text' && collText(values[field.id]).trim() !== '')
+    created.current = true
+    setSaving(true)
+    const ok = await onCreate({
+      name: preferred !== '' ? preferred : fallback !== '' ? fallback : firstText === undefined ? '' : collText(values[firstText.id]).trim(),
+      values,
+      ...(image === undefined ? {} : { image: { base64: image.base64, mediaType: image.mediaType } }),
+    })
+    if (!ok) { created.current = false; setSaving(false); return }
+    if (resetOnCreate === true) {
+      setValues({ ...(seed ?? {}) })
+      setImage(undefined)
+      created.current = false
+      setSaving(false)
+    }
+  }
+  const commitRef = useRef(submit)
+  commitRef.current = submit
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent): void => {
+      const target = event.target
+      if (target instanceof Node && cardRef.current?.contains(target) === true) return
+      void commitRef.current()
+    }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => { document.removeEventListener('pointerdown', onPointerDown, true) }
+  }, [])
+  const cancel = (): void => { cancelled.current = true; onCancel?.() }
+  const pickImage = (file: File): void => {
+    const reader = new FileReader()
+    reader.onload = () => {
+      const preview = typeof reader.result === 'string' ? reader.result : ''
+      const comma = preview.indexOf(',')
+      if (comma < 0) return
+      setImage({ base64: preview.slice(comma + 1), mediaType: file.type === '' ? 'image/jpeg' : file.type, preview })
+    }
+    reader.readAsDataURL(file)
+  }
+  return {
+    values, setValues, image, pickImage, saving, cardRef, submit, cancel, nameField,
+    setField: (field: CollField, value: CollValue): void => setValues(prev => ({ ...prev, [field.id]: value })),
+    blur: (event: FocusEvent<HTMLElement>): void => {
+      const next = event.relatedTarget
+      if (next instanceof Node && event.currentTarget.contains(next)) return
+      void submit()
+    },
+    text,
+  }
+}
+
+/** 各集合布局自己的空白卡：共享提交生命周期，不共享一张通用表单。 */
+function CollDraftCard({ layout, data, t, onCreate, onCancel, inherited, seed, resetOnCreate, requireName }: {
+  readonly layout: string
+  readonly data: CollData
+  readonly t: ShellT
+  readonly onCreate: (result: DraftResult) => Promise<boolean>
+  readonly onCancel?: () => void
+  readonly inherited?: readonly { readonly name: string, readonly value: string }[]
+  readonly seed?: Record<string, CollValue>
+  readonly resetOnCreate?: boolean
+  readonly requireName?: boolean
+}) {
+  const draft = useCollDraft({ data, onCreate, ...(onCancel === undefined ? {} : { onCancel }), ...(seed === undefined ? {} : { seed }), ...(resetOnCreate === undefined ? {} : { resetOnCreate }), ...(requireName === undefined ? {} : { requireName }) })
+  const field = (name: string): CollField | undefined => data.fields.find(candidate => candidate.name === name)
+  const imageField = data.fields.find(candidate => candidate.type === 'image')
+  const noteField = field('说明') ?? data.fields.find(candidate => candidate.type === 'longtext')
+  const input = (target: CollField | undefined, className = 'nv-draft-input', placeholder?: string): ReactNode => target === undefined ? null : (
+    <input className={className} value={draft.text(target)} aria-label={target.name}
+      placeholder={placeholder ?? target.name} disabled={draft.saving}
+      onChange={event => draft.setField(target, event.target.value)} />
+  )
+  const note = (target: CollField | undefined, className = 'nv-draft-note', placeholder?: string): ReactNode => target === undefined ? null : (
+    <textarea className={className} rows={2} value={draft.text(target)} aria-label={target.name}
+      placeholder={placeholder ?? target.name} disabled={draft.saving}
+      onChange={event => draft.setField(target, event.target.value)} />
+  )
+  const mainImage = imageField !== undefined || ['heraldry', 'bestiary', 'magazine', 'armory', 'multiForm'].includes(layout)
+  const imageLabel = imageField?.name
+    ?? (layout === 'heraldry' ? t('coll.image.emblem')
+      : layout === 'bestiary' ? t('coll.image.portrait')
+        : layout === 'magazine' ? t('coll.image.scene')
+          : layout === 'armory' ? t('coll.image.item')
+            : layout === 'multiForm' ? t('coll.image.form') : '')
+  const media = (className: string): ReactNode => mainImage ? (
+    <label className={`${className} nv-draft-media`}>
+      {draft.image === undefined ? <span>＋ {imageLabel}</span> : <img src={draft.image.preview} alt="" />}
+      <input type="file" accept="image/*" disabled={draft.saving} onChange={event => {
+        const file = event.target.files?.[0]
+        event.currentTarget.value = ''
+        if (file !== undefined) draft.pickImage(file)
+      }} />
+    </label>
+  ) : null
+  const name = input(draft.nameField, 'nv-draft-title', draft.nameField?.name ?? t('coll.unnamed'))
+  const cancel = onCancel === undefined ? null : (
+    <button type="button" className="nv-draft-cancel" aria-label={t('create.cancel')} onClick={draft.cancel}>×</button>
+  )
+  const article = (className: string, content: ReactNode): ReactNode => (
+    <article ref={draft.cardRef} className={`${className} nv-draftcard`} onBlur={draft.blur}>
+      {content}
+      {cancel}
+    </article>
+  )
+  switch (layout) {
+    case 'heraldry':
+      return article('nv-heraldry-card', <>
+        {media('nv-heraldry-emblem')}
+        {name}
+        <div className="nv-draft-rows">
+          {field('立场') !== undefined && <label className="nv-draft-row"><span>立场</span>{input(field('立场'), 'nv-draft-input', '')}</label>}
+          {field('实力') !== undefined && <label className="nv-draft-row"><span>实力</span>{input(field('实力'), 'nv-draft-input nv-draft-num', '')}</label>}
+          {field('驻地') !== undefined && <label className="nv-draft-row"><span>驻地</span>{input(field('驻地'), 'nv-draft-input', '')}</label>}
+          {field('首领') !== undefined && <label className="nv-draft-row"><span>首领</span>{input(field('首领'), 'nv-draft-input', '')}</label>}
+        </div>
+        {noteField !== undefined && <label className="nv-draft-noterow"><span>说明</span>{note(noteField, 'nv-draft-note', '')}</label>}
+      </>)
+    case 'bestiary':
+      return article('nv-bestiary-card', <>
+        {media('nv-bestiary-portrait')}
+        <div className="nv-bestiary-body">
+          {name}
+          <div className="nv-bestiary-facts">
+            <span><small>{field('寿命')?.name ?? ''}</small>{input(field('寿命'), 'nv-draft-input nv-draft-small', '—')}</span>
+            <span><small>{field('分布')?.name ?? ''}</small>{input(field('分布'), 'nv-draft-input nv-draft-small', '—')}</span>
+          </div>
+          {note(noteField, 'nv-draft-note nv-draft-note-inline')}
+        </div>
+      </>)
+    case 'magazine':
+      return article('nv-magazine-card', <>
+        {media('nv-magazine-cover')}
+        <div className="nv-magazine-body">
+          {input(field('类别'), 'nv-draft-input nv-draft-kicker')}
+          {name}
+          {input(field('场合'), 'nv-draft-input nv-draft-small')}
+          {input(field('日历'), 'nv-draft-input nv-draft-small')}
+          {note(noteField, 'nv-draft-note nv-draft-note-inline')}
+        </div>
+      </>)
+    case 'armory': {
+      const rest = data.fields.filter(candidate => candidate.id !== draft.nameField?.id && candidate.id !== imageField?.id)
+      return article('nv-armory-card', <>
+        {media('nv-armory-visual')}
+        <div className="nv-armory-body">
+          {name}
+          {rest.map(candidate => candidate.type === 'longtext'
+            ? <Fragment key={candidate.id}>{note(candidate, 'nv-draft-note nv-draft-note-inline')}</Fragment>
+            : <Fragment key={candidate.id}>{input(candidate, 'nv-draft-input nv-draft-small')}</Fragment>)}
+        </div>
+      </>)
+    }
+    case 'skillSheet':
+      return article('nv-skill-card', <>
+        <div className="nv-skill-head">{name}{input(field('类型'), 'nv-draft-input nv-draft-small')}</div>
+        {note(field('效果') ?? noteField, 'nv-draft-note nv-draft-note-inline')}
+        <div className="nv-skill-facts">
+          <span><small>{field('代价')?.name ?? ''}</small>{input(field('代价'), 'nv-draft-input nv-draft-small', '—')}</span>
+        </div>
+      </>)
+    case 'quoteWall':
+      return article('nv-quote-draft', <>
+        <textarea className="nv-draft-quote" rows={4} value={draft.text(draft.nameField)}
+          aria-label={draft.nameField?.name ?? t('coll.unnamed')} placeholder={t('coll.quoteDraftPh')}
+          disabled={draft.saving} onChange={event => { if (draft.nameField !== undefined) draft.setField(draft.nameField, event.target.value) }} />
+        <div className="nv-draft-metarow">
+          {input(field('场景'), 'nv-draft-input nv-draft-small')}
+          {input(field('情绪'), 'nv-draft-input nv-draft-small')}
+          {input(field('对象'), 'nv-draft-input nv-draft-small')}
+        </div>
+      </>)
+    case 'rulebook':
+      return article('nv-rule-draft', <>
+        {input(field('类别'), 'nv-draft-input nv-draft-kicker')}
+        {name}
+        {note(field('说明') ?? noteField, 'nv-draft-note nv-draft-note-inline')}
+        {note(field('详细说明'), 'nv-draft-note nv-draft-note-inline')}
+      </>)
+    case 'multiForm':
+      return article('nv-coll-card nv-draft-form', <>
+        {media('nv-draft-cover')}
+        <div className="nv-draft-body">
+          {name}
+          {note(noteField, 'nv-draft-note nv-draft-note-inline')}
+          {inherited !== undefined && inherited.length > 0 && (
+            <div className="nv-draft-inherited">
+              {inherited.map(row => <span key={row.name}>{row.name}<b>{row.value === '' ? '—' : row.value}</b></span>)}
+            </div>
+          )}
+          <div className="nv-draft-overrides">
+            {input(field('身份'), 'nv-draft-input nv-draft-small')}
+            {input(field('年龄'), 'nv-draft-input nv-draft-small')}
+            {input(field('阵营'), 'nv-draft-input nv-draft-small')}
+            {input(field('出身'), 'nv-draft-input nv-draft-small')}
+          </div>
+        </div>
+      </>)
+    default:
+      return article('nv-coll-card nv-draft-form', <>
+        {media('nv-draft-cover')}
+        <div className="nv-draft-body">
+          {name}
+          {note(noteField, 'nv-draft-note nv-draft-note-inline')}
+        </div>
+      </>)
+  }
+}
+
+
+/** 规则页：分类 rail + 纸面规则条目；最后一条空白规则就是空态，不另做表单。 */
+const RULE_ALL = '$all'
+
+interface RuleGroup { readonly key: string, readonly label: string, readonly items: readonly CollItem[] }
+
+const ruleGroups = (data: CollData, t: ShellT): readonly RuleGroup[] => {
+  const field = data.fields.find(candidate => candidate.name === '类别')
+  if (field === undefined) return [{ key: '', label: '', items: data.items }]
+  const byKey = new Map<string, CollItem[]>()
+  for (const item of data.items) {
+    const key = collText(data.values[item.id]?.[field.id]).trim()
+    const bucket = byKey.get(key)
+    if (bucket === undefined) byKey.set(key, [item])
+    else bucket.push(item)
+  }
+  return [...byKey.entries()]
+    .map(([key, items]) => ({ key, label: key === '' ? t('coll.rule.uncategorized') : key, items }))
+    .sort((a, b) => (a.key === '' ? 1 : 0) - (b.key === '' ? 1 : 0))
+}
+
+const firstLine = (value: CollValue | undefined): string => {
+  const text = collText(value).trim()
+  const at = text.search(/\r?\n/)
+  return (at < 0 ? text : text.slice(0, at)).trim()
+}
+
+/** 常驻空白规则：title/body/detail 都在同一条目里；提交成功后清空，等下一条。 */
+function CollRuleDraft({ data, t, moduleId, category, categories, index, onCreate }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly moduleId: string
+  readonly category: string
+  readonly categories: readonly string[]
+  readonly index: number
+  readonly onCreate: (result: DraftResult) => Promise<boolean>
+}) {
+  const nameField = data.fields.find(field => ['名称', '姓名', '语录'].includes(field.name) && field.type === 'text')
+    ?? data.fields.find(field => field.type === 'text')
+  const categoryField = data.fields.find(field => field.name === '类别')
+  const bodyField = data.fields.find(field => field.name === '说明')
+  const detailField = data.fields.find(field => field.name === '详细说明')
+  const seed = categoryField !== undefined && category !== '' ? { [categoryField.id]: category } : undefined
+  const draft = useCollDraft({
+    data, onCreate,
+    ...(seed === undefined ? {} : { seed }),
+    resetOnCreate: true,
+    contentFields: [nameField?.id, bodyField?.id, detailField?.id],
+    nameFallback: values => firstLine(bodyField === undefined ? undefined : values[bodyField.id])
+      || firstLine(detailField === undefined ? undefined : values[detailField.id]),
+  })
+  const listId = `nv-rule-cats-${moduleId.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+  return (
+    <article ref={draft.cardRef} className="nv-rule-item is-new" onBlur={draft.blur}>
+      <div className="nv-rule-no">{String(index).padStart(2, '0')}</div>
+      <div className="nv-rule-main">
+        {categoryField !== undefined && (
+          <label className="nv-rule-catline">
+            <span>{t('coll.rule.category')}</span>
+            <input className="nv-rule-catinput" list={listId} value={draft.text(categoryField)}
+              placeholder={t('coll.rule.uncategorized')} disabled={draft.saving}
+              aria-label={t('coll.rule.category')}
+              onChange={event => draft.setField(categoryField, event.target.value)}
+              onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />
+            <datalist id={listId}>{categories.map(candidate => <option key={candidate} value={candidate} />)}</datalist>
+          </label>
+        )}
+        <input className="nv-rule-titleinput" value={draft.text(nameField)} placeholder={t('coll.rule.titlePh')}
+          aria-label={t('coll.rule.titlePh')} disabled={draft.saving}
+          onChange={event => { if (nameField !== undefined) draft.setField(nameField, event.target.value) }}
+          onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />
+        {bodyField !== undefined && (
+          <textarea className="nv-rule-bodyinput" rows={2} value={draft.text(bodyField)}
+            placeholder={t('coll.rule.bodyPh')} aria-label={t('coll.rule.bodyPh')} disabled={draft.saving}
+            onChange={event => draft.setField(bodyField, event.target.value)} />
+        )}
+        {detailField !== undefined && (
+          <textarea className="nv-rule-detailinput" rows={1} value={draft.text(detailField)}
+            placeholder={t('coll.rule.detailPh')} aria-label={t('coll.rule.detailPh')} disabled={draft.saving}
+            onChange={event => draft.setField(detailField, event.target.value)} />
+        )}
+      </div>
+    </article>
+  )
+}
+
+/** 已落库的规则：标题/正文/详细说明/分类都点一下就地改。 */
+function CollRuleEntry({ data, item, index, t, moduleId, send, showCategory }: {
+  readonly data: CollData
+  readonly item: CollItem
+  readonly index: number
+  readonly t: ShellT
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly showCategory: boolean
+}) {
+  const values = data.values[item.id] ?? {}
+  const categoryField = data.fields.find(field => field.name === '类别')
+  const bodyField = data.fields.find(field => field.name === '说明')
+  const detailField = data.fields.find(field => field.name === '详细说明')
+  const [detailOpen, setDetailOpen] = useState(false)
+  const body = bodyField === undefined ? '' : collText(values[bodyField.id])
+  const detail = detailField === undefined ? '' : collText(values[detailField.id])
+  const setValue = (field: CollField, value: string): void => {
+    void send({ kind: 'collection_set_value', moduleId, itemId: item.id, fieldId: field.id, value })
+  }
+  return (
+    <article className="nv-rule-item">
+      <div className="nv-rule-no">{String(index).padStart(2, '0')}</div>
+      <div className="nv-rule-main">
+        <h2 className="nv-rule-title">
+          <CollInlineText value={item.name} placeholder={t('coll.unnamed')}
+            onCommit={name => void send({ kind: 'collection_update_item', moduleId, id: item.id, patch: { name } })} />
+          {showCategory && categoryField !== undefined && (
+            <span className="nv-rule-cat">
+              <CollInlineText value={collText(values[categoryField.id])} placeholder={t('coll.rule.uncategorized')}
+                onCommit={value => setValue(categoryField, value)} />
             </span>
           )}
-          {showAdd && (
-            <button type="button" className="nv-coll-add" onClick={() => {
-              void send({ kind: 'collection_add_item', moduleId: module.id, item: { name: t('coll.newItem') } })
-            }}>＋ {t('coll.add')}</button>
+        </h2>
+        {bodyField !== undefined && (
+          <div className="nv-rule-body">
+            <CollInlineText value={body} placeholder={t('coll.rule.bodyPh')} multiline
+              onCommit={value => setValue(bodyField, value)} />
+          </div>
+        )}
+        {detailField !== undefined && (detail !== '' || detailOpen ? (
+          <div className="nv-rule-detail">
+            <CollInlineText value={detail} placeholder={t('coll.rule.detailPh')} multiline autoEdit={detailOpen}
+              onCommit={value => { setDetailOpen(false); setValue(detailField, value) }} />
+          </div>
+        ) : (
+          <button type="button" className="nv-rule-detailadd" onClick={() => setDetailOpen(true)}>{t('coll.rule.detailAdd')}</button>
+        ))}
+      </div>
+    </article>
+  )
+}
+
+/** 规则页唯一渲染器：空集合也画同一张纸，最后一条空白规则就是新增入口。 */
+function CollRulebook({ data, t, moduleId, send, onCreate }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly onCreate: (result: DraftResult) => Promise<boolean>
+}) {
+  const groups = ruleGroups(data, t)
+  const [active, setActive] = useState(RULE_ALL)
+  const effective = active === RULE_ALL || groups.some(group => group.key === active) ? active : RULE_ALL
+  const visible = effective === RULE_ALL ? groups : groups.filter(group => group.key === effective)
+  const count = visible.reduce((total, group) => total + group.items.length, 0)
+  const numbers = new Map<string, number>()
+  let next = 1
+  for (const group of visible) for (const item of group.items) numbers.set(item.id, next++)
+  const categories = groups.map(group => group.key).filter(key => key !== '')
+  return (
+    <div className="nv-rulebook">
+      <nav className="nv-rule-rail" aria-label={t('coll.rule.category')}>
+        <span className="nv-rule-raillabel">{t('coll.rule.category')}</span>
+        <button type="button" className={effective === RULE_ALL ? 'is-on' : ''} onClick={() => setActive(RULE_ALL)}>
+          <span>{t('coll.rule.all')}</span><small>{data.items.length}</small>
+        </button>
+        {groups.filter(group => group.label !== '').map(group => (
+          <button key={group.key || '$none'} type="button" className={effective === group.key ? 'is-on' : ''}
+            onClick={() => setActive(group.key)}>
+            <span>{group.label}</span><small>{group.items.length}</small>
+          </button>
+        ))}
+      </nav>
+      <section className="nv-rule-paper">
+        {visible.map(group => (
+          <section key={group.key || '$none'} className="nv-rule-group">
+            {group.label !== '' && <div className="nv-rule-sectionhead">{group.label}</div>}
+            {group.items.map((item, index) => (
+              <CollRuleEntry key={item.id} data={data} item={item} index={numbers.get(item.id) ?? 1} t={t}
+                moduleId={moduleId} send={send} showCategory={effective === RULE_ALL} />
+            ))}
+          </section>
+        ))}
+        {effective !== RULE_ALL && visible.length === 0 && <div className="nv-rule-sectionhead">{effective}</div>}
+        <CollRuleDraft key={effective} data={data} t={t} moduleId={moduleId} category={effective === RULE_ALL ? '' : effective}
+          categories={categories} index={count + 1} onCreate={onCreate} />
+      </section>
+    </div>
+  )
+}
+
+/** 常驻空白语录：与落库后的引文块同一几何。 */
+function CollQuoteDraft({ data, t, onCreate }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly onCreate: (result: DraftResult) => Promise<boolean>
+}) {
+  const nameField = data.fields.find(field => ['名称', '姓名', '语录'].includes(field.name) && field.type === 'text')
+    ?? data.fields.find(field => field.type === 'text')
+  const sceneField = data.fields.find(field => field.name === '场景')
+  const moodField = data.fields.find(field => field.name === '情绪')
+  const targetField = data.fields.find(field => field.name === '对象')
+  const draft = useCollDraft({
+    data, onCreate, resetOnCreate: true, requireName: true, contentFields: [nameField?.id],
+  })
+  return (
+    <article ref={draft.cardRef} className="nv-quote-block is-new" onBlur={draft.blur}>
+      <div className="nv-quote-mark">“</div>
+      <textarea className="nv-quote-input" rows={3} value={draft.text(nameField)}
+        placeholder={t('coll.quote.editPh')} aria-label={t('coll.quote.editPh')} disabled={draft.saving}
+        onChange={event => { if (nameField !== undefined) draft.setField(nameField, event.target.value) }} />
+      <div className="nv-quote-meta">
+        {sceneField !== undefined && (
+          <label><small>{t('coll.quote.scene')}</small>
+            <input value={draft.text(sceneField)} placeholder={t('coll.quote.scenePh')} disabled={draft.saving}
+              aria-label={t('coll.quote.scene')} onChange={event => draft.setField(sceneField, event.target.value)} />
+          </label>
+        )}
+        {moodField !== undefined && (
+          <label><small>{t('coll.quote.mood')}</small>
+            <input value={draft.text(moodField)} placeholder={t('coll.quote.moodPh')} disabled={draft.saving}
+              aria-label={t('coll.quote.mood')} onChange={event => draft.setField(moodField, event.target.value)} />
+          </label>
+        )}
+        {targetField !== undefined && (
+          <label><small>{t('coll.quote.target')}</small>
+            <input value={draft.text(targetField)} placeholder={t('coll.quote.targetPh')} disabled={draft.saving}
+              aria-label={t('coll.quote.target')} onChange={event => draft.setField(targetField, event.target.value)} />
+          </label>
+        )}
+      </div>
+    </article>
+  )
+}
+
+/** 已落库的引文：句子、场景、情绪、对象点哪改哪。 */
+function CollQuoteBlock({ data, item, t, moduleId, send }: {
+  readonly data: CollData
+  readonly item: CollItem
+  readonly t: ShellT
+  readonly moduleId: string
+  readonly send: WidgetSend
+}) {
+  const values = data.values[item.id] ?? {}
+  const quoteField = data.fields.find(field => field.name === '语录')
+  const sceneField = data.fields.find(field => field.name === '场景')
+  const moodField = data.fields.find(field => field.name === '情绪')
+  const targetField = data.fields.find(field => field.name === '对象')
+  const quote = collText(quoteField === undefined ? undefined : values[quoteField.id]).trim() || item.name
+  const setValue = (field: CollField, value: string): void => {
+    void send({ kind: 'collection_set_value', moduleId, itemId: item.id, fieldId: field.id, value })
+  }
+  const setQuote = (value: string): void => {
+    void send({ kind: 'collection_update_item', moduleId, id: item.id, patch: { name: value } })
+    if (quoteField !== undefined && collText(values[quoteField.id]) !== value) setValue(quoteField, value)
+  }
+  return (
+    <article className="nv-quote-block">
+      <div className="nv-quote-mark">“</div>
+      <div className="nv-quote-text">
+        <CollInlineText value={quote} placeholder={t('coll.quote.editPh')} multiline onCommit={setQuote} />
+      </div>
+      <div className="nv-quote-meta">
+        {sceneField !== undefined && (
+          <span><small>{t('coll.quote.scene')}</small>
+            <CollInlineText value={collText(values[sceneField.id])} placeholder={t('coll.quote.scenePh')}
+              onCommit={value => setValue(sceneField, value)} />
+          </span>
+        )}
+        {moodField !== undefined && (
+          <span><small>{t('coll.quote.mood')}</small>
+            <CollInlineText value={collText(values[moodField.id])} placeholder={t('coll.quote.moodPh')}
+              onCommit={value => setValue(moodField, value)} />
+          </span>
+        )}
+        {targetField !== undefined && (
+          <span><small>{t('coll.quote.target')}</small>
+            <CollInlineText value={collText(values[targetField.id])} placeholder={t('coll.quote.targetPh')}
+              onCommit={value => setValue(targetField, value)} />
+          </span>
+        )}
+      </div>
+    </article>
+  )
+}
+
+/** 引文墙唯一渲染器：空集合也只剩最后一条空白引文。 */
+function CollQuoteWall({ data, t, moduleId, send, onCreate }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly onCreate: (result: DraftResult) => Promise<boolean>
+}) {
+  return (
+    <div className="nv-quote-wall">
+      {data.items.map(item => <CollQuoteBlock key={item.id} data={data} item={item} t={t} moduleId={moduleId} send={send} />)}
+      <CollQuoteDraft data={data} t={t} onCreate={onCreate} />
+    </div>
+  )
+}
+
+/* ---------- 多形态：继承与覆写都在同一张卡上 ---------- */
+
+const FORM_FACT_NAMES = ['身份', '年龄', '阵营', '出身'] as const
+
+interface FormFact {
+  /** 旧多形态模块可能没有覆写字段；没有时只展示继承值。 */
+  readonly field?: CollField
+  readonly label: string
+  readonly inherited: string
+  readonly value: string
+}
+
+const formFacts = (data: CollData, values: Readonly<Record<string, CollValue>>, sourceData?: CollData, sourceItem?: CollItem): readonly FormFact[] => {
+  const sourceValues = sourceData === undefined || sourceItem === undefined ? {} : sourceData.values[sourceItem.id] ?? {}
+  return FORM_FACT_NAMES.flatMap(name => {
+    const field = data.fields.find(candidate => candidate.name === name)
+    const sourceField = sourceData?.fields.find(candidate => candidate.name === name)
+    if (field === undefined && sourceField === undefined) return []
+    return [{
+      ...(field === undefined ? {} : { field }), label: name,
+      inherited: sourceField === undefined ? '' : collText(sourceValues[sourceField.id]),
+      value: field === undefined ? '' : collText(values[field.id]),
+    }]
+  })
+}
+
+function CollMultiFormCard({ data, item, index, t, moduleId, send, imageUrl, sourceData, sourceItem, onOpenSource, onImage }: {
+  readonly data: CollData
+  readonly item: CollItem
+  readonly index: number
+  readonly t: ShellT
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly imageUrl: (resourceId: string) => string
+  readonly sourceData?: CollData
+  readonly sourceItem?: CollItem
+  readonly onOpenSource?: () => void
+  readonly onImage?: (itemId: string, file: File) => void
+  readonly imageLabel?: string
+}) {
+  const values = data.values[item.id] ?? {}
+  const imageId = collImageOf(data, item)
+  const descriptionField = data.fields.find(field => field.name === '说明') ?? data.fields.find(field => field.type === 'longtext')
+  const facts = formFacts(data, values, sourceData, sourceItem)
+  const setValue = (field: CollField, value: string): void => {
+    void send({ kind: 'collection_set_value', moduleId, itemId: item.id, fieldId: field.id, value })
+  }
+  return (
+    <article className="nv-form-card">
+      <label className="nv-form-visual" title={t('coll.image.replace')}>
+        {imageId === undefined ? <span className="nv-form-noimage">＋ {t('coll.image.form')}</span> : <img src={imageUrl(imageId)} alt="" />}
+        {onImage !== undefined && <input type="file" accept="image/*" onChange={event => {
+          const file = event.target.files?.[0]
+          event.currentTarget.value = ''
+          if (file !== undefined) onImage(item.id, file)
+        }} />}
+      </label>
+      <div className="nv-form-main">
+        <div className="nv-form-eyebrow">{t('coll.form.eyebrow')} · {String(index + 1).padStart(2, '0')}</div>
+        <h2 className="nv-form-name">
+          <CollInlineText value={item.name} placeholder={t('coll.form.namePh')}
+            onCommit={name => void send({ kind: 'collection_update_item', moduleId, id: item.id, patch: { name } })} />
+        </h2>
+        {sourceItem !== undefined && <p className="nv-form-base">{fmt(t, 'coll.form.base', { name: sourceItem.name })}</p>}
+        <div className="nv-form-facts">
+          {facts.map(fact => (
+            <div key={fact.field?.id ?? fact.label} className="nv-form-fact">
+              <span className="label">{fact.label}</span>
+              <span className="value">
+                {fact.field === undefined ? (
+                  <>
+                    <span className="old">{fact.inherited === '' ? '—' : fact.inherited}</span>
+                    <span className="inherit">{t('coll.form.inherit')}</span>
+                    <button type="button" className="nv-form-overrideadd"
+                      onClick={() => void send({ kind: 'collection_add_field', moduleId, field: { name: fact.label, type: fact.label === '年龄' ? 'number' : 'text' } })}>
+                      {t('coll.form.overrideAdd')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="old">{fact.inherited === '' ? '—' : fact.inherited}</span>
+                    <span className="arrow">→</span>
+                    <CollInlineText value={fact.value} placeholder={sourceItem === undefined ? t('coll.cell.fill') : t('coll.form.inherit')}
+                      onCommit={value => { if (fact.field !== undefined) setValue(fact.field, value) }} />
+                  </>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+        {descriptionField !== undefined && (
+          <div className="nv-form-desc">
+            <CollInlineText value={collText(values[descriptionField.id])} placeholder={t('coll.form.descPh')} multiline
+              onCommit={value => setValue(descriptionField, value)} />
+          </div>
+        )}
+        {onOpenSource !== undefined && sourceItem !== undefined && (
+          <button type="button" className="nv-form-foot" onClick={onOpenSource}>{t('coll.form.openProfile')}</button>
+        )}
+      </div>
+    </article>
+  )
+}
+
+function CollMultiFormDraft({ data, t, moduleId, send, onCreate, sourceData, sourceItem }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly onCreate: (result: DraftResult) => Promise<boolean>
+  readonly sourceData?: CollData
+  readonly sourceItem?: CollItem
+}) {
+  const nameField = data.fields.find(field => field.name === '名称' && field.type === 'text')
+    ?? data.fields.find(field => field.type === 'text')
+  const descriptionField = data.fields.find(field => field.name === '说明') ?? data.fields.find(field => field.type === 'longtext')
+  const facts = formFacts(data, {}, sourceData, sourceItem)
+  const draft = useCollDraft({
+    data, onCreate, resetOnCreate: true, requireName: true,
+    contentFields: [nameField?.id, descriptionField?.id, ...facts.flatMap(fact => fact.field === undefined ? [] : [fact.field.id])],
+  })
+  return (
+    <article ref={draft.cardRef} className="nv-form-card is-new" onBlur={draft.blur}>
+      <label className="nv-form-visual" title={t('coll.image.replace')}>
+        {draft.image === undefined ? <span className="nv-form-noimage">＋ {t('coll.image.form')}</span> : <img src={draft.image.preview} alt="" />}
+        <input type="file" accept="image/*" disabled={draft.saving} onChange={event => {
+          const file = event.target.files?.[0]
+          event.currentTarget.value = ''
+          if (file !== undefined) draft.pickImage(file)
+        }} />
+      </label>
+      <div className="nv-form-main">
+        <div className="nv-form-eyebrow">{t('coll.form.new')}</div>
+        <input className="nv-form-nameinput" value={draft.text(nameField)} placeholder={t('coll.form.namePh')}
+          aria-label={t('coll.form.namePh')} disabled={draft.saving}
+          onChange={event => { if (nameField !== undefined) draft.setField(nameField, event.target.value) }}
+          onKeyDown={event => { if (event.key === 'Enter') event.currentTarget.blur() }} />
+        {sourceItem !== undefined && <p className="nv-form-base">{fmt(t, 'coll.form.base', { name: sourceItem.name })}</p>}
+        <div className="nv-form-facts">
+          {facts.map(fact => (
+            <div key={fact.field?.id ?? fact.label} className="nv-form-fact">
+              <span className="label">{fact.label}</span>
+              <span className="value">
+                {fact.field === undefined ? (
+                  <>
+                    <span className="old">{fact.inherited === '' ? '—' : fact.inherited}</span>
+                    <span className="inherit">{t('coll.form.inherit')}</span>
+                    <button type="button" className="nv-form-overrideadd"
+                      onClick={() => void send({ kind: 'collection_add_field', moduleId, field: { name: fact.label, type: fact.label === '年龄' ? 'number' : 'text' } })}>
+                      {t('coll.form.overrideAdd')}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="old">{fact.inherited === '' ? '—' : fact.inherited}</span>
+                    <span className="arrow">→</span>
+                    <input className="nv-form-factinput" value={collText(draft.values[fact.field.id])}
+                      placeholder={sourceItem === undefined ? t('coll.cell.fill') : t('coll.form.inherit')}
+                      aria-label={fact.label} disabled={draft.saving}
+                      onChange={event => { if (fact.field !== undefined) draft.setField(fact.field, event.target.value) }} />
+                  </>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+        {descriptionField !== undefined && (
+          <textarea className="nv-form-descinput" rows={2} value={draft.text(descriptionField)}
+            placeholder={t('coll.form.descPh')} aria-label={t('coll.form.descPh')} disabled={draft.saving}
+            onChange={event => draft.setField(descriptionField, event.target.value)} />
+        )}
+      </div>
+    </article>
+  )
+}
+
+/** 多形态唯一渲染器：每张卡自己写继承与覆写；最后一张空白卡就是新增入口。 */
+function CollMultiForm({ data, t, moduleId, send, imageUrl, sourceData, sourceItem, onOpenSource, onImage, onCreate }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly imageUrl: (resourceId: string) => string
+  readonly sourceData?: CollData
+  readonly sourceItem?: CollItem
+  readonly onOpenSource?: () => void
+  readonly onImage?: (itemId: string, file: File) => void
+  readonly onCreate: (result: DraftResult) => Promise<boolean>
+}) {
+  return (
+    <div className="nv-formcards">
+      {data.items.map((item, index) => (
+        <CollMultiFormCard key={item.id} data={data} item={item} index={index} t={t} moduleId={moduleId}
+          send={send} imageUrl={imageUrl} sourceData={sourceData} sourceItem={sourceItem}
+          {...(onOpenSource === undefined ? {} : { onOpenSource })}
+          {...(onImage === undefined ? {} : { onImage })} />
+      ))}
+      <CollMultiFormDraft data={data} t={t} moduleId={moduleId} send={send} onCreate={onCreate} sourceData={sourceData} sourceItem={sourceItem} />
+    </div>
+  )
+}
+
+/** 条目档案：读在前，点事实/正文就地改；图片可直接换。 */
+function CollDossier({ data, item, t, moduleId, imageUrl, send, onClose, links, onFollowLink, onImage, imageLabel }: {
+  readonly data: CollData
+  readonly item: CollItem
+  readonly t: ShellT
+  readonly moduleId: string
+  readonly imageUrl: (resourceId: string) => string
+  readonly send: WidgetSend
+  readonly onClose: () => void
+  readonly links?: readonly { readonly kind: string, readonly target?: string, readonly label: string }[]
+  readonly onFollowLink?: (entry: { readonly kind: string, readonly target?: string, readonly label: string }) => void
+  readonly onImage?: (itemId: string, file: File) => void
+  readonly imageLabel?: string
+}) {
+  const values = data.values[item.id] ?? {}
+  const imageId = collImageOf(data, item)
+  const imageField = data.fields.find(field => field.type === 'image')
+  const imageText = imageLabel ?? imageField?.name ?? t('coll.image.replace')
+  const chipsField = data.fields.find(field => field.type === 'chips')
+  const kicker = chipsField === undefined ? '' : collText(values[chipsField.id]).replace(/、/g, ' · ')
+  const factFields = data.fields.filter(field => field.type !== 'image' && field.type !== 'longtext' && field.type !== 'chips'
+    && field.name !== '名称' && field.name !== '姓名')
+  const bodyFields = data.fields.filter(field => field.type === 'longtext')
+  const setValue = (field: CollField, value: string): void => {
+    void send({ kind: 'collection_set_value', moduleId, itemId: item.id, fieldId: field.id, value })
+  }
+  return (
+    <section className="nv-dossier">
+      <button type="button" className="nv-dossier-back" onClick={onClose}>‹ {t('coll.dossier.back')}</button>
+      <div className="nv-dossier-grid">
+        <aside>
+          <label className="nv-dossier-visual" title={t('coll.dossier.editImage')}>
+            {imageId === undefined
+              ? <span className="nv-dossier-noimage">＋ {imageText}</span>
+              : <img src={imageUrl(imageId)} alt="" />}
+            {onImage !== undefined && <input type="file" accept="image/*" onChange={event => {
+              const file = event.target.files?.[0]
+              event.currentTarget.value = ''
+              if (file !== undefined) onImage(item.id, file)
+            }} />}
+          </label>
+        </aside>
+        <div className="nv-dossier-main">
+          {kicker !== '' && <p className="nv-dossier-kicker">{kicker}</p>}
+          <h2 className="nv-dossier-name">
+            <CollInlineText value={item.name} placeholder={t('coll.unnamed')}
+              onCommit={name => void send({ kind: 'collection_update_item', moduleId, id: item.id, patch: { name } })} />
+          </h2>
+          {factFields.length > 0 && (
+            <div className="nv-dossier-facts">
+              {factFields.map(field => (
+                <div key={field.id} className="nv-dossier-fact">
+                  <div className="label">{field.name}</div>
+                  <div className="value">
+                    <CollInlineText value={collText(values[field.id])} placeholder={t('coll.cell.fill')}
+                      numeric={field.type === 'number' || field.type === 'time'}
+                      onCommit={value => setValue(field, value)} />
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+          {bodyFields.map(field => (
+            <div key={field.id} className="nv-dossier-body">
+              <h4>{field.name}</h4>
+              <CollInlineText value={collText(values[field.id])} placeholder={t('coll.cell.fill')} multiline
+                onCommit={value => setValue(field, value)} />
+            </div>
+          ))}
+          {links !== undefined && links.length > 0 && (
+            <nav className="nv-dossier-rel" aria-label={t('coll.dossier.relations')}>
+              <h4>{t('coll.dossier.relations')}</h4>
+              {links.map(entry => (
+                <button key={`${entry.kind}:${entry.target ?? 'missing'}`} type="button" onClick={() => onFollowLink?.(entry)}>
+                  <span>{entry.target === undefined ? fmt(t, 'coll.link.missing', { label: entry.label }) : entry.label}</span>
+                  <b>{t('coll.dossier.open')}</b>
+                </button>
+              ))}
+            </nav>
           )}
         </div>
+      </div>
+    </section>
+  )
+}
+
+/** 地理：地图册式横版地点卡。 */
+function CollAtlas({ data, t, imageUrl, moduleName, onOpen, onAdd, draft, places, onOpenPlace, onBindPlace, onCreatePlace }: {
+  readonly data: CollData; readonly t: ShellT; readonly imageUrl: (id: string) => string
+  readonly moduleName: string; readonly onOpen: (id: string) => void; readonly onAdd: () => void
+  readonly draft?: ReactNode
+  readonly places?: readonly TlPlace[]; readonly onOpenPlace?: (item: CollItem) => void; readonly onBindPlace?: (item: CollItem, marker: TlPlace) => void; readonly onCreatePlace?: (item: CollItem) => void
+}) {
+  return <div className="nv-atlas-grid">
+    {data.items.map(item => {
+      const image = collImageOf(data, item)
+      const terrain = collValueOf(data, item, '地貌')
+      const climate = collValueOf(data, item, '气候')
+      const faction = collValueOf(data, item, '主要势力')
+      const note = collValueOf(data, item, '一句话', '说明')
+      return <article key={item.id} className="nv-atlas-card" onClick={() => onOpen(item.id)}>
+        <div className="nv-atlas-visual">{image === undefined ? <span>◇</span> : <img src={imageUrl(image)} alt="" />}</div>
+        <div className="nv-atlas-body">
+          <h3>{item.name === '' ? t('coll.unnamed') : item.name}</h3>
+          <div className="nv-atlas-meta">
+            {terrain !== '' && <span>地貌 · {terrain}</span>}
+            {climate !== '' && <span>气候 · {climate}</span>}
+            {faction !== '' && <span>势力 · {faction}</span>}
+          </div>
+          {note !== '' && <p>{note}</p>}
+          <CollPlaceAction data={data} item={item} t={t} places={places} onOpenPlace={onOpenPlace} onBindPlace={onBindPlace} onCreatePlace={onCreatePlace} />
+        </div>
+      </article>
+    })}
+    {draft ?? <CollReadAdd t={t} moduleName={moduleName} onAdd={onAdd} />}
+  </div>
+}
+
+/** 势力：方形徽记墙。 */
+function CollHeraldry({ data, t, imageUrl, moduleName, onOpen, onAdd, draft }: {
+  readonly data: CollData; readonly t: ShellT; readonly imageUrl: (id: string) => string
+  readonly moduleName: string; readonly onOpen: (id: string) => void; readonly onAdd: () => void
+  readonly draft?: ReactNode
+}) {
+  return <div className="nv-heraldry-grid">
+    {data.items.map(item => {
+      const image = collImageOf(data, item)
+      const stance = collValueOf(data, item, '立场')
+      const strength = collValueOf(data, item, '实力')
+      const seat = collValueOf(data, item, '驻地')
+      const leader = collValueOf(data, item, '首领')
+      const note = collValueOf(data, item, '说明')
+      return <article key={item.id} className="nv-heraldry-card" onClick={() => onOpen(item.id)}>
+        <div className="nv-heraldry-emblem">{image === undefined ? <span>◆</span> : <img src={imageUrl(image)} alt="" />}</div>
+        <h3>{item.name === '' ? t('coll.unnamed') : item.name}</h3>
+        {stance !== '' && <div className="nv-heraldry-tags">{stance.split(/[、,，]/).filter(Boolean).map(tag => <span key={tag}>{tag}</span>)}</div>}
+        {strength !== '' && <div className="nv-heraldry-stat"><span>实力</span><b>{strength}</b></div>}
+        {seat !== '' && <small>驻地 · {seat}</small>}
+        {leader !== '' && <small>首领 · {leader}</small>}
+        {note !== '' && <p className="nv-heraldry-note">{note}</p>}
+      </article>
+    })}
+    {draft ?? <CollReadAdd t={t} moduleName={moduleName} onAdd={onAdd} />}
+  </div>
+}
+
+/** 种族：竖版肖像图鉴。 */
+function CollBestiary({ data, t, imageUrl, moduleName, onOpen, onAdd, draft }: {
+  readonly data: CollData; readonly t: ShellT; readonly imageUrl: (id: string) => string
+  readonly moduleName: string; readonly onOpen: (id: string) => void; readonly onAdd: () => void
+  readonly draft?: ReactNode
+}) {
+  return <div className="nv-bestiary-grid">
+    {data.items.map(item => {
+      const image = collImageOf(data, item)
+      const lifespan = collValueOf(data, item, '寿命')
+      const distribution = collValueOf(data, item, '分布')
+      const traits = collValueOf(data, item, '特征')
+      return <article key={item.id} className="nv-bestiary-card" onClick={() => onOpen(item.id)}>
+        <div className="nv-bestiary-portrait">{image === undefined ? <span>◇</span> : <img src={imageUrl(image)} alt="" />}</div>
+        <div className="nv-bestiary-body">
+          <h3>{item.name === '' ? t('coll.unnamed') : item.name}</h3>
+          <div className="nv-bestiary-facts">
+            {lifespan !== '' && <span><small>寿命</small>{lifespan}</span>}
+            {distribution !== '' && <span><small>分布</small>{distribution}</span>}
+          </div>
+          {traits !== '' && <p>{traits}</p>}
+        </div>
+      </article>
+    })}
+    {draft ?? <CollReadAdd t={t} moduleName={moduleName} onAdd={onAdd} />}
+  </div>
+}
+
+/** 文化：杂志式场景卡。 */
+function CollMagazine({ data, t, imageUrl, moduleName, onOpen, onAdd, draft }: {
+  readonly data: CollData; readonly t: ShellT; readonly imageUrl: (id: string) => string
+  readonly moduleName: string; readonly onOpen: (id: string) => void; readonly onAdd: () => void
+  readonly draft?: ReactNode
+}) {
+  return <div className="nv-magazine-grid">
+    {data.items.map(item => {
+      const image = collImageOf(data, item)
+      const category = collValueOf(data, item, '类别')
+      const occasion = collValueOf(data, item, '场合')
+      const calendar = collValueOf(data, item, '日历')
+      const note = collValueOf(data, item, '说明', '一句话')
+      return <article key={item.id} className="nv-magazine-card" onClick={() => onOpen(item.id)}>
+        <div className="nv-magazine-cover">{image === undefined ? <span>◇</span> : <img src={imageUrl(image)} alt="" />}</div>
+        <div className="nv-magazine-body">
+          <div className="nv-magazine-kicker">{category === '' ? t('coll.unnamed') : category}</div>
+          <h3>{item.name === '' ? t('coll.unnamed') : item.name}</h3>
+          {occasion !== '' && <small>{occasion}</small>}
+          {calendar !== '' && <small className="nv-magazine-cal">{calendar}</small>}
+          {note !== '' && <p>{note}</p>}
+        </div>
+      </article>
+    })}
+    {draft ?? <CollReadAdd t={t} moduleName={moduleName} onAdd={onAdd} />}
+  </div>
+}
+
+/** 装备：器物陈列卡。 */
+function CollArmory({ data, t, imageUrl, moduleName, onOpen, onAdd, draft }: {
+  readonly data: CollData; readonly t: ShellT; readonly imageUrl: (id: string) => string
+  readonly moduleName: string; readonly onOpen: (id: string) => void; readonly onAdd: () => void
+  readonly draft?: ReactNode
+}) {
+  return <div className="nv-armory-grid">
+    {data.items.map(item => {
+      const image = collImageOf(data, item)
+      const kind = collValueOf(data, item, '类型')
+      const effect = collValueOf(data, item, '效果', '说明')
+      const owner = collValueOf(data, item, '归属')
+      const detail = collValueOf(data, item, '详细说明')
+      return <article key={item.id} className="nv-armory-card" onClick={() => onOpen(item.id)}>
+        <div className="nv-armory-visual">{image === undefined ? <span>◇</span> : <img src={imageUrl(image)} alt="" />}</div>
+        <div className="nv-armory-body">
+          <h3>{item.name === '' ? t('coll.unnamed') : item.name}</h3>
+          {kind !== '' && <div className="nv-armory-kind">{kind}</div>}
+          {effect !== '' && <p>{effect}</p>}
+          {detail !== '' && <p className="nv-armory-detail">{detail}</p>}
+          {owner !== '' && <small>归属 · {owner}</small>}
+        </div>
+      </article>
+    })}
+    {draft ?? <CollReadAdd t={t} moduleName={moduleName} onAdd={onAdd} />}
+  </div>
+}
+
+/** 能力：技能表，效果与代价/冷却并排。 */
+function CollSkillSheet({ data, t, moduleName, onOpen, onAdd, draft }: {
+  readonly data: CollData; readonly t: ShellT; readonly moduleName: string
+  readonly onOpen: (id: string) => void; readonly onAdd: () => void
+  readonly draft?: ReactNode
+}) {
+  return <div className="nv-skillsheet">
+    {data.items.map(item => {
+      const kind = collValueOf(data, item, '类型')
+      const effect = collValueOf(data, item, '效果', '说明')
+      const cost = collValueOf(data, item, '代价')
+      const cooldown = collValueOf(data, item, '冷却')
+      const detail = collValueOf(data, item, '详细说明')
+      return <article key={item.id} className="nv-skill-card" onClick={() => onOpen(item.id)}>
+        <div className="nv-skill-head"><h3>{item.name === '' ? t('coll.unnamed') : item.name}</h3>{kind !== '' && <span>{kind}</span>}</div>
+        {effect !== '' && <p>{effect}</p>}
+        {detail !== '' && <p className="nv-skill-detail">{detail}</p>}
+        <div className="nv-skill-facts">
+          {cost !== '' && <span><small>代价</small>{cost}</span>}
+          {cooldown !== '' && <span><small>冷却</small>{cooldown}</span>}
+        </div>
+      </article>
+    })}
+    {draft ?? <CollReadAdd t={t} moduleName={moduleName} onAdd={onAdd} />}
+  </div>
+}
+
+/** 图集：瀑布流 + 灯箱 + 拖图上传；图片是唯一主角。 */
+function CollGallery({ data, t, imageUrl, moduleId, send, onOpen }: {
+  readonly data: CollData
+  readonly t: ShellT
+  readonly imageUrl: (resourceId: string) => string
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly onOpen: (id: string) => void
+}) {
+  const imageField = data.fields.find(field => field.type === 'image')
+  const titleField = data.fields.find(field => field.name === '标题' || field.name === '名称')
+  const descriptionField = data.fields.find(field => field.name === '说明' || field.name === '描述')
+  const photos = data.items.flatMap(item => {
+    const raw = imageField === undefined ? undefined : data.values[item.id]?.[imageField.id]
+    const imageId = item.visualKey ?? (typeof raw === 'object' && raw !== null && 'resourceId' in raw && typeof raw.resourceId === 'string' ? raw.resourceId : undefined)
+    return imageId === undefined ? [] : [{ item, imageId, title: item.name, description: descriptionField === undefined ? '' : collText(data.values[item.id]?.[descriptionField.id]) }]
+  })
+  const [lightbox, setLightbox] = useState<number | null>(null)
+  const [dragging, setDragging] = useState(false)
+  const fileInput = useRef<HTMLInputElement | null>(null)
+  const upload = (files: FileList | readonly File[]): void => {
+    for (const file of Array.from(files)) {
+      if (!file.type.startsWith('image/')) continue
+      const reader = new FileReader()
+      reader.onload = () => {
+        const dataUrl = typeof reader.result === 'string' ? reader.result : ''
+        const comma = dataUrl.indexOf(',')
+        if (comma < 0) return
+        void send({
+          kind: 'collection_add_item', moduleId,
+          item: { name: file.name.replace(/\.[^.]+$/, '') || t('coll.gallery.untitled') },
+          imageBase64: dataUrl.slice(comma + 1),
+          imageMediaType: file.type === '' ? 'image/jpeg' : file.type,
+        })
+      }
+      reader.readAsDataURL(file)
+    }
+  }
+  useEffect(() => {
+    if (lightbox === null) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') setLightbox(null)
+      if (event.key === 'ArrowLeft') setLightbox(current => current === null ? null : (current + photos.length - 1) % photos.length)
+      if (event.key === 'ArrowRight') setLightbox(current => current === null ? null : (current + 1) % photos.length)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => { window.removeEventListener('keydown', onKey) }
+  }, [lightbox, photos.length])
+  const current = lightbox === null ? undefined : photos[lightbox]
+  return (
+    <div className={`nv-gallery${dragging ? ' is-drag' : ''}`}
+      onDragOver={event => { event.preventDefault(); setDragging(true) }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={event => { event.preventDefault(); setDragging(false); upload(event.dataTransfer.files) }}>
+      {photos.map((photo, index) => (
+        <figure key={photo.item.id} className="nv-gallery-card" onClick={() => setLightbox(index)}>
+          <img src={imageUrl(photo.imageId)} alt={photo.title} />
+          <figcaption>
+            <b>{photo.title === '' ? t('coll.unnamed') : photo.title}</b>
+            {photo.description !== '' && <span>{photo.description}</span>}
+          </figcaption>
+        </figure>
+      ))}
+      <button type="button" className="nv-gallery-upload" onClick={() => fileInput.current?.click()}>
+        <span>＋</span>
+        <b>{t('coll.gallery.upload')}</b>
+        <small>{t('coll.gallery.drop')}</small>
+      </button>
+      {photos.length === 0 && (
+        <>
+          <span className="nv-gallery-ghost" aria-hidden="true" />
+          <span className="nv-gallery-ghost" aria-hidden="true" />
+        </>
       )}
-      {data.items.length === 0 && <div className="nv-coll-empty">{t('coll.empty')}</div>}
-      {view === 'list' && <CollList data={data} t={t} moduleId={module.id} send={send} {...(refTargets === undefined ? {} : { refTargets })} />}
-      {view === 'cards' && <CollCards data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
-      {view === 'form' && <CollForm data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
-      {view === 'timeline' && <CollScroll data={data} t={t} imageUrl={imageUrl} openId={openId} onOpen={setOpenId} />}
-      {openItem !== undefined && (
-        <CollDetail data={data} item={openItem} t={t} moduleId={module.id} imageUrl={imageUrl}
-          send={send} refTargets={refTargets} onClose={() => setOpenId(null)} />
+      <input ref={fileInput} type="file" accept="image/*" multiple hidden
+        onChange={event => { const files = Array.from(event.target.files ?? []); event.currentTarget.value = ''; upload(files) }} />
+      {current !== undefined && createPortal(
+        <div className="nv-lightbox" onClick={() => setLightbox(null)}>
+          <div className="nv-lightbox-inner" onClick={event => event.stopPropagation()}>
+            <button type="button" className="nv-lightbox-close" onClick={() => setLightbox(null)} aria-label={t('create.cancel')}>×</button>
+            <img className="nv-lightbox-img" src={imageUrl(current.imageId)} alt={current.title} />
+            <div className="nv-lightbox-bar">
+              <div>
+                <b>{current.title === '' ? t('coll.unnamed') : current.title}</b>
+                {current.description !== '' && <p>{current.description}</p>}
+              </div>
+              <div className="nv-lightbox-actions">
+                <button type="button" onClick={() => onOpen(current.item.id)}>{t('coll.detail')}</button>
+                <button type="button" disabled={photos.length <= 1} onClick={() => setLightbox(((lightbox ?? 0) + photos.length - 1) % photos.length)}>‹</button>
+                <button type="button" disabled={photos.length <= 1} onClick={() => setLightbox(((lightbox ?? 0) + 1) % photos.length)}>›</button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
 }
 
 /** 图鉴卡：分区标题 + 卡网格。卡 = 主图（visualKey→资源图，无图给淡色占位）+ 名 + 关键数字 + 摘要。 */
-function CollCards({ data, t, imageUrl, openId, onOpen }: {
+function CollCards({ data, t, imageUrl, openId, onOpen, moduleId, send, moduleName, onAdd, draft, sourceData, sourceItem, places, onOpenPlace, onBindPlace, onCreatePlace }: {
   readonly data: CollData
   readonly t: ShellT
   readonly imageUrl: (resourceId: string) => string
   readonly openId: string | null
   readonly onOpen: (id: string | null) => void
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly moduleName: string
+  readonly onAdd: () => void
+  readonly draft?: ReactNode
+  readonly sourceData?: CollData
+  readonly sourceItem?: CollItem
+  readonly places?: readonly TlPlace[]
+  readonly onOpenPlace?: (item: CollItem) => void
+  readonly onBindPlace?: (item: CollItem, marker: TlPlace) => void
+  readonly onCreatePlace?: (item: CollItem) => void
 }) {
   const { sections } = collSections(data, t('coll.ungrouped'))
   const statField = data.fields.find(f => f.type === 'number')
   const imageField = data.fields.find(f => f.type === 'image')
+  const primaryLabel = data.form?.labels?.primary === undefined
+    ? undefined : formLabel(data.form.labels.primary, t, t('coll.primary'))
+  const addLabel = data.form?.labels?.add === undefined ? fmt(t, 'coll.addLabel', { name: moduleName }) : formLabel(data.form.labels.add, t, t('coll.add'))
+  const placeField = data.fields.find(field => field.name === '地图标记' || field.name === '地点')
+  const placeText = (item: CollItem): string => placeField === undefined ? '' : collText(data.values[item.id]?.[placeField.id]).trim()
+  const imageIdOf = (source: CollData | undefined, item: CollItem | undefined): string | undefined => {
+    if (source === undefined || item === undefined) return undefined
+    if (item.visualKey !== null) return item.visualKey
+    const image = source.fields.find(field => field.type === 'image')
+    const raw = image === undefined ? undefined : source.values[item.id]?.[image.id]
+    return typeof raw === 'object' && raw !== null && 'resourceId' in raw && typeof raw.resourceId === 'string' ? raw.resourceId : undefined
+  }
+  const sourceImageId = sourceItem === undefined ? undefined : imageIdOf(sourceData, sourceItem)
+  const sourceSubtitleField = sourceData?.fields.find(field => (field.type === 'text' || field.type === 'longtext')
+    && sourceItem !== undefined && collText(sourceData.values[sourceItem.id]?.[field.id]) !== ''
+    && collText(sourceData.values[sourceItem.id]?.[field.id]) !== sourceItem.name)
+  const sourceSubtitle = sourceSubtitleField === undefined || sourceData === undefined || sourceItem === undefined
+    ? '' : collText(sourceData.values[sourceItem.id]?.[sourceSubtitleField.id])
   return (
-    <div className="nv-coll-deck">
+    <div className={`nv-coll-deck${data.presentation === undefined ? '' : ` nv-coll-deck-${data.presentation.layout}`}`}>
       {sections.map((section, si) => (
         <section key={section.key || '$'} className="nv-coll-sec">
           {section.label !== '' && (
@@ -1886,25 +4546,64 @@ function CollCards({ data, t, imageUrl, openId, onOpen }: {
               const subtitleField = data.fields.find(field => (field.type === 'text' || field.type === 'longtext')
                 && collText(data.values[item.id]?.[field.id]) !== ''
                 && collText(data.values[item.id]?.[field.id]) !== item.name)
-              const subtitle = subtitleField === undefined ? item.summary : collText(data.values[item.id]?.[subtitleField.id])
+              const subtitle = subtitleField === undefined
+                ? (item.summary === '' ? sourceSubtitle : item.summary)
+                : collText(data.values[item.id]?.[subtitleField.id])
+              const imageId = imageIdOf(data, item) ?? sourceImageId
               return (
-                <button key={item.id} type="button"
+                <div key={item.id} role="button" tabIndex={0}
                   className={`nv-coll-card${openId === item.id ? ' nv-coll-card-on' : ''}`}
-                  onClick={() => onOpen(openId === item.id ? null : item.id)}>
-                  {imageField !== undefined && index === 0 && <span className="nv-coll-primary">{t('coll.primary')}</span>}
-                  {item.visualKey !== null ? (
-                    <img className="nv-coll-cardimg" src={imageUrl(item.visualKey)} alt="" />
+                  onClick={() => onOpen(openId === item.id ? null : item.id)}
+                  onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen(openId === item.id ? null : item.id) } }}>
+                  {primaryLabel !== undefined && data.items[0]?.id === item.id && <span className="nv-coll-primary">{primaryLabel}</span>}
+                  {primaryLabel !== undefined && data.items[0]?.id !== item.id && (
+                    <button type="button" className="nv-coll-setprimary"
+                      onClick={e => { e.stopPropagation(); void send({ kind: 'collection_move_item', moduleId, id: item.id }) }}>
+                      {fmt(t, 'coll.setAs', { label: primaryLabel })}
+                    </button>
+                  )}
+                  {data.presentation?.layout === 'quoteWall' ? null : imageId !== undefined ? (
+                    <img className={`nv-coll-cardimg${data.cardAspect === undefined ? '' : ` nv-coll-cardimg-${data.cardAspect}`}`} src={imageUrl(imageId)} alt="" />
                   ) : (
-                    <span className="nv-coll-cardimg nv-coll-cardimg-empty" title={t('coll.image.pending')}>
+                    <span className={`nv-coll-cardimg nv-coll-cardimg-empty${data.cardAspect === undefined ? '' : ` nv-coll-cardimg-${data.cardAspect}`}`} title={t('coll.image.pending')}>
                       {glyph.sparkle(20)}
                     </span>
                   )}
-                  <span className="nv-coll-cardname">{item.name}</span>
+                  <span className={`nv-coll-cardname${item.name === '' ? ' is-ph' : ''}`}>{item.name === '' ? (sourceItem?.name ?? t('coll.unnamed')) : item.name}</span>
                   {subtitle !== '' && <span className="nv-coll-cardsum">{subtitle}</span>}
                   {statText !== '' && <span className="nv-coll-cardstat">{statText}</span>}
-                </button>
+                  {onOpenPlace !== undefined && placeField !== undefined && (() => {
+                    const text = placeText(item)
+                    const marker = (places ?? []).find(place => place.label === text || place.markerId === text)
+                    if (marker !== undefined) return (
+                      <button type="button" className="nv-coll-placelink"
+                        onClick={event => { event.stopPropagation(); onOpenPlace(item) }}>{t('coll.map.open')}</button>
+                    )
+                    return (
+                      <select className="nv-coll-placebind" defaultValue="" onClick={event => event.stopPropagation()}
+                        onChange={event => {
+                          const value = event.target.value
+                          if (value === '__create__') { onCreatePlace?.(item); return }
+                          const chosen = (places ?? []).find(place => place.markerId === value)
+                          if (chosen !== undefined) onBindPlace?.(item, chosen)
+                        }}>
+                        <option value="">{text === '' ? t('coll.map.bind') : fmt(t, 'coll.map.missing', { name: text })}</option>
+                        {(places ?? []).map(place => <option key={place.markerId} value={place.markerId}>{place.label ?? place.markerId}</option>)}
+                        <option value="__create__">{t('coll.map.create')}</option>
+                      </select>
+                    )
+                  })()}
+                </div>
               )
             })}
+            {si === sections.length - 1 && (draft ?? (
+              <button type="button"
+                className={`nv-coll-addtile${data.cardAspect === undefined ? '' : ` nv-coll-addtile-${data.cardAspect}`}${data.presentation === undefined ? '' : ` nv-coll-addtile-${data.presentation.layout}`}`}
+                onClick={onAdd}>
+                <span className="nv-coll-addtile-plus">＋</span>
+                <b>{addLabel}</b>
+              </button>
+            ))}
           </div>
         </section>
       ))}
@@ -1912,14 +4611,20 @@ function CollCards({ data, t, imageUrl, openId, onOpen }: {
   )
 }
 
-/** 表单视图：一条一张表单卡，字段按「标签—值」逐行排；点卡头打开完整编辑。 */
-function CollForm({ data, t, imageUrl, openId, onOpen }: {
+/** 表单视图：一条一张表单卡；字段本身点一下就能改，卡头只负责进详情。 */
+function CollForm({ data, t, imageUrl, openId, onOpen, moduleId, send, refTargets }: {
   readonly data: CollData
   readonly t: ShellT
   readonly imageUrl: (resourceId: string) => string
   readonly openId: string | null
   readonly onOpen: (id: string | null) => void
+  readonly moduleId: string
+  readonly send: WidgetSend
+  readonly refTargets?: readonly RefTarget[]
 }) {
+  const setValue = (itemId: string, field: CollField, value: CollValue): void => {
+    void send({ kind: 'collection_set_value', moduleId, itemId, fieldId: field.id, value })
+  }
   return (
     <div className="nv-coll-forms">
       {data.items.map(item => (
@@ -1927,7 +4632,7 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
           <button type="button" className={`nv-coll-formhead${data.items.length === 1 ? ' nv-coll-formhead-solo' : ''}`}
             onClick={() => onOpen(openId === item.id ? null : item.id)}>
             {data.items.length > 1 && <span className="nv-coll-formname">{item.name}</span>}
-            <span className="nv-coll-formedit">{t('coll.form.edit')}</span>
+            <span className="nv-coll-formedit">{t('coll.detail')}</span>
           </button>
           <div className="nv-coll-formmain">
           {(() => {
@@ -1943,22 +4648,13 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
               // 图片字段已由表单头部的头像承接，行内不再重复一张大图；背景句移到整幅引用块。
               if (field.type === 'image') return null
               if (field.name === '一句话' || field.name === '一句话背景') return null
-              const text = collText(raw)
-              if (field.type === 'chips') {
-                const chips = text.split('、').map(part => part.trim()).filter(part => part !== '')
-                return (
-                  <div key={field.id} className="nv-coll-formrow">
-                    <span className="nv-coll-formlabel">{field.name}</span>
-                    <span className="nv-coll-formvalue nv-coll-chips">
-                      {chips.length === 0 ? '—' : chips.map(chip => <span key={chip} className="nv-coll-chip nv-coll-chip-neutral">{chip}</span>)}
-                    </span>
-                  </div>
-                )
-              }
               return (
                 <div key={field.id} className="nv-coll-formrow">
                   <span className="nv-coll-formlabel">{field.name}</span>
-                  <span className={`nv-coll-formvalue${text === '' ? ' nv-coll-formempty' : ''}`}>{text === '' ? '—' : text}</span>
+                  <span className="nv-coll-formvalue">
+                    <CollInlineValue field={field} raw={raw} t={t} refTargets={refTargets}
+                      placeholder={t('coll.cell.fill')} onSet={value => setValue(item.id, field, value)} />
+                  </span>
                 </div>
               )
             })}
@@ -1969,7 +4665,12 @@ function CollForm({ data, t, imageUrl, openId, onOpen }: {
             const quoteText = quoteField === undefined ? '' : collText(data.values[item.id]?.[quoteField.id])
             return quoteText === ''
               ? null
-              : <div className="nv-coll-formquote">{quoteText}</div>
+              : (
+                <div className="nv-coll-formquote">
+                  <CollInlineText value={quoteText} placeholder={t('coll.cell.fill')} multiline
+                    onCommit={next => setValue(item.id, quoteField!, next)} />
+                </div>
+              )
           })()}
         </section>
       ))}
@@ -1985,21 +4686,171 @@ export const chipTone = (text: string): string => {
   return 'neutral'
 }
 
+/** 单元格本地草稿：平时是文字，单击就进入输入态；回车/失焦保存。 */
+function CollInlineText({ value, placeholder, multiline, numeric, onCommit, className, autoEdit }: {
+  readonly value: string
+  readonly placeholder: string
+  readonly multiline?: boolean
+  readonly numeric?: boolean
+  readonly onCommit: (text: string) => void
+  readonly className?: string
+  /** 直接进入编辑态：用于“＋ 详细说明”这类先点后写的空字段。 */
+  readonly autoEdit?: boolean
+}) {
+  const [editing, setEditing] = useState(autoEdit === true)
+  const [draft, setDraft] = useState(value)
+  useEffect(() => { if (!editing) setDraft(value) }, [value, editing])
+  const commit = (): void => {
+    setEditing(false)
+    if (draft !== value) onCommit(draft)
+  }
+  if (!editing) {
+    return (
+      <button type="button" className={`nv-coll-cell${value === '' ? ' is-ph' : ''}${className === undefined ? '' : ` ${className}`}`}
+        onClick={() => { setDraft(value); setEditing(true) }}>
+        {value === '' ? placeholder : value}
+      </button>
+    )
+  }
+  return multiline === true ? (
+    <textarea className="nv-coll-cellinput nv-coll-cellarea" value={draft} autoFocus rows={2}
+      onChange={event => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={event => {
+        if (event.key === 'Escape') { setDraft(value); setEditing(false) }
+      }} />
+  ) : (
+    <input className="nv-coll-cellinput" type={numeric === true ? 'number' : 'text'} value={draft} autoFocus
+      onChange={event => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={event => {
+        if (event.key === 'Enter') event.currentTarget.blur()
+        else if (event.key === 'Escape') { setDraft(value); setEditing(false) }
+      }} />
+  )
+}
+
+interface DraftResult {
+  readonly name: string
+  readonly values: Record<string, CollValue>
+  readonly image?: { readonly base64: string, readonly mediaType: string }
+}
+
+/** 引用格：始终是下拉，点一次即改。 */
+function CollRefSelect({ field, raw, t, refTargets, onSet }: {
+  readonly field: CollField
+  readonly raw: CollValue | undefined
+  readonly t: ShellT
+  readonly refTargets?: readonly RefTarget[]
+  readonly onSet: (value: CollValue) => void
+}) {
+  const current = refValueOf(raw)
+  const currentKey = current === undefined ? '' : `ref:${current.itemId ?? current.cardId}`
+  const targets = (refTargets ?? []).filter(target => field.type === 'person' ? target.kind === 'CHARACTER' : target.kind === 'WORLD')
+  return (
+    <select className="nv-coll-ref nv-coll-cellref" value={currentKey}
+      onChange={event => {
+        if (event.target.value.startsWith('ref:')) return
+        const target = targets.find(candidate => candidate.cardId === event.target.value)
+        onSet(target === undefined ? '' : { cardId: target.cardId, name: target.name })
+      }}>
+      {current !== undefined && <option value={currentKey}>{current.name}</option>}
+      <option value="">—</option>
+      {targets.map(target => <option key={target.cardId} value={target.cardId}>{target.name}</option>)}
+    </select>
+  )
+}
+
+/** 字段值控件：文本/数字/长文本/词条/引用各用各的直编控件。 */
+function CollInlineValue({ field, raw, t, refTargets, placeholder, onSet }: {
+  readonly field: CollField
+  readonly raw: CollValue | undefined
+  readonly t: ShellT
+  readonly refTargets?: readonly RefTarget[]
+  readonly placeholder: string
+  readonly onSet: (value: CollValue) => void
+}) {
+  if (field.type === 'person' || field.type === 'place') {
+    return <CollRefSelect field={field} raw={raw} t={t} refTargets={refTargets} onSet={onSet} />
+  }
+  const text = collText(raw)
+  if (field.type === 'chips') {
+    return <ChipsEditor value={text} placeholder={t('coll.chips.add')} onCommit={next => onSet(next)} />
+  }
+  return (
+    <CollInlineText value={text} placeholder={placeholder} multiline={field.type === 'longtext'}
+      numeric={field.type === 'number' || field.type === 'time'}
+      onCommit={next => {
+        if (field.type === 'number' || field.type === 'time') {
+          const number = Number(next)
+          onSet(next.trim() !== '' && Number.isFinite(number) ? number : next)
+        } else onSet(next)
+      }} />
+  )
+}
+
+/** 名称格：单击改名，行尾 › 进详情。 */
+function CollNameCell({ item, t, onRename, onOpen }: {
+  readonly item: CollItem
+  readonly t: ShellT
+  readonly onRename: (name: string) => void
+  readonly onOpen?: (id: string) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(item.name)
+  useEffect(() => { if (!editing) setDraft(item.name) }, [item.name, editing])
+  const commit = (): void => {
+    setEditing(false)
+    const next = draft.trim()
+    if (next !== '' && next !== item.name) onRename(next)
+  }
+  return (
+    <span className="nv-coll-nameline">
+      {editing ? (
+        <input className="nv-coll-cellinput nv-coll-nameinput" value={draft} autoFocus
+          onChange={event => setDraft(event.target.value)}
+          onBlur={commit}
+          onKeyDown={event => {
+            if (event.key === 'Enter') event.currentTarget.blur()
+            else if (event.key === 'Escape') { setDraft(item.name); setEditing(false) }
+          }} />
+      ) : (
+        <button type="button" className={`nv-coll-cell nv-coll-cellname${item.name === '' ? ' is-ph' : ''}`}
+          onClick={() => { setDraft(item.name); setEditing(true) }}>
+          {item.name === '' ? t('coll.unnamed') : item.name}
+        </button>
+      )}
+      {onOpen !== undefined && (
+        <button type="button" className="nv-coll-rowopen" aria-label={t('coll.detail')} title={t('coll.detail')}
+          onClick={() => onOpen(item.id)}>›</button>
+      )}
+    </span>
+  )
+}
+
 /** 列表视图：字段列 + 条目行；引用列是行内选择器，立场列是彩色芯片。 */
-function CollList({ data, t, moduleId, send, refTargets }: {
+function CollList({ data, t, moduleId, send, refTargets, onOpen, draftCard }: {
   readonly data: CollData
   readonly t: ShellT
   readonly moduleId: string
   readonly send: WidgetSend
   readonly refTargets?: readonly RefTarget[]
+  readonly onOpen?: (id: string) => void
+  readonly draftCard?: ReactNode
 }) {
   const setValue = (itemId: string, field: CollField, value: CollValue): void => {
     void send({ kind: 'collection_set_value', moduleId, itemId, fieldId: field.id, value })
   }
-  // 条目自带名称列；集合里若也有「名称」字段就不再重复一列。
-  const columns = data.fields.filter(field => field.name !== '名称' && field.name !== 'Name')
+  const patchItem = (itemId: string, patch: Record<string, string>): void => {
+    void send({ kind: 'collection_update_item', moduleId, id: itemId, patch })
+  }
+  // 条目自带名称列；与条目名全等的字段（例如语录的正文）也不再重复一列。
+  const columns = data.fields.filter(field => field.name !== '名称' && field.name !== 'Name'
+    && data.items.some(item => collText(data.values[item.id]?.[field.id]) !== item.name))
   const showSummary = data.items.some(item => item.summary !== '')
   return (
+    <>
+      {draftCard !== undefined && <div className="nv-coll-listdraft">{draftCard}</div>}
     <table className="nv-coll-table">
       <thead>
         <tr>
@@ -2011,44 +4862,26 @@ function CollList({ data, t, moduleId, send, refTargets }: {
       <tbody>
         {data.items.map(item => (
           <tr key={item.id}>
-            <td className="nv-coll-tdname">{item.name}</td>
-            {columns.map(f => {
-              const raw = data.values[item.id]?.[f.id]
-              if (f.type === 'person' || f.type === 'place') {
-                const current = refValueOf(raw)
-                const currentKey = current === undefined ? '' : `ref:${current.itemId ?? current.cardId}`
-                return (
-                  <td key={f.id}>
-                    <select className="nv-coll-ref nv-coll-reftd" value={currentKey}
-                      onChange={event => {
-                        if (event.target.value.startsWith('ref:')) return
-                        const target = (refTargets ?? []).find(candidate => candidate.cardId === event.target.value)
-                        setValue(item.id, f, target === undefined ? '' : { cardId: target.cardId, name: target.name })
-                      }}>
-                      {current !== undefined && <option value={currentKey}>{current.name}</option>}
-                      <option value="">—</option>
-                      {(refTargets ?? [])
-                        .filter(target => f.type === 'person' ? target.kind === 'CHARACTER' : target.kind === 'WORLD')
-                        .map(target => <option key={target.cardId} value={target.cardId}>{target.name}</option>)}
-                    </select>
-                  </td>
-                )
-              }
-              const text = collText(raw)
-              if (f.type === 'chips') {
-                const chips = text.split('、').map(part => part.trim()).filter(part => part !== '')
-                return <td key={f.id}>{chips.length === 0 ? '' : chips.map(chip => <span key={chip} className="nv-coll-chip nv-coll-chip-neutral">{chip}</span>)}</td>
-              }
-              if (f.name === '立场') {
-                return <td key={f.id}>{text === '' ? '' : <span className={`nv-coll-chip nv-coll-chip-${chipTone(text)}`}>{text}</span>}</td>
-              }
-              return <td key={f.id}>{text}</td>
-            })}
-            {showSummary && <td className="nv-coll-tdsum">{item.summary}</td>}
+            <td className="nv-coll-tdname">
+              <CollNameCell item={item} t={t} onOpen={onOpen} onRename={name => patchItem(item.id, { name })} />
+            </td>
+            {columns.map(f => (
+              <td key={f.id} data-label={f.name}>
+                <CollInlineValue field={f} raw={data.values[item.id]?.[f.id]} t={t} refTargets={refTargets}
+                  placeholder={t('coll.cell.fill')} onSet={value => setValue(item.id, f, value)} />
+              </td>
+            ))}
+            {showSummary && (
+              <td className="nv-coll-tdsum" data-label={t('coll.col.summary')}>
+                <CollInlineText value={item.summary} placeholder={t('coll.cell.fill')}
+                  onCommit={next => patchItem(item.id, { summary: next })} />
+              </td>
+            )}
           </tr>
         ))}
       </tbody>
     </table>
+    </>
   )
 }
 
@@ -2128,31 +4961,10 @@ function ChipsField({ value, placeholder, onCommit }: {
   readonly placeholder: string
   readonly onCommit: (text: string) => void
 }) {
-  const chips = value.split('、').map(part => part.trim()).filter(part => part !== '')
-  const [draft, setDraft] = useState('')
-  const commit = (next: readonly string[]): void => onCommit(next.join('、'))
-  return (
-    <span className="nv-coll-chips">
-      {chips.map(chip => (
-        <span key={chip} className="nv-coll-chip nv-coll-chip-neutral">{chip}
-          <button type="button" className="nv-coll-chipx" aria-label="remove" onClick={() => commit(chips.filter(candidate => candidate !== chip))}>×</button>
-        </span>
-      ))}
-      <input className="nv-coll-chipinput" value={draft} placeholder={placeholder}
-        onChange={event => setDraft(event.target.value)}
-        onKeyDown={event => {
-          if (event.key !== 'Enter') return
-          event.preventDefault()
-          const chip = draft.trim()
-          if (chip === '' || chips.includes(chip)) return
-          commit([...chips, chip])
-          setDraft('')
-        }} />
-    </span>
-  )
+  return <ChipsEditor value={value} placeholder={placeholder} onCommit={onCommit} />
 }
 
-function CollDetail({ data, item, t, moduleId, imageUrl, send, refTargets, onClose }: {
+function CollDetail({ data, item, t, moduleId, imageUrl, send, refTargets, onClose, sourceData, sourceItem, sourceSend, onOpenSource, presentation, places, onOpenPlace }: {
   readonly data: CollData
   readonly item: CollItem
   readonly t: ShellT
@@ -2161,7 +4973,17 @@ function CollDetail({ data, item, t, moduleId, imageUrl, send, refTargets, onClo
   readonly send: WidgetSend
   readonly refTargets?: readonly RefTarget[]
   readonly onClose: () => void
+  readonly sourceData?: CollData
+  readonly sourceItem?: CollItem
+  readonly sourceSend?: WidgetSend
+  readonly onOpenSource?: () => void
+  readonly presentation?: CollData['presentation']
+  readonly places?: readonly TlPlace[]
+  readonly onOpenPlace?: (item: CollItem) => void
 }) {
+  const [showOptional, setShowOptional] = useState(false)
+  const optionalNames = new Set(presentation?.optional ?? [])
+  const hiddenOptional = data.fields.filter(field => field.type !== 'image' && optionalNames.has(field.name) && collText(data.values[item.id]?.[field.id]).trim() === '').length
   const setValue = (field: CollField, raw: string): void => {
     const current = collText(data.values[item.id]?.[field.id])
     if (raw === current) return
@@ -2172,20 +4994,79 @@ function CollDetail({ data, item, t, moduleId, imageUrl, send, refTargets, onClo
   const patchItem = (patch: Record<string, string>): void => {
     void send({ kind: 'collection_update_item', moduleId, id: item.id, patch })
   }
+  const sourceImageId = ((): string | undefined => {
+    if (sourceData === undefined || sourceItem === undefined) return undefined
+    if (sourceItem.visualKey !== null) return sourceItem.visualKey
+    const image = sourceData.fields.find(field => field.type === 'image')
+    const raw = image === undefined ? undefined : sourceData.values[sourceItem.id]?.[image.id]
+    return typeof raw === 'object' && raw !== null && 'resourceId' in raw && typeof raw.resourceId === 'string' ? raw.resourceId : undefined
+  })()
+  const imageId = item.visualKey ?? sourceImageId
+  const setSourceValue = (field: CollField, raw: string): void => {
+    if (sourceData === undefined || sourceItem === undefined || sourceSend === undefined) return
+    const current = collText(sourceData.values[sourceItem.id]?.[field.id])
+    if (raw === current) return
+    const value: CollValue = (field.type === 'number' || field.type === 'time') && raw.trim() !== '' && Number.isFinite(Number(raw))
+      ? Number(raw) : raw
+    void sourceSend({ kind: 'collection_set_value', itemId: sourceItem.id, fieldId: field.id, value })
+  }
   return (
     <div className="nv-coll-detail">
       <div className="nv-coll-detailhead">
         <CollItemName item={item} t={t} onRename={name => patchItem({ name })} />
-        <button type="button" className="nv-canvas-tabx" aria-label={t('create.cancel')} onClick={onClose}>×</button>
+        <button type="button" className="nv-coll-detailclose" aria-label={t('create.cancel')} onClick={onClose}>×</button>
       </div>
-      {item.visualKey !== null && <img className="nv-coll-detailimg" src={imageUrl(item.visualKey)} alt="" />}
-      <div className="nv-coll-detailgrid">
-        {data.fields.map(field => {
+      {imageId !== undefined && <img className="nv-coll-detailimg" src={imageUrl(imageId)} alt="" />}
+      {onOpenPlace !== undefined && data.fields.some(field => field.name === '地图标记' || field.name === '地点') && (
+        <button type="button" className="nv-coll-placelink" onClick={() => onOpenPlace(item)}>
+          {(() => {
+            const field = data.fields.find(candidate => candidate.name === '地图标记' || candidate.name === '地点')
+            const text = field === undefined ? '' : collText(data.values[item.id]?.[field.id]).trim()
+            const found = (places ?? []).some(place => place.label === text || place.markerId === text)
+            return found ? t('coll.map.open') : text === '' ? t('coll.map.bind') : fmt(t, 'coll.map.missing', { name: text })
+          })()}
+        </button>
+      )}
+      {sourceData !== undefined && sourceItem !== undefined && sourceSend !== undefined && (
+        <div className="nv-coll-sourcebox">
+          <div className="nv-coll-sourceboxhead">
+            <b>{fmt(t, 'coll.sourceBase', { name: sourceItem.name })}</b>
+            {onOpenSource !== undefined && <button type="button" onClick={onOpenSource}>{t('card.refOpen')}</button>}
+          </div>
+          <p>{t('coll.sourceBaseHint')}</p>
+          <div className="nv-coll-detailgrid">
+            {sourceData.fields.filter(field => field.type !== 'image' && field.name !== '档案' && field.name !== '名称' && field.name !== '姓名').map(field => {
+              const value = collText(sourceData.values[sourceItem.id]?.[field.id])
+              return (
+                <label key={field.id} className="nv-coll-field">
+                  <span className="nv-coll-fieldname">{field.name}</span>
+                  {field.type === 'chips' ? (
+                    <ChipsField value={value} placeholder={t('coll.chips.add')} onCommit={next => setSourceValue(field, next)} />
+                  ) : field.type === 'longtext' ? (
+                    <CollFieldArea value={value} onCommit={next => setSourceValue(field, next)} />
+                  ) : (
+                    <CollFieldInput value={value} numeric={field.type === 'number' || field.type === 'time'} onCommit={next => setSourceValue(field, next)} />
+                  )}
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      )}
+      {(() => {
+        const fieldNode = (field: CollField) => {
+          if (field.type === 'image') return null
           const v = collText(data.values[item.id]?.[field.id])
+          if (!showOptional && optionalNames.has(field.name) && v.trim() === '') return null
           return (
             <label key={field.id} className="nv-coll-field">
               <span className="nv-coll-fieldname">{field.name}</span>
-              {field.type === 'person' || field.type === 'place' ? (
+              {field.name === '地图标记' && places !== undefined && places.length > 0 ? (
+                <select className="nv-coll-ref" value={collText(data.values[item.id]?.[field.id])} onChange={event => setValue(field, event.target.value)}>
+                  <option value="">—</option>
+                  {places.map(place => <option key={`${place.mapModuleId}:${place.markerId}`} value={place.label ?? place.markerId}>{place.label ?? place.markerId}</option>)}
+                </select>
+              ) : field.type === 'person' || field.type === 'place' ? (
                 <select className="nv-coll-ref" value={refCardId(data.values[item.id]?.[field.id]) ?? ''}
                   onChange={event => {
                     const target = (refTargets ?? []).find(candidate => candidate.cardId === event.target.value)
@@ -2208,8 +5089,32 @@ function CollDetail({ data, item, t, moduleId, imageUrl, send, refTargets, onClo
               )}
             </label>
           )
-        })}
-      </div>
+        }
+        const sections = (presentation?.detail ?? []).map(section => ({
+          title: section.title,
+          fields: data.fields.filter(field => section.fields.includes(field.name) && (showOptional || !optionalNames.has(field.name) || collText(data.values[item.id]?.[field.id]).trim() !== '')),
+        })).filter(section => section.fields.length > 0)
+        const covered = new Set(sections.flatMap(section => section.fields.map(field => field.name)))
+        const rest = data.fields.filter(field => !covered.has(field.name))
+        const toggle = hiddenOptional > 0 ? (
+          <button type="button" className="nv-coll-optionaltoggle" onClick={() => setShowOptional(value => !value)}>
+            {showOptional ? t('coll.optional.hide') : fmt(t, 'coll.optional.show', { n: hiddenOptional })}
+          </button>
+        ) : null
+        if (sections.length === 0) return <><div className="nv-coll-detailgrid">{data.fields.map(fieldNode)}</div>{toggle}</>
+        return (
+          <>
+            {sections.map(section => (
+              <section key={section.title} className="nv-coll-detailsec">
+                <h4>{section.title}</h4>
+                <div className="nv-coll-detailgrid">{section.fields.map(fieldNode)}</div>
+              </section>
+            ))}
+            {rest.length > 0 && <div className="nv-coll-detailgrid">{rest.map(fieldNode)}</div>}
+            {toggle}
+          </>
+        )
+      })()}
       <label className="nv-coll-field">
         <span className="nv-coll-fieldname">{t('coll.col.summary')}</span>
         <CollFieldInput value={item.summary} onCommit={text => patchItem({ summary: text })} />

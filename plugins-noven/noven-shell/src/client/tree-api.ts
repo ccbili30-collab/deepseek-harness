@@ -116,20 +116,32 @@ export async function treeOp(addr: CardAddr, op: { readonly op: 'mkdir' | 'rmdir
   return response?.ok === true
 }
 
+/** Outcome of a file-level tree write: refused ops carry the route's message. */
+export interface FileOpResult {
+  readonly ok: boolean
+  /** HTTP status; 0 when the request never completed. */
+  readonly status: number
+  /** Route explanation for a refused op. */
+  readonly error?: string
+}
+
 /**
  * 树的散文件写面：`rm` 删一个文件（目录会被拒），`rename` 原地改名
  * （name 是不含分隔符的新文件名）。卡/ 目录内部由 CardStore 独管，路由拒收。
  * @param addr - 会话或裸项目根。
  * @param op - path 的项目相对路径校验与冲突由路由负责。
- * @returns 是否成功。
+ * @returns ok 与 HTTP 状态；拒绝时带服务端原文（404 = 文件已不在）。
  */
-export async function fileOp(addr: CardAddr, op: { readonly op: 'rm' | 'rename'; readonly path: string; readonly name?: string }): Promise<boolean> {
+export async function fileOp(addr: CardAddr, op: { readonly op: 'rm' | 'rename'; readonly path: string; readonly name?: string }): Promise<FileOpResult> {
   const response = await fetch(api(addr), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(op),
   }).catch(() => undefined)
-  return response?.ok === true
+  if (response === undefined) return { ok: false, status: 0 }
+  if (response.ok) return { ok: true, status: response.status }
+  const error = await response.text()
+  return { ok: false, status: response.status, ...(error === '' ? {} : { error }) }
 }
 
 /**

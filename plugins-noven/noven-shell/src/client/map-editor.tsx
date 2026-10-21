@@ -7,6 +7,8 @@
  * 「图高单位」空间工作（x∈[0,aspect]，y∈[0,1]），距离与宽度各向同性。
  * @module noven-shell/client/map-editor
  */
+import { usePlaceFocus } from './place-link.ts'
+import { setCollectionFocus } from './collection-focus.ts'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { getStroke } from 'perfect-freehand'
@@ -907,18 +909,23 @@ interface Gesture {
   alt?: boolean
 }
 
-export function MapEditor({ module, t, send, ask, imageUrl, imageResources, referenced }: {
+export function MapEditor({ module, t, send, ask, imageUrl, imageResources, referenced, onFilterTimeline, onOpenSource }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
-  readonly send: (command: CardCommand) => Promise<void>
+  readonly send: (command: CardCommand) => Promise<boolean>
   /** 向本会话排一句话——无底图时「直接生成」和草稿生成都走这里。 */
   readonly ask: (text: string) => Promise<void>
   readonly imageUrl: (resourceId: string) => string
   readonly imageResources: readonly { readonly id: string }[]
   /** 被集合条目引用到的地点名：开启「只看被引用」时只画这些标记。 */
   readonly referenced?: ReadonlySet<string>
+  /** 点标记时把时间线打开并过滤到这个地点。 */
+  readonly onFilterTimeline?: (marker: { readonly id: string, readonly label: string }) => void
+  /** 从地理条目跳来后，回链到来源模块。 */
+  readonly onOpenSource?: (moduleId: string) => void
 }) {
   const data = useMemo(() => editorData(module.widget?.data), [module.widget?.data])
+  const placeFocus = usePlaceFocus()
   const [refOnly, setRefOnly] = useState(false)
   const refOnlyRef = useRef(false)
   const referencedRef = useRef<ReadonlySet<string>>(new Set())
@@ -927,6 +934,7 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
   const stageRef = useRef<HTMLDivElement | null>(null)
   const cvRef = useRef<HTMLCanvasElement | null>(null)
   const imgRef = useRef<HTMLImageElement | null>(null)
+  const baseInputRef = useRef<HTMLInputElement | null>(null)
 
   // 工作空间：x∈[0,aspect]，y∈[0,1]；存储转回宽/高比例。
   const aspectRef = useRef(1.6)
@@ -2979,48 +2987,50 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
 
   const bare = image === undefined || image.resourceId === undefined
   if (bare && !started && data.objects.length === 0 && data.draft.length === 0 && data.base === undefined && data.world === undefined) {
+    const startDraw = (): void => {
+      setStarted(true); setMode('draft')
+      // 默认底层铺海：画布不再是"未知"，手绘往海上加陆地。
+      if (docRef.current.base === undefined) {
+        docRef.current = { ...docRef.current, base: BASE_PRESETS[0] }
+        commit()
+      }
+    }
     return (
-      <div className="nv-wg nv-map">
-        <div className="nv-map-empty">
-          <span className="nv-map-emptyicon">{glyph.map(26)}</span>
-          <span>{t('wg.map.noImage')}</span>
-          {MAP_WORLD && (
-          <div className="nv-map-entries">
-            <button type="button" className="nv-map-entry"
-              onClick={() => setWorld({ seed: generateSeed(), heightmap: { kind: 'template', template: 'continents' } })}>
-              <span className="nv-map-entryicon">{glyph.globe(20)}</span>
-              <span className="nv-map-entryname">{t('wg.map.world.new')}</span>
-              <span className="nv-map-entrydesc">{t('wg.map.world.addDesc')}</span>
-            </button>
+      <div className="nv-wg nv-map nv-map-bare">
+        <div className="nv-map-barecanvas">
+          <div className="nv-map-baregrid" aria-hidden="true" />
+          <div className="nv-map-baretop">
+            <button type="button" className="nv-map-barebtn nv-map-barebtn-primary"
+              onClick={() => baseInputRef.current?.click()}>{t('wg.map.import')}</button>
+            <input ref={baseInputRef} type="file" accept="image/*" hidden onChange={event => {
+              const file = event.target.files?.[0]
+              event.currentTarget.value = ''
+              if (file === undefined) return
+              void (async () => {
+                const bytes = new Uint8Array(await file.arrayBuffer())
+                await send({ kind: 'adopt_image', bytes, mediaType: file.type === '' ? 'image/png' : file.type, moduleId: module.id })
+              })()
+            }} />
+            {MAP_WORLD && (
+              <button type="button" className="nv-map-barebtn"
+                onClick={() => setWorld({ seed: generateSeed(), heightmap: { kind: 'template', template: 'continents' } })}>
+                {t('wg.map.world.new')}
+              </button>
+            )}
           </div>
-          )}
-          {MAP_EDITING && (
-          <div className="nv-map-entries">
-            <button type="button" className="nv-map-entry"
-              onClick={() => {
-                setStarted(true); setMode('draft')
-                // 默认底层铺海：画布不再是"未知"，手绘往海上加陆地。
-                if (docRef.current.base === undefined) {
-                  docRef.current = { ...docRef.current, base: BASE_PRESETS[0] }
-                  commit()
-                }
-              }}>
-              <span className="nv-map-entryicon">{glyph.layers(20)}</span>
-              <span className="nv-map-entryname">{t('wg.map.entry.draw')}</span>
-              <span className="nv-map-entrydesc">{t('wg.map.entry.drawDesc')}</span>
-            </button>
-            <button type="button" className="nv-map-entry"
-              onClick={() => { void ask(t('wg.map.genPrompt')); setGenAsked(true) }}>
-              <span className="nv-map-entryicon">{glyph.sparkle(20)}</span>
-              <span className="nv-map-entryname">{t('wg.map.entry.gen')}</span>
-              <span className="nv-map-entrydesc">{t('wg.map.entry.genDesc')}</span>
-            </button>
+          <button type="button" className="nv-map-baremarker" onClick={() => { setStarted(true); setMode('annotate') }}>
+            <span>＋</span>
+            <b>{t('wg.map.firstMark')}</b>
+          </button>
+          <div className="nv-map-baretools">
+            <button type="button" onClick={startDraw}>{t('wg.map.entry.draw')}</button>
+            <span>{t('wg.map.layer.mark')}</span>
+            <span>{t('wg.map.layer.range')}</span>
+            {imageResources.length > 0 && (
+              <button type="button" onClick={() => setPicking(v => !v)}>{t('wg.map.pick')}</button>
+            )}
           </div>
-          )}
-          {genAsked && <span className="nv-maped-mini">{t('wg.map.genSent')}</span>}
-          {imageResources.length > 0 && (
-            <button type="button" className="nv-wg-add" onClick={() => setPicking(v => !v)}>{t('wg.map.pick')}</button>
-          )}
+          {genAsked && <span className="nv-map-barehint">{t('wg.map.genSent')}</span>}
         </div>
         {picking && (
           <div className="nv-map-picker">
@@ -3632,6 +3642,19 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
     animView({ s, x: st.clientWidth / 2 - w[0] * s, y: st.clientHeight / 2 - w[1] * s }, 300)
   }, [animView, fitScale, markWork, sel])
 
+  useEffect(() => {
+    if (placeFocus === undefined || placeFocus.mapModuleId !== module.id) return
+    const marker = docRef.current.objects.find(object => object.type === 'mark'
+      && (object.id === placeFocus.markerId || object.name === (placeFocus.label ?? '')))
+    if (marker === undefined || marker.type !== 'mark') return
+    setSelId(marker.id)
+    const st = stageRef.current
+    if (st === null) return
+    const w = markWork(marker)
+    const s = Math.max(viewRef.current.s, fitScale() * 1.5)
+    animView({ s, x: st.clientWidth / 2 - w[0] * s, y: st.clientHeight / 2 - w[1] * s }, 300)
+  }, [animView, fitScale, markWork, module.id, module.widget?.data, placeFocus?.label, placeFocus?.mapModuleId, placeFocus?.markerId])
+
   if (!expanded) {
     return (
       <div className="nv-maped" ref={hostRef}>
@@ -3655,8 +3678,23 @@ export function MapEditor({ module, t, send, ask, imageUrl, imageResources, refe
                 onClick={() => setSelId(null)}>×</button>
             </div>
             <p className="nv-maped-infocarddesc">{sel.description === '' ? t('wg.map.noDesc') : sel.description}</p>
+            {placeFocus?.markerId === sel.id && placeFocus.sourceModuleId !== undefined && (
+              <button type="button" className="nv-maped-backlink"
+                onClick={() => {
+                  if (placeFocus.sourceItemId !== undefined) setCollectionFocus({
+                    ...(placeFocus.cardId === undefined ? {} : { cardId: placeFocus.cardId }),
+                    moduleId: placeFocus.sourceModuleId!, itemId: placeFocus.sourceItemId,
+                  })
+                  onOpenSource?.(placeFocus.sourceModuleId!)
+                }}>
+                ← {placeFocus.sourceModuleName ?? '来源'}{placeFocus.sourceItemName === undefined ? '' : ` · ${placeFocus.sourceItemName}`}
+              </button>
+            )}
             <div className="nv-maped-infocardacts">
               <button type="button" className="primary" onClick={focusMark}>{t('wg.map.locate')}</button>
+              {onFilterTimeline !== undefined && (
+                <button type="button" onClick={() => onFilterTimeline({ id: sel.id, label: sel.name })}>{t('wg.map.timeline')}</button>
+              )}
               <button type="button" onClick={() => setSelId(null)}>{t('wg.map.side.close')}</button>
             </div>
           </div>
