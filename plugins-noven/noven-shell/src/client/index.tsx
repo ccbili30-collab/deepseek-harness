@@ -1382,6 +1382,17 @@ export function apply(ctx: ClientContext): void {
     })
   }
 
+  /**
+   * 创作页的宿主必须是探索模式：工作区复用回来的空白可能是用户上次选的
+   * 标准模式，直接沿用会让创作页顶着「标准模式」开工。空白会话允许切换。
+   */
+  const ensureExplorePreset = async (sessionId: SessionId): Promise<void> => {
+    const row = ctx.sessions.list.getSnapshot().byId[sessionId]
+    if (row?.projectionValues?.agentPreset === 'explore') return
+    const result = await ctx.remote.agentPresets.select(sessionId, 'explore')
+    if (!result.ok) console.warn('noven-shell: explore preset select failed:', result.error)
+  }
+
   /** 创作页宿主：当前主视图不是空白会话时，为所选工作区接/建一个空白并在面板下选定（页面不离开）。 */
   const ensureBlankHost = async (workspaceId: WorkspaceId | undefined): Promise<void> => {
     const list = ctx.sessions.list.getSnapshot()
@@ -1389,13 +1400,18 @@ export function apply(ctx: ClientContext): void {
     const root = workspaceRootFor(workspaceId)
     // A blank outside the requested workspace cannot host this page: the composer
     // reads an unregistered cwd as "choose a workspace" and goes read-only.
-    // A blank from any other preset (e.g. standard, created before the default
-    // changed) cannot host it either: the seat would show that preset.
+    // A blank from another preset (e.g. standard, created before the default
+    // changed) can be switched: it has no history to protect.
     const preset = current?.projectionValues?.agentPreset
-    if (current?.blank === true && preset === 'explore' && (root === undefined || current.cwd === root)) return
+    const sameRoot = root === undefined || current?.cwd === root
+    if (current?.blank === true && sameRoot) {
+      if (preset !== 'explore') await ensureExplorePreset(current.id)
+      return
+    }
     const sessionId = workspaceId !== undefined
       ? await ctx.uiWorkspace.connectWorkspace(workspaceId)
       : await createSessionIn(recentSession()?.cwd)
+    await ensureExplorePreset(sessionId)
     // preserve 保住面板：普通 reveal 会在 replaceMain 里 selectPanel(null)，
     // 之后的任何面板重激活都输给晚到的提交。发布版 openSession 类型未带
     // options 参数（ui-workspace 源码与产物已带 preserve），走局部窄化。

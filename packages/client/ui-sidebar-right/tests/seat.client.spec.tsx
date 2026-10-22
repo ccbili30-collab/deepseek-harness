@@ -337,6 +337,23 @@ describe('RightbarSeat presentation', () => {
     expect(seen.at(-1)).toBe('text')
   })
 
+  it('offers a reopen control for a parked canvas in both rail and expanded chrome', async () => {
+    const h = await mountSeat()
+    h.open('kept.txt')
+    act(() => { h.actions.setCanvasParked(SESSION, true) })
+    // Collapsed panel: the rail keeps the parked canvas reachable.
+    const rail = h.view.container.querySelector<HTMLElement>('[data-sidebar-right-canvas-unpark]')
+    expect(rail).not.toBeNull()
+    fireEvent.click(rail!)
+    expect(h.instance.getSnapshot().bySession[SESSION]!.canvasParked).toBe(false)
+    // Expanded panel: the header carries the same control beside collapse.
+    act(() => { h.actions.setCanvasParked(SESSION, true); h.actions.setExpanded(SESSION, true) })
+    const head = h.view.container.querySelector<HTMLElement>('[data-sidebar-right-canvas-unpark]')
+    expect(head).not.toBeNull()
+    fireEvent.click(head!)
+    expect(h.instance.getSnapshot().bySession[SESSION]!.canvasParked).toBe(false)
+  })
+
   it('keeps the canvas claim across a retained surface hiding and return without any report', async () => {
     const h = await mountSeat()
     h.open('kept.txt')

@@ -267,14 +267,27 @@ function ExitFullscreenGlyph(): ReactNode {
   )
 }
 
-/** The panel's two controls, placed at the feature list's head. */
-function PanelChrome({ sessionId, fullscreen, actions, t, shortcuts, toggleFullscreen }: Pick<PanelProps, 'sessionId' | 'actions' | 't' | 'fullscreen' | 'shortcuts' | 'toggleFullscreen'>): ReactNode {
+/** The panel's controls, placed at the feature list's head. */
+function PanelChrome({ sessionId, fullscreen, actions, t, shortcuts, toggleFullscreen, canvasParked, hasCanvas }: Pick<PanelProps, 'sessionId' | 'fullscreen' | 'actions' | 't' | 'shortcuts' | 'toggleFullscreen'> & { readonly canvasParked: boolean; readonly hasCanvas: boolean }): ReactNode {
   const next: DockMode = fullscreen ? 'push' : 'fullscreen'
   const modeLabel = fullscreen ? t('chrome.exitFullscreen') : t('chrome.toFullscreen')
   const mode = shortcuts.find(entry => entry.id === 'pane.fullscreen.toggle')
   const toggle = shortcuts.find(entry => entry.id === 'sidebar.right.toggle')
   return (
     <>
+      {canvasParked && hasCanvas && (
+        <Tooltip label={t('canvas.expand')} side="bottom" delayMs={500}>
+          <button
+            type="button"
+            className={css.iconButton}
+            aria-label={t('canvas.expand')}
+            data-sidebar-right-canvas-unpark
+            onClick={() => { actions.setCanvasParked(sessionId, false) }}
+          >
+            <UnparkGlyph />
+          </button>
+        </Tooltip>
+      )}
       <Tooltip label={modeLabel} shortcutKeys={mode?.keys} side="bottom" delayMs={500}>
         <button
           type="button"
@@ -364,6 +377,25 @@ function FeatureNav(panel: PanelProps): ReactNode {
   )
 }
 
+/** The rail's own canvas reopen control: the parked region has no chrome to hold one. */
+function RailUnpark({ panel }: { readonly panel: PanelProps }): ReactNode {
+  const { actions, sessionId, surface, t } = panel
+  if (!surface.canvasParked || surface.layout.floats.length === 0) return null
+  return (
+    <Tooltip label={t('canvas.expand')} side="bottom" delayMs={500}>
+      <button
+        type="button"
+        className={css.railRow}
+        aria-label={t('canvas.expand')}
+        data-sidebar-right-canvas-unpark
+        onClick={() => { actions.setCanvasParked(sessionId, false) }}
+      >
+        <UnparkGlyph />
+      </button>
+    </Tooltip>
+  )
+}
+
 /**
  * The collapsed navigation column: an icon rail pinned to the panel's anchored
  * edge. Its top control re-expands the panel; below it the product's own zone
@@ -390,6 +422,7 @@ function FeatureRail(panel: PanelProps): ReactNode {
           <IconPanelLeftOutlineRegular className={css.railExpandGlyph} />
         </button>
       </Tooltip>
+      <RailUnpark panel={panel} />
       <div className={css.railTop}>{renderSlot('sidebar.right.pane.top', { rail: true })}</div>
       <nav className={css.railList}>
         {entries.map((entry) => {
@@ -668,6 +701,15 @@ function ParkGlyph(): ReactNode {
   )
 }
 
+/** The reopen chevron points away from the panel, back toward the parked canvas. */
+function UnparkGlyph(): ReactNode {
+  return (
+    <svg className={css.unparkGlyph} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M14.5 5.5 8 12l6.5 6.5" />
+    </svg>
+  )
+}
+
 /**
  * The panel: the navigation column anchored to the frame's right edge and
  * slid off it while collapsed — product navigation above the hairline,
@@ -703,6 +745,7 @@ function SidebarPanel(panel: PanelProps & { width: number; canvas: 'left' | 'rig
         <PanelChrome
           sessionId={sessionId} fullscreen={fullscreen} actions={panel.actions} t={panel.t}
           shortcuts={panel.shortcuts} toggleFullscreen={panel.toggleFullscreen}
+          canvasParked={surface.canvasParked} hasCanvas={surface.layout.floats.length > 0}
         />
       </div>
       {surface.zoneOrder.map(zone => zone === 'top'

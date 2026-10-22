@@ -24,14 +24,14 @@ export function FootLauncher({ wide, openSettings, openMy, t }: FootLauncherProp
   if (!wide) {
     return (
       <button type="button" className="nv-foot-rail" onClick={openSettings} aria-label={t('side.settings')}>
-        <FootAvatar src={profileAvatarUrl(profile)} name={profile.name} />
+        <FootAvatar src={profileAvatarUrl(profile)} />
       </button>
     )
   }
   return (
     <div className="nv-foot">
       <button type="button" className="nv-foot-user" onClick={openMy}>
-        <FootAvatar src={profileAvatarUrl(profile)} name={profile.name} />
+        <FootAvatar src={profileAvatarUrl(profile)} />
         <span className="nv-foot-name">{profile.name}</span>
       </button>
       <button type="button" className="nv-iconbtn nv-foot-gear" aria-label={t('side.settings')} onClick={openSettings}>
@@ -42,11 +42,11 @@ export function FootLauncher({ wide, openSettings, openMy, t }: FootLauncherProp
 }
 
 /**
- * The foot avatar: a round image while it decodes, a mint letter circle when
- * it cannot — a failed asset never leaves a broken square on the rail.
+ * The foot avatar: a round image while it decodes, an empty circle when the
+ * profile has no portrait — no invented initial stands in for identity.
  */
-function FootAvatar({ src, name }: { readonly src: string; readonly name: string }) {
+function FootAvatar({ src }: { readonly src: string }) {
   const [broken, setBroken] = useState(false)
-  if (broken) return <span className="nv-foot-avatar nv-foot-avatar-fallback" aria-hidden>{name.slice(0, 1)}</span>
+  if (src === '' || broken) return <span className="nv-foot-avatar nv-foot-avatar-empty" aria-hidden />
   return <img className="nv-foot-avatar" src={src} alt="" onError={() => { setBroken(true) }} />
 }

@@ -1511,9 +1511,6 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       <div className={`nv-cardpage-scroll${bleed ? ' nv-cardpage-scroll-bleed' : ''}`} ref={scrollRef}>
         {bleed ? (
           <>
-            <button type="button" className="nv-page-bleedback" onClick={() => onOpenCard?.(cardId)}>
-              ‹ {doc.name}
-            </button>
             {aiPageEditing && <span className="nv-ai-pill nv-ai-pill-bleed">{t('ai.editing')}</span>}
             <div className="nv-cardpage-bleed">
               {pageModule !== undefined && (

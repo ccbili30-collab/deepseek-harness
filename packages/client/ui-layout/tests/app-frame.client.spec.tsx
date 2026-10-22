@@ -247,7 +247,7 @@ describe('AppFrame', () => {
     const work = frame.querySelector<HTMLElement>('[data-work]')!
     act(() => { instance.actions.setCanvasFullscreen(true) })
     expect(frame.hasAttribute('data-canvas-fullscreen')).toBe(true)
-    expect(frame.style.gridTemplateColumns).toBe('0 minmax(0px, 1fr)')
+    expect(frame.style.gridTemplateColumns).toBe('minmax(0px, 1fr)')
     expect(work.style.gridTemplateColumns).toBe('minmax(0px, 1fr)')
     act(() => { instance.actions.setCanvasFullscreen(false) })
     expect(frame.hasAttribute('data-canvas-fullscreen')).toBe(false)

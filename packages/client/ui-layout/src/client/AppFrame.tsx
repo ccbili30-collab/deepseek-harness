@@ -462,7 +462,10 @@ export function AppFrame({
       style={{
         ...(document.documentElement.hasAttribute('data-windows-titlebar')
           ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
-        gridTemplateColumns: canvasFullscreen ? '0 minmax(0px, 1fr)' : `${cols.sidebar}px minmax(0px, 1fr)`,
+        // Fullscreen hides the navigation column, so the frame template must
+        // drop that track too: a hidden first child would otherwise leave the
+        // work layer auto-placed in the zero-width track.
+        gridTemplateColumns: canvasFullscreen ? 'minmax(0px, 1fr)' : `${cols.sidebar}px minmax(0px, 1fr)`,
       }}
       data-sidebar-collapsed={sidebarCollapsed || undefined}
       data-canvas-fullscreen={canvasFullscreen || undefined}

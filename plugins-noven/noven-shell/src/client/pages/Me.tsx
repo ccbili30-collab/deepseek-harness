@@ -22,7 +22,7 @@ import { dissolveElement } from '../dissolve.ts'
 import { ExcerptTile } from '../cardtile.tsx'
 import { CardPick, type CardKind } from './CardPick.tsx'
 import { LibraryOverview } from './Library.tsx'
-import { AVATARS, getProfile, onProfileChange, profileAvatarUrl, setProfile, type Profile } from '../profile.ts'
+import { getProfile, onProfileChange, profileAvatarUrl, readAvatarFile, setProfile, type Profile } from '../profile.ts'
 
 interface Props {
   readonly t: ShellT
@@ -192,7 +192,7 @@ function Editable({ value, placeholder, className, hint, onCommit }: {
   )
 }
 
-/** The profile edit dialog: avatar preset picker + name + bio, committed as one save. */
+/** The profile edit dialog: local portrait upload + name + bio, committed as one save. */
 function ProfileDialog({ t, open, profile, onClose }: {
   readonly t: ShellT
   readonly open: boolean
@@ -202,12 +202,22 @@ function ProfileDialog({ t, open, profile, onClose }: {
   const [name, setName] = useState(profile.name)
   const [bio, setBio] = useState(profile.bio)
   const [avatar, setAvatar] = useState(profile.avatar)
+  const [reading, setReading] = useState(false)
+  const fileRef = useRef<HTMLInputElement | null>(null)
   useEffect(() => {
-    if (open) { setName(profile.name); setBio(profile.bio); setAvatar(profile.avatar) }
+    if (open) { setName(profile.name); setBio(profile.bio); setAvatar(profile.avatar); setReading(false) }
     // Reopen always reseeds the drafts from the stored profile.
   }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
+  const pickAvatar = (file: File | undefined): void => {
+    if (file === undefined) return
+    setReading(true)
+    void readAvatarFile(file)
+      .then(dataUrl => { setAvatar(dataUrl) })
+      .catch(() => { /* unreadable image: keep the current portrait */ })
+      .finally(() => { setReading(false) })
+  }
   const save = () => {
-    setProfile({ name: name.trim() === '' ? profile.name : name.trim(), bio: bio.trim(), avatar })
+    setProfile({ name: name.trim(), bio: bio.trim(), avatar })
     onClose()
   }
   return (
@@ -221,13 +231,29 @@ function ProfileDialog({ t, open, profile, onClose }: {
       <div className="nv-profedit">
         <div className="nv-profedit-field">
           <span className="nv-profedit-label">{t('me.profile.avatar')}</span>
-          <div className="nv-profedit-avatars">
-            {AVATARS.map(a => (
-              <button key={a} className="nv-profedit-avatar" data-active={a === avatar || undefined}
-                onClick={() => { setAvatar(a) }}>
-                <img src={profileAvatarUrl({ ...profile, avatar: a })} alt="" />
+          <div className="nv-profedit-portraitrow">
+            <button type="button" className="nv-profedit-portrait" disabled={reading}
+              aria-label={t('me.profile.avatarUpload')} onClick={() => { fileRef.current?.click() }}>
+              {avatar === ''
+                ? <span className="nv-profedit-portrait-empty" aria-hidden="true" />
+                : <img src={profileAvatarUrl({ ...profile, avatar })} alt="" />}
+            </button>
+            <div className="nv-profedit-portraitacts">
+              <button type="button" className="nv-btn-ghost" disabled={reading}
+                onClick={() => { fileRef.current?.click() }}>
+                {reading ? t('me.profile.avatarReading') : t('me.profile.avatarUpload')}
               </button>
-            ))}
+              {avatar !== '' && (
+                <button type="button" className="nv-btn-ghost" onClick={() => { setAvatar('') }}>
+                  {t('me.profile.avatarRemove')}
+                </button>
+              )}
+            </div>
+            <input ref={fileRef} type="file" accept="image/*" hidden
+              onChange={event => {
+                pickAvatar(event.target.files?.[0])
+                event.currentTarget.value = ''
+              }} />
           </div>
         </div>
         <div className="nv-profedit-field">
@@ -313,12 +339,14 @@ export function Me({ t, useCards, useProjects, useStore, onTab, onOpenCard, onOp
       <div className="nv-inner">
         <div className="nv-profile">
           <button className="nv-profile-avatar" title={t('me.profile.avatarHint')}
-            onClick={() => { setProfile({ avatar: AVATARS[(AVATARS.indexOf(profile.avatar) + 1) % AVATARS.length] }) }}>
-            <img src={profileAvatarUrl(profile)} alt="" />
+            onClick={() => { setDialogOpen(true) }}>
+            {profile.avatar === ''
+              ? <span className="nv-profile-avatar-empty" aria-hidden="true" />
+              : <img src={profileAvatarUrl(profile)} alt="" />}
           </button>
           <div style={{ flex: 1, minWidth: 0 }}>
             <Editable className="nv-profile-name" value={profile.name}
-              hint={t('me.profile.editHint')} onCommit={name => { if (name !== '') setProfile({ name }) }} />
+              hint={t('me.profile.editHint')} onCommit={name => { setProfile({ name }) }} />
             <Editable className="nv-profile-bio" value={profile.bio} placeholder={t('me.bio')}
               hint={t('me.profile.editHint')} onCommit={bio => { setProfile({ bio }) }} />
             <div className="nv-profile-mark">{t('me.mark')}</div>
