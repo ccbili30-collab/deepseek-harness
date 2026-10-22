@@ -172,6 +172,7 @@ N.screenshot=function(){
 N.update=function(p){ merge(p||{}); dispatch() };
 if(!STANDALONE){ var log0=console.log, warn0=console.warn, err0=console.error; console.log=function(){ log0.apply(console,arguments); relay('log',arguments) }; console.warn=function(){ warn0.apply(console,arguments); relay('warn',arguments) }; console.error=function(){ err0.apply(console,arguments); relay('error',arguments) } }
 if(STANDALONE){
+  N.standalone=true;
   var SAVE_KEY=${saveKeyJson};
   function readSave(){ try{ var raw=localStorage.getItem(SAVE_KEY); return raw===null?null:JSON.parse(raw) }catch(e){ return null } }
   N.cardState=CARD_STATE;

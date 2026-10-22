@@ -13,6 +13,8 @@ const PALETTE = ['#34d399', '#60a5fa', '#f59e0b', '#f472b6', '#a78bfa', '#94a3b8
 const SAVE_KEY = 'noven.3d-draft.v3'
 /** Payload version stored inside the module's surface state. */
 const SCENE_STATE_VERSION = 1
+/** Card-owned state ceiling, matching SURFACE_STATE_LIMIT in noven-cards. */
+const CARD_STATE_LIMIT = 1024 * 1024
 
 const KIND_LABEL = {
   box: '方块', sphere: '球体', cylinder: '圆柱', cone: '圆锥',
@@ -1470,6 +1472,9 @@ function moduleFrame() {
 function cardBridge() {
   const frame = moduleFrame()
   if (frame === undefined) return undefined
+  // An exported single file keeps the read-only standalone bridge; use
+  // localStorage there instead of waiting for a card-write receipt.
+  if (frame.standalone === true) return undefined
   if (typeof frame.cardWrite !== 'function') return undefined
   if (typeof frame.moduleId !== 'string' || frame.moduleId === '') return undefined
   return frame
@@ -1477,10 +1482,15 @@ function cardBridge() {
 
 /** The scene wrapper stored in the module's surface state. */
 function sceneState() {
+  const scene = JSON.parse(serializeForDisk())
+  scene.camera = {
+    position: camera.position.toArray(),
+    target: orbit.target.toArray(),
+  }
   return {
     version: SCENE_STATE_VERSION,
     kind: 'scene3d',
-    scene: JSON.parse(serializeForDisk()),
+    scene,
   }
 }
 
@@ -1494,6 +1504,16 @@ function applySceneState(payload) {
   state.lights = scene.lights
   state.background = typeof scene.background === 'string' ? scene.background : '#eef2ee'
   state.grid = scene.grid !== false
+  const cameraState = scene.camera
+  if (cameraState !== null && typeof cameraState === 'object'
+    && Array.isArray(cameraState.position) && cameraState.position.length === 3
+    && cameraState.position.every(value => typeof value === 'number' && Number.isFinite(value))
+    && Array.isArray(cameraState.target) && cameraState.target.length === 3
+    && cameraState.target.every(value => typeof value === 'number' && Number.isFinite(value))) {
+    camera.position.fromArray(cameraState.position)
+    orbit.target.fromArray(cameraState.target)
+    orbit.update()
+  }
   return true
 }
 
@@ -1553,9 +1573,15 @@ function persistNow() {
     saveQueued = true
     return true
   }
+  const payload = sceneState()
+  const bytes = new TextEncoder().encode(JSON.stringify(payload)).length
+  if (bytes > CARD_STATE_LIMIT) {
+    updateSaveState('error')
+    toast(`场景 ${(bytes / 1024 / 1024).toFixed(2)} MB，超过卡内 1 MB；减少细分/对象后再保存`)
+    return false
+  }
   saveInFlight = true
   updateSaveState('saving')
-  const payload = sceneState()
   let settled = false
   let timeout = 0
   const finish = result => {
@@ -1604,7 +1630,7 @@ function persistNow() {
 
 function loadLocal() {
   const frame = moduleFrame()
-  if (frame !== undefined) {
+  if (frame !== undefined && frame.standalone !== true) {
     surfaceVersion = typeof frame.surfaceVersion === 'number' ? frame.surfaceVersion : 0
     // A module without injected state starts from the default scene; the old
     // standalone localStorage is not this module's data.
@@ -1612,18 +1638,22 @@ function loadLocal() {
   }
   try {
     const raw = localStorage.getItem(SAVE_KEY)
-    if (raw === null) return false
-    const data = JSON.parse(raw)
-    if (data !== null && typeof data === 'object' && applySceneState(data)) return true
-    if (!Array.isArray(data.objects) || !Array.isArray(data.lights)) return false
-    state.objects = data.objects
-    state.lights = data.lights
-    state.background = typeof data.background === 'string' ? data.background : '#eef2ee'
-    state.grid = data.grid !== false
-    return true
+    if (raw !== null) {
+      const data = JSON.parse(raw)
+      if (data !== null && typeof data === 'object' && applySceneState(data)) return true
+      if (Array.isArray(data.objects) && Array.isArray(data.lights)) {
+        state.objects = data.objects
+        state.lights = data.lights
+        state.background = typeof data.background === 'string' ? data.background : '#eef2ee'
+        state.grid = data.grid !== false
+        return true
+      }
+    }
   } catch {
-    return false
+    // Standalone localStorage can be unavailable (opaque origin); fall back to
+    // the exported snapshot below.
   }
+  return frame !== undefined && frame.surfaceState !== undefined && applySceneState(frame.surfaceState)
 }
 
 /* ---------- toast / background / empty ---------- */

@@ -11,7 +11,8 @@
 - **边操作**：真边倒角（切掉一条边，生成新的斜切面，端点沿面的扇区收口）、环切（选一条边，沿闭合四边面环切一圈，切完自动选中新环，可直接拖 gizmo 缩放）。
 - 边倒角一次只能选一组**互不相邻**的边；共享顶点的边会被拒绝，避免产生破面。
 - 撤销/重做（⌘Z / ⇧⌘Z）、保存到 localStorage、预览（Esc 退出）。
-- 「导入」读自包含 `.glb` / `.gltf`，只做摆放，不做网格编辑；仅本次会话保留。
+- 「导入」读自包含 `.glb` / `.gltf`，只做摆放，不做网格编辑；仅本次会话保留，卡内保存会跳过模型。
+- **保存**：作为产品模块运行时，场景通过 `surface_set_state` 存进卡（顶栏显示「已存入卡 / 未保存 / 需刷新」）；单独打开 HTML 时退回 localStorage。
 - 窄窗口用顶栏「工具 / 属性」打开左右抽屉，点遮罩关闭。
 
 ## 边界
@@ -31,6 +32,7 @@
 - `src/three-draft.js`：three + OrbitControls + TransformControls + GLTFLoader 的 ESM bundle。
 - `src/app.bundle.js`：app.js 的 IIFE bundle（构建产物）。
 - `../3d-editor-draft.html`：内联后的单文件。
+- `build-preset.mjs`：把这份草稿生成产品预设 `plugins-noven/noven-cards/src/free3d-editor.ts`（three 改走共享 `NOVEN_THREE`，其余代码不变）。
 
 重新构建（在仓库根目录）：
 

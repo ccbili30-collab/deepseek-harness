@@ -14,6 +14,7 @@ import { CardStore } from '../lib/store.js'
 import { registerCardRoutes } from '../lib/routes.js'
 import { registerTreeRoutes } from '../lib/tree.js'
 import { proposeEdit } from '../lib/proposals.js'
+import { decodeSurface } from '../lib/formats.js'
 
 const root = mkdtempSync(join(tmpdir(), 'noven-cards-routes-'))
 let failures = 0
@@ -82,6 +83,29 @@ try {
   check(missing.revision === after.revision && missing.changed.length === 0, 'since>当前修订 → 无变化')
   const ancient = await (await get(`/api/noven-cards?root=${encodeURIComponent(root)}&card=card-r&since=1`)).json()
   check(ancient.changed.length > 0 || ancient.full === true, 'since=旧修订 → 变化或全量')
+
+  // 3b. 可编辑 3D：预设落卡后，UI 能通过 apply 保存运行时状态
+  const createdEditor = await (await post({
+    op: 'apply', cardId: 'card-r',
+    command: { kind: 'add_module', name: '可编辑 3D', preset: 'free3d.editor' },
+  })).json()
+  const editorId = createdEditor.createdModuleIds?.[0]
+  check(createdEditor.ok === true && typeof editorId === 'string', '可编辑 3D 预设通过 UI 命令落卡')
+  const stateApplied = await (await post({
+    op: 'apply', cardId: 'card-r',
+    command: {
+      kind: 'surface_set_state', moduleId: editorId,
+      state: { version: 1, kind: 'scene3d', scene: { objects: [], lights: [] } },
+      expectedVersion: 0,
+    },
+  })).json()
+  check(stateApplied.ok === true, 'surface_set_state 通过 UI 命令路由')
+  const editorStored = await store.open('card-r')
+  const editorModule = editorStored.document.modules.find(module => module.id === editorId)
+  const editorBlock = editorModule?.blocks.find(block => block.kind === 'text')
+  const editorRaw = editorBlock === undefined ? '' : new TextDecoder().decode(await store.readPayload('card-r', editorBlock.content))
+  const editorSurface = decodeSurface(editorRaw)
+  check(editorSurface?.state?.kind === 'scene3d' && editorSurface.stateVersion === 1, '编辑器状态写回卡内工程')
 
   // 4. create 的 starter：WORLD blank 带「设定总览」锚点模块，CHARACTER 保持空卡（契约 C7/Q4）
   const worldCard = await (await post({ op: 'create', kind: 'WORLD', name: '起手世界' })).json()

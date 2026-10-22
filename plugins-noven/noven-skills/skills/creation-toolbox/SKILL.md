@@ -87,9 +87,10 @@ read_card → read_text_block(content_ref, offset, limit)
 
 ## 五、自由界面与自由 3D
 
-- 建：`add_module_preset` 的 `surface`（自由界面）或 `free3d`（自由 3D）。不要先建空模块再手写整段 HTML。
-- 读：`surface_read`（entry、manifest、文件清单、字节、静态校验；给 path 回文件正文和 `content_ref`）。改前先读。
+- 建：`add_module_preset` 的 `surface`（自由界面）、`free3d`（自由 3D）或 `free3d.editor`（可编辑 3D：基础几何 + 网格编辑，场景存进卡）。不要先建空模块再手写整段 HTML。
+- 读：`surface_read`（entry、manifest、文件清单、字节、静态校验、`state_version`/`state_bytes`；给 path 回文件正文和 `content_ref`；`include_state:true` 才回 `state` 正文）。改前先读。
 - 写：`surface_write_file`（新建/覆盖单个文件，可带子目录；相对 import 用 `./`）。按文件改，不要整包重写 JSON。删除/改名：`surface_delete_file` / `surface_rename_file`。manifest：`surface_set_manifest`。
+- 状态：`free3d.editor` 的场景在工程 `state` 里，由编辑器通过 `surface_set_state` 保存；AI 先 `surface_read` 读它，不要用 `write_text` 整包重写。改外观、交互和默认场景逻辑改 `main.js` / `style.css`。
 - 验：`surface_validate`（静态：entry、越界、字节上限、import 落点）→ `surface_diagnostics`（运行时控制台/报错，页面打开时上报）。没有日志通常表示页面还没被打开过。
 - 旧原始 HTML 模块：`surface_init` 迁移成工程（index.html + manifest），再按文件改。
 - 模块内跳转用 `NOVEN_FRAME.openCard / openModule / navigate`。

@@ -251,11 +251,12 @@ export function registerCardTools(ctx: Context): void {
 
   tools.register(defineTool({
     name: 'surface_read',
-    description: '读取自由界面（HTML/自由 3D）工程：entry、manifest、文件清单、字节大小与静态校验结果；给 path 时回该文件正文和 content_ref。改工程前先读，写入时把它当 content_ref 传回。旧原始 HTML 模块会被识别为待迁移（legacy）。运行时错误用 surface_diagnostics 读。',
+    description: '读取自由界面（HTML/自由 3D）工程：entry、manifest、文件清单、字节大小、运行时 state 的版本/字节与静态校验结果；给 path 时回该文件正文和 content_ref，include_state 为真时回 state 正文。改工程前先读，写入时把它当 content_ref 传回。旧原始 HTML 模块会被识别为待迁移（legacy）。运行时错误用 surface_diagnostics 读。',
     parameters: {
       ...TARGET_PARAMS,
       module_id: { type: 'string', required: true, description: '自由界面模块编号' },
       path: { type: 'string', description: '可选：只读这一个工程文件' },
+      include_state: { type: 'boolean', description: '可选：连同运行时 state（例如可编辑 3D 的场景）一起返回' },
     },
     output: { schema: RESULT_SCHEMA, render },
     async execute(args, exec): Promise<Record<string, JsonValue>> {
@@ -288,7 +289,7 @@ export function registerCardTools(ctx: Context): void {
         files: validation.files.map(file => ({ path: file.path, bytes: file.bytes })),
         state_version: surface.stateVersion ?? 0,
         state_bytes: validation.state_bytes,
-        ...(surface.state === undefined ? {} : { state: surface.state }),
+        ...(args.include_state === true && surface.state !== undefined ? { state: surface.state } : {}),
         total_bytes: validation.total_bytes,
         validation: {
           ok: validation.ok,
@@ -470,7 +471,7 @@ export function registerCardTools(ctx: Context): void {
 
   tools.register(defineTool({
     name: 'list_module_presets',
-    description: '列出模块库的内置模块预设（规则/语录/势力/种族/文化/能力/装备/图鉴/时间线/地图/自由界面 surface/自由 3D free3d，以及 surface.dashboard、surface.gallery、free3d.viewer 模板），含 id、widget、字段、默认视图和呈现契约。先用它选 preset，再用 add_module_preset 落模块；可交互界面与 3D 优先走自由模块，不要手写同样的字段表。',
+    description: '列出模块库的内置模块预设（规则/语录/势力/种族/文化/能力/装备/图鉴/时间线/地图/自由界面 surface/自由 3D free3d，以及 surface.dashboard、surface.gallery、free3d.editor、free3d.viewer 模板），含 id、widget、字段、默认视图和呈现契约。先用它选 preset，再用 add_module_preset 落模块；可交互界面与 3D 优先走自由模块，不要手写同样的字段表。',
     parameters: {},
     output: { schema: RESULT_SCHEMA, render },
     async execute() {

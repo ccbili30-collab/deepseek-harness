@@ -31,13 +31,16 @@
       "cover": "卡图片资源编号或 data URL",
       "fullscreen": false,
       "chrome": "game"
-    }
+    },
+    "state": { "version": 1, "kind": "scene3d", "scene": { "objects": [], "lights": [] } },
+    "stateVersion": 4
   }
 }
 ```
 
 - `entry` 必须在 `files` 里；相对路径、可带子目录，不允许绝对路径与 `..`。
 - 单文件上限 1 MiB，整工程上限 8 MiB。更大的素材放项目文件，用资产桥读。
+- `state` 是应用自己的运行时数据（例如可编辑 3D 的场景），随卡保存、跨设备同步、AI 可读；应用通过 `surface_set_state` 写回，`stateVersion` 每次递增，写入时带上读取到的版本做并发检查。上限 1 MiB，计入整工程总量。
 - `index.html` 里的 `<link href="./style.css">` 和 `<script src="./main.js">` 会在渲染前内联；`./util.js` 这类相对 ESM import 会递归内联成 data URL。
 - `manifest.chrome`：`game` 显示存档/暂停/导出/分享的小条；`none` 只留全屏与工具入口。
 
@@ -71,7 +74,8 @@ surface_diagnostics { module_id }
 | `NOVEN_FRAME.asset(idOrPath)` | 同步取已缓存的 blob URL；卡图片资源 id 或项目相对路径 |
 | `NOVEN_FRAME.assetAsync(idOrPath)` | 等待资产到达再返回 blob URL（glb/纹理/音频/JSON 用这个） |
 | `NOVEN_FRAME.cardRead()` | 读宿主卡快照（卡名、卡类、模块清单） |
-| `NOVEN_FRAME.cardWrite(command)` | 写卡内白名单命令（集合/时间线/文字块） |
+| `NOVEN_FRAME.cardWrite(command)` | 写卡内白名单命令（集合/时间线/文字块/`surface_set_state`） |
+| `NOVEN_FRAME.surfaceState` / `surfaceVersion` | 启动时注入的模块状态与版本；保存时把版本回传给 `surface_set_state` |
 | `NOVEN_FRAME.openCard(cardId)` | 打开另一张卡 |
 | `NOVEN_FRAME.openModule(moduleId, itemId?)` | 打开本卡另一个模块（带来源回链） |
 | `NOVEN_FRAME.navigate({cardId,moduleId,itemId})` | 通用跳转 |
@@ -96,7 +100,7 @@ import('NOVEN_THREE').then(async THREE => {
 })
 ```
 
-- 内置导出：three 核心、`GLTFLoader`、`RGBELoader`、`OrbitControls`、`PointerLockControls`。
+- 内置导出：three 核心、`GLTFLoader`、`RGBELoader`、`OrbitControls`、`PointerLockControls`、`TransformControls`。
 - 未内置的 addon 可以把源码作为工程文件带进来，但从 `'three'` 的裸 import 不可解析；统一从 `NOVEN_THREE` 取核心。
 - 第一人称交互可用 `PointerLockControls`（iframe 已允许 pointer lock）。
 - 音频/视频用 `media-src data: blob:`；先 `assetAsync` 拿 blob URL 再赋给 `<audio>`。
@@ -108,18 +112,19 @@ import('NOVEN_THREE').then(async THREE => {
 - 打开自由模块默认是**整页**：模块占满画布，没有阅读版心、没有高度上限、没有内滚动。
 - 页面工具条和游戏小条浮在作品上，静止时淡出；**全屏**把当前页铺满画布，Esc 退出；画布自己的全屏再盖住导航/抽屉/对话。
 - 全屏是页签的呈现状态，不是新的覆盖层；切页签会退出模块全屏，布局树不变。
-- 存档走 `gameSave`，宿主按卡:模块存 localStorage，并可在工具条里导出独立 HTML；导出会内联卡图片资源与 three 运行时。
+- 短期进度走 `gameSave`，宿主按卡:模块存 localStorage，并可在工具条里导出独立 HTML；导出会内联卡图片资源与 three 运行时。
+- 需要长期保存、跨设备同步、AI 可接着改的状态走工程里的 `state`，由应用通过 `surface_set_state` 写回；可编辑 3D 就是这样保存场景的。
 
 ## 限制
 
 - **没有网络**：不能 fetch 外网、不能引 CDN。需要联网就走文件退路并在说明里写清。
-- **没有同源**：不能读宿主 DOM、不能用 localStorage（存档走桥）。
-- **资产只读**：项目文件按会话围栏读取，页面不能写文件。
-- **体积**：工程 8 MiB、单文件 1 MiB；大素材放项目文件。
+- **没有同源**：不能读宿主 DOM；页面 localStorage 只用于独立导出兜底，不要把它当作品数据（存档走桥或 `state`）。
+- **资产只读**：项目文件按会话围栏读取，页面不能写文件；应用自己的运行时数据写 `state`。
+- **体积**：工程 8 MiB、单文件 1 MiB、`state` 1 MiB；大素材放项目文件。
 - 自由模块不参与移动端格式保证；手机端不在当前范围。
 
 ## 画风
 
 - 内嵌预览（卡页/总览缩略）是产品内视图：优先用 `--nv-*` 令牌、系统字体、产品间距。
 - 整页/全屏是作品：可以深色、衬线、全屏画布，但要有明确的构图，不要把一个 520px 的卡片塞进整页。
-- 默认模板（`list_module_presets` 可见，用 `add_module_preset` 落卡）：`surface`（自由界面基线）、`surface.dashboard`（仪表盘）、`surface.gallery`（图鉴画廊）、`free3d`（three.js 基线）、`free3d.viewer`（OrbitControls 查看器）。从模板起步比从空白起步稳。
+- 默认模板（`list_module_presets` 可见，用 `add_module_preset` 落卡）：`surface`（自由界面基线）、`surface.dashboard`（仪表盘）、`surface.gallery`（图鉴画廊）、`free3d.editor`（可编辑 3D，场景存进卡）、`free3d`（three.js 基线）、`free3d.viewer`（OrbitControls 查看器）。从模板起步比从空白起步稳。

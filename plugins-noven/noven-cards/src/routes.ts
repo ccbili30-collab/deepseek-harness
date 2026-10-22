@@ -345,6 +345,7 @@ const APPLY_COMMANDS = new Set([
   'collection_set_style',
   'embed_file',
   'set_layout',
+  'surface_set_state',
   'map_spawn_view', 'map_add_marker',
 ])
 
@@ -416,6 +417,13 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
     case 'surface_delete_file': return needs(['moduleId', 'path'])
     case 'surface_rename_file': return needs(['moduleId']) ?? ('from' in command && 'to' in command ? undefined : 'missing from/to')
     case 'surface_set_manifest': return needs(['moduleId']) ?? ('manifest' in command ? undefined : 'missing manifest')
+    case 'surface_set_state':
+      return needs(['moduleId'])
+        ?? ('state' in command ? undefined : 'missing state')
+        ?? (command.expectedVersion === undefined
+          || (typeof command.expectedVersion === 'number' && Number.isInteger(command.expectedVersion) && command.expectedVersion >= 0)
+          ? undefined
+          : 'invalid expectedVersion')
     case 'collection_set_style': return needs(['moduleId', 'artStyle'])
     case 'set_layout': return needs(['layoutKey']) ?? ('layout' in command ? undefined : 'missing layout')
     default: return undefined

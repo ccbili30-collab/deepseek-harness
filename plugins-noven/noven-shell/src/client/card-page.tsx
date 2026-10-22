@@ -313,7 +313,10 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
       const result = await op(addr, { op: 'apply', cardId: state.cardId, version: state.version, command })
       const next = await loadCard(addr, state.cardId)
       if (next !== undefined) setState(next)
-      if (result.version === undefined) setNotice(t('card.refConflict'))
+      if (result.version === undefined) {
+        setNotice(t('card.refConflict'))
+        return false
+      }
       return true
     } catch (error: unknown) {
       setNotice(String(error instanceof Error ? error.message : error))
@@ -863,7 +866,8 @@ function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, i
     const moduleId = String((command as Record<string, unknown>).moduleId ?? '')
     if (!cardData.modules.some(candidate => candidate.id === moduleId)) return { ok: false, error: 'moduleId is not in this card' }
     try {
-      await send(command as Parameters<WidgetSend>[0])
+      const written = await send(command as Parameters<WidgetSend>[0])
+      if (!written) return { ok: false, error: 'card write failed' }
       return { ok: true }
     } catch (error: unknown) {
       return { ok: false, error: String(error instanceof Error ? error.message : error) }
