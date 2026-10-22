@@ -486,6 +486,38 @@ function presentationPosition(
   return { anchor: node.anchorSeq, rank: 0, originalAnchor: node.anchorSeq }
 }
 
+/** One inclusive anchor span the transcript hides. */
+interface ShadowSpan {
+  readonly start: number
+  readonly end: number
+}
+
+/**
+ * Surface events shadowed by a visible prompt replacement. The replacement
+ * itself stays; every earlier node inside a shadowed span leaves the
+ * transcript, which is how an in-place edit hides the old answer.
+ *
+ * Process and turn-tail anchors are synthesized slightly outside the event
+ * seqs (the tail sits at `turn/end + 0.1`), so the span extends half a seq past
+ * its last shadowed event. The next Turn starts at a whole seq above it.
+ */
+function shadowedSpans(nodes: readonly ChatConversationViewNode[]): readonly ShadowSpan[] {
+  const spans: ShadowSpan[] = []
+  for (const node of nodes) {
+    if (node.kind !== 'user') continue
+    const shadowed = (node.data as { readonly shadowed?: readonly number[] }).shadowed
+    if (shadowed === undefined || shadowed.length === 0) continue
+    const start = Math.min(...shadowed)
+    const end = Math.max(...shadowed)
+    spans.push({ start, end: end + 0.5 })
+  }
+  return spans
+}
+
+function shadowed(span: readonly ShadowSpan[], anchor: number): boolean {
+  return span.some(range => anchor >= range.start && anchor <= range.end)
+}
+
 /**
  * Order visible Chat Nodes without changing existing relative order as process
  * eligibility changes. Opening input precedes process candidates, while
@@ -496,7 +528,9 @@ function presentationPosition(
 export function orderedVisibleChatNodes(
   nodes: readonly ChatConversationViewNode[],
 ): ChatConversationViewNode[] {
-  const visible = nodes.filter(node => isVisibleChatNode(node as ChatNode))
+  const spans = shadowedSpans(nodes)
+  const visible = nodes.filter(node =>
+    isVisibleChatNode(node as ChatNode) && !shadowed(spans, node.anchorSeq))
   const presentations = turnProcessPresentations(visible)
   return visible.sort((left, right) => {
     const leftPosition = presentationPosition(left, presentations)

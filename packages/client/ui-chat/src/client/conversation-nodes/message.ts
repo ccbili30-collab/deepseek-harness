@@ -12,6 +12,11 @@ interface ReferencedUserMessageNode extends UserMessageNode {
   readonly referenceLabels?: readonly string[]
   /** Skill names the same step's `skill-invocation` injections loaded. */
   readonly skillNames?: readonly string[]
+  /**
+   * Surface nodes this prompt replaced. A prompt replacement keeps the new
+   * text at this position while the transcript hides the shadowed range.
+   */
+  readonly shadowed?: readonly number[]
 }
 
 interface ReferencedSteeringMessageNode extends SteeringMessageNode {
@@ -19,6 +24,8 @@ interface ReferencedSteeringMessageNode extends SteeringMessageNode {
   readonly referenceLabels?: readonly string[]
   /** Skill names the same step's `skill-invocation` injections loaded. */
   readonly skillNames?: readonly string[]
+  /** Surface nodes this prompt replaced. */
+  readonly shadowed?: readonly number[]
 }
 
 type MessageNode = ReferencedUserMessageNode | ReferencedSteeringMessageNode | (ContextMessageNode & { readonly waking?: boolean })
@@ -64,15 +71,26 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
   target: 'chat',
   match: (event) => {
     if (event.type === 'user/message') {
-      return isAppendSurfaceEvent(event) && !isCompactionCheckpoint(event)
-        ? { id: String(event.data.id), role: 'start' }
-        : null
+      if (isCompactionCheckpoint(event)) return null
+      if (isAppendSurfaceEvent(event)) return { id: String(event.data.id), role: 'start' }
+      // Only a real user prompt may replace the surface in the transcript;
+      // model-only replacements (foreign/compaction sources) stay out of it.
+      if (isReplacementSurfaceEvent(event) && event.data.source.kind === 'user') {
+        return { id: String(event.data.id), role: 'start' }
+      }
+      return null
     }
     return null
   },
   start: (_context, match, reader) => {
     const event = match.event
     if (event.type !== 'user/message') throw new Error('input-message start requires user/message')
+    // A prompt replacement keeps the new text visible while the transcript
+    // hides the surface range it shadowed (see orderedVisibleChatNodes).
+    const shadowed = isReplacementSurfaceEvent(event)
+      ? event.sourceEventSeqs ?? []
+      : undefined
+    const withShadowed = shadowed === undefined ? {} : { shadowed }
     if (event.data.source.kind !== 'user') {
       const nextTurn = reader.previous<InboxState>('inbox-next-turn')?.state
       const nextStep = reader.previous<InboxState>('inbox-next-step')?.state
@@ -100,6 +118,7 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
         time: event.time,
         content: event.data.content,
         source: event.data.source,
+        ...withShadowed,
       }
       : {
         kind: 'user',
@@ -107,6 +126,7 @@ export const messageDefinition: ConversationNodeDefinition<MessageNode> = {
         time: event.time,
         content: event.data.content,
         source: event.data.source,
+        ...withShadowed,
       }
   },
   update: context => context.state,

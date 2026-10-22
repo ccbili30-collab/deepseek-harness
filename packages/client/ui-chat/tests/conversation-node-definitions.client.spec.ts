@@ -2489,6 +2489,41 @@ describe('built-in conversation node Definitions', () => {
     expect(snapshot(compactions).nodes.values().filter(candidate => candidate.kind === 'compaction')).toHaveLength(1)
   })
 
+  it('shows a prompt replacement in place and hides the shadowed transcript', () => {
+    const value = assembler([
+      at(0, 'turn/start', { turn: 1 }),
+      at(1, 'user/message', textMessage('old-prompt', 'old prompt'), { surfaceOp: 'append' }),
+      at(2, 'step/start', { turn: 1, step: 1 }),
+      at(3, 'assistant/message', {
+        turn: 1, step: 1, message: assistantMessage('old-answer', 'old answer'),
+      }, { surfaceOp: 'append' }),
+      at(4, 'step/end', { turn: 1, step: 1 }),
+      at(5, 'turn/end', { turn: 1, reason: { kind: 'completed' } }),
+      at(6, 'turn/start', { turn: 2 }),
+      at(7, 'user/message', textMessage('new-prompt', 'new prompt'), {
+        surfaceOp: { op: 'replace', startSeq: 1, endSeq: 3 },
+        sourceEventSeqs: [0, 1, 2, 3, 4, 5],
+      }),
+      at(8, 'step/start', { turn: 2, step: 1 }),
+      at(9, 'assistant/message', {
+        turn: 2, step: 1, message: assistantMessage('new-answer', 'new answer'),
+      }, { surfaceOp: 'append' }),
+      at(10, 'step/end', { turn: 2, step: 1 }),
+      at(11, 'turn/end', { turn: 2, reason: { kind: 'completed' } }),
+    ])
+    const snap = snapshot(value)
+    const visible = snap.order
+      .map(key => snap.nodes.get(key))
+      .filter((candidate): candidate is ChatConversationViewNode => candidate !== undefined)
+    const texts = JSON.stringify(visible.map(candidate => candidate.data))
+    expect(texts).toContain('new prompt')
+    expect(texts).toContain('new answer')
+    expect(texts).not.toContain('old prompt')
+    expect(texts).not.toContain('old answer')
+    const replacement = visible.find(candidate => candidate.kind === 'user')
+    expect((replacement?.data as { readonly shadowed?: readonly number[] }).shadowed).toEqual([0, 1, 2, 3, 4, 5])
+  })
+
   it('fills a landed compaction marker when an older page supplies its summary', () => {
     const value = assembler([
       at(13, 'user/message', {

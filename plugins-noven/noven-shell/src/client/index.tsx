@@ -2676,7 +2676,7 @@ export function apply(ctx: ClientContext): void {
     name: 'sidebar.workspaces.session.menu.item', id: 'copy-session-id', order: 500, locale: NS,
   }, CopySessionIdItem)), 'noven-shell: 复制会话 ID row')
   applyQuote(ctx)
-  applyBranches(ctx, (from, to) => canvasInstance.actions.inheritOwner(from, to))
+  applyBranches(ctx, t)
   // The stage's card chip raises the card editor through the shell's face —
   // the workbench plugin dispatches, the shell owns navigation.
   ctx.effect(() => {
