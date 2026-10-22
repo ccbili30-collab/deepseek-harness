@@ -1,7 +1,7 @@
 {
   "name": "noven-skills",
   "version": "0.1.0",
-  "description": "Noven bundled skills — the mobile built-in skills ported: wenyou-maker, card-organizer, humanizer-zh, human-writing, shipped as a bundled skill root on the host skill registry.",
+  "description": "Noven bundled skills — the mobile built-in skills ported (wenyou-maker, card-organizer, humanizer-zh, human-writing) plus worldview-coauthor, creation-toolbox, and the ported growth-world tutorial skill, shipped as a bundled skill root on the host skill registry.",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",

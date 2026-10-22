@@ -41,9 +41,12 @@ export function Create({ t, useWorkspaces, useSessions, renderFactorySlot, ensur
   const importRef = useRef<HTMLInputElement | null>(null)
 
   const workspaces = useWorkspaces(s => s.items)
+  const workspacesState = useWorkspaces(s => s.state)
   const hostId = useSessions(mainSessionId)
   const hostBlank = useSessions(s => (hostId === undefined ? undefined : s.byId[hostId]?.blank))
   const hostCwd = useSessions(s => (hostId === undefined ? undefined : s.byId[hostId]?.cwd))
+  /** 空白宿主的实际预设；改默认前留下的 standard 空白不能再当这个页面的宿主。 */
+  const hostPreset = useSessions(s => (hostId === undefined ? undefined : s.byId[hostId]?.projectionValues?.agentPreset))
   /** 默认 = 最近活跃会话所在的工作区（没有则清单第一项）。 */
   const recentCwd = useSessions(s => {
     let cwd: string | undefined
@@ -85,13 +88,17 @@ export function Create({ t, useWorkspaces, useSessions, renderFactorySlot, ensur
   // engages — re-homing then would fight the handoff — and it never repeats.
   const ensuringRef = useRef(false)
   useEffect(() => {
-    if (hostBlank === true || hostEngaged || revealedRef.current || ensuringRef.current) return
+    // Wait for the workspace list: creating the host before it loads falls back
+    // to the harness cwd, and a blank outside every workspace leaves the
+    // composer in its read-only "choose a workspace" state.
+    if (workspacesState === 'loading') return
+    if ((hostBlank === true && hostPreset === 'explore') || hostEngaged || revealedRef.current || ensuringRef.current) return
     ensuringRef.current = true
     void ensureBlankHost(workspace?.workspaceId).catch((reason: unknown) => {
       console.warn('noven-shell: blank host ensure failed:', reason)
       ensuringRef.current = false
     })
-  }, [hostBlank, hostEngaged, ensureBlankHost, workspace?.workspaceId])
+  }, [hostBlank, hostPreset, hostEngaged, ensureBlankHost, workspace?.workspaceId, workspacesState])
 
   return (
     <div className="nv-page nv-create-page">

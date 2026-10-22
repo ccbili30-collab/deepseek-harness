@@ -387,7 +387,7 @@ async function serveProjects(request: Request, ctx: Context): Promise<Response> 
       ...await projectRow(p),
       ...(p.id !== undefined && (idCounts.get(p.id) ?? 0) > 1 ? { duplicate: true } : {}),
     })))
-    return new Response(request.method === 'HEAD' ? null : JSON.stringify({ projects: rows }), { headers: JSON_HEADERS })
+    return new Response(request.method === 'HEAD' ? null : JSON.stringify({ projects: rows, miscRoot: MISC_PROJECT_ROOT }), { headers: JSON_HEADERS })
   }
   let body: Record<string, unknown>
   try {

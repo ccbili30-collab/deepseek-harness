@@ -69,12 +69,20 @@ export interface ProjectRow {
   readonly misc?: boolean
 }
 
-/** Root of the permanent 杂项 project; everything ungrouped lands here. Mirrors noven-ledger's constant. */
+/**
+ * Root of the permanent 杂项 project, as reported by the Host. The browser has
+ * no HOME, so a local path guess would invent a root the server cannot find.
+ */
+let miscRoot: string | undefined
+
+/** Record the Host-reported misc root (catalog payload). */
+export function setMiscProjectRoot(root: string | undefined): void {
+  miscRoot = root
+}
+
+/** Host-reported misc root; empty until the catalog loads. */
 export function miscProjectRoot(): string {
-  const home = typeof process !== 'undefined' && typeof process.env?.HOME === 'string' && process.env.HOME !== ''
-    ? process.env.HOME
-    : '/'
-  return `${home}/诺文/杂项`
+  return miscRoot ?? ''
 }
 
 /** A project address: the session whose cwd names it, or the workspace root itself. */
@@ -148,7 +156,7 @@ export function libraryFor(addr: ProjectAddr): ObservableSnapshot<LibraryPayload
 /** Registry mutation: register / unregister / create against `/api/noven-projects`. */
 /** Whether a root is the permanent 杂项 project. */
 export function isMiscRoot(root: string | undefined): boolean {
-  return root !== undefined && root === miscProjectRoot()
+  return root !== undefined && miscRoot !== undefined && root === miscRoot
 }
 
 export async function projectOp(op: { op: 'register' | 'unregister' | 'create' | 'rename'; root: string; title?: string; description?: string }): Promise<ProjectRow | undefined> {
@@ -191,7 +199,8 @@ export function projectsCatalog(sessions: ClientContext['sessions']): Observable
         queued = false
         const response = await fetch('/api/noven-projects').catch(() => undefined)
         if (response === undefined || !response.ok) return
-        const { projects } = await response.json() as { projects: readonly (Omit<ProjectRow, 'sessionId'> & { sessionId?: SessionId })[] }
+        const { projects, miscRoot: hostMiscRoot } = await response.json() as { projects: readonly (Omit<ProjectRow, 'sessionId'> & { sessionId?: SessionId })[]; miscRoot?: string }
+        setMiscProjectRoot(hostMiscRoot)
         // A session bound to the root makes API calls cheap; rows without one go by root.
         const state = sessions.list.getSnapshot()
         const byRoot = new Map<string, SessionId>()

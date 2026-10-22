@@ -46,7 +46,7 @@ import { Messages } from './pages/Messages.tsx'
 import { CardStudio } from './pages/CardStudio.tsx'
 import { ProjectPage } from './pages/Library.tsx'
 import type { ProjectRef } from './pages/Library.tsx'
-import { fetchLibrary, isMiscRoot, libraryOp, miscProjectRoot, projectOp, projectsCatalog } from './library-api.ts'
+import { fetchLibrary, isMiscRoot, libraryOp, miscProjectRoot, projectOp, projectsCatalog, setMiscProjectRoot } from './library-api.ts'
 import type { LibraryOp, LibraryPayload, ProjectAddr, ProjectRow } from './library-api.ts'
 import { cardOp, exportCardPackage, fetchCard, fetchCardList, type CardCommand } from './card-api.ts'
 import type { CardAddr, CardOp } from './card-api.ts'
@@ -1154,15 +1154,36 @@ function commandCatalog(remote: ClientContext['remote'], sessionId: Parameters<C
 
 export function apply(ctx: ClientContext): void {
   injectNovenStyles()
+  // 设定管理员是 sidecar 的内部预设，不进用户的模式选择列表。预设仍注册、
+  // 设定助手会话照常工作；这里只在渲染层隐藏那一项菜单。
+  const hiddenPresetLabels = ['设定管理员', '标准模式']
+  const hideInternalPreset = (): void => {
+    const items = document.querySelectorAll<HTMLElement>('[role="menuitem"]')
+    for (let index = 0; index < items.length; index += 1) {
+      const item = items[index]
+      const label = item?.textContent ?? ''
+      if (item !== undefined && hiddenPresetLabels.some(hidden => label.includes(hidden))) item.style.display = 'none'
+    }
+  }
+  const presetObserver = new MutationObserver(() => { hideInternalPreset() })
+  presetObserver.observe(document.body, { childList: true, subtree: true })
+  hideInternalPreset()
+  ctx.effect(() => () => { presetObserver.disconnect() }, 'noven-shell: hide internal preset')
   ctx.effect(() => installPanelGhost(), 'noven-shell: panel ghost')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'noven-shell: dictionaries')
   const t = ctx.locale.bind(NS)
-  // 杂项项目是永久兜底（设计理念 §15）：启动幂等确保目录 + 注册表 + 上游工作区都有它。
+  // 杂项项目是永久兜底（设计理念 §15）：Host 的目录与注册表由服务端自举，
+  // 这里只取它报告的根去补登记上游工作区。浏览器没有 HOME，不能本地拼路径。
   void (async () => {
-    const misc = miscProjectRoot()
-    const row = await projectOp({ op: 'register', root: misc, title: '杂项' }).catch(() => undefined)
-    if (row === undefined) return
-    await (ctx.get('workspaces') as IWorkspaces | undefined)?.create({ path: misc }).catch(() => undefined)
+    try {
+      const response = await fetch('/api/noven-projects')
+      if (!response.ok) return
+      const payload = await response.json() as { projects: readonly { root: string; misc?: boolean }[]; miscRoot?: string }
+      setMiscProjectRoot(payload.miscRoot)
+      const misc = payload.projects.find(row => row.misc === true)?.root
+      if (misc === undefined) return
+      await (ctx.get('workspaces') as IWorkspaces | undefined)?.create({ path: misc }).catch(() => undefined)
+    } catch { /* a lost misc bootstrap never blocks the app */ }
   })()
 
   // Noven palette over the shipped tokens (light drives the product; dark
@@ -1252,6 +1273,7 @@ export function apply(ctx: ClientContext): void {
       const target = recentSession()
       if (target !== undefined) return { sessionId: target.id, root: target.cwd || miscProjectRoot() }
       const misc = miscProjectRoot()
+      if (misc === '') return {}
       const id = await createSessionIn(misc)
       return { sessionId: id, root: misc }
     }
@@ -1397,7 +1419,13 @@ export function apply(ctx: ClientContext): void {
   const ensureBlankHost = async (workspaceId: WorkspaceId | undefined): Promise<void> => {
     const list = ctx.sessions.list.getSnapshot()
     const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
-    if (current?.blank === true) return
+    const root = workspaceRootFor(workspaceId)
+    // A blank outside the requested workspace cannot host this page: the composer
+    // reads an unregistered cwd as "choose a workspace" and goes read-only.
+    // A blank from any other preset (e.g. standard, created before the default
+    // changed) cannot host it either: the seat would show that preset.
+    const preset = current?.projectionValues?.agentPreset
+    if (current?.blank === true && preset === 'explore' && (root === undefined || current.cwd === root)) return
     const sessionId = workspaceId !== undefined
       ? await ctx.uiWorkspace.connectWorkspace(workspaceId)
       : await createSessionIn(recentSession()?.cwd)
@@ -1624,7 +1652,9 @@ export function apply(ctx: ClientContext): void {
       return id
     }
     // 没有任何项目时，新会话落进杂项（设计理念 §15），不再留下无 cwd 的会话。
-    const id = await createSessionIn(miscProjectRoot()).catch(() => undefined)
+    const misc = miscProjectRoot()
+    if (misc === '') return undefined
+    const id = await createSessionIn(misc).catch(() => undefined)
     if (id !== undefined) ctx.uiWorkspace.openSession(id)
     return id
   }
@@ -1738,6 +1768,7 @@ export function apply(ctx: ClientContext): void {
       if (focusSnapshot === undefined && request.kind !== 'import') {
         // 无项目态不再立项：新东西一律落杂项项目（设计理念 §15）；真正的立项走「新建项目」。
         const misc = miscProjectRoot()
+        if (misc === '') return
         const sessionId = await ensureSession()
         if (sessionId === undefined) return
         if (ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd !== misc) {
