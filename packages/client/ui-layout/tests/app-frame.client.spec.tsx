@@ -685,6 +685,27 @@ describe('AppFrame pointer resizing', () => {
     expect(frame.querySelector('[data-side="unit"]')).toBeNull()
   })
 
+  it('changes the drawer width from its conversation-facing line without moving the canvas-facing line', () => {
+    const { frame, instance } = mountFrame()
+    act(() => { setClaim('right'); instance.actions.openRightbar(true, false, false) })
+    const before = instance.getSnapshot().layoutInfo
+    const unitBefore = before.unit ?? 0
+    const rightbarBefore = before.rightbar ?? 0
+    const canvasBefore = unitBefore - rightbarBefore
+    const innerBefore = handleFor(frame, 'rightbar').style.left
+    const unitHandle = frame.querySelector<HTMLElement>('[data-side="unit"]')!
+    const start = parseFloat(unitHandle.style.left)
+    drag(unitHandle, start, start - 100)
+    const after = instance.getSnapshot().layoutInfo
+    expect(after.unit).toBe(unitBefore + 100)
+    expect(after.rightbar).toBe(rightbarBefore + 100)
+    expect((after.unit ?? 0) - (after.rightbar ?? 0)).toBe(canvasBefore)
+    // The canvas-facing line is the drawer's other edge: it stays put while
+    // the conversation-facing line resizes the drawer from the left.
+    expect(handleFor(frame, 'rightbar').style.left).toBe(innerBefore)
+    expect(tracks(frame)).toEqual([280, unitBefore + 100])
+  })
+
   it('commits the pointerup coordinate and cancels its pending animation frame', () => {
     const { frame, instance } = mountFrame()
     const handle = handleFor(frame, 'sidebar')

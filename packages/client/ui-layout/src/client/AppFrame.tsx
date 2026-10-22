@@ -435,10 +435,25 @@ export function AppFrame({
   const unitWRef = useRef(unitW)
   unitWRef.current = unitW
   const unitBase = useRef(0)
-  const onUnitStart = useCallback(() => { unitBase.current = unitWRef.current; setDragging(true) }, [])
+  const unitRightbarBase = useRef(0)
+  const onUnitStart = useCallback(() => {
+    unitBase.current = unitWRef.current
+    unitRightbarBase.current = rightbarWidth.current
+    setDragging(true)
+  }, [])
   const onUnitDrag = useCallback((dx: number) => {
+    // Agent arrangement: the drawer sits between the conversation and the
+    // canvas. The outer line is the drawer's conversation-facing edge; moving
+    // it changes the drawer width from that side while the canvas-facing edge
+    // stays put, so the conversation yields and the canvas keeps its width.
+    if (!unitLeft && canvas === 'right') {
+      const delta = -dx
+      actions.setUnit(unitBase.current + delta)
+      actions.setRightbar(unitRightbarBase.current + delta)
+      return
+    }
     actions.setUnit(unitBase.current + (unitLeft ? dx : -dx))
-  }, [actions, unitLeft])
+  }, [actions, unitLeft, canvas])
   const sidebar = useMemo(() => renderSlot('sidebar', {
     collapsed: sidebarCollapsed,
     width: cols.sidebar,
