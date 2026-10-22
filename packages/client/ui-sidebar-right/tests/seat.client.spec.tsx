@@ -337,18 +337,6 @@ describe('RightbarSeat presentation', () => {
     expect(seen.at(-1)).toBe('text')
   })
 
-  it('offers one rail canvas toggle for both parking and reopening', async () => {
-    const h = await mountSeat()
-    h.open('kept.txt', { expandColumn: false })
-    act(() => { h.actions.setExpanded(SESSION, false) })
-    const toggle = (): HTMLElement => element(h.view.container, '[data-sidebar-right-canvas-toggle]')
-    fireEvent.click(toggle())
-    expect(h.instance.getSnapshot().bySession[SESSION]!.canvasParked).toBe(true)
-    // The rail keeps the control in place; the same button brings it back.
-    fireEvent.click(toggle())
-    expect(h.instance.getSnapshot().bySession[SESSION]!.canvasParked).toBe(false)
-  })
-
   it('keeps the canvas claim across a retained surface hiding and return without any report', async () => {
     const h = await mountSeat()
     h.open('kept.txt')

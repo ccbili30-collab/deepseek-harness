@@ -35,8 +35,6 @@ export interface TreeInjected {
     readonly studio: ObservableSnapshot<boolean>
     /** 本会话画布焦点叶的当前页签 key——树行据此点亮相映的"当前页"。 */
     readonly activeTab: ObservableSnapshot<string | undefined>
-    /** 本会话画布开态（有页且未停靠）——底排按钮据此换标签。 */
-    readonly canvas: ObservableSnapshot<boolean>
     /** 右栏功能页签清单（guide 注册表）——工具菜单的功能行按它枚举。 */
     readonly featureTabs: ObservableSnapshot<readonly SidebarRightGuideBox[]>
   }
@@ -92,8 +90,6 @@ export interface TreeInjected {
   readonly deleteSel: (items: readonly { readonly path: string; readonly cardId?: string; readonly workId?: string }[]) => void
   /** rail 态里把抽屉展开回来。 */
   readonly expandDrawer: () => void
-  /** 翻画布：开着就停靠，关着就抬回；无页时先开起点页。 */
-  readonly toggleCanvas: () => void
 }
 
 /** 模块行的类型图标：widget type → 线性图标（设计稿 02/03）。 */
@@ -918,7 +914,6 @@ export function ContentTree(props: TreeProps) {
   const dockOpen = props.useDock(v => v)
   const bottomOpen = props.useBottomPanel(v => v)
   const studioOn = props.useStudio(v => v)
-  const canvasOpen = props.useCanvas(v => v)
   const featureTabs = props.useFeatureTabs(v => v)
   const needle = query.trim().toLowerCase()
   const filtered = useMemo((): NovenTree | undefined => {
@@ -1266,17 +1261,6 @@ export function ContentTree(props: TreeProps) {
           {query === '' && <kbd className="nv-tree-kbd" aria-hidden="true">⌘K</kbd>}
         </div>
       </div>
-      {/* 画布开着时收起入口在画布缝上；关着时这里独占一行做显眼的展开入口。 */}
-      {!canvasOpen && (
-        <div className="nv-tree-canvasbar">
-          <button type="button" className="nv-tree-new nv-tree-canvas"
-            title={t('tree.canvas.open')}
-            onClick={props.toggleCanvas}>
-            <span className="nv-tree-toolicon">{glyph.floatWin(13)}</span>
-            <span>{t('tree.canvas.open')}</span>
-          </button>
-        </div>
-      )}
       <div className="nv-tree-scroll">
         {noProject && (
           // 空抽屉只说一件事：这里能新建。文案与案头同一口径——"没有项目"

@@ -43,7 +43,6 @@ export const zh = {
   'tab.guide.title': '开始',
   'tab.unavailable': '这类内容还没有可用的查看方式。',
   'canvas.collapse': '收起画布',
-  'canvas.expand': '展开画布',
   'canvas.back': '后退',
   'canvas.forward': '前进',
 } satisfies Record<string, string>
@@ -88,7 +87,6 @@ export const en = {
   'tab.guide.title': 'Start',
   'tab.unavailable': 'Nothing here can view this kind of content yet.',
   'canvas.collapse': 'Park the canvas',
-  'canvas.expand': 'Show the canvas',
   'canvas.back': 'Back',
   'canvas.forward': 'Forward',
 } satisfies Record<SidebarRightKey, string>

@@ -473,31 +473,18 @@
 }
 
 /* The park chevron points toward the panel; a left-parked canvas collapses
-   rightward, so the glyph flips. The reopen chevron points the other way,
-   and flips with the drawer's side for the same reason. */
+   rightward, so the glyph flips. */
 .canvas[data-canvas-side='left'] .parkGlyph {
   transform: scaleX(-1);
 }
 
-.panel[data-drawer-side='right'] .parkGlyph {
-  transform: scaleX(-1);
-}
-
-.unparkGlyph {
-  transform: scaleX(-1);
-}
-
-.panel[data-drawer-side='right'] .unparkGlyph {
-  transform: none;
-}
-
-/* A visible close control for every page, set inside the canvas clear of the
-   seam drag handle (which owns the exact edge). */
+/* A selfChrome page draws its own top bar; the park affordance then stands
+   as a pill straddling the canvas's panel-facing seam. */
 .canvasEdgePark {
   position: absolute;
   top: 50%;
-  left: 16px;
-  z-index: 12;
+  left: -13px;
+  z-index: 5;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -515,7 +502,7 @@
 
 .canvas[data-canvas-side='left'] .canvasEdgePark {
   left: auto;
-  right: 16px;
+  right: -13px;
 }
 
 .canvasEdgePark:hover {

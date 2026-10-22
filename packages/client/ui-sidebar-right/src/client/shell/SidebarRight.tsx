@@ -267,8 +267,8 @@ function ExitFullscreenGlyph(): ReactNode {
   )
 }
 
-/** The panel's controls, placed at the feature list's head. */
-function PanelChrome({ sessionId, fullscreen, actions, t, shortcuts, toggleFullscreen }: Pick<PanelProps, 'sessionId' | 'fullscreen' | 'actions' | 't' | 'shortcuts' | 'toggleFullscreen'>): ReactNode {
+/** The panel's two controls, placed at the feature list's head. */
+function PanelChrome({ sessionId, fullscreen, actions, t, shortcuts, toggleFullscreen }: Pick<PanelProps, 'sessionId' | 'actions' | 't' | 'fullscreen' | 'shortcuts' | 'toggleFullscreen'>): ReactNode {
   const next: DockMode = fullscreen ? 'push' : 'fullscreen'
   const modeLabel = fullscreen ? t('chrome.exitFullscreen') : t('chrome.toFullscreen')
   const mode = shortcuts.find(entry => entry.id === 'pane.fullscreen.toggle')
@@ -364,27 +364,6 @@ function FeatureNav(panel: PanelProps): ReactNode {
   )
 }
 
-/** The rail's canvas toggle: one control for both parking and reopening. */
-function RailCanvasToggle({ panel }: { readonly panel: PanelProps }): ReactNode {
-  const { actions, sessionId, surface, t } = panel
-  if (surface.layout.floats.length === 0) return null
-  const parked = surface.canvasParked
-  const label = t(parked ? 'canvas.expand' : 'canvas.collapse')
-  return (
-    <Tooltip label={label} side="bottom" delayMs={500}>
-      <button
-        type="button"
-        className={css.railRow}
-        aria-label={label}
-        data-sidebar-right-canvas-toggle
-        onClick={() => { actions.setCanvasParked(sessionId, !parked) }}
-      >
-        {parked ? <UnparkGlyph /> : <ParkGlyph />}
-      </button>
-    </Tooltip>
-  )
-}
-
 /**
  * The collapsed navigation column: an icon rail pinned to the panel's anchored
  * edge. Its top control re-expands the panel; below it the product's own zone
@@ -411,7 +390,6 @@ function FeatureRail(panel: PanelProps): ReactNode {
           <IconPanelLeftOutlineRegular className={css.railExpandGlyph} />
         </button>
       </Tooltip>
-      <RailCanvasToggle panel={panel} />
       <div className={css.railTop}>{renderSlot('sidebar.right.pane.top', { rail: true })}</div>
       <nav className={css.railList}>
         {entries.map((entry) => {
@@ -572,11 +550,19 @@ function CanvasHost(panel: PanelProps & { width: number; toggleSidebar: () => vo
                   <CloseGlyph />
                 </button>
               </Tooltip>
+              <Tooltip label={t('canvas.collapse')} side="bottom" delayMs={500}>
+                <button type="button" className={css.iconButton}
+                  aria-label={t('canvas.collapse')}
+                  data-sidebar-right-canvas-park
+                  onClick={() => { panel.actions.setCanvasParked(panel.sessionId, true) }}>
+                  <ParkGlyph />
+                </button>
+              </Tooltip>
             </header>
           )}
-          {/* One close control for every page, set inside the canvas just off
-              the drawer seam so the seam's drag handle stays unobstructed. */}
-          {open && tab !== undefined && surface.layout.expanded && (
+          {/* A page owning its own chrome gets the same affordance on the seam:
+          a pill straddling the canvas's drawer-facing edge. */}
+          {open && tab !== undefined && definition?.selfChrome === true && (
             <Tooltip label={t('canvas.collapse')} side="bottom" delayMs={500}>
               <button type="button" className={css.canvasEdgePark}
                 aria-label={t('canvas.collapse')}
@@ -677,15 +663,6 @@ function CloseGlyph(): ReactNode {
 function ParkGlyph(): ReactNode {
   return (
     <svg className={css.parkGlyph} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <path d="M14.5 5.5 8 12l6.5 6.5" />
-    </svg>
-  )
-}
-
-/** The reopen chevron points away from the panel, back toward the parked canvas. */
-function UnparkGlyph(): ReactNode {
-  return (
-    <svg className={css.unparkGlyph} width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       <path d="M14.5 5.5 8 12l6.5 6.5" />
     </svg>
   )
