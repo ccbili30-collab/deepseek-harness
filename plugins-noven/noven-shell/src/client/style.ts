@@ -1355,14 +1355,18 @@ div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !impo
 .nv-tree-rolestitle { flex: 1; min-width: 0; }
 .nv-tree-glyph { width: 16px; flex: none; color: var(--nv-secondary-text); font-size: 11px; }
 .nv-tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 底部分三份：画布开合、「＋ 新建」、工具。Menu anchor 根是 inline span——
-   给 flex:1 让三份均分；画布关着时整颗薄荷色，做底排主入口。 */
-.nv-tree-foot { display: flex; gap: 8px; padding: 10px 12px 14px; }
-.nv-tree-foot > span { display: flex; flex: 1; min-width: 0; }
+/* 底部分两半：「＋ 新建」开对象、「🔧 工具」开功能台（设计稿 01 变体——
+   功能台从主面板挪回工作现场旁）。Menu anchor 根是 inline span——
+   给 flex:1 让两半均分。画布开合不在这排，单独占搜索下方整行。 */
+.nv-tree-foot { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 14px; }
+.nv-tree-foot > span { display: flex; flex: 1; min-width: 64px; }
 .nv-tree-new { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%;
   border: 1px solid var(--nv-divider); border-radius: 10px; padding: 9px 0; font-size: 13px;
-  background: var(--nv-surface); color: var(--nv-primary-text); cursor: pointer; }
+  background: var(--nv-surface); color: var(--nv-primary-text); cursor: pointer; white-space: nowrap; }
 .nv-tree-new:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); }
+/* 画布开合独占一行：关着时整条薄荷色，窄抽屉也不会把四字标签挤成竖排。 */
+.nv-tree-canvasbar { padding: 0 12px 10px; }
+.nv-tree-canvas { padding: 8px 10px; }
 .nv-tree-canvas:not([data-open]) { border-color: rgba(14,159,110,.32); background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 .nv-tree-toolicon { display: inline-flex; color: var(--nv-secondary-text); }
 .nv-tree-canvas .nv-tree-toolicon { color: inherit; }

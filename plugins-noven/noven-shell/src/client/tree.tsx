@@ -1266,6 +1266,16 @@ export function ContentTree(props: TreeProps) {
           {query === '' && <kbd className="nv-tree-kbd" aria-hidden="true">⌘K</kbd>}
         </div>
       </div>
+      {/* 画布开合放在搜索下方的整行，不跟「新建/工具」抢宽度；窄抽屉也只占一行。 */}
+      <div className="nv-tree-canvasbar">
+        <button type="button" className="nv-tree-new nv-tree-canvas"
+          data-open={canvasOpen || undefined}
+          title={t(canvasOpen ? 'tree.canvas.close' : 'tree.canvas.open')}
+          onClick={props.toggleCanvas}>
+          <span className="nv-tree-toolicon">{glyph.floatWin(13)}</span>
+          <span>{t(canvasOpen ? 'tree.canvas.close' : 'tree.canvas.open')}</span>
+        </button>
+      </div>
       <div className="nv-tree-scroll">
         {noProject && (
           // 空抽屉只说一件事：这里能新建。文案与案头同一口径——"没有项目"
@@ -1383,15 +1393,6 @@ export function ContentTree(props: TreeProps) {
       </div>
       {!noProject && (
       <div className="nv-tree-foot">
-        <span className="nv-tree-foothalf">
-          <button type="button" className="nv-tree-new nv-tree-canvas"
-            data-open={canvasOpen || undefined}
-            title={t(canvasOpen ? 'tree.canvas.close' : 'tree.canvas.open')}
-            onClick={props.toggleCanvas}>
-            <span className="nv-tree-toolicon">{glyph.floatWin(13)}</span>
-            <span>{t(canvasOpen ? 'tree.canvas.close' : 'tree.canvas.open')}</span>
-          </button>
-        </span>
         <Menu portal open={menuOpen} side="top" align="start" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => setMenuOpen(false)}
           onSelect={createMenuSelect}
