@@ -1266,17 +1266,19 @@ export function ContentTree(props: TreeProps) {
           {query === '' && <kbd className="nv-tree-kbd" aria-hidden="true">⌘K</kbd>}
         </div>
       </div>
-      {/* 画布开着时收起入口在画布缝上；关着时这里独占一行做显眼的展开入口。 */}
-      {!canvasOpen && (
-        <div className="nv-tree-canvasbar">
-          <button type="button" className="nv-tree-new nv-tree-canvas"
-            title={t('tree.canvas.open')}
-            onClick={props.toggleCanvas}>
-            <span className="nv-tree-toolicon">{glyph.floatWin(13)}</span>
-            <span>{t('tree.canvas.open')}</span>
-          </button>
-        </div>
-      )}
+      {/* 画布是一个固定位置的开关：开着/关着都在这，只换状态，不换入口。 */}
+      <div className="nv-tree-canvasrow">
+        <span className="nv-tree-canvaslabel">
+          <span className="nv-tree-toolicon">{glyph.floatWin(13)}</span>
+          {t('tree.canvas.label')}
+        </span>
+        <button type="button" role="switch" aria-checked={canvasOpen}
+          aria-label={t('tree.canvas.toggle')}
+          className="nv-tree-switch" data-canvas-on={canvasOpen || undefined}
+          onClick={props.toggleCanvas}>
+          <span className="nv-tree-switch-thumb" aria-hidden="true" />
+        </button>
+      </div>
       <div className="nv-tree-scroll">
         {noProject && (
           // 空抽屉只说一件事：这里能新建。文案与案头同一口径——"没有项目"

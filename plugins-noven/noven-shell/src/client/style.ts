@@ -1240,6 +1240,8 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
 [class*='navBody'] { position: relative; }
 [class*='panelHead'] { position: absolute; top: 5px; right: 8px; padding: 0; z-index: 10; }
 [data-sidebar-right-mode] { display: none; }
+/* 画布开关只在抽屉里的固定 switch 上；缝上胶囊不再作为第二个入口。 */
+[data-sidebar-right-canvas-park] { display: none !important; }
 
 /* 设计稿 01 底色：抽屉与会话两列底偏灰（pane），控件与画布留白。抽屉面板
    自身不刷色、内部也无白底元素，直接给面板着色；会话列的根容器刷的是
@@ -1361,11 +1363,21 @@ div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !impo
   border: 1px solid var(--nv-divider); border-radius: 10px; padding: 9px 0; font-size: 13px;
   background: var(--nv-surface); color: var(--nv-primary-text); cursor: pointer; white-space: nowrap; }
 .nv-tree-new:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); }
-/* 画布关着时这枚是抽屉的显眼入口：整条薄荷色。 */
-.nv-tree-canvasbar { padding: 0 12px 10px; }
-.nv-tree-canvas { padding: 8px 10px; border-color: rgba(14,159,110,.32); background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+/* 画布开关：固定一行，左标签右拨杆；开着薄荷、关着灰。 */
+.nv-tree-canvasrow { display: flex; align-items: center; gap: 8px; padding: 0 12px 10px; }
+.nv-tree-canvaslabel { flex: 1; min-width: 0; display: flex; align-items: center; gap: 6px;
+  font-size: 12.5px; color: var(--nv-primary-text); }
+.nv-tree-switch { position: relative; flex: none; width: 36px; height: 20px; padding: 0; border: 0;
+  border-radius: 999px; background: var(--nv-divider); cursor: pointer;
+  transition: background var(--nv-dur-micro) ease; }
+/* 选中态有一条全局 [aria-checked='true'] { background:none }；开关要保留
+   自己的薄荷底，用元素+类+属性的特异性压过它。 */
+button.nv-tree-switch[data-canvas-on] { background: var(--nv-accent); }
+.nv-tree-switch-thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
+  border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.18);
+  transition: transform var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-tree-switch[data-canvas-on] .nv-tree-switch-thumb { transform: translateX(16px); }
 .nv-tree-toolicon { display: inline-flex; color: var(--nv-secondary-text); }
-.nv-tree-canvas .nv-tree-toolicon { color: inherit; }
 /* 分组头的删除钮：与「＋」同族悬停显隐，悬停转危险色。 */
 .nv-tree-del:hover { color: var(--nv-danger); }
 /* 卡尾的「＋ 新建模块」条：和「＋ 新建」同族，缩进对齐模块行。 */
