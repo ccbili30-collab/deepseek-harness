@@ -21,6 +21,9 @@ import { flattenLineage } from './lineage.ts'
 // the 'title' projection key this manager projects into list rows (and any
 // useProjection('title') consumer reads). Zero value imports by construction.
 import type {} from '@deepseek-ai/dsh-session-title/client'
+// Type-only merge edge: creation seeds the blank row's agentPreset projection
+// so a just-created host matches a preset-filtered reuse immediately.
+import type {} from '@deepseek-ai/dsh-agent-preset-registry/types'
 import { Notifier } from './notifier.ts'
 import { ProjectionValueStore } from './projection-store.ts'
 import type { HistoryCache } from './history-cache.ts'
@@ -493,7 +496,8 @@ export class SessionManager {
    * Contract session.create; on success merge into summaries immediately (no
    * wait for the next refresh). A created session is blank by definition
    * (entity birth precedes the first message).
-   * @param opts - target workspace or working directory, plus an optional caller-owned id.
+   * @param opts - target workspace or working directory, an optional
+   * caller-owned id, and the Agent preset to compose the Session with.
    * @returns the create result.
   */
   async create(
@@ -501,9 +505,13 @@ export class SessionManager {
       workspaceId?: WorkspaceId
       cwd?: string
       sessionId?: SessionId
+      agentPreset?: string
     } = {},
   ): Promise<RemoteResult<{ sessionId: SessionId }>> {
-    const shared = opts.sessionId === undefined ? {} : { sessionId: opts.sessionId }
+    const shared = {
+      ...opts.sessionId === undefined ? {} : { sessionId: opts.sessionId },
+      ...opts.agentPreset === undefined ? {} : { agentPreset: opts.agentPreset },
+    }
     const payload = opts.workspaceId !== undefined
       ? { workspaceId: opts.workspaceId, ...shared }
       : { ...(opts.cwd === undefined ? {} : { cwd: opts.cwd }), ...shared }
@@ -512,6 +520,9 @@ export class SessionManager {
       this.recordMutation({ kind: 'placeholder', summary: { agentAvailable: true,
         sessionId: result.value.sessionId, updatedAt: Date.now(), running: false, blank: true,
         ...(opts.cwd !== undefined ? { cwd: opts.cwd } : {}),
+        ...(opts.agentPreset === undefined
+          ? {}
+          : { projectionValues: { agentPreset: opts.agentPreset } }),
       } })
     } else {
       const publishedSessionId = workspaceAttachSessionId(result.error)

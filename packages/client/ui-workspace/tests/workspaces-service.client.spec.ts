@@ -798,6 +798,25 @@ describe('UiWorkspaceService', () => {
     expect(b.sessions.retain).not.toHaveBeenCalled()
   })
 
+  it('reuses only a blank running the requested Agent preset and creates with it otherwise', async () => {
+    const b = bench({
+      sessions: sessionState([
+        summary('standard', { blank: true, cwd: '/w/a', projectionValues: { agentPreset: 'standard' } }),
+        summary('explore', { blank: true, cwd: '/w/a', projectionValues: { agentPreset: 'explore' } }),
+      ]),
+      workspaces: workspaceState([workspace('a', [sid('standard'), sid('explore')])]),
+    })
+    expect(b.uiWorkspace.reusableBlank(wid('a'), { agentPreset: 'explore' })).toBe(sid('explore'))
+    expect(b.uiWorkspace.reusableBlank(wid('a'), { agentPreset: 'create' })).toBeUndefined()
+    b.sessions.create.mockClear()
+    await expect(b.uiWorkspace.connectWorkspace(wid('a'), { agentPreset: 'explore' })).resolves.toBe(sid('explore'))
+    expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({ workspaceId: wid('a'), sessionId: sid('explore') })
+
+    b.sessions.create.mockClear()
+    await expect(b.uiWorkspace.connectWorkspace(wid('a'), { agentPreset: 'create' })).resolves.toBe(sid('created-a'))
+    expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({ workspaceId: wid('a'), agentPreset: 'create' })
+  })
+
   it('reports a refused explicit Session creation through the Workspace notice', async () => {
     const b = bench({ workspaces: workspaceState([workspace('a')]), sessions: sessionState() })
     // Startup restoration creates its own Session first and stays quiet on failure (pinned above).

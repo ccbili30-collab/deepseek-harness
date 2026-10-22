@@ -885,6 +885,18 @@ describe('create', () => {
     expect(b.svc.binding(born)).toBe(reference.binding)
   })
 
+  it('sends the requested Agent preset and seeds the blank row with it', async ({ bench }) => {
+    const b = bench()
+    b.mock.remote.session.create.mockResolvedValue(ok({ sessionId: sid('born'), agentPreset: 'explore' }))
+    const born = await b.svc.create({ workspaceId: 'ws' as never, agentPreset: 'explore' })
+    expect(b.mock.remote.session.create).toHaveBeenCalledExactlyOnceWith({ workspaceId: 'ws', agentPreset: 'explore' })
+    expect(b.svc.list.getSnapshot().byId[born]).toMatchObject({
+      id: 'born',
+      blank: true,
+      projectionValues: { agentPreset: 'explore' },
+    })
+  })
+
   it('lists the published id after Workspace attachment fails (publication precedes attachment)', async ({ bench }) => {
     const b = bench()
     b.mock.remote.session.create.mockResolvedValue(err(new RemoteError(

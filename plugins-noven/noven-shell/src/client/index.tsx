@@ -1382,36 +1382,21 @@ export function apply(ctx: ClientContext): void {
     })
   }
 
-  /**
-   * 创作页的宿主必须是探索模式：工作区复用回来的空白可能是用户上次选的
-   * 标准模式，直接沿用会让创作页顶着「标准模式」开工。空白会话允许切换。
-   */
-  const ensureExplorePreset = async (sessionId: SessionId): Promise<void> => {
-    const row = ctx.sessions.list.getSnapshot().byId[sessionId]
-    if (row?.projectionValues?.agentPreset === 'explore') return
-    const result = await ctx.remote.agentPresets.select(sessionId, 'explore')
-    if (!result.ok) console.warn('noven-shell: explore preset select failed:', result.error)
-  }
-
-  /** 创作页宿主：当前主视图不是空白会话时，为所选工作区接/建一个空白并在面板下选定（页面不离开）。 */
+  /** 创作页宿主：当前主视图不是探索模式空白时，为所选工作区接/建一个并选定（页面不离开）。 */
   const ensureBlankHost = async (workspaceId: WorkspaceId | undefined): Promise<void> => {
     const list = ctx.sessions.list.getSnapshot()
     const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
     const root = workspaceRootFor(workspaceId)
     // A blank outside the requested workspace cannot host this page: the composer
     // reads an unregistered cwd as "choose a workspace" and goes read-only.
-    // A blank from another preset (e.g. standard, created before the default
-    // changed) can be switched: it has no history to protect.
-    const preset = current?.projectionValues?.agentPreset
+    // A blank from another preset cannot host it either — the workspace layer
+    // filters reuse by preset, so a standard blank is left for other flows and
+    // an explore blank is reused or created here.
     const sameRoot = root === undefined || current?.cwd === root
-    if (current?.blank === true && sameRoot) {
-      if (preset !== 'explore') await ensureExplorePreset(current.id)
-      return
-    }
+    if (current?.blank === true && sameRoot && current.projectionValues?.agentPreset === 'explore') return
     const sessionId = workspaceId !== undefined
-      ? await ctx.uiWorkspace.connectWorkspace(workspaceId)
-      : await createSessionIn(recentSession()?.cwd)
-    await ensureExplorePreset(sessionId)
+      ? await ctx.uiWorkspace.connectWorkspace(workspaceId, { agentPreset: 'explore' })
+      : await createSessionIn(recentSession()?.cwd, 'explore')
     // preserve 保住面板：普通 reveal 会在 replaceMain 里 selectPanel(null)，
     // 之后的任何面板重激活都输给晚到的提交。发布版 openSession 类型未带
     // options 参数（ui-workspace 源码与产物已带 preserve），走局部窄化。
@@ -1483,12 +1468,14 @@ export function apply(ctx: ClientContext): void {
   /**
    * 建会话：根下有注册 workspace 走 workspaceId（进分组名单），否则裸
    * cwd。注意 workspaceId 与 cwd 在 create 载荷里互斥——传了 workspaceId
-   * 会丢 cwd，服务端从 workspace 解析。
+   * 会丢 cwd，服务端从 workspace 解析。预设随创建请求一并落地，宿主不再
+   * 事后切换。
    */
-  const createSessionIn = (root: string | undefined): Promise<SessionId> => {
-    if (root === undefined) return ctx.sessions.create({})
+  const createSessionIn = (root: string | undefined, agentPreset?: string): Promise<SessionId> => {
+    if (root === undefined) return ctx.sessions.create({ ...(agentPreset === undefined ? {} : { agentPreset }) })
     const workspaceId = workspaceIdFor(root)
-    return ctx.sessions.create(workspaceId === undefined ? { cwd: root } : { workspaceId })
+    const preset = agentPreset === undefined ? {} : { agentPreset }
+    return ctx.sessions.create(workspaceId === undefined ? { cwd: root, ...preset } : { workspaceId, ...preset })
   }
 
   /** 当前项目坐标：跟随绑定会话的 cwd，标题取创作库登记名。 */
@@ -1850,15 +1837,17 @@ export function apply(ctx: ClientContext): void {
       // specific blank here (workspace switch, blank session open) has already
       // selected it — seat that one, never a recent-workspace guess.
       const seam = ctx.uiWorkspace as {
-        reusableBlank?: () => SessionId | undefined
+        reusableBlank?: (workspaceId?: WorkspaceId, options?: { agentPreset?: string }) => SessionId | undefined
         openSession?: (target: SessionId, options?: { panel?: 'preserve', transition?: 'none' }) => void
       }
       const current = Object.values(ctx.sessions.list.getSnapshot().byId)
         .find(row => (row.retainedBy.mainView ?? 0) > 0)
-      const blank = current?.blank === true ? current.id : seam.reusableBlank?.()
-      if (blank !== undefined) {
-        seam.openSession?.(blank, { panel: 'preserve', transition: 'none' })
-        resetCreateLayout(blank)
+      const host = current?.blank === true && current.projectionValues?.agentPreset === 'explore'
+        ? current.id
+        : seam.reusableBlank?.(undefined, { agentPreset: 'explore' })
+      if (host !== undefined) {
+        seam.openSession?.(host, { panel: 'preserve', transition: 'none' })
+        resetCreateLayout(host)
       }
       ctx.layout.selectPanel(CREATE_ID)
     }).finally(() => { openingCreateSurface = false })

@@ -42,6 +42,15 @@ export interface OpenSessionOptions {
   readonly transition?: 'none'
 }
 
+/** Blank-host requirements for Workspace connection. */
+export interface ConnectWorkspaceOptions {
+  /**
+   * Agent preset the blank host must run. A reusable blank with any other
+   * preset is skipped; when none matches, creation requests this preset.
+   */
+  readonly agentPreset?: string
+}
+
 /** Workspace archive and directory operations consumed by Client UI domains. */
 export interface UiWorkspace {
   /**
@@ -73,17 +82,19 @@ export interface UiWorkspace {
   /**
    * Resolve the reusable or newly created blank Session for a Workspace.
    * @param workspaceId - target Workspace.
+   * @param options - optional Agent preset the returned blank must run.
    * @returns a Session already addressable through the Session Controller.
    */
-  connectWorkspace(workspaceId: WorkspaceId): Promise<SessionId>
+  connectWorkspace(workspaceId: WorkspaceId, options?: ConnectWorkspaceOptions): Promise<SessionId>
   /**
    * Find, without any Host round-trip, the blank Session connectWorkspace
    * would reuse for a Workspace. Hosts that mount a composer on a blank can
    * select it inside their own commit instead of waiting for creation.
    * @param workspaceId - target Workspace; absent picks the most recent one.
-   * @returns the reusable blank, or undefined when none exists yet.
+   * @param options - optional Agent preset the blank must run.
+   * @returns the reusable blank, or undefined when none matches.
    */
-  reusableBlank(workspaceId?: WorkspaceId): SessionId | undefined
+  reusableBlank(workspaceId?: WorkspaceId, options?: ConnectWorkspaceOptions): SessionId | undefined
   /**
    * Start a New Session flow and navigate to its Session; a creation the Host
    * refuses is shown through the Workspace notice and leaves the selection as it was.
@@ -168,7 +179,7 @@ export class DirectoryBrowseError extends Error {
 
 /** Implements Workspace archive and directory UI operations. */
 class UiWorkspaceService extends Service implements UiWorkspace {
-  private readonly connecting = new Map<WorkspaceId, Promise<SessionId>>()
+  private readonly connecting = new Map<string, Promise<SessionId>>()
   private readonly lifetime = new AbortController()
   private readonly selection = createSnapshotStore<MainSelection>(
     {}, { persist: { name: 'dsh.sessions.current' } },
@@ -205,34 +216,41 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     }, 'ui-workspace: Workspace navigation policy')
   }
 
-  async connectWorkspace(workspaceId: WorkspaceId): Promise<SessionId> {
+  async connectWorkspace(workspaceId: WorkspaceId, options: ConnectWorkspaceOptions = {}): Promise<SessionId> {
     const workspace = this.workspaces.list.getSnapshot().items
       .find(item => item.workspaceId === workspaceId)
     if (workspace === undefined) {
       throw new Error(`uiWorkspace.connectWorkspace: unknown workspace ${workspaceId}`)
     }
-    const inflight = this.connecting.get(workspaceId)
+    // Different preset requirements must not coalesce: one caller may accept
+    // any blank while another needs a specific composition.
+    const key = `${workspaceId}\u0000${options.agentPreset ?? ''}`
+    const inflight = this.connecting.get(key)
     if (inflight !== undefined) return inflight
 
-    const attempt = this.reuseOrCreateBlank(workspace)
-      .finally(() => { this.connecting.delete(workspaceId) })
-    this.connecting.set(workspaceId, attempt)
+    const attempt = this.reuseOrCreateBlank(workspace, options.agentPreset)
+      .finally(() => { this.connecting.delete(key) })
+    this.connecting.set(key, attempt)
     return attempt
   }
 
-  private reuseOrCreateBlank(workspace: WorkspaceView): Promise<SessionId> {
+  private reuseOrCreateBlank(workspace: WorkspaceView, agentPreset?: string): Promise<SessionId> {
     const archived = this.workspaces.list.getSnapshot().archivedSessionIds
     const sessions = this.sessions.list.getSnapshot()
     for (const id of sessions.ids) {
       const summary = sessions.byId[id]
       if (summary === undefined || !summary.blank || summary.cwd !== workspace.path
         || !workspace.sessionIds.includes(id) || archived.includes(id)) continue
-      return this.reuseBlank(workspace.workspaceId, id)
+      if (agentPreset !== undefined && summary.projectionValues?.agentPreset !== agentPreset) continue
+      return this.reuseBlank(workspace.workspaceId, id, agentPreset)
     }
-    return this.sessions.create({ workspaceId: workspace.workspaceId })
+    return this.sessions.create({
+      workspaceId: workspace.workspaceId,
+      ...(agentPreset === undefined ? {} : { agentPreset }),
+    })
   }
 
-  reusableBlank(workspaceId?: WorkspaceId): SessionId | undefined {
+  reusableBlank(workspaceId?: WorkspaceId, options: ConnectWorkspaceOptions = {}): SessionId | undefined {
     const workspace = this.workspaces.list.getSnapshot()
     const sessions = this.sessions.list.getSnapshot()
     const recentId = workspaceId ?? recentWorkspace(workspace.items, sessions.byId)
@@ -243,17 +261,21 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       const summary = sessions.byId[id]
       if (summary === undefined || !summary.blank || summary.cwd !== target.path
         || !target.sessionIds.includes(id) || archived.has(id)) continue
+      if (options.agentPreset !== undefined && summary.projectionValues?.agentPreset !== options.agentPreset) continue
       return id
     }
     return undefined
   }
 
-  private async reuseBlank(workspaceId: WorkspaceId, sessionId: SessionId): Promise<SessionId> {
+  private async reuseBlank(workspaceId: WorkspaceId, sessionId: SessionId, agentPreset?: string): Promise<SessionId> {
     try {
       return await this.sessions.create({ workspaceId, sessionId })
     } catch (error: unknown) {
       if (sessionCreateErrorOf(error)?.rpcError.code !== 'session/writer-held') throw error
-      return this.sessions.create({ workspaceId })
+      return this.sessions.create({
+        workspaceId,
+        ...(agentPreset === undefined ? {} : { agentPreset }),
+      })
     }
   }
 

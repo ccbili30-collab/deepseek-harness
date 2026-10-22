@@ -8,6 +8,7 @@
  */
 import type { SlotHookFactory } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { MenuOpenState, UseMenuOpenState } from '@deepseek-ai/dsh-client-ui-workspace/client'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -48,6 +49,30 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
         text: string
       }
     }
+  }
+}
+
+declare module '@deepseek-ai/dsh-client-ui-workspace/client' {
+  interface UiWorkspace {
+    /**
+     * Resolve a blank host that runs the requested Agent preset; a mismatch is
+     * skipped and creation requests the preset. Absent on older published builds.
+     */
+    connectWorkspace(workspaceId: WorkspaceId, options?: { readonly agentPreset?: string }): Promise<SessionId>
+    /** Preset-filtered form of `reusableBlank`; absent on older published builds. */
+    reusableBlank(workspaceId?: WorkspaceId, options?: { readonly agentPreset?: string }): SessionId | undefined
+  }
+}
+
+declare module '@deepseek-ai/dsh-api-session-controller/client' {
+  interface ISessions {
+    /** Create with an explicit Agent preset; absent on older published builds. */
+    create(opts?: {
+      workspaceId?: WorkspaceId
+      cwd?: string
+      sessionId?: SessionId
+      agentPreset?: string
+    }): Promise<SessionId>
   }
 }
 
