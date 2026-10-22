@@ -3036,6 +3036,16 @@ table.nv-coll-table { display: block; font-size: 14px; }
 .nv-quote-pop:hover { border-color: var(--nv-accent); }
 .nv-msgact { display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: var(--nv-secondary-text); cursor: pointer; }
 .nv-msgact:hover { color: var(--nv-accent-deep); background: var(--nv-hover); }
+.nv-rewind-editor { box-sizing: border-box; display: flex; flex-direction: column; gap: 6px; width: calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance)); max-width: var(--dsh-composer-card-max-width); margin: 0 auto; padding: 10px 14px 12px; border: 0; --dsw-elevation-stroke-color: var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-panel); background: var(--dsw-specific-input-major); box-shadow: var(--dsw-elevation-soft); color: var(--nv-primary-text); font-size: var(--dsh-content-font-size, 14px); line-height: calc(24px + var(--dsh-content-font-delta, 0px)); }
+.nv-rewind-head { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; }
+.nv-rewind-input { width: 100%; min-height: 56px; max-height: 180px; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; line-height: inherit; resize: none; overflow-y: auto; outline: none; }
+.nv-rewind-input::placeholder { color: var(--dsw-alias-label-tertiary); }
+.nv-rewind-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+.nv-rewind-actions button { height: 30px; padding: 0 14px; border: 1px solid var(--nv-divider); border-radius: 8px; background: transparent; color: var(--nv-secondary-text); font: inherit; font-size: 12px; cursor: pointer; }
+.nv-rewind-actions button:hover:not(:disabled) { color: var(--nv-primary-text); background: var(--nv-hover); }
+.nv-rewind-actions .nv-rewind-send { border-color: var(--nv-accent); background: var(--nv-accent); color: #fff; }
+.nv-rewind-actions .nv-rewind-send:hover:not(:disabled) { border-color: var(--nv-accent-deep); background: var(--nv-accent-deep); color: #fff; }
+.nv-rewind-actions .nv-rewind-send:disabled { opacity: .4; cursor: default; }
 
 /* ---------- 浮窗（撕下来的页签=前台工作面） + conv 页体 ---------- */
 .nv-float { position: fixed; z-index: 70; display: flex; flex-direction: column; background: var(--nv-surface); border: 1px solid var(--nv-divider); border-radius: 10px; box-shadow: 0 12px 40px rgba(23,32,51,.18); overflow: hidden; }

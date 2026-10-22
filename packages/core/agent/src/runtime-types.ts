@@ -116,6 +116,13 @@ export type PreStepDecision =
     messages: UserMessage[]
     /** Start a distinct model-message series before this step's admitted messages. */
     startsRequestSeries?: true
+    /**
+     * Run this step from the current model-visible surface even when the inbox
+     * admitted no messages. A listener that rewrote the surface (for example
+     * replacing the prompt it just shadowed) uses this instead of appending a
+     * second copy of the prompt.
+     */
+    surfacePrompt?: true
   }
 
 /** Action returned by a listener that owns model-request recovery. */

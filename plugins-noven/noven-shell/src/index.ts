@@ -10,9 +10,10 @@ import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { registerRewind } from './rewind.ts'
 
 export const name = 'noven-shell'
-export const inject = ['connection']
+export const inject = ['connection', 'sessionController']
 
 const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets')
 /** Vendored Fantasy-Map-Generator editor (complete upstream app, built with a relative base). */
@@ -130,6 +131,7 @@ async function serveMapEditor(req: IncomingMessage, res: ServerResponse): Promis
 
 /** Register the read-only asset route; all presentation ships through ./client. */
 export function apply(ctx: Context): void {
+  registerRewind(ctx)
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/noven-assets',
     methods: ['GET', 'HEAD'],

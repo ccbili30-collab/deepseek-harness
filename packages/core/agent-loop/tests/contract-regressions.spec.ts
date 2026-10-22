@@ -214,6 +214,34 @@ describe('abort during tool execution ends the turn', () => {
     expect(agent.inbox.nextTurn).toHaveLength(0)
   })
 
+  it('runs a step from the surface when a pre-step decision says so', async () => {
+    const adapter = new MockAdapter([textResponse('answer')])
+    const ctx = await harness(adapter)
+    const agent = await ctx.agentLoop.create(SessionId('a-surface-prompt'), { provider: 'mock', model: 'mock' })
+    // A prompt replacement lands outside the turn; the step must use it instead
+    // of an admitted inbox message.
+    agent.session.append('user/message', createUserMessage({
+      content: [{ type: 'text', text: 'surface prompt' }],
+      source: { kind: 'user' },
+    }), { surfaceOp: 'append' })
+    ctx.on('agent/pre-step', ({ agent: subject }, next) => {
+      if (subject !== agent) return next()
+      return next().then(decision => decision.kind === 'enter'
+        ? { ...decision, messages: [], surfacePrompt: true }
+        : decision)
+    })
+    send(agent, 'wake')
+    await waitForIdle(ctx, agent)
+    expect(adapter.requests).toHaveLength(1)
+    const prompts = agent.session.deriveMessages()
+      .filter(message => message.role === 'user')
+      .flatMap(message => message.content.flatMap(part => part.type === 'text' ? [part.text] : []))
+    expect(prompts).toEqual(['surface prompt'])
+    expect(agent.session.snapshotEvents().filter(event => event.type === 'user/message'
+      && event.data.source.kind === 'user')).toHaveLength(1)
+    expect(agent.inbox.nextTurn).toHaveLength(0)
+  })
+
   it('parks result context finalized after disposal cancellation without opening another turn', async () => {
     const adapter = new MockAdapter([toolCallResponse('c1', 'waiter', {})])
     const ctx = await harness(adapter)

@@ -57,6 +57,8 @@ type PreparedStep =
     kind: 'enter'
     messages: UserMessage[]
     startsRequestSeries?: true
+    /** Run from the current surface without appending an admitted prompt. */
+    surfacePrompt?: true
     assembly: PromptAssembly
   }
 
@@ -321,7 +323,9 @@ export class ReactLoopAgent implements Agent {
         if (turnEnds && decision.messages.length === 0) break
         // A removed waking message or an enter decision rewritten to empty
         // still owns the initial turn boundary, but it spends no model call.
-        if (phase.step === 0 && decision.messages.length === 0) {
+        // A surface prompt is different: the step's prompt already sits on the
+        // model-visible surface, so an empty admitted list still runs.
+        if (phase.step === 0 && decision.messages.length === 0 && decision.surfacePrompt !== true) {
           turnEnds = { kind: 'completed' }
           return false
         }
