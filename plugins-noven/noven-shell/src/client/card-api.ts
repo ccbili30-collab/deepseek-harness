@@ -39,6 +39,14 @@ export interface CardModuleDoc {
     readonly view?: string
     readonly filter?: { readonly characters?: readonly string[] }
     readonly overrides?: Record<string, unknown>
+    /** One-shot browser generation request written by the map tool. */
+    readonly request?: Record<string, unknown>
+    /** Map stage: blank white-film, terrain-only, or complete world. */
+    readonly mapStage?: 'blank' | 'terrain' | 'world'
+    /** Structured map summary saved with the map for the card AI. */
+    readonly mapSummary?: Record<string, unknown>
+    /** Terrain-only summary returned after AI composition. */
+    readonly mapTerrainSummary?: Record<string, unknown>
     readonly snapshot?: {
       readonly cardName: string
       readonly moduleName: string

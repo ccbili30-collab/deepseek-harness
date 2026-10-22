@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>地图工具 · 制图台草稿</title>
+<style>
+  :root{
+    --paper:#FBFAF6;
+    --paper-deep:#F7F4EC;
+    --line:#E8E3D7;
+    --line-soft:#EFEBE1;
+    --ink:#242923;
+    --muted:#7A7F75;
+    --faint:#A7ACA2;
+    --mint:#0E9F6E;
+    --mint-deep:#0B7A55;
+    --mint-soft:#E8F6EF;
+    --mint-line:rgba(14,159,110,.34);
+    --serif:"Songti SC","Noto Serif SC",Georgia,serif;
+    --sans:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0;overflow:hidden;background:var(--paper);color:var(--ink);font-family:var(--sans)}
+  button{font-family:inherit;color:inherit}
+
+  .desk{height:100%;display:flex;flex-direction:column}
+
+  /* ---------- top rail ---------- */
+  .topbar{
+    position:relative;z-index:20;height:54px;flex:0 0 54px;
+    display:flex;align-items:center;gap:20px;padding:0 22px;
+    background:rgba(251,250,246,.94);
+    border-bottom:1px solid var(--line);
+    backdrop-filter:blur(14px);
+  }
+  .stage{display:flex;align-items:center;gap:8px;min-width:190px}
+  .stage-dot{width:7px;height:7px;border-radius:50%;background:var(--mint);box-shadow:0 0 0 4px var(--mint-soft)}
+  .stage-name{font-size:13px;font-weight:650;letter-spacing:.01em}
+  .stage-sub{font-size:11.5px;color:var(--muted)}
+  .stage-sep{color:#C9CDC3;font-size:11px}
+
+  .steps{position:absolute;left:50%;transform:translateX(-50%);display:flex;align-items:center;gap:12px;color:var(--faint);font-size:11px;letter-spacing:.06em}
+  .steps .step{position:relative;padding-bottom:4px}
+  .steps .step.active{color:var(--ink);font-weight:600}
+  .steps .step.active::after{content:"";position:absolute;left:50%;bottom:0;width:4px;height:4px;margin-left:-2px;border-radius:50%;background:var(--mint)}
+  .steps i{width:16px;height:1px;background:var(--line);display:block}
+
+  .actions{margin-left:auto;display:flex;align-items:center;gap:4px}
+  .primary{
+    height:32px;display:inline-flex;align-items:center;gap:8px;padding:0 15px;
+    border:0;border-radius:9px;background:var(--mint);color:#fff;
+    font-size:11.5px;font-weight:600;letter-spacing:.02em;cursor:pointer;
+    box-shadow:0 3px 10px rgba(14,159,110,.20);
+    transition:background .16s,transform .16s,box-shadow .16s;
+  }
+  .primary:hover{background:var(--mint-deep);box-shadow:0 5px 14px rgba(14,159,110,.24)}
+  .primary:active{transform:translateY(1px)}
+  .primary svg{width:13px;height:13px}
+  .icon{
+    width:30px;height:30px;display:inline-grid;place-items:center;
+    border:0;border-radius:8px;background:transparent;color:var(--muted);cursor:pointer;
+    transition:background .16s,color .16s;
+  }
+  .icon:hover{background:var(--mint-soft);color:var(--mint-deep)}
+  .icon svg{width:16px;height:16px}
+
+  .menu{
+    position:absolute;right:18px;top:48px;min-width:176px;padding:6px;
+    border:1px solid var(--line);border-radius:11px;background:rgba(251,250,246,.98);
+    box-shadow:0 18px 44px rgba(36,41,35,.16);z-index:40;
+  }
+  .menu[hidden]{display:none}
+  .menu button{
+    width:100%;height:32px;display:flex;align-items:center;gap:9px;padding:0 9px;
+    border:0;border-radius:7px;background:transparent;color:var(--ink);font-size:11.5px;text-align:left;cursor:pointer;
+  }
+  .menu button:hover{background:var(--paper-deep)}
+  .menu button.danger{color:#A8503F}
+  .menu span{flex:1}
+  .menu .hint{color:var(--faint);font-size:10px}
+  .menu hr{border:0;border-top:1px solid var(--line-soft);margin:5px 4px}
+
+  /* ---------- workspace ---------- */
+  .workspace{position:relative;flex:1;min-height:0;overflow:hidden}
+  .canvas{position:absolute;inset:0;background:
+    radial-gradient(120% 90% at 30% 10%, #fff 0%, rgba(255,255,255,0) 55%),
+    radial-gradient(80% 70% at 85% 90%, #FBF8EF 0%, rgba(251,248,239,0) 60%),
+    var(--paper);
+  }
+  #cells{position:absolute;inset:0;width:100%;height:100%}
+  #cells path{fill:none;stroke:#D4DBD1;stroke-width:.62;opacity:.92}
+
+  .paper-hint{
+    position:absolute;z-index:0;left:50%;top:50%;transform:translate(-50%,-50%);
+    width:min(760px,82%);text-align:center;color:#A1A8A0;
+    font-size:clamp(20px,2.35vw,30px);line-height:1.7;letter-spacing:.06em;
+    pointer-events:none;opacity:.62;
+  }
+  .paper-hint .sub{display:block;margin-top:6px;font-size:.72em;letter-spacing:.04em;color:#A9AFA7}
+
+  /* ---------- brush panel ---------- */
+  .panel{
+    position:absolute;z-index:15;left:0;top:0;bottom:0;width:328px;
+    display:flex;flex-direction:column;
+    background:var(--paper);
+    border-right:1px solid var(--line);
+    box-shadow:12px 0 32px rgba(36,41,35,.035);
+    transition:transform .22s cubic-bezier(.22,.8,.28,1);
+  }
+  .panel.closed{transform:translateX(-100%)}
+  .panel-head{height:54px;flex:0 0 54px;display:flex;align-items:center;padding:0 18px;gap:10px}
+  .panel-title{font-size:14px;font-weight:650;letter-spacing:.01em;flex:1}
+  .collapse{
+    height:24px;display:inline-flex;align-items:center;gap:4px;padding:0 7px;
+    border:0;border-radius:6px;background:transparent;color:var(--faint);
+    font-size:10.5px;cursor:pointer;transition:background .16s,color .16s;
+  }
+  .collapse:hover{background:var(--paper-deep);color:var(--ink)}
+  .collapse svg{width:11px;height:11px}
+
+  .tabs{display:flex;gap:18px;padding:0 18px;border-bottom:1px solid var(--line-soft);flex:0 0 36px;align-items:flex-end}
+  .tab{
+    position:relative;height:36px;padding:0 0 9px;border:0;background:transparent;
+    color:var(--faint);font-size:11.5px;letter-spacing:.03em;cursor:pointer;
+  }
+  .tab:hover{color:var(--muted)}
+  .tab.active{color:var(--ink);font-weight:600}
+  .tab.active::after{content:"";position:absolute;left:0;right:0;bottom:-1px;height:2px;background:var(--mint);border-radius:2px 2px 0 0}
+
+  .panel-body{flex:1;min-height:0;overflow:auto;padding:16px 18px 20px}
+  .pane[hidden]{display:none}
+  .pane-kicker{
+    margin:0 0 9px;color:var(--faint);font-size:9.5px;font-weight:600;
+    letter-spacing:.16em;text-transform:uppercase;
+  }
+  .pane-kicker + .tiles{margin-bottom:18px}
+
+  .tiles{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+  .tiles.one{grid-template-columns:1fr}
+  .tile{
+    min-height:66px;display:flex;align-items:center;gap:10px;padding:10px 11px;
+    border:1px solid transparent;border-radius:11px;background:transparent;
+    text-align:left;cursor:pointer;transition:background .16s,border-color .16s,box-shadow .16s;
+  }
+  .tile:hover{background:var(--paper-deep)}
+  .tile.active{background:var(--mint-soft);border-color:var(--mint-line);box-shadow:inset 2px 0 0 var(--mint)}
+  .tile .glyph{width:28px;height:28px;flex:0 0 28px;color:#4F574E}
+  .tile.active .glyph{color:var(--mint-deep)}
+  .tile .glyph svg{width:28px;height:28px;display:block}
+  .tile-text{display:flex;flex-direction:column;gap:2px;min-width:0}
+  .tile-name{font-size:12px;font-weight:600;line-height:1.25}
+  .tile-desc{font-size:10px;line-height:1.35;color:var(--muted)}
+  .tile.active .tile-name{color:var(--mint-deep)}
+  .tile.active .tile-desc{color:#5F7B6D}
+
+  .setting{display:flex;align-items:center;gap:10px;height:32px;margin:0 0 2px}
+  .setting-label{width:30px;flex:0 0 30px;color:var(--muted);font-size:10.5px}
+  .setting output{width:24px;text-align:right;color:var(--ink);font-size:10.5px;font-variant-numeric:tabular-nums}
+  input[type=range]{
+    flex:1;appearance:none;height:2px;border-radius:2px;background:#DED9CC;outline:none;
+  }
+  input[type=range]::-webkit-slider-thumb{
+    appearance:none;width:12px;height:12px;border-radius:50%;background:var(--paper);
+    border:1.6px solid var(--mint);box-shadow:0 1px 3px rgba(36,41,35,.16);cursor:pointer;
+  }
+
+  .segmented{display:flex;gap:4px;margin-top:2px}
+  .segmented button{
+    height:26px;padding:0 10px;border:0;border-bottom:2px solid transparent;background:transparent;
+    color:var(--faint);font-size:10.5px;cursor:pointer;
+  }
+  .segmented button:hover{color:var(--muted)}
+  .segmented button.active{color:var(--mint-deep);border-bottom-color:var(--mint);font-weight:600}
+
+  .action-list{display:flex;flex-direction:column;gap:2px}
+  .action-row{
+    height:38px;display:flex;align-items:center;gap:10px;padding:0 10px;
+    border:0;border-radius:9px;background:transparent;color:var(--ink);font-size:11.5px;cursor:pointer;text-align:left;
+  }
+  .action-row:hover{background:var(--paper-deep)}
+  .action-row .glyph{width:18px;height:18px;flex:0 0 18px;color:var(--muted)}
+  .action-row .glyph svg{width:18px;height:18px}
+  .action-row span{flex:1}
+  .action-row small{color:var(--faint);font-size:9.5px}
+  .action-row.danger{color:#A8503F}
+  .action-row.danger .glyph{color:#B56A55}
+  .action-row.danger:hover{background:#FBF0EC}
+
+  .brush-settings{
+    margin:18px -18px 0;padding:14px 18px 0;
+    border-top:1px solid var(--line-soft);
+  }
+  .current-brush{display:flex;align-items:center;gap:7px;margin:0 0 10px;color:var(--faint);font-size:10px}
+  .current-brush::before{content:"";width:5px;height:5px;border-radius:50%;background:var(--mint)}
+  .current-brush strong{color:var(--ink);font-size:11.5px;font-weight:600}
+  .brush-settings .pane-kicker{margin-bottom:6px}
+  .brush-settings .setting{height:28px;margin:0 0 2px}
+  .brush-settings .segmented{margin-top:0}
+
+  .arrange-layer{
+    position:absolute;inset:0 0 48px 0;z-index:30;display:flex;flex-direction:column;
+    background:var(--paper);
+  }
+  .arrange-layer[hidden]{display:none}
+  .arrange-head{
+    height:54px;flex:0 0 54px;display:flex;align-items:center;gap:10px;
+    padding:0 18px;border-bottom:1px solid var(--line-soft);
+  }
+  .arrange-title{flex:1;font-size:14px;font-weight:650}
+  .arrange-body{flex:1;min-height:0;overflow:auto;padding:16px 18px 20px}
+
+  .panel-foot{
+    flex:0 0 48px;display:flex;align-items:center;gap:2px;padding:0 12px;
+    border-top:1px solid var(--line-soft);
+  }
+  .foot-icon{
+    width:30px;height:30px;display:inline-grid;place-items:center;border:0;border-radius:8px;
+    background:transparent;color:var(--faint);cursor:pointer;transition:background .16s,color .16s;
+  }
+  .foot-icon:hover{background:var(--paper-deep);color:var(--ink)}
+  .foot-icon svg{width:15px;height:15px}
+  .foot-spacer{flex:1}
+  .advanced{
+    height:28px;display:inline-flex;align-items:center;gap:3px;padding:0 7px;
+    border:0;border-radius:7px;background:transparent;color:var(--faint);font-size:10.5px;cursor:pointer;
+  }
+  .advanced:hover{background:var(--paper-deep);color:var(--ink)}
+  .advanced.active{background:var(--mint-soft);color:var(--mint-deep)}
+  .advanced svg{width:12px;height:12px}
+
+  .edge-tab{
+    position:absolute;z-index:14;left:0;top:50%;transform:translateY(-50%);
+    width:26px;height:74px;display:flex;align-items:center;justify-content:center;
+    border:1px solid var(--line);border-left:0;border-radius:0 9px 9px 0;
+    background:rgba(251,250,246,.96);color:var(--muted);font-size:10px;
+    letter-spacing:.16em;writing-mode:vertical-rl;cursor:pointer;
+    box-shadow:6px 0 18px rgba(36,41,35,.05);
+  }
+  .edge-tab:hover{color:var(--mint-deep);background:var(--mint-soft)}
+  .edge-tab[hidden]{display:none}
+
+  @media (max-width:960px){
+    .steps{display:none}
+    .panel{width:306px}
+    .paper-hint{font-size:clamp(16px,3.2vw,22px)}
+  }
+</style>
+</head>
+<body>
+<div class="desk">
+  <header class="topbar">
+    <div class="stage">
+      <span class="stage-dot"></span>
+      <span class="stage-name">白膜</span>
+      <span class="stage-sep">·</span>
+      <span class="stage-sub">先涂地形</span>
+    </div>
+
+    <nav class="steps" aria-label="创作阶段">
+      <span class="step active">白膜</span><i></i>
+      <span class="step">地形</span><i></i>
+      <span class="step">人文</span>
+    </nav>
+
+    <div class="actions">
+      <button class="primary" id="primary" type="button">
+        定稿地形
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h9M9 4l4 4-4 4"/></svg>
+      </button>
+      <button class="icon" type="button" title="全屏">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 7V3h4M11 3h4v4M15 11v4h-4M7 15H3v-4"/></svg>
+      </button>
+      <button class="icon" id="more" type="button" title="更多">
+        <svg viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.3"/><circle cx="9" cy="9" r="1.3"/><circle cx="14" cy="9" r="1.3"/></svg>
+      </button>
+    </div>
+
+    <div class="menu" id="menu" hidden>
+      <button type="button"><span>重开白膜</span><small class="hint">清空草稿</small></button>
+      <button type="button"><span>随机世界</span><small class="hint">覆盖当前</small></button>
+      <hr>
+      <button type="button"><span>导出地图</span><small class="hint">.map</small></button>
+    </div>
+  </header>
+
+  <div class="workspace">
+    <main class="canvas">
+      <div class="paper-hint">
+        <div>白膜 · 不是最终地图</div>
+        <div class="sub">先涂地形，画完点顶部「定稿地形」</div>
+      </div>
+      <svg id="cells" aria-hidden="true"></svg>
+    </main>
+
+    <aside class="panel" id="panel">
+      <div class="panel-head">
+        <div class="panel-title">白膜画笔</div>
+        <button class="collapse" id="collapse" type="button">
+          收起
+          <svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M8 2 4 6l4 4"/></svg>
+        </button>
+      </div>
+
+      <div class="tabs" role="tablist">
+        <button class="tab active" data-tab="shape" type="button" role="tab">塑形</button>
+        <button class="tab" data-tab="gradient" type="button" role="tab">渐变</button>
+        <button class="tab" data-tab="special" type="button" role="tab">特殊</button>
+      </div>
+
+      <div class="panel-body">
+        <section class="pane" data-pane="shape">
+          <div class="pane-kicker">塑造地形</div>
+          <div class="tiles">
+            <button class="tile active" type="button">
+              <span class="glyph"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M3 22 10 12l4 5 7-11 4 16"/><path d="M14 22h0"/></svg></span>
+              <span class="tile-text"><span class="tile-name">抬高</span><span class="tile-desc">把碎块加高</span></span>
+            </button>
+            <button class="tile" type="button">
+              <span class="glyph"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6 10 16l4-5 7 11 4-16"/></svg></span>
+              <span class="tile-text"><span class="tile-name">降低</span><span class="tile-desc">把碎块挖成海</span></span>
+            </button>
+            <button class="tile" type="button">
+              <span class="glyph"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"><path d="M4 14h20M8 10v8M20 10v8"/></svg></span>
+              <span class="tile-text"><span class="tile-name">抹平</span><span class="tile-desc">统一到起始高度</span></span>
+            </button>
+            <button class="tile" type="button">
+              <span class="glyph"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"><path d="M3 17c4-7 8-7 11 0s7 7 11 0"/></svg></span>
+              <span class="tile-text"><span class="tile-name">平滑</span><span class="tile-desc">柔化边缘</span></span>
+            </button>
+          </div>
+
+        </section>
+
+        <section class="pane" data-pane="gradient" hidden>
+          <div class="pane-kicker">渐变笔触</div>
+          <div class="tiles one">
+            <button class="tile" type="button">
+              <span class="glyph"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"><path d="M3 21 25 7"/><circle cx="7" cy="19" r="1.4" fill="currentColor" stroke="none"/><circle cx="14" cy="14" r="1.4" fill="currentColor" stroke="none"/><circle cx="21" cy="9" r="1.4" fill="currentColor" stroke="none"/></svg></span>
+              <span class="tile-text"><span class="tile-name">渐高</span><span class="tile-desc">拖动时逐步抬升，形成缓坡</span></span>
+            </button>
+            <button class="tile" type="button">
+              <span class="glyph"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"><path d="M3 7 25 21"/><circle cx="7" cy="9" r="1.4" fill="currentColor" stroke="none"/><circle cx="14" cy="14" r="1.4" fill="currentColor" stroke="none"/><circle cx="21" cy="19" r="1.4" fill="currentColor" stroke="none"/></svg></span>
+              <span class="tile-text"><span class="tile-name">渐低</span><span class="tile-desc">拖动时逐步降低，形成缓谷</span></span>
+            </button>
+          </div>
+        </section>
+
+        <section class="pane" data-pane="special" hidden>
+          <div class="pane-kicker">特殊笔触</div>
+          <div class="tiles one">
+            <button class="tile" type="button">
+              <span class="glyph"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M3 16 7 10l4 8 4-9 4 10 4-6 2 3"/></svg></span>
+              <span class="tile-text"><span class="tile-name">扰动</span><span class="tile-desc">随机改变碎块高度，做碎岸与丘陵</span></span>
+            </button>
+            <button class="tile" type="button">
+              <span class="glyph"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18c0-7 5-11 10-10 5 1 7 6 6 10-1 5-6 7-10 6-3-1-5-3-6-6Z"/><path d="M11 16h7M14.5 12.5v7"/></svg></span>
+              <span class="tile-text"><span class="tile-name">填充</span><span class="tile-desc">点一块封闭水域，生成锥形陆地</span></span>
+            </button>
+            <button class="tile" type="button">
+              <span class="glyph"><svg viewBox="0 0 28 28" fill="none" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"><path d="M6 22 22 6"/><circle cx="6" cy="22" r="1.8"/><circle cx="22" cy="6" r="1.8"/></svg></span>
+              <span class="tile-text"><span class="tile-name">画线</span><span class="tile-desc">拉一条直线，沿线的碎块一起变</span></span>
+            </button>
+          </div>
+        </section>
+
+      <div class="brush-settings">
+        <div class="current-brush"><span>当前画笔</span><strong id="currentBrush">抬高</strong></div>
+        <div class="pane-kicker">笔触</div>
+        <div class="setting">
+          <span class="setting-label">半径</span>
+          <input type="range" min="1" max="100" value="25" data-out="radius">
+          <output id="radius">25</output>
+        </div>
+        <div class="setting">
+          <span class="setting-label">力度</span>
+          <input type="range" min="1" max="10" value="5" data-out="power">
+          <output id="power">5</output>
+        </div>
+        <div class="pane-kicker" style="margin-top:10px">作用范围</div>
+        <div class="segmented">
+          <button class="active" type="button">全部碎块</button>
+          <button type="button">只改陆地</button>
+          <button type="button">只改水域</button>
+        </div>
+      </div>
+
+      </div>
+
+      <div class="panel-foot">
+        <button class="foot-icon" type="button" title="撤销"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4 2 8l4 4"/><path d="M2 8h7a5 5 0 0 1 0 10"/></svg></button>
+        <button class="foot-icon" type="button" title="重做"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l4 4-4 4"/><path d="M16 8H9a5 5 0 0 0 0 10"/></svg></button>
+        <span class="foot-spacer"></span>
+        <button class="advanced" id="openArrange" type="button">整理
+          <svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 4h10M2 7h7M2 10h4"/></svg>
+        </button>
+      </div>
+
+      <div class="arrange-layer" id="arrangeLayer" hidden>
+        <div class="arrange-head">
+          <div class="arrange-title">整理地形</div>
+        </div>
+        <div class="arrange-body">
+          <div class="pane-kicker">编辑历史</div>
+          <div class="action-list">
+            <button class="action-row" type="button"><span class="glyph"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4 2 8l4 4"/><path d="M2 8h7a5 5 0 0 1 0 10"/></svg></span><span>撤销</span><small>⌘Z</small></button>
+            <button class="action-row" type="button"><span class="glyph"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l4 4-4 4"/><path d="M16 8H9a5 5 0 0 0 0 10"/></svg></span><span>重做</span><small>⇧⌘Z</small></button>
+          </div>
+          <div class="pane-kicker" style="margin-top:16px">整片调整</div>
+          <div class="action-list">
+            <button class="action-row" type="button"><span class="glyph"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 9h14M5 6 2 9l3 3M13 6l3 3-3 3"/></svg></span><span>缩放高程</span></button>
+            <button class="action-row" type="button"><span class="glyph"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 2v4M9 12v4M2 9h4M12 9h4"/><circle cx="9" cy="9" r="2.4"/></svg></span><span>条件缩放</span></button>
+            <button class="action-row" type="button"><span class="glyph"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 11c3-5 5-5 7 0s4 5 7 0"/></svg></span><span>整体平滑</span></button>
+            <button class="action-row" type="button"><span class="glyph"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M2 10 6 5l3 6 3-7 4 7"/></svg></span><span>整体扰动</span></button>
+          </div>
+          <div class="pane-kicker" style="margin-top:16px">危险操作</div>
+          <div class="action-list">
+            <button class="action-row danger" type="button"><span class="glyph"><svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h12M7 5V3h4v2M5 5l1 10h6l1-10"/></svg></span><span>清空全部高度</span><small>不可撤销</small></button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <button class="edge-tab" id="edge" type="button" hidden>画笔</button>
+  </div>
+</div>
+
+<script>
+  /* ---------- tab switching ---------- */
+  const tabs = [...document.querySelectorAll('.tab')];
+  const panes = [...document.querySelectorAll('.pane')];
+  const allTiles = [...document.querySelectorAll('.tile')];
+  const currentBrush = document.getElementById('currentBrush');
+  const activateTile = tile => {
+    for (const item of allTiles) item.classList.toggle('active', item === tile);
+    currentBrush.textContent = tile.querySelector('.tile-name').textContent;
+  };
+  for (const tab of tabs) {
+    tab.addEventListener('click', () => {
+      for (const item of tabs) item.classList.toggle('active', item === tab);
+      for (const pane of panes) pane.hidden = pane.dataset.pane !== tab.dataset.tab;
+      const visible = panes.find(pane => !pane.hidden);
+      if (visible && !visible.querySelector('.tile.active')) {
+        const first = visible.querySelector('.tile');
+        if (first) activateTile(first);
+      }
+    });
+  }
+
+  /* ---------- tiles ---------- */
+  for (const tile of allTiles) tile.addEventListener('click', () => activateTile(tile));
+
+  /* ---------- sliders ---------- */
+  for (const input of document.querySelectorAll('input[type=range]')) {
+    const out = document.getElementById(input.dataset.out);
+    input.addEventListener('input', () => { out.textContent = input.value; });
+  }
+
+  /* ---------- range segmented ---------- */
+  for (const segment of document.querySelectorAll('.segmented')) {
+    for (const button of segment.querySelectorAll('button')) {
+      button.addEventListener('click', () => {
+        for (const item of segment.querySelectorAll('button')) item.classList.toggle('active', item === button);
+      });
+    }
+  }
+
+  /* ---------- panel collapse / edge ---------- */
+  const panel = document.getElementById('panel');
+  const edge = document.getElementById('edge');
+  document.getElementById('collapse').addEventListener('click', () => {
+    panel.classList.add('closed');
+    edge.hidden = false;
+  });
+  edge.addEventListener('click', () => {
+    panel.classList.remove('closed');
+    edge.hidden = true;
+  });
+
+  /* ---------- arrange mode: same footer control toggles back ---------- */
+  const arrangeLayer = document.getElementById('arrangeLayer');
+  const arrangeToggle = document.getElementById('openArrange');
+  const arrangeIcon = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 4h10M2 7h7M2 10h4"/></svg>';
+  const brushIcon = '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 2 5 6l3 3 4-4M5 6 2 9l3 3 3-3"/></svg>';
+  arrangeToggle.addEventListener('click', () => {
+    arrangeLayer.hidden = !arrangeLayer.hidden;
+    arrangeToggle.classList.toggle('active', !arrangeLayer.hidden);
+    arrangeToggle.innerHTML = arrangeLayer.hidden ? '整理 ' + arrangeIcon : '返回画笔 ' + brushIcon;
+  });
+
+  /* ---------- overflow menu ---------- */
+  const menu = document.getElementById('menu');
+  document.getElementById('more').addEventListener('click', event => {
+    event.stopPropagation();
+    menu.hidden = !menu.hidden;
+  });
+  document.addEventListener('click', event => {
+    if (!menu.hidden && !menu.contains(event.target)) menu.hidden = true;
+  });
+
+  /* ---------- white-film cell mesh ---------- */
+  function mulberry32(seed) {
+    return function () {
+      let t = (seed += 0x6D2B79F5);
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+
+  function buildMesh() {
+    const svg = document.getElementById('cells');
+    svg.innerHTML = '';
+    const box = svg.getBoundingClientRect();
+    const W = Math.max(600, box.width);
+    const H = Math.max(400, box.height);
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.setAttribute('preserveAspectRatio', 'none');
+
+    const random = mulberry32(1542);
+    const spacing = 24;
+    const stepY = spacing * 0.88;
+    const points = [];
+    const rows = Math.ceil(H / stepY) + 2;
+    const cols = Math.ceil(W / spacing) + 2;
+    for (let r = -1; r < rows; r++) {
+      for (let c = -1; c < cols; c++) {
+        points.push({
+          x: c * spacing + (r % 2 === 0 ? 0 : spacing / 2) + (random() - .5) * spacing * 0.55,
+          y: r * stepY + (random() - .5) * spacing * 0.55,
+          r, c,
+        });
+      }
+    }
+
+    const byKey = new Map(points.map(p => [`${p.r}:${p.c}`, p]));
+    const at = (r, c) => byKey.get(`${r}:${c}`);
+    const clip = (poly, nx, ny, mx, my) => {
+      const out = [];
+      for (let i = 0; i < poly.length; i++) {
+        const a = poly[i];
+        const b = poly[(i + 1) % poly.length];
+        const da = nx * (a[0] - mx) + ny * (a[1] - my);
+        const db = nx * (b[0] - mx) + ny * (b[1] - my);
+        const ina = da <= 0;
+        const inb = db <= 0;
+        if (ina) out.push(a);
+        if (ina !== inb) {
+          const t = da / (da - db);
+          out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+        }
+      }
+      return out;
+    };
+
+    let d = '';
+    for (const p of points) {
+      let poly = [
+        [p.x - spacing * 1.7, p.y - spacing * 1.7],
+        [p.x + spacing * 1.7, p.y - spacing * 1.7],
+        [p.x + spacing * 1.7, p.y + spacing * 1.7],
+        [p.x - spacing * 1.7, p.y + spacing * 1.7],
+      ];
+      for (let dr = -2; dr <= 2; dr++) {
+        for (let dc = -2; dc <= 2; dc++) {
+          if (dr === 0 && dc === 0) continue;
+          const q = at(p.r + dr, p.c + dc);
+          if (!q) continue;
+          const nx = q.x - p.x;
+          const ny = q.y - p.y;
+          poly = clip(poly, nx, ny, (p.x + q.x) / 2, (p.y + q.y) / 2);
+          if (!poly.length) break;
+        }
+        if (!poly.length) break;
+      }
+      if (poly.length < 3) continue;
+      d += 'M' + poly.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join('L') + 'Z';
+    }
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', d);
+    svg.appendChild(path);
+  }
+
+  buildMesh();
+  let resizeTimer = 0;
+  window.addEventListener('resize', () => {
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(buildMesh, 180);
+  });
+</script>
+</body>
+</html>

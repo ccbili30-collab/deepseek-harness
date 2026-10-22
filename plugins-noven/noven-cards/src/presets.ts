@@ -13,7 +13,7 @@ import { join } from 'node:path'
 import { emptyCardDocument, mintId, type ContentBlock, type ContentDocument, type ContentModule } from './model.ts'
 import { contractFor } from './collection-contracts.ts'
 import {
-  encodeCollection, encodeMap, encodeRelation, encodeTimeline,
+  encodeCollection, encodeRelation, encodeTimeline,
   type CollectionData, type CollectionFieldType, type CollectionValue, type TimelineCalendar, type TimelineData, type TimelineEra, type TimelineEvent,
 } from './formats.ts'
 
@@ -426,29 +426,7 @@ export async function buildPresetDocument(
         })
         module.blocks.push({ kind: 'text', id: mintId(), content: await io.writeText(encodeRelation({ version: 1, nodes, edges })) })
       } else if (node.widget === 'map') {
-        if (node.map?.image !== undefined) {
-          const asset = node.map.image
-          const bytes = await readFile(join(PRESETS_DIR, asset))
-          const mediaType = asset.endsWith('.png') ? 'image/png' : 'image/jpeg'
-          const resourceId = mintId()
-          document.resources.push({ id: resourceId, content: await io.writePayload(bytes, mediaType), mediaType })
-          module.blocks.push({ kind: 'image', id: mintId(), resourceId })
-        }
-        const marks = (node.map?.markers ?? []).map(marker => ({
-          id: mintId(), type: 'mark' as const, layer: 'marks', name: marker.label, color: '#34d399',
-          pos: [marker.x, marker.y] as const, description: marker.description ?? '',
-        }))
-        module.blocks.push({
-          kind: 'text', id: mintId(),
-          content: await io.writeText(encodeMap({
-            version: 1,
-            description: node.map?.description ?? '',
-            markers: marks.map(mark => ({ id: mark.id, x: mark.pos[0], y: mark.pos[1], label: mark.name, description: mark.description })),
-            objects: marks,
-            draft: [],
-            palette: [],
-          })),
-        })
+        // FMG 编辑器在打开地图页时生成空白世界；不再写旧 MapData 载荷。
       } else if (node.widget === 'timeline') {
         const unit = node.timeline?.unit ?? '年'
         const data: TimelineData = {

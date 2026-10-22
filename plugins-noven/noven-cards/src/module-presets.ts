@@ -6,7 +6,7 @@
 import { mintId } from './model.ts'
 import { COLLECTION_CONTRACTS } from './collection-contracts.ts'
 import {
-  encodeCollection, encodeMap, encodeScene, encodeSurface, encodeTimeline,
+  encodeCollection, encodeScene, encodeSurface, encodeTimeline,
   type CollectionData, type CollectionFieldType, type CollectionPresentation, type CollectionView, type SceneData, type TimelineCalendar, type TimelineData,
 } from './formats.ts'
 import { FREE3D_EDITOR_CSS, FREE3D_EDITOR_HTML, FREE3D_EDITOR_JS } from './free3d-editor.ts'
@@ -552,12 +552,4 @@ export function timelinePreset(spec: ModulePresetSpec): string {
     calendar: defaultCalendar(unit), views: [], eras: [], events: [], marks: [],
   }
   return encodeTimeline(data)
-}
-
-/**
- * Encode an empty editable map preset.
- * @returns encoded map payload.
- */
-export function mapPreset(): string {
-  return encodeMap({ version: 1, description: '', markers: [], objects: [], draft: [], palette: [] })
 }

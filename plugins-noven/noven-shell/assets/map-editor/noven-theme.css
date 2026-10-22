@@ -1,0 +1,269 @@
+/* Noven skin over the vendored Fantasy Map Generator editor.
+   The upstream app sets its UI variables inline on boot, so the host also
+   re-applies them with !important; this stylesheet covers the static chrome. */
+
+:root {
+  --bg-main: #FBFAF6 !important;
+  --bg-lighter: #F4F1E8 !important;
+  --bg-light: #FBFAF6 !important;
+  --bg-disabled: #ECE8DC !important;
+  --bg-dialogs: #FBFAF6 !important;
+  --header: #ECEEEF !important;
+  --header-active: #DDF3E9 !important;
+  --bg-opacity: 0.97 !important;
+  --serif: "Songti SC", "Noto Serif SC", Georgia, serif !important;
+  --sans-serif: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif !important;
+  --monospace: "SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace !important;
+}
+
+body { background: #EFE6D0 !important; }
+
+/* ---------- main menu ---------- */
+#optionsContainer,
+#optionsTrigger,
+#collapsible { font-family: var(--sans-serif) !important; }
+
+#options {
+  font-family: var(--sans-serif) !important;
+  border: 1px solid #D9D2C0 !important;
+  border-radius: 14px !important;
+  background: rgba(251, 250, 246, .97) !important;
+  box-shadow: 0 16px 40px rgba(36, 41, 35, .16), 0 2px 8px rgba(36, 41, 35, .06) !important;
+  padding-bottom: 8px !important;
+  overflow: hidden !important;
+  backdrop-filter: blur(12px);
+}
+
+#optionsTrigger {
+  background: #FBFAF6 !important;
+  border: 1px solid #D9D2C0 !important;
+  border-radius: 10px !important;
+  color: #242923 !important;
+  box-shadow: 0 4px 14px rgba(36, 41, 35, .10) !important;
+}
+#optionsTrigger:hover { background: #DDF3E9 !important; color: #0E9F6E !important; }
+
+.tab {
+  border-bottom: 1px solid #E6E1D4 !important;
+  height: 38px !important;
+  background: #F4F1E8 !important;
+}
+
+button.options {
+  background: transparent !important;
+  color: #6D726C !important;
+  font: 500 12px/1 var(--sans-serif) !important;
+  border-radius: 8px 8px 0 0 !important;
+  transition: background 160ms, color 160ms !important;
+}
+
+button.options:hover {
+  background: #DDF3E9 !important;
+  color: #0E9F6E !important;
+}
+
+button.active {
+  background: #FBFAF6 !important;
+  color: #242923 !important;
+  box-shadow: inset 0 -2px 0 #0E9F6E !important;
+}
+
+.tabcontent {
+  color: #4E544C !important;
+  font-size: 11.5px !important;
+  opacity: 1 !important;
+}
+
+#options p {
+  font-style: normal !important;
+  font-weight: 500 !important;
+  color: #7A7F75 !important;
+}
+
+#options select,
+#options input[type="text"],
+#options input[type="number"],
+#options textarea {
+  border: 1px solid #D9D2C0 !important;
+  border-radius: 8px !important;
+  background: #fff !important;
+  color: #242923 !important;
+  font-family: var(--sans-serif) !important;
+}
+
+#options input[type="range"] { accent-color: #0E9F6E !important; }
+
+.tabcontent li {
+  background: #fff !important;
+  border: 1px solid #E6E1D4 !important;
+  border-radius: 7px !important;
+  color: #4E544C !important;
+  font-family: var(--sans-serif) !important;
+  padding: 5px 6px !important;
+  margin: 4px 5px !important;
+}
+
+.tabcontent li.buttonoff {
+  background: #F4F1E8 !important;
+  color: #A0A49A !important;
+}
+
+.tabcontent li:hover {
+  box-shadow: 0 0 0 1px #0E9F6E !important;
+}
+
+.tabcontent button {
+  background: #fff !important;
+  border: 1px solid #E6E1D4 !important;
+  border-radius: 7px !important;
+  color: #4E544C !important;
+  font-family: var(--sans-serif) !important;
+}
+
+.tabcontent button:hover {
+  border-color: #0E9F6E !important;
+  color: #0E9F6E !important;
+  background: #DDF3E9 !important;
+}
+
+.tabcontent button.pressed {
+  background: #DDF3E9 !important;
+  color: #0E9F6E !important;
+  font-style: normal !important;
+}
+
+#viewMode > button {
+  border-radius: 7px !important;
+  background: #fff !important;
+  border: 1px solid #E6E1D4 !important;
+}
+
+#viewMode > button:hover { border-color: #0E9F6E !important; color: #0E9F6E !important; }
+
+/* ---------- dialogs / tooltips ---------- */
+/* Map hover text sits directly on the map: no box, no fill, no radius.
+   It stays long enough to read, then leaves the map alone. */
+#tooltip {
+  background: transparent !important;
+  color: #F8F5EC !important;
+  border-radius: 0 !important;
+  text-shadow: 0 1px 3px rgba(20, 24, 20, .72), 0 0 10px rgba(20, 24, 20, .38) !important;
+  font-family: var(--sans-serif) !important;
+  bottom: 74px !important;
+  width: auto !important;
+  left: 50% !important;
+  transform: translateX(-50%) !important;
+  padding: 0 !important;
+  opacity: 1;
+  transition: opacity .45s ease !important;
+}
+#tooltip.noven-tip-fading { opacity: 0 !important; }
+/* Paper stages are light: ink text with a paper halo instead of white. */
+body.noven-blank #tooltip,
+body.noven-terrain #tooltip {
+  color: #3C423A !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, .82), 0 0 7px rgba(255, 255, 255, .62) !important;
+}
+
+.dialog,
+.ui-dialog {
+  background: #FBFAF6 !important;
+  border: 1px solid #D9D2C0 !important;
+  border-radius: 14px !important;
+  box-shadow: 0 18px 44px rgba(36, 41, 35, .18) !important;
+  color: #242923 !important;
+  font-family: var(--sans-serif) !important;
+}
+
+.ui-dialog-titlebar {
+  background: #F4F1E8 !important;
+  border-bottom: 1px solid #E6E1D4 !important;
+  border-radius: 14px 14px 0 0 !important;
+  color: #242923 !important;
+}
+
+.ui-dialog-buttonpane {
+  background: #FBFAF6 !important;
+  border-top: 1px solid #E6E1D4 !important;
+}
+
+.ui-button {
+  background: #fff !important;
+  border: 1px solid #D9D2C0 !important;
+  border-radius: 7px !important;
+  color: #4E544C !important;
+}
+
+.ui-button:hover {
+  border-color: #0E9F6E !important;
+  color: #0E9F6E !important;
+  background: #DDF3E9 !important;
+}
+
+/* the small floating help / play buttons */
+#optionsTrigger,
+#mapOverlay button,
+#assistantBubble {
+  font-family: var(--sans-serif) !important;
+}
+
+#loading > #loading-typography {
+  color: #4E544C !important;
+  text-shadow: none !important;
+}
+
+/* scrollbars */
+* {
+  scrollbar-color: #D9D2C0 transparent;
+}
+
+/* white-film heightmap: every cell is a visible paper fragment */
+body.noven-blank #map,
+body.noven-blank #viewbox {
+  background: #FBFAF6 !important;
+}
+body.noven-blank #heights polygon {
+  stroke: #C9D1C9;
+  stroke-width: .7;
+}
+body.noven-blank #loading {
+  display: none !important;
+}
+/* The paper hint replaces the upstream mode tip; keep hover text above the
+   paper edge and hide the pinned duplicate. */
+body.noven-blank #tooltip { bottom: 76px !important; }
+/* A pinned mode tip is redundant next to the paper hint; transient hover tips
+   have an empty data-main and stay visible. */
+body.noven-blank #tooltip[data-main]:not([data-main=""]) { display: none !important; }
+body.noven-blank #tooltip:empty { display: none !important; }
+body.noven-blank #exitCustomization { display: none !important; }
+
+/* Terrain-only stage: the heightmap bands are clipped to land and shade the
+   painted elevations; ocean, coastline, lakes and rivers carry the rest. */
+body.noven-terrain #map,
+body.noven-terrain #viewbox {
+  background: #FBFAF6 !important;
+}
+body.noven-terrain #oceanBase { fill: #dfeef2 !important; }
+body.noven-terrain #oceanLayers path { fill: #eaf4f6 !important; }
+body.noven-terrain #oceanPattern { display: none !important; }
+/* The land base is a neutral highland; the map style's black placeholder
+   shows through wherever a state does not cover the land. */
+body:not(.noven-blank):not(.noven-terrain) #landmass > rect { fill: #DCE3D2 !important; }
+body.noven-terrain #landmass > rect { fill: #dfe8d2 !important; }
+body.noven-terrain #terrs { mask: url(#land); }
+body.noven-terrain #landHeights > rect,
+body.noven-terrain #oceanHeights { display: none !important; }
+body.noven-terrain #terrs path { opacity: .94; }
+body.noven-terrain #coastline use { stroke: #6f8f7f !important; stroke-width: 1px !important; }
+body.noven-terrain #rivers path { fill: #4f7d86 !important; }
+body.noven-terrain #lakes use { fill: #cfe3e6 !important; }
+
+/* Noven has one assistant: the card sidebar. Hide the upstream assistant and
+   the promotional About entry. */
+#assistant,
+#assistantBubble,
+#tourPromptButton,
+#aboutTab {
+  display: none !important;
+}
