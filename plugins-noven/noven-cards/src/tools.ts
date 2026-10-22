@@ -19,11 +19,10 @@ type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string
 import { flattenModules, organizeFolders, assertValid, findTarget, emptyCardDocument, IMAGE_MEDIA, type ContentDocument, type ContentModule, type ModuleUse } from './model.ts'
 import { BindingStore } from './bindings.ts'
 import { CardStore, cardsRoot, type SavedCard } from './store.ts'
-import { applyAndCommit, resolveWorldHeightmap, type EditorCommand } from './editor.ts'
-import { calendarOf, decodeCollection, decodeMap, decodeRelation, decodeTimeline } from './formats.ts'
+import { applyAndCommit, type EditorCommand } from './editor.ts'
+import { calendarOf, decodeCollection, decodeRelation, decodeTimeline } from './formats.ts'
 import { buildPresetDocument, listPresets, loadPreset } from './presets.ts'
 import { MODULE_PRESETS } from './module-presets.ts'
-import { generateWorld, applyWorldEdits } from 'noven-fmg/world'
 import { proposeEdit, proposeTransform, proposalChanges, proposalPreview } from './proposals.ts'
 import { aiTrustOf } from './trust.ts'
 import { buildBulkModules, parseBulkTree } from './bulk.ts'
@@ -271,71 +270,6 @@ export function registerCardTools(ctx: Context): void {
       const resource = target.resources.find(candidate => candidate.id === args.resource_id)
       if (resource === undefined) throw new Error('资源不属于目标卡')
       return { status: 'read', image_path: await resolved.store.payloadPath(String(args.root_id), resource.content), media_type: resource.mediaType, next: '用 read_image 读取 image_path' }
-    },
-  }))
-
-  tools.register(defineTool({
-    name: 'map_describe',
-    description: '读取 map 模块解析后的世界实体表：国家/城邦/河流/地貌/文化的编号 id、归一化位置 at、人口/都城/港口/类型等属性；已套用现存 edits 覆写（改名/移除后的现状）。' +
-      '实体默认无名——配合 widget_set_data 的 world.edits 按 id 或 at 起名/删除。' +
-      'burgs 参数：capitals 只列都城与港口（默认，省 token）；all 列全部城邦。',
-    parameters: {
-      root_id: TARGET_PARAMS.root_id,
-      target_id: TARGET_PARAMS.target_id,
-      module_id: { type: 'string', required: true, description: 'map 模块编号' },
-      project: TARGET_PARAMS.project,
-      burgs: { type: 'string', description: 'capitals（默认）/ all' },
-    },
-    output: { schema: RESULT_SCHEMA, render },
-    async execute(args, exec): Promise<Record<string, JsonValue>> {
-      const resolved = await resolveCard(sessionCwd(exec), exec.agent?.session?.id as SessionId | undefined, String(args.root_id), optionalId(args.project) ?? undefined)
-      const card = await currentCard(resolved.store, String(args.root_id))
-      const target = locate(card, String(args.target_id))
-      const module = flattenModules(target.modules).find(candidate => candidate.id === args.module_id)
-      if (module === undefined) throw new Error('模块不在目标卡中')
-      if (module.widget?.type !== 'map') throw new Error('目标模块不是 map 类型')
-      const block = module.blocks.find(candidate => candidate.kind === 'text')
-      const raw = block === undefined ? undefined : new TextDecoder().decode(await resolved.store.readPayload(String(args.root_id), block.content))
-      const data = decodeMap(raw)
-      const heightmap = resolveWorldHeightmap(data)
-      if (data.world === undefined || heightmap === undefined) {
-        return { status: 'read', world: null, objects: data.objects.length, draft: data.draft.length,
-          hint: '该模块还没有 world 生成源——用 widget_set_data 写 world（seed+heightmap）后重查' }
-      }
-      const world = generateWorld({ seed: data.world.seed, config: data.world.config, heightmap, postSteps: [...(data.world.postSteps ?? [])] })
-      if (data.world.edits !== undefined && data.world.edits.length > 0) applyWorldEdits(world, data.world.edits)
-      const { width: w, height: h } = world.config
-      const at = (x: number, y: number) => [Math.round(x / w * 1000) / 1000, Math.round(y / h * 1000) / 1000]
-      const majorOnly = args.burgs !== 'all'
-      return {
-        status: 'read',
-        world: {
-          seed: world.config.seed, named: world.config.names,
-          states: world.pack.states.filter(s => s.i && !s.removed).map(s => ({
-            i: s.i, name: s.name, ...(s.pole !== undefined ? { at: at(s.pole[0], s.pole[1]) } : {}),
-            capital: s.capital, culture: s.culture,
-          })),
-          cultures: world.pack.cultures.filter(c => c.i && !c.removed).map(c => ({
-            i: c.i, name: c.name, type: c.type, ...(c.center !== undefined ? { at: at(...world.pack.cells.p[c.center]) } : {}),
-          })),
-          features: world.pack.features.filter(f => f?.i && !f.removed).map(f => ({
-            i: f.i, name: f.name, type: f.type, subtype: f.subtype,
-            at: at(...world.pack.cells.p[f.firstCell]),
-          })),
-          rivers: world.pack.rivers.filter(r => r.i && !r.removed).map(r => ({
-            i: r.i, name: r.name, type: r.type, length: r.length,
-            ...(r.points !== undefined && r.points.length > 0 ? { at: at(...r.points[Math.floor(r.points.length / 2)].slice(0, 2) as [number, number]) } : {}),
-          })),
-          burgs: world.pack.burgs.filter(b => b?.i && !b.removed && (!majorOnly || b.capital || b.port)).map(b => ({
-            i: b.i, name: b.name ?? '', at: at(b.x, b.y),
-            ...(b.capital ? { capital: 1 } : {}), ...(b.port ? { port: b.port } : {}),
-            ...(b.population !== undefined ? { pop: b.population } : {}),
-            ...(b.state !== undefined ? { state: b.state } : {}),
-            ...(b.culture !== undefined ? { culture: b.culture } : {}),
-          })),
-          total_burgs: world.pack.burgs.filter(b => b?.i && !b.removed).length,
-        },
-      }
     },
   }))
 
@@ -1090,78 +1024,250 @@ export function registerCardTools(ctx: Context): void {
     })
 
   registerEditTool(tools, 'widget_set_data',
-    '整体改写 map / relation 模块的结构化数据（timeline/collection 请用各自的专用工具）。' +
-    'map 有三层，全部可选：' +
-    '① world 生成源——{"seed":"任意串","config":{"points":10000,"width":1280,"height":800},' +
-    '"heightmap":{"kind":"template","template":"continents"},"postSteps":["Smooth 2 0 0 0"]}。' +
-    'heightmap.kind 支持 template（程序模板 continents/archipelago/peninsula/atoll…）、heights（逐格 0-100 高度数组）、' +
-    'gray（逐格 0-255 灰度，可喂 DEM）、draft（把本模块 draft 栅格化成高度图再跑管线）、' +
-    'png（借真实地形骨架的架空图，内置库直接写名字：{"kind":"png","path":"east-asia"} 得东亚轮廓；' +
-    '还有 world、world-from-pacific、eurasia、europe、africa-centric、north-america、us-mainland、' +
-    'mediterranean-sea、arabia、middle-east、indian-ocean、atlantics、caribbean、britain、greenland、' +
-    'iceland、hellenica、europe-north、europe-central、europe-accented、europe-and-central-asia；' +
-    '也可给 PNG 绝对路径；png 会拉伸到 config.width×height，保比例就自己配宽高，如 east-asia 配 1000×640）。' +
-    '种子决定一切：同 seed+同输入=同世界；只换 seed 就是换一张图。' +
-    '定位声明：一切生成皆为架空——png 只是借真实地形的轮廓做架空世界，' +
-    '不要声称是某朝代疆域或真实地图；历史政权/战线等语义用 objects 标注层表达。' +
-    'draft 用于架空地形或战区/势力范围这类意图标注（op:subtract 挖海、stroke 描走廊）。' +
-    '命名：默认 config.namebase=\'zh\' 出中文构词名（临安城/沧江/赤岭），' +
-    '预设还有 zh-chunqiu（春秋）、zh-modern（现代）、west（西幻中译）；' +
-    '数字 = 统一用该序号 Markov 语种库；内联 {mode:"compose"|"markov",names:["专名",…],suffix:{burg:[…],river:[…],state:[…]}} = 自建风格语料，' +
-    '或写 .json 路径（如 local/namebases/xx.json）读入存成内联——风格要独特就自建语料。' +
-    'config.names=false 可全无名。想精修/语义化起名：world.edits 写 ' +
-    '[{"kind":"burg","id":5,"at":[0.4,0.3],"name":"临安","lock":true}]，' +
-    'id 是实体编号（同生成内精确），at 是归一化位置兜底（重算后按最近实体回贴），' +
-    'key 是原始名（有名实体跨重算匹配）；edits 改名后重算不丢。' +
-    '② draft 语义草稿——人与 AI 共用的意图层：[{"kind":"stroke","color":"#B8A888","r":0.05,"pts":[[x,y],…]},' +
-    '{"kind":"shape","color":"…","ctrl":[[x,y]×4],"roughness":0.35,"seed":7,"op":"add|subtract"},' +
-    '{"kind":"poly","color":"…","pts":[[x,y]…],"op":"add|subtract"},{"kind":"stroke","erase":true,…}]。' +
-    '颜色经 palette 解释成高度：palette:[{"name":"海","desc":"ocean","color":"#6D9DC5","level":5}]，' +
-    'level 0-100，20 是海平线（海≈5、湖≈16、陆≈40、山≈75、峰≈88）；不写 level 按 name/desc 里的' +
-    '海/陆/山/湖/ocean/mountain 等词猜。base 是底层语义色（一般是海，没涂到的地方都是它）。' +
-    '③ objects 覆盖标注层——{"id","type":"mark|line|face","layer","name","color","pos"/"pts"}' +
-    '（markers 是 mark 的兼容投影）。坐标一律底图归一化 0..1，x 是宽比。' +
-    '写完 draft 意图后把 heightmap 置 {"kind":"draft"} 再保存，管线会按草稿重算世界。' +
-    'relation: {"nodes":[{"name":"艾莉娅","note":"…","x":0.3,"y":0.5}],"edges":[{"from":"节点id","to":"节点id","label":"师徒"}]}。',
+    '整体改写 relation 模块的结构化数据：{"nodes":[{"name":"艾莉娅","note":"…","x":0.3,"y":0.5}],"edges":[{"from":"节点id","to":"节点id","label":"师徒"}]}。' +
+    'timeline/collection 用各自的专用工具；地图由 FMG 编辑器生成，用 generate_map。',
     {
-      module_id: { type: 'string', required: true, description: 'map / relation 模块编号' },
-      widget: { type: 'string', required: true, description: 'map 或 relation' },
-      data: { type: 'json', required: true, description: '该类型的整份数据对象' },
+      module_id: { type: 'string', required: true, description: 'relation 模块编号' },
+      widget: { type: 'string', required: true, description: '固定为 relation' },
+      data: { type: 'json', required: true, description: 'relation 的整份数据对象' },
     },
     args => {
       const moduleId = String(args.module_id)
       const raw = typeof args.data === 'string' ? args.data : JSON.stringify(args.data)
       const widget = String(args.widget)
-      if (widget !== 'map' && widget !== 'relation') {
-        throw new Error('widget 必须是 map 或 relation（timeline/collection 用各自的专用工具）')
-      }
+      if (widget !== 'relation') throw new Error('widget 必须是 relation（地图请用 generate_map）')
       return { kind: 'set_widget_data', moduleId, widget, data: raw }
     })
 
-  registerEditTool(tools, 'map_spawn_view',
-    '从 map 模块生成局部视图子模块：取景框内的对象与草稿裁剪重归一化；' +
-    '父模块带 world 生成源时不是裁剪，而是把该区域重采样成更密的格网、由管线重新长出河网/城邦/国界——细节随放大变多。' +
-    '子模块自动记入 parent 溯源并紧跟源模块。',
-    {
-      module_id: { type: 'string', required: true, description: 'map 模块编号' },
-      bbox: { type: 'string', description: '取景框 "[x0,y0,x1,y1]"（归一化坐标，0..1 左上原点）；与 object_id 二选一' },
-      object_id: { type: 'string', description: '围绕某个 objects 对象的外接框取景；与 bbox 二选一' },
-      name: { type: 'string', description: '子模块名，缺省自动命名' },
+  tools.register(defineTool({
+    name: 'generate_map',
+    description: '在卡的地图模块上排队一次 Fantasy-Map-Generator 世界生成（模板/种子/尺寸/空白）。' +
+      '这是浏览器编辑器的生成请求：地图页打开后才会真正生成并自动保存；不要把回执当成“地图已生成”。' +
+      'template 常用：continents（大陆）、archipelago（群岛）、lowIsland（单岛）、peninsula（半岛）、blank（空白单岛，无国家/城邦）。' +
+      'blank 会自动带 empty=true，只保留地形/一个中立文化，方便用户手动画。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '地图模块编号' },
+      template: { type: 'string', description: 'FMG 高度图模板 id；缺省 continents' },
+      seed: { type: 'string', description: '世界种子；省略=由编辑器随机' },
+      width: { type: 'integer', description: '地图宽度像素，默认 1280' },
+      height: { type: 'integer', description: '地图高度像素，默认 800' },
+      points: { type: 'integer', description: '网格点数，默认 10000；越大越细也越慢' },
+      empty: { type: 'boolean', description: 'true=不生成国家/城邦（空白手绘）；blank 模板自动开启' },
     },
-    args => {
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const root = String(args.root_id)
+      const target = String(args.target_id)
       const moduleId = String(args.module_id)
-      const objectId = optionalId(args.object_id) ?? undefined
-      let bbox: readonly [number, number, number, number] | undefined
-      if (typeof args.bbox === 'string' && args.bbox.trim() !== '') {
-        const parsed: unknown = JSON.parse(args.bbox)
-        if (!Array.isArray(parsed) || parsed.length !== 4 || parsed.some(v => typeof v !== 'number')) {
-          throw new Error('bbox 必须是四个数的 JSON 数组 [x0,y0,x1,y1]')
-        }
-        bbox = parsed as [number, number, number, number]
+      const template = typeof args.template === 'string' && args.template.trim() !== '' ? args.template.trim() : 'continents'
+      const empty = args.empty === true || template === 'blank'
+      const request: Record<string, unknown> = {
+        template,
+        ...(typeof args.seed === 'string' && args.seed.trim() !== '' ? { seed: args.seed.trim() } : {}),
+        width: Number.isFinite(Number(args.width)) && Number(args.width) > 0 ? Math.trunc(Number(args.width)) : 1280,
+        height: Number.isFinite(Number(args.height)) && Number(args.height) > 0 ? Math.trunc(Number(args.height)) : 800,
+        points: Number.isFinite(Number(args.points)) && Number(args.points) > 0 ? Math.trunc(Number(args.points)) : 10000,
+        ...(empty ? { empty: true } : {}),
       }
-      if (bbox === undefined && objectId === undefined) throw new Error('bbox 或 object_id 至少给一个')
-      return { kind: 'map_spawn_view', moduleId, ...(objectId !== undefined ? { objectId } : {}), ...(bbox !== undefined ? { bbox } : {}), ...(args.name !== undefined ? { name: String(args.name) } : {}) }
-    })
+      await editAndCommit(exec, root, target, { kind: 'request_map_generation', moduleId, request }, optionalId(args.project) ?? undefined)
+      return {
+        status: 'requested',
+        root_id: root,
+        target_id: target,
+        module_id: moduleId,
+        ...request,
+        hint: '地图页打开后由 FMG 编辑器生成，完成后自动保存到卡；如果地图页已经打开，会立即开始。',
+      }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'map_summary',
+    description: '读取地图模块上次保存时留下的结构化摘要：国家/文化/城邦/标记的编号、名称和位置。' +
+      '改图前先用它拿编号；摘要缺失时先让用户打开地图页并保存一次。只读，不会执行任何地图代码。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '地图模块编号' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const resolved = await resolveCard(sessionCwd(exec), exec.agent?.session?.id as SessionId | undefined, String(args.root_id), optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, String(args.root_id))
+      const target = locate(card, String(args.target_id))
+      const module = flattenModules(target.modules).find(candidate => candidate.id === args.module_id)
+      if (module === undefined) throw new Error('模块不在目标卡中')
+      if (module.widget?.type !== 'map') throw new Error('目标模块不是 map 类型')
+      const summary = module.widget.mapSummary
+      if (summary === undefined) {
+        return { status: 'empty', module_id: module.id, summary: null, hint: '还没有地图摘要：先打开地图页并保存一次，再让我改图。' }
+      }
+      return { status: 'read', module_id: module.id, summary: summary as JsonValue, hint: null }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'map_edit',
+    description: '在已定稿/已保存的地图上排队一组改图动作，地图页打开后由编辑器直接执行并保存。' +
+      '只允许安全的编辑动作，不允许删除/合并/整张重生成，也不允许执行代码。' +
+      '常用：States.rename(国家编号, 新名字)、States.recolor(编号, 颜色)、States.setPopulation(编号, 人口)、' +
+      'Burgs.rename(城邦编号, 新名字)、Burgs.setPopulation(编号, 人口)、Burgs.setPort(编号, 港口编号或0)、' +
+      'Cultures.rename(文化编号, 新名字)、Religions.rename(编号, 新名字)、Markers.rename(标记编号, 新名字)、' +
+      'Markers.move(编号, x, y)。先用 map_summary 拿编号。小改直接执行，地图工具的「AI 改动」可撤销。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '地图模块编号' },
+      operations: {
+        type: 'array',
+        required: true,
+        description: '动作数组，每项 { op: "States.rename", args: [3, "寒川"] }',
+        items: {
+          type: 'object',
+          properties: {
+            op: { type: 'string', required: true, description: '动作名' },
+            args: { type: 'array', required: true, description: '按动作参数顺序排列的参数' },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const operations = Array.isArray(args.operations) ? args.operations : []
+      if (operations.length === 0) throw new Error('operations 不能为空')
+      for (const item of operations) {
+        if (typeof item !== 'object' || item === null || Array.isArray(item)) throw new Error('每个 operation 必须是对象')
+        const record = item as Record<string, unknown>
+        if (typeof record.op !== 'string' || !Array.isArray(record.args)) throw new Error('operation 需要 op 字符串和 args 数组')
+      }
+      const root = String(args.root_id)
+      const target = String(args.target_id)
+      const moduleId = String(args.module_id)
+      await editAndCommit(exec, root, target, { kind: 'request_map_edit', moduleId, operations }, optionalId(args.project) ?? undefined)
+      return {
+        status: 'requested',
+        module_id: moduleId,
+        operations,
+        hint: '地图页打开后会立即执行并保存到卡；完成后可用 map_summary 复查。',
+      }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'map_compose',
+    description: '在空白白膜上按归一化地形构图起稿。只在没有地图文档的白膜上使用；已有地图先让用户重开白膜。' +
+      'spec 支持：seed、landRatio（0.02–0.9）、landmasses（shape=ellipse: center/radius/coast/height；shape=polygon: points/coast/height）、' +
+      'ridges（path/height/width）、basins（center/radius/depth）、plateaus（center/radius/height）。所有坐标和半径都是 0–1 归一化值。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '地图模块编号' },
+      spec: { type: 'object', required: true, additionalProperties: true, description: '地形构图；至少包含 landmasses' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const spec = args.spec
+      if (spec === null || typeof spec !== 'object' || Array.isArray(spec)) throw new Error('spec 必须是对象')
+      const root = String(args.root_id)
+      const target = String(args.target_id)
+      const moduleId = String(args.module_id)
+      const resolved = await resolveCard(sessionCwd(exec), exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, root)
+      const module = flattenModules(locate(card, target).modules).find(candidate => candidate.id === moduleId)
+      if (module === undefined) throw new Error('模块不在目标卡中')
+      if (module.widget?.type !== 'map') throw new Error('目标模块不是 map 类型')
+      if (module.blocks.some(block => block.kind === 'text')) throw new Error('当前地图已有内容；先重开白膜再起稿')
+      await editAndCommit(exec, root, target, { kind: 'request_map_compose', moduleId, spec }, optionalId(args.project) ?? undefined)
+      return { status: 'requested', module_id: moduleId, hint: '地图页打开后会先起一张白膜再落构图；完成后用 map_terrain_summary 看陆地比例和 ASCII 缩略图。' }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'map_paint',
+    description: '对当前白膜地形做增量修改。operations 每项为 { op, args }；op 只能是 add_landmass / add_ridge / carve_sea / add_lake / raise。' +
+      'args 使用 0–1 坐标：add_landmass、raise、carve_sea、add_lake 用 center/radius（radius 可为数字或 [rx,ry]），add_landmass 可带 height，raise 可带 amount，carve_sea/add_lake 可带 depth；add_ridge 用 path/height/width。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '地图模块编号' },
+      operations: {
+        type: 'array',
+        required: true,
+        description: '地形动作数组',
+        items: {
+          type: 'object',
+          properties: {
+            op: { type: 'string', required: true, description: '地形动作名' },
+            args: { type: 'object', required: true, additionalProperties: true, description: '动作参数，0–1 坐标' },
+          },
+          additionalProperties: false,
+        },
+      },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const operations = Array.isArray(args.operations) ? args.operations : []
+      if (operations.length === 0) throw new Error('operations 不能为空')
+      for (const item of operations) {
+        if (typeof item !== 'object' || item === null || Array.isArray(item)) throw new Error('每个 operation 必须是对象')
+        const record = item as Record<string, unknown>
+        if (typeof record.op !== 'string') throw new Error('operation 需要 op 字符串')
+        if (record.args === null || typeof record.args !== 'object' || Array.isArray(record.args)) throw new Error('operation 需要 args 对象')
+      }
+      const root = String(args.root_id)
+      const target = String(args.target_id)
+      const moduleId = String(args.module_id)
+      const resolved = await resolveCard(sessionCwd(exec), exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, root)
+      const module = flattenModules(locate(card, target).modules).find(candidate => candidate.id === moduleId)
+      if (module === undefined) throw new Error('模块不在目标卡中')
+      if (module.widget?.type !== 'map') throw new Error('目标模块不是 map 类型')
+      if (module.blocks.some(block => block.kind === 'text')) throw new Error('当前地图已定稿；先重开白膜再改地形')
+      await editAndCommit(exec, root, target, { kind: 'request_map_paint', moduleId, operations }, optionalId(args.project) ?? undefined)
+      return { status: 'requested', module_id: moduleId, operations, hint: '地图页打开后会立即修改白膜并自动存草稿；完成后用 map_terrain_summary 复查。' }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'map_terrain_summary',
+    description: '读取上次 AI 地形起稿或调整后的结构化摘要：陆地比例、格子数、高度范围，以及 32×24 的 ASCII 陆地/水域缩略图（# 陆地、^ 高地、. 水域）。没有摘要时返回 empty。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '地图模块编号' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const resolved = await resolveCard(sessionCwd(exec), exec.agent?.session?.id as SessionId | undefined, String(args.root_id), optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, String(args.root_id))
+      const module = flattenModules(locate(card, String(args.target_id)).modules).find(candidate => candidate.id === args.module_id)
+      if (module === undefined) throw new Error('模块不在目标卡中')
+      if (module.widget?.type !== 'map') throw new Error('目标模块不是 map 类型')
+      const summary = module.widget.mapTerrainSummary
+      if (summary === undefined) return { status: 'empty', module_id: module.id, summary: null, hint: '还没有地形摘要：先让 AI 起稿或改地形，或打开地图页看一眼。' }
+      return { status: 'read', module_id: module.id, summary: summary as JsonValue, hint: null }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'generate_map_human',
+    description: '给已经定稿的地形补人文层（国家、文化、城邦、宗教、道路）。只在地图阶段为 terrain 时使用；生成后会保存为 world 并带摘要。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '地图模块编号' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const root = String(args.root_id)
+      const target = String(args.target_id)
+      const moduleId = String(args.module_id)
+      const resolved = await resolveCard(sessionCwd(exec), exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, root)
+      const module = flattenModules(locate(card, target).modules).find(candidate => candidate.id === moduleId)
+      if (module === undefined) throw new Error('模块不在目标卡中')
+      if (module.widget?.type !== 'map') throw new Error('目标模块不是 map 类型')
+      if (module.widget.mapStage !== 'terrain') throw new Error('地形还没有定稿；先让用户点「定稿地形」')
+      await editAndCommit(exec, root, target, { kind: 'request_map_human', moduleId }, optionalId(args.project) ?? undefined)
+      return { status: 'requested', module_id: moduleId, hint: '地图页会生成人文层并保存为完整世界；完成后用 map_summary 复查。' }
+    },
+  }))
 
   // ---------- 图片 ----------
   registerEditTool(tools, 'set_card_image', '将目标卡已持有的图片设为封面或头像。不会上传、生成或删除图片。',
@@ -1474,34 +1580,20 @@ async function resolveCard(cwd: string, sessionId: SessionId | undefined, cardId
 }
 
 /**
- * 编辑一条命令；卡的信任档（cardMeta.aiTrust）决定去向：'auto' 直接提交，
- * 默认 'propose' 落成提案等用户确认。跨项目照常——卡在哪就改哪。
+ * 编辑一条命令并直接提交。AI 写入不再经过提案确认：改完即生效。
+ * 跨项目照常——卡在哪就改哪。
  */
 async function editAndCommit(exec: { agent?: { session: { id?: string, header: { cwd?: string } } } }, root: string, target: string, command: EditorCommand, project?: string): Promise<Record<string, JsonValue>> {
   const cwd = sessionCwd(exec)
   const sessionId = exec.agent?.session?.id as SessionId | undefined
   const resolved = await resolveCard(cwd, sessionId, root, project)
   await bindManaged(cwd, exec, root, resolved.projectRoot)
-  if (await aiTrustOf(resolved.projectRoot, root) === 'auto') {
-    const { outcome, saved } = await applyAndCommit(resolved.store, root, target, command, 'AI')
-    return {
-      status: 'saved', root_id: root, target_id: target, revision: saved.revision, next_draft_version: saved.version,
-      project_root: resolved.projectRoot,
-      created_module_ids: outcome.createdModuleIds, created_block_ids: outcome.createdBlockIds,
-      ...cardTag(outcome.draft.document, target),
-    }
-  }
-  const outcome = await proposeEdit(resolved.store, root, target, command)
-  const preview = proposalPreview(resolved.saved.document, outcome.proposal)
+  const { outcome, saved } = await applyAndCommit(resolved.store, root, target, command, 'AI')
   return {
-    status: 'proposed', pending: true, root_id: root, target_id: target,
+    status: 'saved', root_id: root, target_id: target, revision: saved.revision, next_draft_version: saved.version,
     project_root: resolved.projectRoot,
-    proposal_changes: proposalChanges(resolved.saved.document, outcome.proposal).map(change => ({
-      module_id: change.moduleId, name: change.name, kind: change.kind, stale: change.stale,
-    })),
     created_module_ids: outcome.createdModuleIds, created_block_ids: outcome.createdBlockIds,
-    ...cardTag(preview, target),
-    next: '改动已作为提案放在画布上，等待用户确认——不要宣称已完成；用户接受后才生效',
+    ...cardTag(outcome.draft.document, target),
   }
 }
 

@@ -96,18 +96,14 @@ try {
   check(saved5b.document.resources.length === 1 && saved5b.document.resources[0].mediaType === 'image/png', '素材资源补丁随提案接受落地')
   check((await store.open('card-p')).document.resources.length === 1, '接受的资源写入 head')
 
-  // 6. 信任档：默认 propose → 工具回 proposed；auto → 工具直接 saved
-  check(await aiTrustOf(root, 'card-p') === 'propose', '信任档缺省为 propose')
+  // 6. 工具写入直接提交；旧信任档仍可读，但不再拦工具。
+  check(await aiTrustOf(root, 'card-p') === 'propose', '信任档缺省仍为 propose（旧数据可读）')
   const registered = new Map()
   registerCardTools({ tools: { register: def => { registered.set(def.name, def) } } })
   const exec = { agent: { session: { id: 'sess-p', header: { cwd: root } } } }
-  const proposed = await registered.get('rename_card').execute({ root_id: 'card-p', target_id: 'card-p', name: '提案世界改名' }, exec)
-  check(proposed.status === 'proposed' && proposed.pending === true, '工具在 propose 档下回 proposed')
-  const headAfterTool = await store.open('card-p')
-  check(headAfterTool.document.name === '提案世界', 'proposed 的改名没碰 head')
-  await rejectProposal(store, 'card-p')
+  const direct = await registered.get('rename_card').execute({ root_id: 'card-p', target_id: 'card-p', name: '提案世界改名' }, exec)
+  check(direct.status === 'saved' && (await store.open('card-p')).document.name === '提案世界改名', '工具直接提交，不看信任档')
   await setAiTrust(root, 'card-p', 'auto')
-  check(await aiTrustOf(root, 'card-p') === 'auto', '信任档可切到 auto')
   const saved6 = await registered.get('rename_card').execute({ root_id: 'card-p', target_id: 'card-p', name: '自动世界' }, exec)
   check(saved6.status === 'saved' && (await store.open('card-p')).document.name === '自动世界', 'auto 档下工具直接提交')
   await setAiTrust(root, 'card-p', 'propose')

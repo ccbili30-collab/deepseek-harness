@@ -16,7 +16,7 @@ import { expandShape, bboxOf as geomBBox, padBBox, clipPolygonRect, clipPolyline
 import { resolvePngHeightmap } from './heightmap-png.ts'
 import { resolveNamebase } from './namebase.ts'
 import { generateWorld, resampleWorld, rasterizeDraft, guessDraftLevel, getGridDims, type HeightmapInput } from 'noven-fmg/world'
-import { collectionPreset, isModulePreset, mapPreset, MODULE_PRESETS, timelinePreset } from './module-presets.ts'
+import { collectionPreset, isModulePreset, MODULE_PRESETS, timelinePreset } from './module-presets.ts'
 import { customCollection, customMap, customTimeline, normalizeCustomModule } from './custom-modules.ts'
 import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeScene, encodeScene, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type MapData, type SceneData, type TimelineCalendar } from './formats.ts'
 
@@ -54,6 +54,20 @@ export type EditorCommand =
   | { kind: 'remove_character', characterId: string }
   // ---------- 预制模块的结构化命令（契约 C2）：人、AI、提案共用 ----------
   | { kind: 'set_widget_data', moduleId: string, widget: 'timeline' | 'collection' | 'map' | 'relation' | 'scene', data: unknown }
+  /** Replace a map module's payload with a complete Fantasy-Map-Generator `.map` document. */
+  | { kind: 'write_map_document', moduleId: string, text: string, stage?: 'terrain' | 'world', summary?: Record<string, unknown> }
+  /** Queue a browser-side FMG generation request; the map host consumes and clears it. */
+  | { kind: 'request_map_generation', moduleId: string, request: Record<string, unknown> }
+  /** Queue a browser-side map edit batch; the map host applies it and saves the map. */
+  | { kind: 'request_map_edit', moduleId: string, operations: unknown[] }
+  /** Queue a blank-sheet terrain composition for the map host. */
+  | { kind: 'request_map_compose', moduleId: string, spec: Record<string, unknown> }
+  /** Queue incremental terrain shape operations for the blank sheet. */
+  | { kind: 'request_map_paint', moduleId: string, operations: unknown[] }
+  /** Record the terrain summary returned by the map host after compose/paint. */
+  | { kind: 'record_map_terrain', moduleId: string, summary: Record<string, unknown> }
+  /** Queue the human layer for a finalized terrain map. */
+  | { kind: 'request_map_human', moduleId: string }
   /** 从地图模块生一个局部视图子模块：裁取景框内的对象与草稿、重归一化、复用底图 + window 取景框，并记 parent 溯源。 */
   | { kind: 'map_spawn_view', moduleId: string, name?: string, objectId?: string, bbox?: readonly [number, number, number, number], aspect?: number }
   | { kind: 'map_add_marker', moduleId: string, marker: { id?: string, label: string, x: number, y: number, description?: string, color?: string } }
@@ -280,7 +294,7 @@ async function transformDocument(
         } else if (spec.widget === 'timeline') {
           created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(timelinePreset(spec)) })
         } else if (spec.widget === 'map') {
-          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(mapPreset()) })
+          // FMG 编辑器在模块打开时自己生成空白地图，不写旧 MapData 载荷。
         } else if (spec.widget === 'html' && spec.sample !== undefined) {
           created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(spec.sample) })
         } else if (spec.widget === 'scene') {
@@ -648,6 +662,81 @@ async function transformDocument(
         markers: [...current.markers, marker],
         objects: [...current.objects, object],
       })) })
+      break
+    }
+    case 'request_map_generation': {
+      const target = widgetModule(command.moduleId, 'map')
+      next = put({ ...card, modules: updateModule(card.modules, target.id, original => ({
+        ...original,
+        widget: { ...(original.widget ?? { type: 'map' }), type: 'map', request: command.request },
+      })) })
+      break
+    }
+    case 'request_map_edit': {
+      const target = widgetModule(command.moduleId, 'map')
+      if (!Array.isArray(command.operations) || command.operations.length === 0) throw new Error('地图修改操作不能为空')
+      next = put({ ...card, modules: updateModule(card.modules, target.id, original => ({
+        ...original,
+        widget: { ...(original.widget ?? { type: 'map' }), type: 'map', request: { kind: 'edit', operations: command.operations } },
+      })) })
+      break
+    }
+    case 'request_map_compose': {
+      const target = widgetModule(command.moduleId, 'map')
+      if (typeof command.spec !== 'object' || command.spec === null || Array.isArray(command.spec)) throw new Error('地形构图不能为空')
+      if (!Array.isArray(command.spec.landmasses) || command.spec.landmasses.length === 0) throw new Error('地形构图至少需要一块陆地')
+      if ((await widgetJson(target))?.trim()) throw new Error('当前地图已有内容；先重开白膜再让 AI 起稿')
+      next = put({ ...card, modules: updateModule(card.modules, target.id, original => ({
+        ...original,
+        widget: { ...(original.widget ?? { type: 'map' }), type: 'map', request: { kind: 'compose', spec: command.spec } },
+      })) })
+      break
+    }
+    case 'request_map_paint': {
+      const target = widgetModule(command.moduleId, 'map')
+      if (!Array.isArray(command.operations) || command.operations.length === 0) throw new Error('地形修改动作不能为空')
+      if (command.operations.some(item => typeof item !== 'object' || item === null || Array.isArray(item) || typeof (item as Record<string, unknown>).op !== 'string')) throw new Error('地形修改动作格式不对')
+      if ((await widgetJson(target))?.trim()) throw new Error('当前地图已有内容；先重开白膜再让 AI 改地形')
+      next = put({ ...card, modules: updateModule(card.modules, target.id, original => ({
+        ...original,
+        widget: { ...(original.widget ?? { type: 'map' }), type: 'map', request: { kind: 'paint', operations: command.operations } },
+      })) })
+      break
+    }
+    case 'request_map_human': {
+      const target = widgetModule(command.moduleId, 'map')
+      if (target.widget?.mapStage !== 'terrain') throw new Error('地形还没有定稿，不能生成人文层')
+      next = put({ ...card, modules: updateModule(card.modules, target.id, original => ({
+        ...original,
+        widget: { ...(original.widget ?? { type: 'map' }), type: 'map', request: { kind: 'human' } },
+      })) })
+      break
+    }
+    case 'record_map_terrain': {
+      const target = widgetModule(command.moduleId, 'map')
+      if (typeof command.summary !== 'object' || command.summary === null || Array.isArray(command.summary)) throw new Error('地形摘要不能为空')
+      next = put({ ...card, modules: updateModule(card.modules, target.id, original => {
+        const { request: _request, ...widget } = original.widget ?? { type: 'map' }
+        return { ...original, widget: { ...widget, type: 'map', mapTerrainSummary: command.summary } }
+      }) })
+      break
+    }
+    case 'write_map_document': {
+      const target = widgetModule(command.moduleId, 'map')
+      if (typeof command.text !== 'string' || command.text.trim() === '') throw new Error('地图文档不能为空')
+      const modules = await putWidgetJson(target, command.text)
+      next = put({ ...card, modules: updateModule(modules, target.id, original => {
+        const { request: _request, ...widget } = original.widget ?? { type: 'map' }
+        return {
+          ...original,
+          widget: {
+            ...widget,
+            type: 'map',
+            ...(command.stage === undefined ? {} : { mapStage: command.stage }),
+            ...(command.summary === undefined ? {} : { mapSummary: command.summary }),
+          },
+        }
+      }) })
       break
     }
     case 'map_spawn_view': {

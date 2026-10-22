@@ -107,6 +107,9 @@ interface HydratedModule {
     readonly view?: string
     readonly filter?: { readonly characters?: readonly string[] }
     readonly overrides?: Record<string, unknown>
+    readonly mapStage?: 'blank' | 'terrain' | 'world'
+    readonly mapSummary?: Record<string, unknown>
+    readonly mapTerrainSummary?: Record<string, unknown>
     readonly snapshot?: { readonly cardName: string, readonly moduleName: string, readonly widget: { readonly type: string, readonly data?: unknown }, readonly resources?: Record<string, { readonly base64: string, readonly mediaType: string }> }
   }
   /** Options round-trip fields: `module_options` rewrites them wholesale, so the client must echo the current values back. */
@@ -149,6 +152,9 @@ async function hydrateModules(store: CardStore, cardId: string, modules: readonl
           ...(module.widget.view !== undefined ? { view: module.widget.view } : {}),
           ...(module.widget.filter !== undefined ? { filter: module.widget.filter } : {}),
           ...(module.widget.overrides !== undefined ? { overrides: module.widget.overrides } : {}),
+          ...(module.widget.mapStage !== undefined ? { mapStage: module.widget.mapStage } : {}),
+          ...(module.widget.mapSummary !== undefined ? { mapSummary: module.widget.mapSummary } : {}),
+          ...(module.widget.mapTerrainSummary !== undefined ? { mapTerrainSummary: module.widget.mapTerrainSummary } : {}),
           ...(module.widget.snapshot !== undefined ? { snapshot: module.widget.snapshot } : {}),
           ...(decode !== undefined ? { data: decode(blocks.find(b => b.kind === 'text')?.text) } : {}),
         },
@@ -344,7 +350,8 @@ const APPLY_COMMANDS = new Set([
   'collection_set_style',
   'embed_file',
   'set_layout',
-  'map_spawn_view', 'map_add_marker',
+  'map_spawn_view', 'map_add_marker', 'write_map_document', 'request_map_generation', 'request_map_edit',
+  'request_map_compose', 'request_map_paint', 'record_map_terrain', 'request_map_human',
 ])
 
 /** Reject malformed commands before applyEdit interprets them. */
@@ -354,6 +361,46 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
   const needs = (fields: readonly string[]): string | undefined =>
     fields.some(f => typeof command[f] !== 'string') ? `missing field for ${kind}` : undefined
   switch (kind) {
+    case 'write_map_document': {
+      const invalid = needs(['moduleId', 'text'])
+      if (invalid !== undefined) return invalid
+      if (command.text === '') return 'empty map document'
+      if (command.stage !== undefined && command.stage !== 'terrain' && command.stage !== 'world') return 'invalid map stage'
+      if (command.summary !== undefined && (typeof command.summary !== 'object' || command.summary === null || Array.isArray(command.summary))) return 'invalid map summary'
+      return undefined
+    }
+    case 'request_map_generation': {
+      const invalid = needs(['moduleId'])
+      if (invalid !== undefined) return invalid
+      return typeof command.request !== 'object' || command.request === null ? 'missing request' : undefined
+    }
+    case 'request_map_edit': {
+      const invalid = needs(['moduleId'])
+      if (invalid !== undefined) return invalid
+      if (!Array.isArray(command.operations) || command.operations.length === 0) return 'missing operations'
+      if (command.operations.some(item => typeof item !== 'object' || item === null || Array.isArray(item))) return 'invalid operation'
+      return undefined
+    }
+    case 'request_map_compose': {
+      const invalid = needs(['moduleId'])
+      if (invalid !== undefined) return invalid
+      if (typeof command.spec !== 'object' || command.spec === null || Array.isArray(command.spec)) return 'missing terrain spec'
+      return undefined
+    }
+    case 'request_map_paint': {
+      const invalid = needs(['moduleId'])
+      if (invalid !== undefined) return invalid
+      if (!Array.isArray(command.operations) || command.operations.length === 0) return 'missing terrain operations'
+      if (command.operations.some(item => typeof item !== 'object' || item === null || Array.isArray(item) || typeof (item as Record<string, unknown>).op !== 'string')) return 'invalid terrain operation'
+      return undefined
+    }
+    case 'request_map_human': return needs(['moduleId'])
+    case 'record_map_terrain': {
+      const invalid = needs(['moduleId'])
+      if (invalid !== undefined) return invalid
+      if (typeof command.summary !== 'object' || command.summary === null || Array.isArray(command.summary)) return 'missing terrain summary'
+      return undefined
+    }
     case 'add_module_custom': {
       const invalid = needs(['name'])
       if (invalid !== undefined) return invalid
@@ -435,6 +482,24 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
     if (cardId === null || cardId === '') {
       const rows = await cardList(store)
       return new Response(request.method === 'HEAD' ? null : JSON.stringify({ cards: rows }), { headers: JSON_HEADERS })
+    }
+    const mapRequestModule = url.searchParams.get('mapRequest')
+    if (mapRequestModule !== null && mapRequestModule !== '') {
+      const head = await store.open(cardId)
+      if (head === undefined) return new Response('card not found', { status: 404, headers: JSON_HEADERS })
+      const findModule = (modules: readonly ContentModule[]): ContentModule | undefined => {
+        for (const module of modules) {
+          if (module.id === mapRequestModule) return module
+          const child = findModule(module.children)
+          if (child !== undefined) return child
+        }
+        return undefined
+      }
+      const module = findModule(head.document.modules)
+      return new Response(request.method === 'HEAD' ? null : JSON.stringify({
+        revision: head.revision,
+        request: module?.widget?.type === 'map' ? module.widget.request ?? null : null,
+      }), { headers: JSON_HEADERS })
     }
     const since = url.searchParams.get('since')
     if (since !== null) {

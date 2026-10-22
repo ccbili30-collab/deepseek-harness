@@ -52,6 +52,14 @@ export interface ModuleWidget {
   filter?: { readonly characters?: readonly string[] }
   /** 引用挂载的本卡展示覆盖（浅合并到源数据）。 */
   overrides?: Record<string, unknown>
+  /** 一次性的客户端生成请求（地图模块）；编辑器消费后清除。 */
+  request?: Record<string, unknown>
+  /** 地图模块阶段：白膜、地形已定稿、完整世界；缺省按完整世界处理。 */
+  mapStage?: 'blank' | 'terrain' | 'world'
+  /** 上次保存时的地图摘要，供侧边 AI 安全读取。 */
+  mapSummary?: Record<string, unknown>
+  /** 白膜地形起稿后的结构化摘要（陆地比例、ASCII 缩略图），供 AI 下一轮构图。 */
+  mapTerrainSummary?: Record<string, unknown>
   /** 导出时内联的源模块快照；源卡/源模块不可用时渲染它。 */
   snapshot?: {
     readonly cardName: string

@@ -1,0 +1,2705 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>诺文 · 地图编辑器</title>
+  <style>
+    :root {
+      --ink: #242923;
+      --muted: #7A7F75;
+      --line: #D9D2C0;
+      --accent: #0E9F6E;
+      --accent-soft: #DDF3E9;
+      --ui: system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    }
+    html, body { height: 100%; margin: 0; background: #EFE6D0; overflow: hidden; }
+    iframe { display: block; position: absolute; left: 0; top: 54px; width: 100%; height: calc(100% - 54px); border: 0; }
+    #noven-bar {
+      position: fixed; left: 0; right: 0; top: 0; height: 54px; z-index: 30;
+      display: flex; align-items: center; gap: 20px; padding: 0 22px;
+      background: rgba(251, 250, 246, .94); border-bottom: 1px solid #E8E3D7;
+      backdrop-filter: blur(14px); font-family: var(--ui);
+    }
+    #noven-stage { display: flex; align-items: center; gap: 8px; min-width: 190px; }
+    .noven-stage-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px var(--accent-soft); }
+    #noven-stage-name { color: var(--ink); font-size: 13px; font-weight: 650; }
+    .noven-stage-sep { color: #C9CDC3; font-size: 11px; }
+    #noven-stage-sub { color: var(--muted); font-size: 11.5px; }
+    #noven-steps {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 12px; color: #A7ACA2;
+      font-size: 11px; letter-spacing: .06em;
+    }
+    #noven-steps i { display: block; width: 16px; height: 1px; background: #E8E3D7; }
+    #noven-steps span { position: relative; padding-bottom: 4px; }
+    #noven-steps span.active { color: var(--ink); font-weight: 600; }
+    #noven-steps span.active::after {
+      content: ""; position: absolute; left: 50%; bottom: 0; width: 4px; height: 4px;
+      margin-left: -2px; border-radius: 50%; background: var(--accent);
+    }
+    #noven-actions { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+    #noven-primary {
+      height: 32px; display: inline-flex; align-items: center; gap: 8px; padding: 0 15px;
+      border: 0; border-radius: 9px; background: var(--accent); color: #fff;
+      font: 600 11.5px/1 var(--ui); letter-spacing: .02em; cursor: pointer;
+      box-shadow: 0 3px 10px rgba(14,159,110,.20);
+      transition: background 150ms, transform 150ms, box-shadow 150ms;
+    }
+    #noven-primary:hover { background: #0B7A55; box-shadow: 0 5px 14px rgba(14,159,110,.24); }
+    #noven-primary:active { transform: translateY(1px); }
+    #noven-primary:disabled { opacity: .42; cursor: default; box-shadow: none; }
+    #noven-primary svg { width: 13px; height: 13px; }
+    .noven-icon {
+      width: 30px; height: 30px; display: inline-grid; place-items: center;
+      border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer;
+      transition: background 150ms, color 150ms;
+    }
+    .noven-icon:hover, .noven-icon.active { background: var(--accent-soft); color: #0B7A55; }
+    .noven-icon svg { width: 16px; height: 16px; }
+    #noven-more-menu {
+      position: absolute; right: 14px; top: 49px; min-width: 178px; padding: 6px;
+      border: 1px solid #E8E3D7; border-radius: 11px; background: rgba(251,250,246,.98);
+      box-shadow: 0 18px 44px rgba(36,41,35,.16); z-index: 40;
+    }
+    #noven-more-menu[hidden] { display: none; }
+    #noven-more-menu button {
+      width: 100%; height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 9px;
+      border: 0; border-radius: 7px; background: transparent; color: var(--ink);
+      font: 11.5px/1 var(--ui); text-align: left; cursor: pointer;
+    }
+    #noven-more-menu button:hover { background: #F4F1E8; }
+    #noven-more-menu button:disabled { opacity: .45; cursor: default; }
+    #noven-more-menu span { flex: 1; }
+    #noven-more-menu small { color: #A7ACA2; font-size: 9.5px; }
+    #noven-more-menu hr { border: 0; border-top: 1px solid #EFEBE1; margin: 5px 4px; }
+    #noven-finalize, #noven-human, #noven-state { display: none !important; }
+    @media (max-width: 960px) {
+      #noven-steps { display: none; }
+      #noven-stage { min-width: 150px; }
+    }
+    @media (max-width: 720px) {
+      #noven-bar { padding: 0 10px; gap: 8px; }
+      #noven-stage { display: none; }
+      #noven-primary { padding: 0 10px; }
+    }
+    #noven-ai-log {
+      position: fixed; left: 14px; bottom: 58px; z-index: 40;
+      display: flex; align-items: center; gap: 8px;
+      padding: 6px 9px; border: 1px solid rgba(14,159,110,.25); border-radius: 9px;
+      background: rgba(228,245,237,.97); color: #0B7A55; font: 11px var(--ui);
+      box-shadow: 0 4px 16px rgba(20,30,26,.08);
+    }
+    #noven-ai-log[hidden] { display: none; }
+    #noven-ai-log button {
+      height: 24px; padding: 0 8px; border: 1px solid #0E9F6E; border-radius: 6px;
+      background: #0E9F6E; color: #fff; font: 10px var(--ui); cursor: pointer;
+    }
+  </style>
+  <style>
+    :root {
+      --n-ink: #24261F;
+      --n-muted: #6F7468;
+      --n-faint: #9B9F93;
+      --n-paper: #FCF9F0;
+      --n-desk: #F6F1E6;
+      --n-line: #E3DAC7;
+      --n-sand: #EDE7DA;
+      --n-accent: #0E7A55;
+      --n-accent-deep: #0A5E42;
+    }
+    iframe#fmg { top: 0 !important; height: 100% !important; }
+    #noven-bar, #noven-ai-log, #noven-edge-tab { display: none !important; }
+    #noven-shell { font-family: var(--ui); color: var(--n-ink); }
+    #noven-rail {
+      position: fixed; left: 14px; top: 50%; transform: translateY(-50%); z-index: 60;
+      width: 58px; padding: 6px; display: flex; flex-direction: column; gap: 3px;
+      background: rgba(252, 249, 240, .94); border: 1px solid var(--n-line);
+      border-radius: 17px; box-shadow: 0 14px 40px rgba(36, 38, 31, .13);
+      backdrop-filter: blur(16px);
+    }
+    #noven-rail button {
+      position: relative;
+      width: 44px; height: 44px; display: flex; flex-direction: column; align-items: center;
+      justify-content: center; gap: 2px; border: 0; border-radius: 10px; background: transparent;
+      color: var(--n-muted); font: 9.5px/1 var(--ui); cursor: pointer;
+      transition: background 140ms, color 140ms;
+    }
+    #noven-rail button svg { width: 18px; height: 18px; display: block; }
+    #noven-rail button:hover { background: var(--n-sand); color: var(--n-ink); }
+    #noven-rail button.active { background: var(--n-sand); color: var(--n-ink); }
+    #noven-rail button:disabled { opacity: .32; cursor: default; }
+    #noven-rail .rail-sep { height: 1px; margin: 4px 7px; background: var(--n-line); }
+    #noven-rail .rail-dot {
+      position: absolute; right: 7px; top: 7px; width: 5px; height: 5px;
+      border-radius: 50%; background: var(--n-accent); box-shadow: 0 0 0 3px rgba(14, 122, 85, .14);
+    }
+    #noven-rail .rail-dot[hidden] { display: none; }
+
+    .noven-panel {
+      position: fixed; left: 84px; top: 16px; bottom: 92px; z-index: 55; width: 304px;
+      display: flex; flex-direction: column; overflow: hidden;
+      background: rgba(252, 249, 240, .97); border: 1px solid var(--n-line);
+      border-radius: 16px; box-shadow: 0 20px 54px rgba(36, 38, 31, .14);
+      backdrop-filter: blur(18px);
+    }
+    .noven-panel[hidden] { display: none; }
+    .noven-panel-right { left: auto; right: 16px; width: 322px; }
+    .noven-panel-head {
+      height: 52px; flex: 0 0 52px; display: flex; align-items: center; gap: 6px;
+      padding: 0 10px 0 16px; border-bottom: 1px solid var(--n-line);
+    }
+    .noven-panel-head strong {
+      flex: 1; font: 600 15px/1 var(--serif, "Songti SC", serif); letter-spacing: .03em;
+    }
+    .noven-icon-btn {
+      width: 28px; height: 28px; display: inline-grid; place-items: center;
+      border: 0; border-radius: 7px; background: transparent; color: var(--n-faint);
+      font: 14px/1 var(--ui); cursor: pointer;
+    }
+    .noven-icon-btn:hover { background: var(--n-sand); color: var(--n-ink); }
+    .noven-text-btn {
+      height: 26px; padding: 0 8px; border: 1px solid var(--n-line); border-radius: 7px;
+      background: #fff; color: var(--n-muted); font: 10.5px/1 var(--ui); cursor: pointer;
+    }
+    .noven-text-btn:hover { background: var(--n-sand); color: var(--n-ink); }
+    .noven-panel-body { flex: 1; min-height: 0; overflow: auto; }
+    .noven-search { padding: 12px 14px 6px; }
+    .noven-search input {
+      width: 100%; height: 32px; box-sizing: border-box; padding: 0 10px;
+      border: 1px solid var(--n-line); border-radius: 8px; background: #fff;
+      color: var(--n-ink); font: 11.5px var(--ui); outline: none;
+    }
+    .noven-search input:focus { border-color: #BEB29A; }
+    .noven-group { border-bottom: 1px solid var(--n-line); }
+    .noven-group:last-child { border-bottom: 0; }
+    .noven-group-head {
+      width: 100%; height: 40px; display: flex; align-items: center; gap: 8px;
+      padding: 0 14px; border: 0; background: transparent; color: var(--n-ink);
+      font: 12px/1 var(--ui); text-align: left; cursor: pointer;
+    }
+    .noven-group-head:hover { background: rgba(237, 231, 218, .55); }
+    .noven-group-head .noven-chev {
+      width: 12px; height: 12px; color: var(--n-faint); transition: transform 180ms var(--n-ease, ease);
+    }
+    .noven-group.open .noven-chev { transform: rotate(90deg); }
+    .noven-group-head .noven-count { margin-left: auto; color: var(--n-faint); font-size: 10px; }
+    .noven-rows { padding: 0 8px 8px; }
+    .noven-group:not(.open) .noven-rows { display: none; }
+    .noven-row {
+      width: 100%; height: 34px; display: flex; align-items: center; gap: 8px;
+      padding: 0 8px; border: 0; border-radius: 7px; background: transparent;
+      color: var(--n-ink); font: 11.5px/1 var(--ui); text-align: left; cursor: pointer;
+    }
+    .noven-row:hover { background: var(--n-sand); }
+    .noven-row .noven-row-note {
+      flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      color: var(--n-faint); font-size: 9.5px;
+    }
+    .noven-row .noven-count { margin-left: auto; color: var(--n-faint); font-size: 10px; }
+    .noven-row .noven-go { color: #C0B7A4; font-size: 12px; }
+    .noven-empty { padding: 18px 14px; color: var(--n-faint); font: 11px/1.6 var(--ui); }
+
+    #noven-dock {
+      position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 60;
+      height: 48px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+      background: rgba(252, 249, 240, .94); border: 1px solid var(--n-line);
+      border-radius: 15px; box-shadow: 0 12px 34px rgba(36, 38, 31, .13);
+      backdrop-filter: blur(16px);
+    }
+    #noven-dock-left, #noven-dock-right { display: flex; align-items: center; gap: 2px; }
+    #noven-dock-left button, #noven-dock-right .noven-icon-btn {
+      width: 28px; height: 28px; display: inline-grid; place-items: center;
+      border: 0; border-radius: 7px; background: transparent; color: var(--n-muted);
+      cursor: pointer;
+    }
+    #noven-dock-left button:hover, #noven-dock-right .noven-icon-btn:hover { background: var(--n-sand); color: var(--n-ink); }
+    #noven-dock-left button:disabled { opacity: .28; cursor: default; }
+    #noven-dock-left svg, #noven-dock-right svg { width: 15px; height: 15px; }
+    #noven-dock-stage {
+      min-width: 142px; display: flex; flex-direction: column; align-items: flex-start;
+      gap: 2px; padding: 0 8px; border-left: 1px solid var(--n-line);
+      border-right: 1px solid var(--n-line);
+    }
+    #noven-dock-stage-name { font: 600 12px/1.2 var(--ui); }
+    #noven-dock-stage-counts { color: var(--n-faint); font: 9.5px/1.2 var(--ui); }
+    #noven-dock-steps { display: flex; align-items: center; gap: 5px; color: var(--n-faint); font: 8.5px/1 var(--ui); }
+    #noven-dock-steps i { width: 8px; height: 1px; background: var(--n-line); display: block; }
+    #noven-dock-steps span.active { color: var(--n-ink); font-weight: 600; }
+    #noven-dock-primary {
+      height: 32px; padding: 0 14px; border: 0; border-radius: 8px;
+      background: var(--n-accent); color: #fff; font: 600 11px/1 var(--ui);
+      letter-spacing: .02em; cursor: pointer; white-space: nowrap;
+    }
+    #noven-dock-primary:hover { background: var(--n-accent-deep); }
+    #noven-dock-primary:disabled { opacity: .38; cursor: default; }
+    #noven-dock-primary svg { width: 12px; height: 12px; margin-left: 5px; vertical-align: -1px; }
+
+    #noven-tools-menu {
+      position: fixed; left: 84px; bottom: 92px; z-index: 65; width: 200px; padding: 6px;
+      background: rgba(252, 249, 240, .98); border: 1px solid var(--n-line);
+      border-radius: 12px; box-shadow: 0 18px 48px rgba(36, 38, 31, .17);
+    }
+    #noven-tools-menu[hidden] { display: none; }
+    #noven-tools-menu button {
+      width: 100%; height: 32px; display: flex; align-items: center; padding: 0 9px;
+      border: 0; border-radius: 7px; background: transparent; color: var(--n-ink);
+      font: 11.5px/1 var(--ui); text-align: left; cursor: pointer;
+    }
+    #noven-tools-menu button:hover { background: var(--n-sand); }
+    #noven-tools-menu hr { border: 0; border-top: 1px solid var(--n-line); margin: 5px 4px; }
+
+    #noven-gen {
+      position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
+      background: rgba(30, 32, 27, .22); backdrop-filter: blur(3px);
+    }
+    #noven-gen[hidden] { display: none; }
+    .noven-gen-card {
+      width: min(540px, calc(100vw - 32px)); max-height: min(760px, calc(100vh - 40px));
+      display: flex; flex-direction: column; overflow: hidden;
+      background: var(--n-paper); border: 1px solid var(--n-line);
+      border-radius: 18px; box-shadow: 0 30px 90px rgba(30, 32, 27, .24);
+    }
+    .noven-gen-head {
+      height: 54px; flex: 0 0 54px; display: flex; align-items: center; gap: 8px;
+      padding: 0 14px 0 18px; border-bottom: 1px solid var(--n-line);
+    }
+    .noven-gen-head strong { flex: 1; font: 600 16px/1 var(--serif, "Songti SC", serif); }
+    .noven-gen-body { flex: 1; min-height: 0; overflow: auto; padding: 18px; }
+    .noven-gen-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 16px; }
+    .noven-gen-grid label { display: flex; flex-direction: column; gap: 5px; color: var(--n-muted); font: 10.5px var(--ui); }
+    .noven-gen-grid input {
+      height: 32px; padding: 0 9px; border: 1px solid var(--n-line); border-radius: 8px;
+      background: #fff; color: var(--n-ink); font: 12px var(--ui); outline: none;
+    }
+    .noven-gen-note { margin: 14px 0 0; color: var(--n-faint); font: 10px/1.6 var(--ui); }
+    .noven-rebuild-title { margin: 20px 0 8px; color: var(--n-faint); font: 600 9.5px var(--ui); letter-spacing: .14em; }
+    .noven-rebuild { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+    .noven-rebuild button {
+      height: 30px; border: 1px solid var(--n-line); border-radius: 7px; background: #fff;
+      color: var(--n-ink); font: 10.5px var(--ui); cursor: pointer; text-align: left; padding: 0 8px;
+    }
+    .noven-rebuild button:hover { background: var(--n-sand); }
+    .noven-rebuild button:disabled { opacity: .38; cursor: default; }
+    .noven-rebuild button:disabled:hover { background: #fff; }
+    .noven-gen-foot {
+      flex: 0 0 56px; display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+      padding: 0 16px; border-top: 1px solid var(--n-line);
+    }
+    .noven-gen-foot button {
+      height: 32px; padding: 0 14px; border: 1px solid var(--n-line); border-radius: 8px;
+      background: transparent; color: var(--n-muted); font: 11.5px var(--ui); cursor: pointer;
+    }
+    .noven-gen-foot button.primary { border-color: var(--n-accent); background: var(--n-accent); color: #fff; font-weight: 600; }
+    .noven-gen-foot button.primary:hover { background: var(--n-accent-deep); }
+
+    .noven-layer-row {
+      height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px;
+      border-radius: 6px; color: var(--n-ink); font: 11px var(--ui);
+    }
+    .noven-layer-row:hover { background: var(--n-sand); }
+    .noven-layer-row .noven-eye {
+      width: 24px; height: 24px; display: grid; place-items: center; border: 0;
+      border-radius: 6px; background: transparent; color: var(--n-muted); cursor: pointer;
+    }
+    .noven-layer-row .noven-eye svg { width: 15px; height: 15px; }
+    .noven-layer-row.off .noven-eye { color: var(--n-faint); }
+    .noven-layer-row.off { color: var(--n-faint); }
+    .noven-layer-row .noven-layer-name { flex: 1; }
+    .noven-layer-row .noven-gear { color: var(--n-faint); }
+    .noven-layer-presets { padding: 12px 14px 6px; }
+    .noven-layer-presets select {
+      width: 100%; height: 32px; padding: 0 8px; border: 1px solid var(--n-line);
+      border-radius: 8px; background: #fff; color: var(--n-ink); font: 11.5px var(--ui);
+    }
+    .noven-layer-view { display: flex; gap: 4px; padding: 8px 14px 4px; }
+    .noven-layer-view button {
+      flex: 1; height: 28px; border: 1px solid var(--n-line); border-radius: 7px;
+      background: #fff; color: var(--n-muted); font: 10.5px var(--ui); cursor: pointer;
+    }
+    .noven-layer-view button:hover { border-color: #BEB29A; color: var(--n-ink); }
+    .noven-layer-view button.active { background: var(--n-sand); border-color: #D3C7B0; color: var(--n-ink); }
+    .noven-layer-group { padding: 4px 8px 8px; }
+    .noven-layer-group.open .noven-chev { transform: rotate(90deg); }
+    .noven-layer-group h4 { margin: 10px 8px 3px; color: var(--n-faint); font: 600 9px var(--ui); letter-spacing: .14em; }
+
+    .noven-ai-note { padding: 16px; color: var(--n-muted); font: 11.5px/1.7 var(--ui); }
+    .noven-ai-status {
+      margin: 0 16px; padding: 12px; border: 1px solid var(--n-line);
+      border-radius: 10px; background: #fff; color: var(--n-ink); font: 11.5px/1.6 var(--ui);
+    }
+    .noven-ai-status strong { display: block; margin-bottom: 4px; font-size: 12px; }
+    .noven-ai-undo {
+      margin: 10px 16px; height: 32px; border: 1px solid var(--n-accent); border-radius: 8px;
+      background: var(--n-accent); color: #fff; font: 11px var(--ui); cursor: pointer;
+    }
+    .noven-ai-undo[hidden] { display: none; }
+
+    #noven-toast {
+      position: fixed; left: 50%; bottom: 78px; transform: translateX(-50%); z-index: 70;
+      padding: 7px 12px; border: 1px solid var(--n-line); border-radius: 9px;
+      background: rgba(252, 249, 240, .96); color: var(--n-ink); font: 11px var(--ui);
+      box-shadow: 0 8px 24px rgba(36, 38, 31, .12);
+    }
+    #noven-toast[hidden] { display: none; }
+    #noven-boot {
+      position: fixed; inset: 0; z-index: 55; display: grid; place-items: center;
+      background: rgba(246, 241, 230, .52); backdrop-filter: blur(2px);
+      pointer-events: none;
+    }
+    #noven-boot[hidden] { display: none; }
+    .noven-boot-card {
+      pointer-events: auto; width: min(360px, calc(100vw - 40px)); box-sizing: border-box;
+      display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 22px 20px;
+      border: 1px solid var(--n-line); border-radius: 16px; background: var(--n-paper);
+      box-shadow: 0 24px 70px rgba(36, 38, 31, .18); text-align: center;
+    }
+    .noven-boot-card strong { font: 600 16px/1.3 var(--serif, "Songti SC", serif); }
+    .noven-boot-card span { color: var(--n-muted); font: 11.5px/1.6 var(--ui); }
+    .noven-boot-card button {
+      margin-top: 4px; height: 30px; padding: 0 12px; border: 1px solid var(--n-accent);
+      border-radius: 8px; background: var(--n-accent); color: #fff; font: 11px var(--ui); cursor: pointer;
+    }
+    .noven-boot-card button[hidden] { display: none; }
+
+    @media (max-width: 760px) {
+      #noven-rail { left: 8px; width: 50px; padding: 4px; }
+      #noven-rail button { width: 42px; height: 40px; }
+      .noven-panel { left: 66px; top: 8px; bottom: 82px; width: calc(100vw - 74px); }
+      .noven-panel-right { left: auto; right: 8px; width: calc(100vw - 74px); }
+      #noven-dock { left: 66px; right: 8px; bottom: 8px; transform: none; justify-content: space-between; }
+      #noven-dock-stage { min-width: 0; }
+      #noven-dock-stage-counts, #noven-dock-steps { display: none; }
+      #noven-dock-primary { padding: 0 10px; }
+      #noven-tools-menu { left: 66px; bottom: 82px; }
+      .noven-gen-grid { grid-template-columns: 1fr; }
+      .noven-rebuild { grid-template-columns: 1fr 1fr; }
+    }
+    @media (max-height: 560px) {
+      #noven-rail { top: 8px; transform: none; }
+      #noven-rail button { height: 38px; }
+      .noven-panel { top: 8px; bottom: 82px; }
+    }
+  </style>
+</head>
+<body>
+  <iframe id="fmg" src="./?noven=blank&v=2" title="Fantasy Map Generator"></iframe>
+  <div id="noven-bar" role="toolbar" aria-label="地图操作">
+    <div id="noven-stage">
+      <span class="noven-stage-dot"></span>
+      <span id="noven-stage-name">白膜</span>
+      <span class="noven-stage-sep">·</span>
+      <span id="noven-stage-sub">先涂地形</span>
+    </div>
+    <div id="noven-steps" aria-label="创作阶段">
+      <span data-step="blank" class="active">白膜</span><i></i>
+      <span data-step="terrain">地形</span><i></i>
+      <span data-step="world">人文</span>
+    </div>
+    <div id="noven-actions">
+      <button id="noven-primary" type="button">定稿地形
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h9M9 4l4 4-4 4"/></svg>
+      </button>
+      <button id="noven-fullscreen" class="noven-icon" type="button" title="全屏">
+        <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 7V3h4M11 3h4v4M15 11v4h-4M7 15H3v-4"/></svg>
+      </button>
+      <button id="noven-more" class="noven-icon" type="button" title="更多">
+        <svg viewBox="0 0 18 18" fill="currentColor"><circle cx="4" cy="9" r="1.3"/><circle cx="9" cy="9" r="1.3"/><circle cx="14" cy="9" r="1.3"/></svg>
+      </button>
+      <div id="noven-more-menu" hidden>
+        <button id="noven-blank" type="button"><span>重开白膜</span><small>清空草稿</small></button>
+        <button id="noven-random" type="button"><span>随机世界</span><small>覆盖当前</small></button>
+        <hr>
+        <button id="noven-save" type="button"><span>保存到卡</span></button>
+      </div>
+    </div>
+    <button id="noven-finalize" type="button" hidden>定稿地形</button>
+    <button id="noven-human" type="button" hidden>生成人文层</button>
+    <span id="noven-state" hidden>连接中…</span>
+  </div>
+  <div id="noven-ai-log" hidden>
+    <span id="noven-ai-log-text"></span>
+    <button id="noven-ai-undo" type="button">撤销</button>
+  </div>
+  <div id="noven-shell">
+    <nav id="noven-rail" aria-label="地图工具">
+      <button id="rail-brush" type="button" title="画笔 (B)">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 16c2.4.2 3.7-.5 4.5-1.8"/><path d="M6.5 13.5 14 6a2 2 0 0 1 2.8 2.8l-7.4 7.4c-1 1-2.6 1.4-4.4 1.2"/><path d="m12.6 7.4 2 2"/></svg>
+        <span>画笔</span>
+      </button>
+      <button id="rail-world" type="button" title="世界">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c2 2.1 3 4.5 3 7s-1 4.9-3 7c-2-2.1-3-4.5-3-7s1-4.9 3-7Z"/></svg>
+        <span>世界</span>
+      </button>
+      <button id="rail-layers" type="button" title="图层">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="m10 3 7 4-7 4-7-4 7-4Z"/><path d="m3 10 7 4 7-4"/><path d="m3 13.5 7 4 7-4"/></svg>
+        <span>图层</span>
+      </button>
+      <button id="rail-ai" type="button" title="AI 改动">
+        <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"><path d="M10 2.5c.5 3.7 2.3 5.5 6 6-3.7.5-5.5 2.3-6 6-.5-3.7-2.3-5.5-6-6 3.7-.5 5.5-2.3 6-6Z"/><path d="M15.5 13.5c.2 1.5.9 2.2 2.5 2.5-1.6.2-2.3 1-2.5 2.5-.2-1.5-.9-2.3-2.5-2.5 1.6-.3 2.3-1 2.5-2.5Z"/></svg>
+        <span>AI</span>
+        <i class="rail-dot" id="rail-ai-dot" hidden></i>
+      </button>
+      <div class="rail-sep"></div>
+      <button id="rail-more" type="button" title="更多">
+        <svg viewBox="0 0 20 20" fill="currentColor"><circle cx="4.5" cy="10" r="1.4"/><circle cx="10" cy="10" r="1.4"/><circle cx="15.5" cy="10" r="1.4"/></svg>
+        <span>更多</span>
+      </button>
+    </nav>
+
+    <aside id="noven-world" class="noven-panel" hidden>
+      <header class="noven-panel-head">
+        <strong>世界</strong>
+        <button id="noven-world-add" class="noven-text-btn" type="button" title="添加城市、标签、标记、河流或道路">添加</button>
+        <button id="noven-world-gen" class="noven-text-btn" type="button" title="生成人文层或重建单项">生成</button>
+        <button id="noven-world-close" class="noven-icon-btn" type="button" title="收起">×</button>
+      </header>
+      <div class="noven-search"><input id="noven-world-search" type="search" placeholder="搜索国家、城市、生物群系…"></div>
+      <div class="noven-panel-body" id="noven-world-body"></div>
+    </aside>
+
+    <aside id="noven-layers" class="noven-panel" hidden>
+      <header class="noven-panel-head">
+        <strong>图层</strong>
+        <button id="noven-layers-close" class="noven-icon-btn" type="button" title="收起">×</button>
+      </header>
+      <div class="noven-layer-presets">
+        <select id="noven-preset" aria-label="图层预设">
+          <option value="political">政治地图</option>
+          <option value="cultural">文化地图</option>
+          <option value="religions">宗教地图</option>
+          <option value="provinces">省份地图</option>
+          <option value="biomes">生物群系地图</option>
+          <option value="heightmap">高度图</option>
+          <option value="physical">自然地图</option>
+          <option value="poi">兴趣点</option>
+          <option value="goods">商品地图</option>
+          <option value="trade">贸易动画</option>
+          <option value="military">军事地图</option>
+          <option value="emblems">纹章</option>
+          <option value="landmass">纯陆地</option>
+          <option value="custom" disabled>自定义（当前）</option>
+        </select>
+      </div>
+      <div class="noven-layer-view">
+        <button type="button" data-view="standard">标准</button>
+        <button type="button" data-view="mesh">3D</button>
+        <button type="button" data-view="globe">球体</button>
+      </div>
+      <div class="noven-panel-body" id="noven-layer-body"></div>
+    </aside>
+
+    <aside id="noven-ai" class="noven-panel noven-panel-right" hidden>
+      <header class="noven-panel-head">
+        <strong>AI 改动</strong>
+        <button id="noven-ai-close" class="noven-icon-btn" type="button" title="收起">×</button>
+      </header>
+      <div class="noven-panel-body">
+        <p class="noven-ai-note">在卡内对话里让 AI 改这张图。应用到地图后，这里会记录每一批改动；点撤销可整批回退。</p>
+        <div class="noven-ai-status" id="noven-ai-status"><strong>暂无 AI 改动</strong><span>地图当前没有被 AI 修改过的批次。</span></div>
+        <button class="noven-ai-undo" id="noven-ai-undo-panel" type="button" hidden>撤销上一批</button>
+      </div>
+    </aside>
+
+    <div id="noven-dock">
+      <div id="noven-dock-left">
+        <button id="noven-undo" type="button" title="撤销">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4 2 8l4 4"/><path d="M2 8h7a5 5 0 0 1 0 10"/></svg>
+        </button>
+        <button id="noven-redo" type="button" title="重做">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m12 4 4 4-4 4"/><path d="M16 8H9a5 5 0 0 0 0 10"/></svg>
+        </button>
+      </div>
+      <div id="noven-dock-stage">
+        <span id="noven-dock-stage-name">白膜</span>
+        <span id="noven-dock-stage-counts">先涂地形</span>
+      </div>
+      <div id="noven-dock-right">
+        <button id="noven-dock-primary" type="button">定稿地形
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h9M9 4l4 4-4 4"/></svg>
+        </button>
+        <button id="noven-dock-fullscreen" class="noven-icon-btn" type="button" title="全屏">
+          <svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M3 7V3h4M11 3h4v4M15 11v4h-4M7 15H3v-4"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <div id="noven-tools-menu" hidden>
+      <button id="noven-more-blank" type="button">重开白膜</button>
+      <button id="noven-more-random" type="button">随机世界</button>
+      <button id="noven-more-settings" type="button">地图设置与导出</button>
+      <hr>
+      <button id="noven-more-submap" type="button">子地图</button>
+      <button id="noven-more-transform" type="button">变换地图</button>
+      <button id="noven-more-wrap" type="button">包裹工具</button>
+    </div>
+
+    <div id="noven-gen" hidden>
+      <div class="noven-gen-card">
+        <header class="noven-gen-head">
+          <strong>生成人文层</strong>
+          <button id="noven-gen-close" class="noven-icon-btn" type="button" title="关闭">×</button>
+        </header>
+        <div class="noven-gen-body">
+          <div class="noven-gen-grid">
+            <label>国家数量<input id="noven-gen-states" type="number" min="2" max="80" value="20"></label>
+            <label>省份比例<input id="noven-gen-provinces" type="number" min="0" max="1" step="0.1" value="0.5"></label>
+            <label>文化数量<input id="noven-gen-cultures" type="number" min="1" max="40" value="8"></label>
+            <label>宗教数量<input id="noven-gen-religions" type="number" min="1" max="30" value="6"></label>
+            <label>城市数量<input id="noven-gen-burgs" type="number" min="10" max="800" value="120"></label>
+            <label>种子<input id="noven-gen-seed" type="text" placeholder="留空则随机"></label>
+          </div>
+          <p class="noven-gen-note">生成会保留已定稿的海岸、河流与地形；只补国家、省份、文化、宗教和城市。已有世界会被重写，建议先保存。</p>
+          <div class="noven-rebuild-title">重建单项</div>
+          <div class="noven-rebuild" id="noven-rebuild"></div>
+        </div>
+        <footer class="noven-gen-foot">
+          <button id="noven-gen-cancel" type="button">取消</button>
+          <button id="noven-gen-run" class="primary" type="button">生成人文层</button>
+        </footer>
+      </div>
+    </div>
+
+    <div id="noven-boot">
+      <div class="noven-boot-card">
+        <strong id="noven-boot-title">正在准备地图…</strong>
+        <span id="noven-boot-text">正在连接地图引擎。</span>
+        <button id="noven-boot-action" type="button" hidden>重开白膜</button>
+      </div>
+    </div>
+
+    <div id="noven-toast" hidden></div>
+  </div>
+  <script>
+    const frame = document.getElementById('fmg')
+    const state = document.getElementById('noven-state')
+    const saveButton = document.getElementById('noven-save')
+    const blankButton = document.getElementById('noven-blank')
+    const randomButton = document.getElementById('noven-random')
+    const finalizeButton = document.getElementById('noven-finalize')
+    const humanButton = document.getElementById('noven-human')
+    const fullscreenButton = document.getElementById('noven-fullscreen')
+    const primaryButton = document.getElementById('noven-primary')
+    const moreButton = document.getElementById('noven-more')
+    const moreMenu = document.getElementById('noven-more-menu')
+    const stageName = document.getElementById('noven-stage-name')
+    const stageSub = document.getElementById('noven-stage-sub')
+    const steps = document.getElementById('noven-steps')
+    const aiLog = document.getElementById('noven-ai-log')
+    const aiLogText = document.getElementById('noven-ai-log-text')
+    const aiUndoButton = document.getElementById('noven-ai-undo')
+    const embedded = window.parent !== window
+    const dockPrimary = document.getElementById('noven-dock-primary')
+    const dockStageName = document.getElementById('noven-dock-stage-name')
+    const dockStageCounts = document.getElementById('noven-dock-stage-counts')
+    const dockSteps = document.getElementById('noven-dock-steps')
+    const dockFullscreen = document.getElementById('noven-dock-fullscreen')
+    const dockUndo = document.getElementById('noven-undo')
+    const dockRedo = document.getElementById('noven-redo')
+    const railBrush = document.getElementById('rail-brush')
+    const railWorld = document.getElementById('rail-world')
+    const railLayers = document.getElementById('rail-layers')
+    const railAi = document.getElementById('rail-ai')
+    const railMore = document.getElementById('rail-more')
+    const railAiDot = document.getElementById('rail-ai-dot')
+    const worldPanel = document.getElementById('noven-world')
+    const worldBody = document.getElementById('noven-world-body')
+    const worldSearch = document.getElementById('noven-world-search')
+    const layerPanel = document.getElementById('noven-layers')
+    const layerBody = document.getElementById('noven-layer-body')
+    const presetSelect = document.getElementById('noven-preset')
+    const aiPanel = document.getElementById('noven-ai')
+    const aiStatusEl = document.getElementById('noven-ai-status')
+    const aiUndoPanel = document.getElementById('noven-ai-undo-panel')
+    const toolsMenu = document.getElementById('noven-tools-menu')
+    const genSheet = document.getElementById('noven-gen')
+    const genRun = document.getElementById('noven-gen-run')
+    const genRebuild = document.getElementById('noven-rebuild')
+    const toastEl = document.getElementById('noven-toast')
+    const bootEl = document.getElementById('noven-boot')
+    const bootTitle = document.getElementById('noven-boot-title')
+    const bootText = document.getElementById('noven-boot-text')
+    const bootAction = document.getElementById('noven-boot-action')
+    let bootSince = Date.now()
+    const DOCK_ARROW = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h9M9 4l4 4-4 4"/></svg>'
+    const VARS = {
+      '--bg-main': '#FBFAF6',
+      '--bg-lighter': '#F4F1E8',
+      '--bg-light': '#FBFAF6',
+      '--bg-disabled': '#ECE8DC',
+      '--bg-dialogs': '#FBFAF6',
+      '--header': '#ECEEEF',
+      '--header-active': '#DDF3E9',
+      '--bg-opacity': '0.97',
+      '--serif': '"Songti SC", "Noto Serif SC", Georgia, serif',
+      '--sans-serif': 'system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif',
+      '--monospace': '"SF Mono", ui-monospace, SFMono-Regular, Menlo, monospace',
+    }
+
+    let ready = false
+    let saving = false
+    let announced = false
+    /** One automatic brush collapse per narrow blank session; a manual summon must stick. */
+    let narrowBrushCollapsed = false
+    window.novenHostReady = false
+
+    function setState(text, error = false) {
+      state.textContent = text
+      if (error) state.setAttribute('data-error', '')
+      else state.removeAttribute('data-error')
+      if (stageSub !== null) stageSub.textContent = text.includes(' · ') ? text.split(' · ').slice(1).join(' · ') : text
+    }
+
+    function setAiToolsStatus(text, canUndo) {
+      const d = frame.contentWindow?.document
+      const label = d?.getElementById('noven-ai-tools-text')
+      const undo = d?.getElementById('noven-ai-tools-undo')
+      if (label) label.textContent = text
+      if (undo) undo.hidden = !canUndo
+      refreshAiPanel()
+    }
+
+    /** Card+module key for the applied-AI history kept in localStorage. */
+    let undoStorageKey = ''
+
+    function undoCount() {
+      const api = frame.contentWindow?.novenMap
+      return api?.undoCount?.(undoStorageKey) ?? 0
+    }
+
+    function refreshUndoStatus() {
+      const count = undoCount()
+      setAiToolsStatus(count > 0 ? `可撤销 ${count} 批 AI 改动` : '暂无', count > 0)
+    }
+
+    function clearUndoHistory() {
+      frame.contentWindow?.novenMap?.clearUndoHistory?.(undoStorageKey)
+      setAiToolsStatus('暂无', false)
+      if (aiLog) aiLog.hidden = true
+      refreshAiPanel()
+    }
+
+    let worldOpenGroup = 'politics'
+    let toastTimer = 0
+    const layerOpenGroups = new Set(['geo', 'culture', 'mark'])
+
+    const WORLD_GROUPS = [
+      {
+        id: 'politics', label: '政治', countKey: 'states', unit: '国', rows: [
+          { label: '国家', note: '总览 / 编辑', countKey: 'states', run: () => openController('StatesEditor') },
+          { label: '省份', note: '总览 / 编辑', countKey: 'provinces', run: () => openController('ProvincesEditor') },
+          { label: '区域', note: '区域图层', countKey: 'zones', run: () => openController('ZonesEditor') },
+          { label: '外交', note: '关系矩阵', run: () => openController('DiplomacyOverview') },
+          { label: '军事', note: '军队与军团', run: () => openController('MilitaryOverview') },
+        ],
+      },
+      {
+        id: 'culture', label: '文化', countKey: 'cultures', unit: '族', rows: [
+          { label: '文化', note: '总览 / 编辑', countKey: 'cultures', run: () => openController('CulturesEditor') },
+          { label: '宗教', note: '总览 / 编辑', countKey: 'religions', run: () => openController('ReligionsEditor') },
+          { label: '语言与名称', note: '命名库', run: () => openController('NamesbaseEditor') },
+          { label: '纹章', note: '盾徽与配色', run: () => openController('EmblemsEditor', 'openDefault') },
+        ],
+      },
+      {
+        id: 'geo', label: '地理', countKey: 'biomes', unit: '群系', rows: [
+          { label: '河流', note: '总览 / 编辑', countKey: 'rivers', run: () => openController('RiversOverview') },
+          { label: '湖泊', note: '湖泊编辑器', countKey: 'lakes', run: () => openController('LakesEditor') },
+          { label: '海岸线', note: '海岸设置', run: () => openController('CoastlineEditor') },
+          { label: '生物群系', note: '颜色与宜居度', countKey: 'biomes', run: () => openController('BiomesEditor') },
+          { label: '地貌', note: '岛屿与海陆', countKey: 'features', run: () => openController('FeaturesOverview') },
+          { label: '高程', note: '画笔 / 模板 / 图片', run: () => openController('HeightmapEditor') },
+        ],
+      },
+      {
+        id: 'settle', label: '聚落与经济', countKey: 'burgs', unit: '城', rows: [
+          { label: '城市', note: '总览 / 编辑', countKey: 'burgs', run: () => openController('BurgsOverview') },
+          { label: '市场', note: '市场与贸易', countKey: 'markets', run: () => openController('MarketsOverview') },
+          { label: '商品', note: '资源与图标', countKey: 'goods', run: () => openController('GoodsEditor') },
+          { label: '贸易', note: '贸易动画', run: () => openController('TradeAnimationEditor') },
+          { label: '生产链', note: '商品配方', run: () => openController('ProductionChains') },
+          { label: '道路', note: '总览 / 编辑', countKey: 'routes', run: () => openController('RoutesOverview') },
+          { label: '旅程', note: '旅途与运输', run: () => openController('JourneysOverview') },
+        ],
+      },
+      {
+        id: 'mark', label: '标注', countKey: 'markers', unit: '标记', rows: [
+          { label: '标记', note: '兴趣点 / 编辑', countKey: 'markers', run: () => openController('MarkersOverview') },
+          { label: '标签', note: '文字与排版', countKey: 'labels', run: () => openController('LabelsOverview') },
+          { label: '测量', note: '距离与标尺', run: () => openController('MeasurersEditor') },
+          { label: '笔记', note: '实体备注', run: () => openController('NotesEditor') },
+          { label: '传说', note: '地图设定', run: () => openController('LoreEditor') },
+        ],
+      },
+      {
+        id: 'tools', label: '工具与视图', rows: [
+          { label: '单元格', note: '点地图查看', run: () => openController('CellInfo') },
+          { label: '图表', note: '统计图', run: () => openController('ChartsOverview') },
+          { label: '小地图', note: '导航缩略图', run: () => openController('Minimap') },
+          { label: '单位与比例', note: '人口 / 距离', run: () => openController('UnitsEditor') },
+          { label: '世界配置', note: '气候与尺寸', run: () => openController('WorldConfigurator') },
+          { label: '子地图', note: '从视口生成', run: () => openController('SubmapTool') },
+          { label: '变换', note: '旋转 / 缩放', run: () => openController('TransformTool') },
+          { label: '包裹', note: '调整格形', run: () => openController('WrapTool') },
+        ],
+      },
+    ]
+
+    const LAYER_GROUPS = [
+      { id: 'geo', label: '地理', ids: [['texture', '纹理'], ['heightmap', '高度图'], ['lakes', '湖泊'], ['biomes', '生物群系'], ['cells', '网格单元'], ['grid', '网格'], ['coordinates', '坐标'], ['compass', '罗盘玫瑰']] },
+      { id: 'terrain', label: '地形', ids: [['rivers', '河流'], ['relief', '地形起伏']] },
+      { id: 'culture', label: '人文', ids: [['religions', '宗教'], ['cultures', '文化'], ['states', '国家'], ['provinces', '省份'], ['zones', '区域'], ['borders', '边界'], ['routes', '道路']] },
+      { id: 'data', label: '数据', ids: [['temperature', '温度'], ['ice', '冰川'], ['goods', '商品'], ['markets', '市场'], ['trade', '贸易'], ['precipitation', '降水'], ['population', '人口'], ['emblems', '纹章'], ['burgIcons', '图标']] },
+      { id: 'mark', label: '标注', ids: [['labels', '标签'], ['military', '军事'], ['markers', '标记'], ['journeys', '旅程']] },
+      { id: 'frame', label: '画布', ids: [['rulers', '标尺'], ['scaleBar', '比例尺'], ['vignette', '暗角']] },
+    ]
+
+    const REBUILDS = [
+      ['国家', 'regenerateStates'], ['省份', 'regenerateProvinces'], ['城市', 'regenerateBurgs'],
+      ['文化', 'regenerateCultures'], ['宗教', 'regenerateReligions'], ['河流', 'regenerateRivers'],
+      ['道路', 'regenerateRoutes'], ['国家标签', 'regenerateStateLabels'], ['地形起伏', 'regenerateReliefIcons'],
+      ['纹章', 'regenerateEmblems'], ['标记', 'regenerateMarkers'], ['区域', 'regenerateZones'],
+      ['军事', 'regenerateMilitary'], ['人口', 'regeneratePopulation'], ['商品', 'regenerateGoods'],
+      ['经济', 'regenerateEconomy'], ['生产', 'regenerateProduction'], ['市场', 'regenerateMarkets'],
+      ['冰川', 'regenerateIce'],
+    ]
+
+    function toast(message) {
+      if (toastEl === null) return
+      window.clearTimeout(toastTimer)
+      toastEl.textContent = message
+      toastEl.hidden = false
+      toastTimer = window.setTimeout(() => { toastEl.hidden = true }, 2400)
+    }
+
+    function readCounts() {
+      const p = frame.contentWindow?.pack
+      const live = list => (Array.isArray(list) ? list : []).filter(item => item && item.i !== 0 && !item.removed).length
+      return {
+        states: live(p?.states),
+        provinces: live(p?.provinces),
+        cultures: live(p?.cultures),
+        religions: live(p?.religions),
+        burgs: live(p?.burgs),
+        rivers: live(p?.rivers),
+        routes: live(p?.routes),
+        markers: live(p?.markers),
+        zones: live(p?.zones),
+        markets: live(p?.markets),
+        goods: live(p?.goods),
+        features: live(p?.features),
+        biomes: (p?.biomes ?? []).filter(biome => biome && biome.i).length,
+        lakes: (p?.features ?? []).filter(feature => feature && feature.type === 'lake').length,
+        labels: 0,
+      }
+    }
+
+    function setRail(tool) {
+      const entries = { brush: railBrush, world: railWorld, layers: railLayers, ai: railAi }
+      for (const [id, button] of Object.entries(entries)) button.classList.toggle('active', id === tool)
+    }
+
+    function isBrushOpen() {
+      const panel = frame.contentDocument?.getElementById('brushesPanel')
+      return Boolean(panel && panel.offsetParent !== null)
+    }
+
+    function syncRail() {
+      if (isBrushOpen()) setRail('brush')
+      else if (!worldPanel.hidden) setRail('world')
+      else if (!layerPanel.hidden) setRail('layers')
+      else if (!aiPanel.hidden) setRail('ai')
+      else setRail(null)
+      railBrush.disabled = currentStage !== 'blank'
+    }
+
+    function closeBrushDialog() {
+      try {
+        const jq = frame.contentWindow?.jQuery
+        if (typeof jq === 'function') {
+          const dialog = jq('#brushesPanel')
+          if (dialog.dialog('isOpen')) dialog.dialog('close')
+        }
+      } catch (error) {
+        console.warn('Noven brush close failed', error)
+      }
+    }
+
+    function closeEditorModals() {
+      const doc = frame.contentDocument
+      if (doc === null || doc === undefined) return
+      const had = doc.body.classList.contains('noven-style-open') || doc.body.classList.contains('noven-options-open')
+      doc.body.classList.remove('noven-style-open', 'noven-options-open')
+      if (had) {
+        try { frame.contentWindow?.hideOptions?.() } catch { /* options may be closed */ }
+      }
+    }
+
+    function closePanels(except) {
+      if (except !== 'style') closeEditorModals()
+      if (except !== 'brush') closeBrushDialog()
+      if (except !== 'world') worldPanel.hidden = true
+      if (except !== 'layers') layerPanel.hidden = true
+      if (except !== 'ai') aiPanel.hidden = true
+      if (except !== 'more') toolsMenu.hidden = true
+      syncRail()
+    }
+
+    function openStyleEditor(id) {
+      openController('StyleEditor', 'open', id)
+      window.setTimeout(() => {
+        const doc = frame.contentDocument
+        if (doc !== null && doc !== undefined) doc.body.classList.add('noven-style-open')
+      }, 120)
+    }
+
+    function openOptionsEditor() {
+      closePanels()
+      const win = frame.contentWindow
+      const doc = win?.document
+      if (doc === null || doc === undefined) return
+      win.showOptions?.()
+      doc.getElementById('optionsTab')?.click()
+      window.setTimeout(() => {
+        doc.body.classList.add('noven-options-open')
+      }, 80)
+    }
+
+    function openBrushShelf() {
+      if (currentStage !== 'blank') {
+        toast('地形已定稿；要改高程请用「世界 → 地理 → 高程」')
+        return
+      }
+      closePanels('brush')
+      const controller = frame.contentWindow?.Controllers?.HeightmapEditor
+      if (!controller?.openBrushes) {
+        toast('画笔还没准备好')
+        return
+      }
+      Promise.resolve(controller.openBrushes()).catch(error => {
+        console.warn('Noven brush open failed', error)
+        toast('画笔没有打开')
+      })
+      setRail('brush')
+    }
+
+    function openWorldShelf() {
+      closePanels('world')
+      renderWorld()
+      worldPanel.hidden = false
+      if (window.innerWidth >= 760) worldSearch.focus()
+      setRail('world')
+    }
+
+    function renderWorld() {
+      if (worldBody === null) return
+      const counts = readCounts()
+      try { counts.labels = frame.contentWindow?.getLabelsData?.()?.length ?? 0 } catch { counts.labels = 0 }
+      const query = (worldSearch.value ?? '').trim().toLowerCase()
+      const groups = query
+        ? WORLD_GROUPS
+            .map(group => ({
+              ...group,
+              rows: group.rows.filter(row => `${row.label}${row.note ?? ''}`.toLowerCase().includes(query)),
+            }))
+            .filter(group => group.rows.length > 0)
+        : WORLD_GROUPS
+      worldBody.replaceChildren()
+      if (groups.length === 0) {
+        const empty = document.createElement('div')
+        empty.className = 'noven-empty'
+        empty.textContent = `没有找到「${query}」。试试国家、城市、生物群系、图层。`
+        worldBody.appendChild(empty)
+        return
+      }
+      for (const group of groups) {
+        const open = query !== '' || group.id === worldOpenGroup
+        const section = document.createElement('section')
+        section.className = `noven-group${open ? ' open' : ''}`
+        const head = document.createElement('button')
+        head.type = 'button'
+        head.className = 'noven-group-head'
+        const chevron = document.createElement('span')
+        chevron.className = 'noven-chev'
+        chevron.textContent = '›'
+        const name = document.createElement('span')
+        name.textContent = group.label
+        head.append(chevron, name)
+        if (group.countKey !== undefined) {
+          const count = document.createElement('span')
+          count.className = 'noven-count'
+          count.textContent = `${counts[group.countKey] ?? 0} ${group.unit ?? ''}`
+          head.appendChild(count)
+        }
+        head.addEventListener('click', () => {
+          if (query !== '') worldSearch.value = ''
+          worldOpenGroup = group.id
+          renderWorld()
+        })
+        section.appendChild(head)
+        const rows = document.createElement('div')
+        rows.className = 'noven-rows'
+        for (const row of group.rows) {
+          const button = document.createElement('button')
+          button.type = 'button'
+          button.className = 'noven-row'
+          const label = document.createElement('span')
+          label.textContent = row.label
+          const note = document.createElement('span')
+          note.className = 'noven-row-note'
+          note.textContent = row.note ?? ''
+          button.append(label, note)
+          if (row.countKey !== undefined) {
+            const count = document.createElement('span')
+            count.className = 'noven-count'
+            count.textContent = String(counts[row.countKey] ?? 0)
+            button.appendChild(count)
+          }
+          const go = document.createElement('span')
+          go.className = 'noven-go'
+          go.textContent = '›'
+          button.appendChild(go)
+          button.addEventListener('click', () => row.run())
+          rows.appendChild(button)
+        }
+        section.appendChild(rows)
+        worldBody.appendChild(section)
+      }
+    }
+
+    function openLayerPanel() {
+      closePanels('layers')
+      const hiddenPreset = frame.contentDocument?.getElementById('layersPreset')
+      const hiddenValue = hiddenPreset?.value
+      const knownValues = [...presetSelect.options].map(option => option.value)
+      presetSelect.value = knownValues.includes(hiddenValue) ? hiddenValue : 'political'
+      renderLayers()
+      syncViewButtons()
+      layerPanel.hidden = false
+      setRail('layers')
+    }
+
+    function syncViewButtons() {
+      const doc = frame.contentDocument
+      const mapping = { standard: 'viewStandard', mesh: 'viewMesh', globe: 'viewGlobe' }
+      for (const button of layerPanel.querySelectorAll('[data-view]')) {
+        const id = mapping[button.dataset.view]
+        button.classList.toggle('active', doc?.getElementById(id)?.classList.contains('pressed') ?? false)
+      }
+    }
+
+    function renderLayers() {
+      if (layerBody === null) return
+      const win = frame.contentWindow
+      layerBody.replaceChildren()
+      for (const group of LAYER_GROUPS) {
+        const open = layerOpenGroups.has(group.id)
+        const section = document.createElement('div')
+        section.className = `noven-layer-group${open ? ' open' : ''}`
+        const head = document.createElement('button')
+        head.type = 'button'
+        head.className = 'noven-group-head'
+        const chevron = document.createElement('span')
+        chevron.className = 'noven-chev'
+        chevron.textContent = '›'
+        const name = document.createElement('span')
+        name.textContent = group.label
+        head.append(chevron, name)
+        head.addEventListener('click', () => {
+          if (layerOpenGroups.has(group.id)) layerOpenGroups.delete(group.id)
+          else layerOpenGroups.add(group.id)
+          renderLayers()
+        })
+        section.appendChild(head)
+        if (!open) {
+          layerBody.appendChild(section)
+          continue
+        }
+        for (const [id, label] of group.ids) {
+          let on = true
+          try { on = win?.Layers?.isOn?.(id) !== false } catch { on = true }
+          const row = document.createElement('div')
+          row.className = `noven-layer-row${on ? '' : ' off'}`
+          const eye = document.createElement('button')
+          eye.type = 'button'
+          eye.className = 'noven-eye'
+          eye.title = on ? '隐藏' : '显示'
+          eye.innerHTML = on
+            ? '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.8 9s2.6-4.2 7.2-4.2S16.2 9 16.2 9s-2.6 4.2-7.2 4.2S1.8 9 1.8 9Z"/><circle cx="9" cy="9" r="2.1"/></svg>'
+            : '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M1.8 9s2.6-4.2 7.2-4.2S16.2 9 16.2 9s-2.6 4.2-7.2 4.2S1.8 9 1.8 9Z"/><circle cx="9" cy="9" r="2.1"/><path d="m3 15 12-12"/></svg>'
+          eye.addEventListener('click', event => {
+            event.stopPropagation()
+            try { win?.Layers?.toggle?.(id) } catch (error) { console.warn('Noven layer toggle failed', error) }
+            renderLayers()
+          })
+          const labelEl = document.createElement('span')
+          labelEl.className = 'noven-layer-name'
+          labelEl.textContent = label
+          const gear = document.createElement('button')
+          gear.type = 'button'
+          gear.className = 'noven-icon-btn noven-gear'
+          gear.title = '样式'
+          gear.textContent = '⚙'
+          gear.addEventListener('click', event => {
+            event.stopPropagation()
+            openStyleEditor(id)
+          })
+          row.append(eye, labelEl, gear)
+          section.appendChild(row)
+        }
+        layerBody.appendChild(section)
+      }
+    }
+
+    function refreshAiPanel() {
+      if (aiStatusEl === null) return
+      const count = undoCount()
+      aiStatusEl.replaceChildren()
+      const title = document.createElement('strong')
+      title.textContent = count > 0 ? `可撤销 ${count} 批 AI 改动` : '暂无 AI 改动'
+      const body = document.createElement('span')
+      body.textContent = count > 0 ? '最近一批改动已写入地图；撤销会整批回退。' : '地图当前没有被 AI 修改过的批次。'
+      aiStatusEl.append(title, body)
+      if (aiUndoPanel !== null) aiUndoPanel.hidden = count === 0
+      if (railAiDot !== null) railAiDot.hidden = count === 0
+    }
+
+    function openAiPanel() {
+      closePanels('ai')
+      refreshAiPanel()
+      aiPanel.hidden = false
+      setRail('ai')
+    }
+
+    function openMoreMenu() {
+      closePanels('more')
+      const rect = railMore.getBoundingClientRect()
+      toolsMenu.style.left = `${Math.min(rect.right + 8, window.innerWidth - 216)}px`
+      toolsMenu.style.top = `${Math.max(8, Math.min(rect.bottom - 232, window.innerHeight - 240))}px`
+      toolsMenu.style.bottom = 'auto'
+      toolsMenu.hidden = !toolsMenu.hidden
+      setRail(null)
+    }
+
+    function openAddMenu(anchor) {
+      const existing = document.getElementById('noven-add-menu')
+      if (existing !== null) existing.remove()
+      const menu = document.createElement('div')
+      menu.id = 'noven-add-menu'
+      Object.assign(menu.style, {
+        position: 'fixed', zIndex: '70', minWidth: '150px', padding: '6px',
+        background: '#FCF9F0', border: '1px solid #E3DAC7', borderRadius: '10px',
+        boxShadow: '0 12px 32px rgba(36, 38, 31, .16)',
+      })
+      const rect = anchor.getBoundingClientRect()
+      menu.style.left = `${Math.min(rect.left, window.innerWidth - 170)}px`
+      menu.style.top = `${rect.bottom + 6}px`
+      const items = [
+        ['城市', () => openController('BurgCreator', 'toggle')],
+        ['标签', () => openController('LabelCreator', 'toggle')],
+        ['标记', () => openController('MarkerCreator', 'toggle')],
+        ['河流', () => openController('RiverAutoCreator', 'toggle')],
+        ['道路', () => openController('RouteCreator', 'open')],
+      ]
+      for (const [label, run] of items) {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.textContent = label
+        Object.assign(button.style, {
+          display: 'block', width: '100%', height: '30px', padding: '0 9px',
+          border: '0', borderRadius: '7px', background: 'transparent', color: '#24261F',
+          font: '11.5px system-ui, sans-serif', textAlign: 'left', cursor: 'pointer',
+        })
+        button.addEventListener('mouseenter', () => { button.style.background = '#EDE7DA' })
+        button.addEventListener('mouseleave', () => { button.style.background = 'transparent' })
+        button.addEventListener('click', () => { menu.remove(); run() })
+        menu.appendChild(button)
+      }
+      document.body.appendChild(menu)
+      window.setTimeout(() => {
+        const close = event => {
+          if (!menu.contains(event.target)) menu.remove()
+          document.removeEventListener('click', close)
+        }
+        document.addEventListener('click', close)
+      }, 0)
+    }
+
+    function openGenerationSheet() {
+      if (currentStage === 'blank') {
+        toast('先定稿地形，再生成人文层')
+        return
+      }
+      closePanels()
+      const counts = readCounts()
+      const set = (id, value) => {
+        const input = document.getElementById(id)
+        if (input !== null) input.value = String(value)
+      }
+      set('noven-gen-states', counts.states || 20)
+      set('noven-gen-provinces', 0.5)
+      set('noven-gen-cultures', counts.cultures || 8)
+      set('noven-gen-religions', counts.religions || 6)
+      set('noven-gen-burgs', counts.burgs || 120)
+      genRun.textContent = currentStage === 'world' ? '重新生成人文层' : '生成人文层'
+      renderRebuild()
+      genSheet.hidden = false
+      setRail(null)
+    }
+
+    function renderRebuild() {
+      if (genRebuild === null) return
+      genRebuild.replaceChildren()
+      for (const [label, id] of REBUILDS) {
+        const button = document.createElement('button')
+        button.type = 'button'
+        button.textContent = label
+        button.disabled = currentStage !== 'world'
+        button.addEventListener('click', () => {
+          genSheet.hidden = true
+          closePanels()
+          const target = frame.contentDocument?.getElementById(id)
+          if (target === null || target === undefined) {
+            toast(`没有找到「${label}」的重建入口`)
+            return
+          }
+          target.click()
+          syncDock()
+        })
+        genRebuild.appendChild(button)
+      }
+    }
+
+    function openController(name, method = 'open', ...args) {
+      const entry = frame.contentWindow?.Controllers?.[name]
+      const fn = entry?.[method]
+      if (typeof fn !== 'function') {
+        toast(`暂时打不开「${name}」`)
+        return
+      }
+      closePanels()
+      setRail(null)
+      Promise.resolve(fn.apply(entry, args)).catch(error => {
+        console.warn(`Noven controller ${name}.${method} failed`, error)
+        toast('编辑器没有打开')
+      })
+    }
+
+    function updateBoot() {
+      if (bootEl === null) return
+      if (!ready) {
+        bootEl.hidden = false
+        bootTitle.textContent = '正在连接地图引擎…'
+        bootText.textContent = '正在启动地图编辑器。'
+        bootAction.hidden = true
+        return
+      }
+      const blank = frame.contentWindow?.novenBlank === true
+      const loaded = currentStage !== 'blank' && Boolean(frame.contentWindow?.pack?.cells?.i?.length)
+      if (blank || loaded) {
+        bootEl.hidden = true
+        return
+      }
+      bootEl.hidden = false
+      const timedOut = Date.now() - bootSince > 12000
+      bootTitle.textContent = timedOut ? '地图数据还没送达' : '正在准备地图…'
+      bootText.textContent = timedOut
+        ? '如果这是从卡页打开的地图，请刷新卡页；如果这是独立预览，可以重开白膜。'
+        : '正在连接地图引擎并等待地图数据。'
+      bootAction.hidden = !timedOut || embedded
+    }
+
+    function syncDock() {
+      if (dockStageName === null || dockPrimary === null) return
+      const stage = currentStage
+      const counts = readCounts()
+      dockStageName.textContent = stage === 'world' ? '人文' : stage === 'terrain' ? '地形' : '白膜'
+      dockStageCounts.textContent = stage === 'world'
+        ? `${counts.states} 国 · ${counts.provinces} 省 · ${counts.burgs} 城`
+        : stage === 'terrain'
+          ? '地形已定稿 · 生成人文层'
+          : '先涂地形'
+      const label = stage === 'world' ? '保存到卡' : stage === 'terrain' ? '生成人文层' : '定稿地形'
+      if (dockPrimary.dataset.label !== label) {
+        dockPrimary.dataset.label = label
+        dockPrimary.innerHTML = `${label}${DOCK_ARROW}`
+      }
+      dockPrimary.disabled = stage === 'world'
+        ? saveButton.disabled
+        : stage === 'terrain'
+          ? !ready
+          : finalizeButton.disabled || !ready
+      for (const step of dockSteps?.querySelectorAll('[data-step]') ?? []) {
+        step.classList.toggle('active', step.dataset.step === stage)
+      }
+      const brushUndo = frame.contentDocument?.getElementById('undo')
+      const brushRedo = frame.contentDocument?.getElementById('redo')
+      const undoTotal = undoCount()
+      if (stage === 'world') {
+        dockUndo.disabled = undoTotal === 0
+        dockRedo.disabled = true
+      } else {
+        dockUndo.disabled = brushUndo?.disabled ?? true
+        dockRedo.disabled = brushRedo?.disabled ?? true
+      }
+      if (railAiDot !== null) railAiDot.hidden = undoTotal === 0
+      if (railBrush !== null) railBrush.disabled = stage !== 'blank'
+      syncRail()
+      updateBoot()
+    }
+
+    function wireShell() {
+      railBrush?.addEventListener('click', () => {
+        if (isBrushOpen()) closeBrushDialog()
+        else openBrushShelf()
+        syncRail()
+      })
+      railWorld?.addEventListener('click', () => {
+        if (!worldPanel.hidden) { worldPanel.hidden = true; syncRail() }
+        else openWorldShelf()
+      })
+      railLayers?.addEventListener('click', () => {
+        if (!layerPanel.hidden) { layerPanel.hidden = true; syncRail() }
+        else openLayerPanel()
+      })
+      railAi?.addEventListener('click', () => {
+        if (!aiPanel.hidden) { aiPanel.hidden = true; syncRail() }
+        else openAiPanel()
+      })
+      railMore?.addEventListener('click', event => { event.stopPropagation(); openMoreMenu() })
+      document.getElementById('noven-world-close')?.addEventListener('click', () => { worldPanel.hidden = true; syncRail() })
+      document.getElementById('noven-layers-close')?.addEventListener('click', () => { layerPanel.hidden = true; syncRail() })
+      document.getElementById('noven-ai-close')?.addEventListener('click', () => { aiPanel.hidden = true; syncRail() })
+      worldSearch?.addEventListener('input', renderWorld)
+      document.getElementById('noven-world-add')?.addEventListener('click', event => {
+        event.stopPropagation()
+        openAddMenu(event.currentTarget)
+      })
+      document.getElementById('noven-world-gen')?.addEventListener('click', openGenerationSheet)
+      presetSelect?.addEventListener('change', () => {
+        const hiddenPreset = frame.contentDocument?.getElementById('layersPreset')
+        if (hiddenPreset !== null && hiddenPreset !== undefined) {
+          hiddenPreset.value = presetSelect.value
+          hiddenPreset.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        window.setTimeout(() => { renderLayers(); syncViewButtons() }, 120)
+      })
+      for (const button of layerPanel?.querySelectorAll('[data-view]') ?? []) {
+        button.addEventListener('click', () => {
+          const id = { standard: 'viewStandard', mesh: 'viewMesh', globe: 'viewGlobe' }[button.dataset.view]
+          frame.contentDocument?.getElementById(id)?.click()
+          window.setTimeout(syncViewButtons, 260)
+        })
+      }
+      aiUndoPanel?.addEventListener('click', () => { undoAi(); window.setTimeout(refreshAiPanel, 220) })
+      dockPrimary?.addEventListener('click', () => {
+        if (currentStage === 'world') saveToCard('world')
+        else if (currentStage === 'terrain') openGenerationSheet()
+        else finalizeTerrain()
+      })
+      dockUndo?.addEventListener('click', () => {
+        if (currentStage === 'world') undoAi()
+        else frame.contentDocument?.getElementById('undo')?.click()
+        window.setTimeout(syncDock, 120)
+      })
+      dockRedo?.addEventListener('click', () => {
+        frame.contentDocument?.getElementById('redo')?.click()
+        window.setTimeout(syncDock, 120)
+      })
+      dockFullscreen?.addEventListener('click', () => {
+        window.parent.postMessage({ type: 'noven-map-fullscreen-toggle' }, '*')
+      })
+      document.getElementById('noven-more-blank')?.addEventListener('click', () => {
+        toolsMenu.hidden = true
+        void startBlank({ fresh: true })
+      })
+      document.getElementById('noven-more-random')?.addEventListener('click', () => {
+        toolsMenu.hidden = true
+        randomButton.click()
+      })
+      document.getElementById('noven-more-settings')?.addEventListener('click', () => {
+        toolsMenu.hidden = true
+        openOptionsEditor()
+      })
+      bootAction?.addEventListener('click', () => {
+        if (bootEl !== null) bootEl.hidden = true
+        void startBlank({ fresh: true })
+      })
+      document.getElementById('noven-more-submap')?.addEventListener('click', () => openController('SubmapTool'))
+      document.getElementById('noven-more-transform')?.addEventListener('click', () => openController('TransformTool'))
+      document.getElementById('noven-more-wrap')?.addEventListener('click', () => openController('WrapTool'))
+      document.getElementById('noven-gen-close')?.addEventListener('click', () => { genSheet.hidden = true })
+      document.getElementById('noven-gen-cancel')?.addEventListener('click', () => { genSheet.hidden = true })
+      genRun?.addEventListener('click', async () => {
+        const number = (id, fallback) => {
+          const input = document.getElementById(id)
+          const value = Number(input?.value)
+          return Number.isFinite(value) ? value : fallback
+        }
+        const options = {
+          states: Math.max(2, Math.round(number('noven-gen-states', 20))),
+          provinces: Math.min(1, Math.max(0, number('noven-gen-provinces', 0.5))),
+          cultures: Math.max(1, Math.round(number('noven-gen-cultures', 8))),
+          religions: Math.max(1, Math.round(number('noven-gen-religions', 6))),
+          burgs: Math.max(10, Math.round(number('noven-gen-burgs', 120))),
+        }
+        const seed = document.getElementById('noven-gen-seed')?.value?.trim()
+        genRun.disabled = true
+        genRun.textContent = '生成中…'
+        try {
+          await generateHumanLayer(seed ? { ...options, seed } : options)
+        } finally {
+          genRun.disabled = false
+          genRun.textContent = '生成人文层'
+          genSheet.hidden = true
+          window.setTimeout(syncDock, 200)
+        }
+      })
+      document.addEventListener('click', event => {
+        if (toolsMenu !== null && !toolsMenu.hidden && !toolsMenu.contains(event.target) && !railMore.contains(event.target)) {
+          toolsMenu.hidden = true
+        }
+      })
+      document.addEventListener('keydown', event => {
+        const target = event.target
+        const typing = target instanceof HTMLElement
+          && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)
+        if (typing) return
+        if (event.key === 'Escape') {
+          closePanels()
+          genSheet.hidden = true
+          document.getElementById('noven-add-menu')?.remove()
+          return
+        }
+        if (event.metaKey || event.ctrlKey || event.altKey) return
+        if (event.key === 'b' || event.key === 'B') openBrushShelf()
+        if (event.key === 'w' || event.key === 'W') openWorldShelf()
+        if (event.key === 'l' || event.key === 'L') openLayerPanel()
+      })
+      renderRebuild()
+      refreshAiPanel()
+      syncDock()
+      window.setInterval(syncDock, 500)
+    }
+
+    function enhanceHumanPanel(doc) {
+      const options = doc.getElementById('options')
+      const tools = doc.getElementById('toolsContent')
+      if (!options || !tools) return
+      const tabStrip = options.querySelector('.tab')
+      if (tabStrip) tabStrip.style.display = 'none'
+      for (const tabcontent of options.querySelectorAll('.tabcontent')) {
+        tabcontent.style.display = tabcontent.id === 'toolsContent' ? 'block' : 'none'
+      }
+      tools.querySelectorAll('.noven-section-head').forEach(node => node.remove())
+      if (doc.getElementById('noven-human-head') !== null) return
+
+      const head = doc.createElement('div')
+      head.id = 'noven-human-head'
+      head.innerHTML = '<strong>人文编辑器</strong><button id="noven-human-collapse" type="button">收起</button>'
+      options.insertBefore(head, options.firstChild)
+
+      const tabs = doc.createElement('div')
+      tabs.id = 'noven-human-tabs'
+      tabs.innerHTML = '<button type="button" class="active">编辑</button>' +
+        '<button type="button">重新生成</button><button type="button">添加</button>' +
+        '<button type="button">显示</button><button type="button">创建</button>'
+      head.insertAdjacentElement('afterend', tabs)
+
+      let section = null
+      let index = -1
+      for (const child of [...tools.children]) {
+        if (child.classList.contains('separator')) {
+          index += 1
+          section = doc.createElement('div')
+          section.className = 'noven-tool-section'
+          section.dataset.index = String(index)
+          section.hidden = index !== 0
+          tools.appendChild(section)
+          continue
+        }
+        if (section !== null) section.appendChild(child)
+      }
+
+      const buttons = [...tabs.querySelectorAll('button')]
+      const sections = [...tools.querySelectorAll('.noven-tool-section')]
+      buttons.forEach((button, buttonIndex) => {
+        button.addEventListener('click', () => {
+          for (const item of buttons) item.classList.toggle('active', item === button)
+          for (const item of sections) item.hidden = item.dataset.index !== String(buttonIndex)
+        })
+      })
+      head.querySelector('#noven-human-collapse')?.addEventListener('click', () => {
+        const container = doc.getElementById('optionsContainer')
+        if (container !== null) container.style.display = 'none'
+      })
+    }
+
+    function openHumanPanel(doc) {
+      if (!doc) return
+      const container = doc.getElementById('optionsContainer')
+      const options = doc.getElementById('options')
+      if (!container || !options) return
+      container.style.display = 'block'
+      options.style.display = 'block'
+      options.style.left = '0'
+      options.style.top = '0'
+      options.style.width = '100%'
+      options.style.height = '100%'
+      enhanceHumanPanel(doc)
+    }
+
+    function openToolsMenu(doc) {
+      openHumanPanel(doc)
+    }
+    // The old human panel is gone; the stage transition opens the world index.
+    openToolsMenu = () => openWorldShelf()
+
+    /** Rebuild the upstream brush dialog into the Noven 制图台 layout without
+     * moving buttons out of #brushesButtons (upstream's delegated click and
+     * direct-child selectors stay valid). */
+    function enhanceBrushPanel(panel, doc) {
+      const meta = {
+        brushRaise: { name: '抬高', desc: '把碎块加高' },
+        brushLower: { name: '降低', desc: '把碎块挖成海' },
+        brushAlign: { name: '抹平', desc: '统一到起始高度' },
+        brushSmooth: { name: '平滑', desc: '柔化边缘' },
+        brushElevate: { name: '渐高', desc: '拖动逐步抬升，形成缓坡' },
+        brushDepress: { name: '渐低', desc: '拖动逐步降低，形成缓谷' },
+        brushDisrupt: { name: '扰动', desc: '随机改变碎块高度' },
+        brushFill: { name: '填充', desc: '点封闭水域，生成锥形陆地' },
+        brushLine: { name: '画线', desc: '拉一条直线，沿线一起变' },
+      }
+      const advanced = new Set(['brushElevate', 'brushDepress', 'brushDisrupt', 'brushFill', 'brushLine'])
+      for (const [id, info] of Object.entries(meta)) {
+        const button = doc.getElementById(id)
+        if (button === null) continue
+        button.dataset.group = advanced.has(id) ? 'advanced' : 'core'
+        if (button.querySelector('.noven-brush-label') === null) {
+          const label = doc.createElement('span')
+          label.className = 'noven-brush-label'
+          label.textContent = info.name
+          button.appendChild(label)
+        }
+      }
+
+      if (doc.getElementById('noven-brush-shelf') !== null) return
+
+      const head = doc.createElement('div')
+      head.id = 'noven-brush-shelf'
+      head.innerHTML = '<div class="noven-shelf-head"><strong>画笔</strong>' +
+        '<button id="noven-brush-close" type="button" title="收起">×</button></div>' +
+        '<div class="noven-shelf-sub">在纸面上拖动；参数对全部画笔生效。</div>'
+      panel.insertBefore(head, panel.firstChild)
+
+      const scroll = doc.createElement('div')
+      scroll.id = 'noven-brush-scroll'
+      panel.insertBefore(scroll, head.nextSibling)
+      const buttons = doc.getElementById('brushesButtons')
+      if (buttons !== null) scroll.appendChild(buttons)
+
+      const settings = doc.createElement('div')
+      settings.id = 'noven-brush-settings'
+      settings.innerHTML = '<div id="noven-current-brush"><span>当前</span><strong>抬高</strong></div>' +
+        '<div id="noven-height-readout"><span>光标高度</span><strong id="noven-height-value">—</strong><em id="noven-height-label"></em></div>' +
+        '<div class="noven-height-legend"><span>低</span><i></i><span>高</span></div>' +
+        '<div id="noven-brush-hint">把碎块加高</div>' +
+        '<div class="noven-brush-kicker">笔触</div>'
+      scroll.appendChild(settings)
+      for (const id of ['brushesSliders', 'lineSlider']) {
+        const node = doc.getElementById(id)
+        if (node !== null) settings.appendChild(node)
+      }
+      const filter = doc.getElementById('cellTypeFilter')?.closest('div')
+      if (filter !== null && filter !== undefined) {
+        const kicker = doc.createElement('div')
+        kicker.className = 'noven-brush-kicker'
+        kicker.textContent = '作用范围'
+        settings.appendChild(kicker)
+        settings.appendChild(filter)
+      }
+
+      const more = doc.createElement('button')
+      more.id = 'noven-brush-more'
+      more.type = 'button'
+      more.textContent = '更多笔刷'
+      scroll.insertBefore(more, settings)
+
+      let expanded = false
+      const setExpanded = value => {
+        expanded = value
+        for (const id of advanced) {
+          const button = doc.getElementById(id)
+          if (button !== null) button.hidden = !value
+        }
+        more.textContent = value ? '收起更多' : '更多笔刷'
+      }
+      setExpanded(false)
+      more.addEventListener('click', () => setExpanded(!expanded))
+
+      if (doc.__novenHeightBound !== true) {
+        doc.__novenHeightBound = true
+        doc.addEventListener('noven:height-hover', event => {
+          const height = Number(event.detail?.height)
+          if (!Number.isFinite(height)) return
+          const value = doc.getElementById('noven-height-value')
+          const label = doc.getElementById('noven-height-label')
+          if (value !== null) value.textContent = String(Math.round(height))
+          if (label !== null) {
+            label.textContent = height < 20 ? '海面' : height < 35 ? '低地' : height < 50 ? '丘陵' : height < 65 ? '高地' : height < 80 ? '山地' : '高山'
+          }
+        })
+      }
+
+      const layer = doc.createElement('div')
+      layer.id = 'noven-arrange'
+      layer.hidden = true
+      layer.innerHTML = '<div class="noven-arrange-head">整理地形</div>' +
+        '<div class="noven-arrange-body">' +
+          '<div class="noven-arrange-kicker">编辑历史</div>' +
+          '<button type="button" class="noven-arrange-row" data-brush-call="undo"><span class="noven-arrange-glyph">↶</span><span>撤销</span><small>⌘Z</small></button>' +
+          '<button type="button" class="noven-arrange-row" data-brush-call="redo"><span class="noven-arrange-glyph">↷</span><span>重做</span><small>⇧⌘Z</small></button>' +
+          '<div class="noven-arrange-kicker">整片调整</div>' +
+          '<button type="button" class="noven-arrange-row" data-brush-call="rescaleShow"><span class="noven-arrange-glyph">↔</span><span>缩放高程</span></button>' +
+          '<button type="button" class="noven-arrange-row" data-brush-call="rescaleCondShow"><span class="noven-arrange-glyph">ƒ</span><span>条件缩放</span></button>' +
+          '<button type="button" class="noven-arrange-row" data-brush-call="smoothHeights"><span class="noven-arrange-glyph">≈</span><span>整体平滑</span></button>' +
+          '<button type="button" class="noven-arrange-row" data-brush-call="disruptHeights"><span class="noven-arrange-glyph">∿</span><span>整体扰动</span></button>' +
+          '<div class="noven-arrange-kicker">危险操作</div>' +
+          '<button type="button" class="noven-arrange-row danger" data-brush-call="brushClear"><span class="noven-arrange-glyph">⌫</span><span>清空全部高度</span><small>不可撤销</small></button>' +
+          '<div id="noven-arrange-sections"></div>' +
+        '</div>'
+      panel.appendChild(layer)
+      const sections = layer.querySelector('#noven-arrange-sections')
+      for (const id of ['rescaleSection', 'rescaleCondSection']) {
+        const node = doc.getElementById(id)
+        if (node !== null) sections.appendChild(node)
+      }
+
+      const foot = doc.createElement('div')
+      foot.id = 'noven-brush-foot'
+      foot.innerHTML =
+        '<button type="button" data-brush-call="undo" title="撤销">' +
+          '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4 2 8l4 4"/><path d="M2 8h7a5 5 0 0 1 0 10"/></svg>' +
+        '</button>' +
+        '<button type="button" data-brush-call="redo" title="重做">' +
+          '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4l4 4-4 4"/><path d="M16 8H9a5 5 0 0 0 0 10"/></svg>' +
+        '</button>' +
+        '<span></span>' +
+        '<button type="button" id="noven-arrange-toggle">整理' +
+          '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 4h10M2 7h7M2 10h4"/></svg>' +
+        '</button>'
+      panel.appendChild(foot)
+
+      const current = settings.querySelector('#noven-current-brush strong')
+      const hint = settings.querySelector('#noven-brush-hint')
+      const showBrush = info => {
+        if (current !== null) current.textContent = info.name
+        if (hint !== null) hint.textContent = info.desc
+      }
+      if (buttons !== null && buttons.querySelector('button.pressed') === null) {
+        const raised = doc.getElementById('brushRaise')
+        raised?.click()
+        showBrush(meta.brushRaise)
+      } else {
+        const pressed = buttons?.querySelector('button.pressed')
+        const info = pressed ? meta[pressed.id] : undefined
+        if (info !== undefined) showBrush(info)
+      }
+      buttons?.addEventListener('click', event => {
+        const target = event.target
+        const button = target !== null && typeof target.closest === 'function' ? target.closest('#brushesButtons > button') : null
+        if (button === null) return
+        const info = meta[button.id]
+        if (info !== undefined) showBrush(info)
+      })
+
+      for (const button of layer.querySelectorAll('[data-brush-call]')) {
+        button.addEventListener('click', () => doc.getElementById(button.dataset.brushCall)?.click())
+      }
+
+      const toggle = foot.querySelector('#noven-arrange-toggle')
+      const setArrange = open => {
+        layer.hidden = !open
+        toggle.classList.toggle('active', open)
+        toggle.innerHTML = (open ? '返回画笔' : '整理') +
+          (open
+            ? '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M9 2 5 6l3 3 4-4M5 6 2 9l3 3 3-3"/></svg>'
+            : '<svg viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M2 4h10M2 7h7M2 10h4"/></svg>')
+      }
+      toggle.addEventListener('click', () => setArrange(layer.hidden))
+      for (const button of foot.querySelectorAll('[data-brush-call]')) {
+        button.addEventListener('click', () => doc.getElementById(button.dataset.brushCall)?.click())
+      }
+      head.querySelector('#noven-brush-close')?.addEventListener('click', () => {
+        try { doc.defaultView?.jQuery?.('#brushesPanel')?.dialog?.('close') } catch (error) {
+          console.warn('Noven brush close failed', error)
+        }
+      })
+    }
+
+    /** Strip the hover box and clear a hover tip after it has been read. */
+    function bindTooltipFade(doc) {
+      const tip = doc.getElementById('tooltip')
+      if (tip === null || tip.dataset.novenFade === 'on') return
+      tip.dataset.novenFade = 'on'
+      let timer = 0
+      const schedule = () => {
+        window.clearTimeout(timer)
+        timer = window.setTimeout(() => {
+          const text = (tip.textContent ?? '').trim()
+          // A pinned mode tip is the current message; only transient hover text fades.
+          if (text === '' || tip.dataset.main === tip.innerHTML) return
+          tip.classList.add('noven-tip-fading')
+          window.setTimeout(() => {
+            if (!tip.classList.contains('noven-tip-fading')) return
+            tip.innerHTML = ''
+            tip.classList.remove('noven-tip-fading')
+          }, 500)
+        }, 1600)
+      }
+      new MutationObserver(() => {
+        const text = (tip.textContent ?? '').trim()
+        if (text === (tip.dataset.novenText ?? '')) return
+        tip.dataset.novenText = text
+        tip.classList.remove('noven-tip-fading')
+        if (text !== '') schedule()
+      }).observe(tip, { childList: true, subtree: true, characterData: true })
+    }
+
+    function apply() {
+      const doc = frame.contentDocument
+      if (doc === null || doc.head === null) return
+      if (doc.getElementById('noven-theme') === null) {
+        const link = doc.createElement('link')
+        link.id = 'noven-theme'
+        link.rel = 'stylesheet'
+        link.href = 'noven-theme.css?v=12'
+        doc.head.appendChild(link)
+      }
+      bindTooltipFade(doc)
+      for (const [name, value] of Object.entries(VARS)) {
+        doc.documentElement.style.setProperty(name, value, 'important')
+      }
+      doc.body.style.background = '#EFE6D0'
+      if (doc.getElementById('noven-dock-style') === null) {
+        const style = doc.createElement('style')
+        style.id = 'noven-dock-style'
+        style.textContent = `
+          #optionsContainer {
+            position: fixed !important; left: 0 !important; top: 0 !important;
+            width: 318px !important; height: 100% !important; max-height: 100% !important;
+            border: 0 !important; border-right: 1px solid #E3E5DF !important;
+            border-radius: 0 !important; box-shadow: none !important;
+            background: #FBFAF6 !important; opacity: 1 !important; z-index: 1000 !important;
+          }
+          #options { opacity: 1 !important; z-index: 1001 !important; }
+          #customizationMenu {
+            position: fixed !important; left: 0 !important; top: 0 !important;
+            width: 318px !important; height: 100% !important; max-height: 100% !important;
+            border: 0 !important; border-right: 1px solid #E3E5DF !important;
+            border-radius: 0 !important; box-shadow: none !important;
+            background: #FBFAF6 !important; overflow: auto !important;
+          }
+          .ui-dialog:has(#brushesPanel) {
+            position: fixed !important; left: 0 !important; top: 0 !important;
+            width: 318px !important; height: 100% !important; max-height: 100% !important;
+            border: 0 !important; border-right: 1px solid #E3E5DF !important;
+            border-radius: 0 !important; box-shadow: none !important;
+            background: #FBFAF6 !important;
+          }
+          .ui-dialog:has(#brushesPanel) .ui-dialog-content { height: calc(100% - 25px) !important; overflow: auto !important; }
+          .ui-dialog:has(#brushesPanel) .ui-dialog-titlebar { border-radius: 0 !important; position: relative !important; }
+          .ui-dialog:has(#brushesPanel) .ui-dialog-titlebar button:not(#noven-brush-collapse) { display: none !important; }
+          #brushesPanel {
+            position: relative !important;
+            width: 100% !important; height: 100% !important; max-height: none !important;
+            overflow: auto !important; border: 0 !important;
+          }
+          #noven-brush-collapse {
+            position: absolute; top: 50%; right: 10px; transform: translateY(-50%); z-index: 2;
+            min-width: 48px; box-sizing: border-box; white-space: nowrap; text-align: center;
+            height: 22px; padding: 0 8px; border: 1px solid #D9D2C0; border-radius: 6px;
+            background: #fff; color: #4E544C; font: 10px system-ui, -apple-system, "PingFang SC", sans-serif;
+            cursor: pointer;
+          }
+          #noven-brush-collapse:hover { border-color: #0E9F6E; color: #0E9F6E; }
+          #brushesPanel {
+            box-sizing: border-box !important; padding: 2px 14px 56px !important;
+          }
+          #noven-brush-tabs {
+            position: sticky; top: 0; z-index: 3; background: #FBFAF6 !important;
+            padding-top: 2px; border-bottom: 1px solid #EFEBE1;
+          }
+          .noven-brush-tabrow { display: flex; gap: 18px; }
+          .noven-brush-tabrow button {
+            height: 36px; padding: 0 0 9px; border: 0; background: transparent;
+            color: #A7ACA2; font: 11.5px system-ui, -apple-system, "PingFang SC", sans-serif;
+            cursor: pointer; position: relative;
+          }
+          .noven-brush-tabrow button.active { color: #242923; font-weight: 600; }
+          .noven-brush-tabrow button.active::after {
+            content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+            background: #0E9F6E; border-radius: 2px 2px 0 0;
+          }
+          #noven-brush-pane-label {
+            margin: 12px 0 9px; color: #A7ACA2; font: 600 9.5px system-ui, -apple-system, "PingFang SC", sans-serif;
+            letter-spacing: .16em;
+          }
+          #brushesButtons {
+            display: grid !important; grid-template-columns: 1fr 1fr !important;
+            gap: 8px !important; width: 100% !important; box-sizing: border-box !important;
+          }
+          #brushesButtons[data-group="gradient"], #brushesButtons[data-group="special"] { grid-template-columns: 1fr !important; }
+          #brushesButtons > button {
+            display: grid !important; grid-template-columns: 28px 1fr; grid-template-rows: auto auto;
+            column-gap: 8px; align-items: center; text-align: left;
+            min-height: 66px; height: auto !important; padding: 9px 10px !important;
+            border: 1px solid transparent !important; border-radius: 11px !important; background: transparent !important;
+          }
+          #brushesButtons > button:hover { background: #F4F1E8 !important; }
+          #brushesButtons > button.pressed {
+            background: #E8F6EF !important; border-color: rgba(14,159,110,.34) !important;
+            box-shadow: inset 2px 0 0 #0E9F6E !important;
+          }
+          #brushesButtons > button[hidden] { display: none !important; }
+          #brushesButtons svg {
+            grid-row: 1 / span 2; width: 28px; height: 28px; pointer-events: none;
+          }
+          .noven-brush-label {
+            grid-column: 2; grid-row: 1; margin: 0; color: #242923;
+            font: 600 12px/1.25 system-ui, -apple-system, "PingFang SC", sans-serif;
+          }
+          .noven-brush-desc {
+            grid-column: 2; grid-row: 2; margin: 0; color: #7A7F75;
+            font: 10px/1.35 system-ui, -apple-system, "PingFang SC", sans-serif;
+          }
+          #brushesButtons > button.pressed .noven-brush-label { color: #0B7A55; }
+          #brushesButtons > button.pressed .noven-brush-desc { color: #5F7B6D; }
+          #noven-brush-settings {
+            margin-top: 18px; padding-top: 14px; border-top: 1px solid #E8E3D7;
+          }
+          #noven-current-brush {
+            display: flex; align-items: center; gap: 7px; margin-bottom: 10px;
+            color: #A7ACA2; font: 10px system-ui, -apple-system, "PingFang SC", sans-serif;
+          }
+          #noven-current-brush::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #0E9F6E; }
+          #noven-current-brush strong { color: #242923; font-size: 11.5px; font-weight: 600; }
+          #noven-height-readout {
+            display: flex; align-items: baseline; gap: 6px; margin: 0 0 5px;
+            color: #7A7F75; font: 10px system-ui, -apple-system, "PingFang SC", sans-serif;
+          }
+          #noven-height-value { min-width: 22px; color: #242923; font-size: 15px; font-weight: 650; text-align: right; }
+          #noven-height-label { color: #A7ACA2; font-size: 9.5px; font-style: normal; }
+          .noven-height-legend {
+            display: flex; align-items: center; gap: 6px; margin: 0 0 3px;
+            color: #A7ACA2; font: 9px system-ui, -apple-system, "PingFang SC", sans-serif;
+          }
+          .noven-height-legend i {
+            flex: 1; height: 6px; border-radius: 3px;
+            background: linear-gradient(90deg, #E8EFE0, #D5E5C5, #C6DDB2, #D6DDA5, #E0CD91, #D2AF78, #BE9064, #946044);
+          }
+          .noven-brush-note { margin: 0 0 10px; color: #A7ACA2; font: 9.5px/1.5 system-ui, -apple-system, "PingFang SC", sans-serif; }
+          .noven-brush-kicker {
+            margin: 0 0 6px; color: #A7ACA2;
+            font: 600 9.5px system-ui, -apple-system, "PingFang SC", sans-serif; letter-spacing: .16em;
+          }
+          #noven-brush-settings > div:not(.noven-brush-kicker):not(#noven-current-brush) { margin-right: 0; }
+          #brushesSliders > div, #lineSlider > div { display: flex; align-items: center; gap: 10px; height: 30px; }
+          #brushesSliders, #lineSlider { margin: 0 0 4px !important; }
+          #brushesPanel label[for="cellTypeFilter"] { display: none !important; }
+          #noven-brush-empty { color: #A7ACA2; font: 10px/1.5 system-ui, -apple-system, "PingFang SC", sans-serif; }
+          body.noven-blank #ocean,
+          body.noven-blank #landmass,
+          body.noven-blank #coastline { display: none !important; }
+          #brushesPanel #cellTypeFilter {
+            height: 26px; border: 1px solid #D9D2C0; border-radius: 6px; background: #fff;
+            color: #242424; font: 10.5px system-ui, -apple-system, "PingFang SC", sans-serif;
+          }
+          #noven-arrange {
+            position: absolute; left: 0; top: 0; bottom: 48px; right: auto !important; width: 100% !important;
+            box-sizing: border-box !important; z-index: 5; display: flex; flex-direction: column;
+            background: #FBFAF6 !important;
+          }
+          #noven-arrange[hidden] { display: none !important; }
+          .noven-arrange-head {
+            height: 44px; flex: 0 0 44px; display: flex; align-items: center; padding: 0 18px;
+            color: #242923; font: 600 13px system-ui, -apple-system, "PingFang SC", sans-serif;
+            border-bottom: 1px solid #EFEBE1;
+          }
+          .noven-arrange-body { flex: 1; min-height: 0; overflow: auto; padding: 14px 18px; }
+          #modifyButtons { display: none !important; }
+          .noven-arrange-kicker {
+            margin: 14px 0 5px; color: #A7ACA2;
+            font: 600 9.5px system-ui, -apple-system, "PingFang SC", sans-serif; letter-spacing: .16em;
+          }
+          .noven-arrange-kicker:first-child { margin-top: 0; }
+          .noven-arrange-row {
+            width: 100%; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 10px;
+            border: 0; border-radius: 9px; background: transparent; color: #242423;
+            font: 11.5px system-ui, -apple-system, "PingFang SC", sans-serif; text-align: left; cursor: pointer;
+          }
+          .noven-arrange-row:hover { background: #F4F1E8; }
+          .noven-arrange-row .noven-arrange-glyph { width: 18px; flex: 0 0 18px; color: #7A7F75; text-align: center; font-size: 15px; }
+          .noven-arrange-row span:nth-child(2) { flex: 1; }
+          .noven-arrange-row small { color: #A7ACA2; font-size: 9.5px; }
+          .noven-arrange-row.danger { color: #A8503F; }
+          .noven-arrange-row.danger .noven-arrange-glyph { color: #B56A55; }
+          .noven-arrange-row.danger:hover { background: #FBF0EC; }
+          #noven-arrange-sections > div {
+            margin-top: 12px; padding: 8px; border: 1px solid #E8E3D7; border-radius: 8px;
+            background: #fff; font: 10px system-ui, -apple-system, "PingFang SC", sans-serif;
+          }
+          #noven-brush-foot {
+            position: absolute; left: 0; right: auto !important; bottom: 0; width: 100% !important;
+            box-sizing: border-box !important; height: 48px; z-index: 6;
+            display: flex; align-items: center; gap: 2px; padding: 0 12px;
+            border-top: 1px solid #EFEBE1; background: #FBFAF6 !important;
+          }
+          #noven-brush-foot > button[data-brush-call] {
+            width: 30px; height: 30px; display: grid; place-items: center;
+            border: 0; border-radius: 8px; background: transparent; color: #A7ACA2; cursor: pointer;
+          }
+          #noven-brush-foot > button[data-brush-call]:hover { background: #F4F1E8; color: #242923; }
+          #noven-brush-foot svg { width: 15px; height: 15px; }
+          #noven-arrange-toggle {
+            margin-left: auto; height: 28px; padding: 0 8px; display: inline-flex; align-items: center; gap: 4px;
+            border: 0; border-radius: 7px; background: transparent; color: #A7ACA2;
+            font: 10.5px system-ui, -apple-system, "PingFang SC", sans-serif; cursor: pointer;
+          }
+          #noven-arrange-toggle:hover { background: #F4F1E8; color: #242423; }
+          #noven-arrange-toggle.active { background: #E8F6EF; color: #0B7A55; }
+          #noven-arrange-toggle svg { width: 12px; height: 12px; }
+          #aboutTab, #assistantBubble, #tourPromptButton, #optionsTrigger,
+          #newMapButton, #saveButton { display: none !important; }
+          /* Options panel becomes the Noven human editor; the upstream
+             Layers/Style/Options tab strip never returns after finalize. */
+          #options .tab { display: none !important; }
+          #options { border: 0 !important; border-radius: 0 !important; box-shadow: none !important; background: #FBFAF6 !important; padding: 0 !important; overflow: auto !important; }
+          #options .tabcontent { display: none !important; }
+          #options #toolsContent { display: block !important; padding: 0 14px 18px !important; }
+          #noven-human-head {
+            position: sticky; top: 0; z-index: 5; height: 54px; display: flex; align-items: center; gap: 10px;
+            padding: 0 4px; background: #FBFAF6 !important;
+          }
+          #noven-human-head strong { flex: 1; color: #242923; font: 650 14px system-ui, -apple-system, "PingFang SC", sans-serif; }
+          #noven-human-collapse {
+            height: 24px; padding: 0 7px; border: 0; border-radius: 6px; background: transparent;
+            color: #A7ACA2; font: 10.5px system-ui, -apple-system, "PingFang SC", sans-serif; cursor: pointer;
+          }
+          #noven-human-collapse:hover { background: #F4F1E8; color: #242923; }
+          #noven-human-tabs {
+            position: sticky; top: 54px; z-index: 4; display: flex; gap: 18px;
+            background: #FBFAF6 !important; border-bottom: 1px solid #EFEBE1; margin: 0 -14px 0;
+            padding: 0 14px;
+          }
+          #noven-human-tabs button {
+            height: 36px; padding: 0 0 9px; border: 0; background: transparent;
+            color: #A7ACA2; font: 11.5px system-ui, -apple-system, "PingFang SC", sans-serif; cursor: pointer;
+            position: relative;
+          }
+          #noven-human-tabs button.active { color: #242923; font-weight: 600; }
+          #noven-human-tabs button.active::after {
+            content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+            background: #0E9F6E; border-radius: 2px 2px 0 0;
+          }
+          #toolsContent .separator, #toolsContent .noven-section-head { display: none !important; }
+          #toolsContent .grid { display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 6px !important; margin: 10px 0 16px !important; }
+          #toolsContent .grid button {
+            height: 36px; padding: 0 8px; border: 1px solid #ECE7DB !important; border-radius: 8px !important;
+            background: #fff !important; color: #4E544C !important;
+            font: 10.5px system-ui, -apple-system, "PingFang SC", sans-serif !important; cursor: pointer;
+            text-align: left;
+          }
+          #toolsContent .grid button:hover { border-color: #0E9F6E !important; color: #0B7A55 !important; background: #E8F6EF !important; }
+          #toolsContent .noven-tool-section[hidden] { display: none !important; }
+          #toolsContent #noven-ai-tools { margin: 12px 0 4px !important; }
+          #noven-edge-tab {
+            position: fixed; left: 0; top: 50%; z-index: 9999;
+            display: flex; flex-direction: column; align-items: center; justify-content: center;
+            gap: 7px; width: 30px; height: 108px; padding: 8px 0;
+            transform: translateY(-50%); border: 1px solid #D5D9D2; border-left: 0;
+            border-radius: 0 10px 10px 0; background: #FBFAF6; color: #6B746E;
+            font: 10px system-ui, -apple-system, "PingFang SC", sans-serif;
+            letter-spacing: .12em; writing-mode: vertical-rl; cursor: pointer;
+          }
+          #noven-edge-tab:hover { background: #E4F5ED; color: #0B7A55; }
+          #noven-edge-tab[hidden] { display: none; }
+          #noven-ai-tools {
+            margin: 8px 0 12px; padding: 8px; border: 1px solid #E3E5DF; border-radius: 8px;
+            background: #F4F5F2; color: #4E544C; font: 11px system-ui, -apple-system, "PingFang SC", sans-serif;
+          }
+          #noven-ai-tools-head { margin-bottom: 4px; color: #0B7A55; font-weight: 600; }
+          .noven-section-head {
+            margin: 10px 0 2px; color: #242923; font: 600 11px system-ui, -apple-system, "PingFang SC", sans-serif;
+            letter-spacing: .08em;
+          }
+          #noven-ai-tools-undo {
+            margin-top: 6px; height: 24px; padding: 0 8px; border: 1px solid #0E9F6E;
+            border-radius: 6px; background: #0E9F6E; color: #fff; font: 10px system-ui, sans-serif; cursor: pointer;
+          }
+          #noven-ai-tools-undo[hidden] { display: none; }
+        `
+        doc.head.appendChild(style)
+      }
+      if (doc.getElementById('noven-shell-style') === null) {
+        const shellStyle = doc.createElement('style')
+        shellStyle.id = 'noven-shell-style'
+        shellStyle.textContent = `
+          #optionsContainer, #optionsTrigger, #customizationMenu, #aboutTab { display: none !important; }
+          body.noven-style-open #optionsContainer,
+          body.noven-options-open #optionsContainer {
+            display: block !important; opacity: 1 !important; position: fixed !important;
+            left: 50% !important; top: 50% !important; transform: translate(-50%, -50%) !important;
+            width: min(760px, calc(100vw - 32px)) !important;
+            height: min(680px, calc(100vh - 120px)) !important;
+            max-height: calc(100vh - 120px) !important;
+            border: 1px solid #E3DAC7 !important; border-radius: 16px !important;
+            box-shadow: 0 30px 90px rgba(30, 32, 27, .24) !important;
+            background: #FCF9F0 !important; z-index: 2000 !important; overflow: hidden !important;
+          }
+          body.noven-style-open #options,
+          body.noven-options-open #options {
+            display: block !important; position: static !important; width: 100% !important;
+            height: 100% !important; max-height: none !important; padding: 0 !important;
+            overflow: auto !important; background: #FCF9F0 !important;
+          }
+          body.noven-style-open #options .tab,
+          body.noven-options-open #options .tab { display: flex !important; align-items: center; }
+          body.noven-style-open #options .tab .options:not(#optionsHide),
+          body.noven-options-open #options .tab .options:not(#optionsHide) { display: none !important; }
+          body.noven-style-open #options #styleContent,
+          body.noven-options-open #options #optionsContent { display: block !important; }
+          body.noven-style-open #options #optionsContent,
+          body.noven-options-open #options #styleContent,
+          body.noven-style-open #options #toolsContent,
+          body.noven-options-open #options #toolsContent { display: none !important; }
+          .ui-dialog { max-width: calc(100vw - 32px) !important; max-height: calc(100vh - 32px) !important; }
+          .ui-dialog .ui-dialog-content { max-height: calc(100vh - 100px) !important; overflow: auto !important; }
+          .ui-dialog:has(#brushesPanel) {
+            position: fixed !important; left: 84px !important; top: 16px !important;
+            width: 304px !important; height: auto !important;
+            max-height: calc(100% - 108px) !important;
+            border: 1px solid #E3DAC7 !important; border-radius: 16px !important;
+            box-shadow: 0 20px 54px rgba(36, 38, 31, .14) !important;
+            background: #FCF9F0 !important; overflow: hidden !important;
+          }
+          .ui-dialog:has(#brushesPanel) .ui-dialog-titlebar { display: none !important; }
+          .ui-dialog:has(#brushesPanel) .ui-dialog-content {
+            height: auto !important; max-height: calc(100vh - 110px) !important;
+            padding: 0 !important; overflow: hidden !important; background: #FCF9F0 !important;
+          }
+          #brushesPanel {
+            position: relative !important; display: flex !important; flex-direction: column !important;
+            width: 100% !important; height: auto !important; max-height: calc(100vh - 110px) !important;
+            padding: 0 !important; overflow: hidden !important; border: 0 !important;
+            background: #FCF9F0 !important;
+          }
+          #noven-brush-shelf { flex: 0 0 auto; padding: 14px 16px 6px; }
+          #noven-brush-shelf .noven-shelf-head { display: flex; align-items: center; gap: 8px; }
+          #noven-brush-shelf strong { flex: 1; color: #24261F; font: 600 15px/1 "Songti SC", serif; letter-spacing: .03em; }
+          #noven-brush-close {
+            width: 26px; height: 26px; border: 0; border-radius: 7px; background: transparent;
+            color: #9B9F93; font: 17px/1 system-ui, sans-serif; cursor: pointer;
+          }
+          #noven-brush-close:hover { background: #EDE7DA; color: #24261F; }
+          #noven-brush-shelf .noven-shelf-sub { margin-top: 4px; color: #9B9F93; font: 10px/1.5 system-ui, sans-serif; }
+          #noven-brush-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 16px 12px; }
+          #brushesButtons {
+            display: grid !important; grid-template-columns: 1fr 1fr !important;
+            gap: 6px !important; width: 100% !important; box-sizing: border-box !important;
+            margin: 10px 0 0 !important;
+          }
+          #brushesButtons > button {
+            display: flex !important; align-items: center; gap: 8px; min-height: 44px;
+            height: auto !important; padding: 8px 9px !important;
+            border: 1px solid #E3DAC7 !important; border-radius: 9px !important;
+            background: #fff !important; color: #24261F !important; text-align: left;
+          }
+          #brushesButtons > button:hover { background: #F6F1E6 !important; }
+          #brushesButtons > button.pressed {
+            background: #EDE7DA !important; border-color: #D3C7B0 !important;
+            box-shadow: none !important; color: #24261F !important;
+          }
+          #brushesButtons > button[hidden] { display: none !important; }
+          #brushesButtons svg { width: 22px; height: 22px; flex: 0 0 22px; pointer-events: none; color: #4F574E; }
+          #brushesButtons > button.pressed svg { color: #24261F !important; }
+          .noven-brush-label { color: #24261F; font: 600 11.5px/1.2 system-ui, sans-serif; }
+          #brushesButtons > button.pressed .noven-brush-label { color: #24261F !important; }
+          #noven-brush-more {
+            width: 100%; height: 30px; margin: 8px 0 0; border: 1px dashed #D3C7B0;
+            border-radius: 8px; background: transparent; color: #6F7468;
+            font: 10.5px system-ui, sans-serif; cursor: pointer;
+          }
+          #noven-brush-more:hover { background: #F6F1E6; color: #24261F; }
+          #noven-brush-settings { margin-top: 14px; padding-top: 12px; border-top: 1px solid #E3DAC7; }
+          #noven-current-brush {
+            display: flex; align-items: center; gap: 7px; margin-bottom: 8px;
+            color: #9B9F93; font: 10px system-ui, sans-serif;
+          }
+          #noven-current-brush::before { content: ""; width: 5px; height: 5px; border-radius: 50%; background: #0E7A55; }
+          #noven-current-brush strong { color: #24261F; font-size: 11.5px; font-weight: 600; }
+          #noven-height-readout {
+            display: flex; align-items: baseline; gap: 6px; margin: 0 0 5px;
+            color: #6F7468; font: 10px system-ui, sans-serif;
+          }
+          #noven-height-value { min-width: 22px; color: #24261F; font-size: 15px; font-weight: 650; text-align: right; }
+          #noven-height-label { color: #9B9F93; font-size: 9.5px; font-style: normal; }
+          .noven-height-legend {
+            display: flex; align-items: center; gap: 6px; margin: 0 0 6px;
+            color: #9B9F93; font: 9px system-ui, sans-serif;
+          }
+          .noven-height-legend i {
+            flex: 1; height: 5px; border-radius: 3px;
+            background: linear-gradient(90deg, #E8EFE0, #D5E5C5, #C6DDB2, #D6DDA5, #E0CD91, #D2AF78, #BE9064, #946044);
+          }
+          #noven-brush-hint { margin: 0 0 8px; color: #6F7468; font: 10px/1.5 system-ui, sans-serif; }
+          .noven-brush-kicker { margin: 10px 0 5px; color: #9B9F93; font: 600 9.5px system-ui, sans-serif; letter-spacing: .14em; }
+          #brushesSliders > div, #lineSlider > div { display: flex; align-items: center; gap: 10px; height: 30px; }
+          #brushesSliders, #lineSlider { accent-color: #6F7468; }
+          #brushesSliders, #lineSlider { margin: 0 0 2px !important; }
+          #brushesPanel label[for="cellTypeFilter"] { display: none !important; }
+          #brushesPanel #cellTypeFilter {
+            height: 26px; border: 1px solid #E3DAC7; border-radius: 6px; background: #fff;
+            color: #24261F; font: 10.5px system-ui, sans-serif;
+          }
+          #noven-brush-foot {
+            position: static !important; flex: 0 0 46px; width: 100% !important;
+            box-sizing: border-box !important; display: flex; align-items: center; gap: 2px;
+            padding: 0 12px; border-top: 1px solid #E3DAC7; background: #FCF9F0 !important;
+          }
+          #noven-brush-foot > button[data-brush-call] {
+            width: 30px; height: 30px; display: grid; place-items: center;
+            border: 0; border-radius: 8px; background: transparent; color: #9B9F93; cursor: pointer;
+          }
+          #noven-brush-foot > button[data-brush-call]:hover { background: #EDE7DA; color: #24261F; }
+          #noven-brush-foot svg { width: 15px; height: 15px; }
+          #noven-arrange-toggle {
+            margin-left: auto; height: 28px; padding: 0 8px; display: inline-flex;
+            align-items: center; gap: 4px; border: 0; border-radius: 7px; background: transparent;
+            color: #6F7468; font: 10.5px system-ui, sans-serif; cursor: pointer;
+          }
+          #noven-arrange-toggle:hover { background: #EDE7DA; color: #24261F; }
+          #noven-arrange-toggle.active { background: #EDE7DA; color: #24261F; }
+          #noven-arrange-toggle svg { width: 12px; height: 12px; }
+          #noven-arrange {
+            position: absolute !important; inset: 0 0 46px 0 !important;
+            width: 100% !important; box-sizing: border-box; z-index: 5;
+            display: flex; flex-direction: column; background: #FCF9F0 !important;
+          }
+          #noven-arrange[hidden] { display: none !important; }
+          .noven-arrange-head {
+            height: 46px; flex: 0 0 46px; display: flex; align-items: center; padding: 0 16px;
+            color: #24261F; font: 600 13px system-ui, sans-serif; border-bottom: 1px solid #E3DAC7;
+          }
+          .noven-arrange-body { flex: 1; min-height: 0; overflow: auto; padding: 12px 12px; }
+          #modifyButtons { display: none !important; }
+          .noven-arrange-kicker { margin: 12px 0 4px; color: #9B9F93; font: 600 9.5px system-ui, sans-serif; letter-spacing: .14em; }
+          .noven-arrange-kicker:first-child { margin-top: 0; }
+          .noven-arrange-row {
+            width: 100%; height: 36px; display: flex; align-items: center; gap: 9px; padding: 0 8px;
+            border: 0; border-radius: 8px; background: transparent; color: #24261F;
+            font: 11.5px system-ui, sans-serif; text-align: left; cursor: pointer;
+          }
+          .noven-arrange-row:hover { background: #EDE7DA; }
+          .noven-arrange-row .noven-arrange-glyph { width: 18px; flex: 0 0 18px; color: #6F7468; text-align: center; font-size: 15px; }
+          .noven-arrange-row span:nth-child(2) { flex: 1; }
+          .noven-arrange-row small { color: #9B9F93; font-size: 9.5px; }
+          .noven-arrange-row.danger { color: #A8503F; }
+          .noven-arrange-row.danger .noven-arrange-glyph { color: #B56A55; }
+          .noven-arrange-row.danger:hover { background: #FBF0EC; }
+          #noven-arrange-sections > div {
+            margin-top: 10px; padding: 8px; border: 1px solid #E3DAC7; border-radius: 8px;
+            background: #fff; font: 10px system-ui, sans-serif;
+          }
+          @media (max-width: 760px) {
+            .ui-dialog:has(#brushesPanel) {
+              left: 66px !important; top: 8px !important; width: calc(100vw - 74px) !important;
+              max-height: calc(100% - 88px) !important;
+            }
+            .ui-dialog:has(#brushesPanel) .ui-dialog-content { max-height: calc(100vh - 90px) !important; }
+            #brushesPanel { max-height: calc(100vh - 90px) !important; }
+          }
+        `
+        doc.head.appendChild(shellStyle)
+      }
+      const tools = doc.getElementById('toolsContent')
+      if (tools && doc.getElementById('noven-ai-tools') === null) {
+        const box = doc.createElement('div')
+        box.id = 'noven-ai-tools'
+        box.innerHTML = '<div id="noven-ai-tools-head">AI 改动</div><div id="noven-ai-tools-text">暂无</div><button id="noven-ai-tools-undo" type="button" hidden>撤销</button>'
+        tools.prepend(box)
+        const editorHead = doc.createElement('div')
+        editorHead.className = 'noven-section-head'
+        editorHead.textContent = '人文编辑器'
+        box.insertAdjacentElement('afterend', editorHead)
+        box.querySelector('#noven-ai-tools-undo')?.addEventListener('click', undoAi)
+      }
+      const brush = doc.getElementById('brushesPanel')
+      if (brush !== null) {
+        enhanceBrushPanel(brush, doc)
+        const labels = {
+          undo: '撤销', redo: '重做', rescaleShow: '缩放', rescaleCondShow: '条件缩放',
+          smoothHeights: '整体平滑', disruptHeights: '整体扰动', brushClear: '清空',
+        }
+        for (const [id, label] of Object.entries(labels)) {
+          const button = doc.getElementById(id)
+          if (button !== null && button.querySelector('.noven-brush-label') === null) {
+            const span = doc.createElement('span')
+            span.className = 'noven-brush-label'
+            span.textContent = label
+            button.appendChild(span)
+          }
+        }
+      }
+      if (doc.__novenStyleBound !== true) {
+        doc.__novenStyleBound = true
+        doc.getElementById('optionsHide')?.addEventListener('click', () => {
+          doc.body.classList.remove('noven-style-open', 'noven-options-open')
+        })
+      }
+      const dismiss = [...doc.querySelectorAll('button')].find(button =>
+        button.textContent.trim() === "Don't show again")
+      if (dismiss !== undefined) dismiss.click()
+      if (!ready && frame.contentWindow?.novenMapReady === true) {
+        ready = true
+        window.novenHostReady = true
+        setState(embedded ? '已连接' : '预览模式')
+        saveButton.disabled = !embedded
+        if (!embedded) setState('预览模式', false)
+        const win = frame.contentWindow
+        win.addEventListener('noven:blank-started', handleBlankStarted)
+        win.addEventListener('noven:terrain-finalized', event => handleTerrainFinalized(event.detail))
+        win.addEventListener('noven:heightmap-changed', scheduleDraftSave)
+        if (embedded && !announced) {
+          announced = true
+          window.parent.postMessage({ type: 'noven-map-ready' }, '*')
+        }
+        syncDock()
+        if (!embedded) {
+          window.setTimeout(() => {
+            if (currentStage === 'blank' && frame.contentWindow?.novenBlank !== true) void startBlank({ fresh: true })
+          }, 250)
+        }
+        window.setTimeout(() => { if (!worldPanel.hidden) renderWorld() }, 220)
+      }
+    }
+
+    let finalized = false
+    let currentStage = 'blank'
+
+    const ARROW = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8h9M9 4l4 4-4 4"/></svg>'
+    function updateBar() {
+      if (stageName === null || primaryButton === null) return
+      stageName.textContent = currentStage === 'world' ? '人文' : currentStage === 'terrain' ? '地形' : '白膜'
+      for (const step of steps?.querySelectorAll('[data-step]') ?? []) {
+        step.classList.toggle('active', step.dataset.step === currentStage)
+      }
+      primaryButton.innerHTML = (currentStage === 'world' ? '保存到卡' : currentStage === 'terrain' ? '生成人文层' : '定稿地形') + ARROW
+      primaryButton.disabled = currentStage === 'world' ? saveButton.disabled : currentStage === 'terrain' ? humanButton.disabled : finalizeButton.disabled
+    }
+    primaryButton?.addEventListener('click', () => {
+      if (currentStage === 'world') saveButton.click()
+      else if (currentStage === 'terrain') humanButton.click()
+      else finalizeButton.click()
+    })
+    moreButton?.addEventListener('click', event => {
+      event.stopPropagation()
+      if (moreMenu !== null) moreMenu.hidden = !moreMenu.hidden
+    })
+    document.addEventListener('click', event => {
+      if (moreMenu !== null && !moreMenu.hidden && !moreMenu.contains(event.target)) moreMenu.hidden = true
+    })
+    updateBar()
+
+    let draftKey = ''
+    let draftMeta = null
+    let draftTimer = 0
+
+    function encodeHeights(heights) {
+      let binary = ''
+      const chunk = 0x8000
+      for (let i = 0; i < heights.length; i += chunk) {
+        binary += String.fromCharCode(...heights.subarray(i, i + chunk))
+      }
+      return btoa(binary)
+    }
+
+    function decodeHeights(text) {
+      const binary = atob(text)
+      const heights = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) heights[i] = binary.charCodeAt(i)
+      return heights
+    }
+
+    function readDraft(key) {
+      try {
+        const draft = JSON.parse(localStorage.getItem(key) || 'null')
+        if (!draft || typeof draft.heights !== 'string') return undefined
+        if (typeof draft.seed !== 'string' || !draft.seed) return undefined
+        return draft
+      } catch {
+        return undefined
+      }
+    }
+
+    function saveDraft() {
+      const w = frame.contentWindow
+      if (!draftKey || !draftMeta || w?.novenBlank !== true || !w.grid?.cells?.h) return
+      try {
+        localStorage.setItem(draftKey, JSON.stringify({
+          ...draftMeta,
+          heights: encodeHeights(w.grid.cells.h),
+        }))
+      } catch (error) {
+        console.warn('Noven blank draft could not be saved', error)
+      }
+    }
+
+    function scheduleDraftSave() {
+      window.clearTimeout(draftTimer)
+      draftTimer = window.setTimeout(saveDraft, 700)
+    }
+
+    function clearDraft() {
+      window.clearTimeout(draftTimer)
+      if (draftKey) {
+        try { localStorage.removeItem(draftKey) } catch { /* storage may be unavailable */ }
+      }
+      draftKey = ''
+      draftMeta = null
+    }
+
+    function restoreDraft(draft) {
+      const w = frame.contentWindow
+      if (!w?.grid?.cells?.h) return
+      const heights = decodeHeights(draft.heights)
+      if (heights.length !== w.grid.cells.h.length) return
+      w.grid.cells.h.set(heights)
+      w.Controllers.HeightmapEditor.open({ mode: 'erase' })
+      setState('白膜 · 已恢复草稿')
+    }
+
+    function handleBlankStarted() {
+      finalized = false
+      narrowBrushCollapsed = false
+      frame.contentWindow?.clearMainTip?.()
+      setState('白膜 · 先涂地形')
+      saveButton.disabled = true
+      finalizeButton.hidden = false
+      finalizeButton.disabled = false
+      updateBar()
+      if ((frame.clientWidth ?? 0) < 700) {
+        narrowBrushCollapsed = true
+        try { frame.contentWindow?.jQuery('#brushesPanel').dialog('close') } catch (error) {
+          console.warn('Noven narrow brush collapse failed', error)
+        }
+        setState('白膜 · 从左侧「画笔」打开')
+      }
+      window.setTimeout(syncDock, 180)
+      if (embedded) window.parent.postMessage({ type: 'noven-map-blank-started' }, '*')
+    }
+
+    function handleTerrainFinalized(detail) {
+      if (finalized) return
+      finalized = true
+      if (detail?.ok === false) {
+        setState('地形定稿失败', true)
+        finalizeButton.disabled = false
+        return
+      }
+      clearDraft()
+      currentStage = 'terrain'
+      updateBar()
+      frame.contentWindow?.novenMap?.fit?.()
+      window.setTimeout(() => {
+        openWorldShelf()
+        syncDock()
+      }, 160)
+      setState('地形已定稿')
+      finalizeButton.hidden = true
+      humanButton.hidden = false
+      saveButton.disabled = !embedded
+      if (embedded) {
+        window.parent.postMessage({ type: 'noven-map-terrain-finalized' }, '*')
+        saveToCard('terrain')
+      }
+    }
+
+    async function startBlank(options = {}) {
+      if (!ready) return
+      if (typeof options.undoKey === 'string') undoStorageKey = options.undoKey
+      clearUndoHistory()
+      const key = typeof options.draftKey === 'string' ? options.draftKey : draftKey
+      if (options.fresh === true && key) {
+        try { localStorage.removeItem(key) } catch { /* storage may be unavailable */ }
+      }
+      draftKey = key
+      const saved = options.fresh === true ? undefined : (draftKey ? readDraft(draftKey) : undefined)
+      const seed = saved?.seed ?? options.seed ?? `noven-blank-${Date.now()}`
+      const width = saved?.width ?? options.width ?? 1280
+      const height = saved?.height ?? options.height ?? 800
+      const points = saved?.points ?? options.points ?? 10000
+      draftMeta = { seed, width, height, points }
+      currentStage = 'blank'
+      updateBar()
+      blankButton.disabled = true
+      randomButton.disabled = true
+      finalizeButton.hidden = true
+      humanButton.hidden = true
+      setState(saved ? '白膜 · 恢复草稿…' : '白膜准备中…')
+      try {
+        await frame.contentWindow.novenMap.startBlank({ seed, width, height, points })
+        if (saved) restoreDraft(saved)
+        frame.contentWindow?.clearMainTip?.()
+        setState(saved ? '白膜 · 已恢复草稿' : '白膜 · 先涂地形')
+        saveButton.disabled = true
+        finalizeButton.hidden = false
+        finalizeButton.disabled = false
+      } catch (error) {
+        setState('白膜启动失败', true)
+        console.error('Noven blank map failed', error)
+      } finally {
+        blankButton.disabled = false
+        randomButton.disabled = false
+      }
+    }
+
+    async function finalizeTerrain() {
+      if (!ready || frame.contentWindow?.novenBlank !== true) return
+      finalizeButton.disabled = true
+      setState('定稿中…')
+      try {
+        await frame.contentWindow.novenMap.finalize()
+      } catch (error) {
+        setState('地形定稿失败', true)
+        console.error('Noven terrain finalize failed', error)
+      }
+      if (frame.contentWindow?.novenBlank === true) {
+        setState('陆地不足 200 块，继续涂', true)
+        finalizeButton.disabled = false
+        return
+      }
+      handleTerrainFinalized({ ok: true })
+    }
+
+    async function generateHumanLayer(options = {}) {
+      if (!ready || frame.contentWindow?.novenBlank === true) return
+      humanButton.disabled = true
+      setState('生成人文层中…')
+      try {
+        await frame.contentWindow.novenMap.generateHuman(options)
+        frame.contentWindow.novenMap.fit?.()
+        frame.contentWindow.Layers?.hide?.('ice', 'scaleBar')
+        currentStage = 'world'
+        updateBar()
+        clearUndoHistory()
+        humanButton.hidden = true
+        humanButton.disabled = false
+        setState('人文层已生成')
+        syncDock()
+        if (embedded) window.parent.postMessage({ type: 'noven-map-human-generated' }, '*')
+        saveToCard('world')
+      } catch (error) {
+        humanButton.disabled = false
+        setState('生成人文层失败', true)
+        toast('生成人文层失败，请重试')
+        console.error('Noven human layer generation failed', error)
+      }
+    }
+
+    async function composeMapTerrain(spec) {
+      const api = frame.contentWindow?.novenMap
+      if (!ready || !api || spec === null || typeof spec !== 'object' || Array.isArray(spec)) return
+      if (frame.contentWindow?.novenBlank !== true) {
+        setState('先在白膜上起稿', true)
+        return
+      }
+      setState('AI 地形起稿中…')
+      try {
+        const summary = api.composeTerrain(spec)
+        window.setTimeout(() => setState(`AI 地形 · 陆地 ${Math.round(summary.landRatio * 100)}%`), 0)
+        setAiToolsStatus(`地形已起稿 · 陆地 ${Math.round(summary.landRatio * 100)}%`, false)
+        window.parent.postMessage({ type: 'noven-map-terrain-summary', summary }, '*')
+      } catch (error) {
+        setState('AI 地形起稿失败', true)
+        console.error('Noven terrain composition failed', error)
+      }
+    }
+
+    async function paintMapTerrain(operations) {
+      const api = frame.contentWindow?.novenMap
+      if (!ready || !api || !Array.isArray(operations) || operations.length === 0) return
+      if (frame.contentWindow?.novenBlank !== true) {
+        setState('先在白膜上起稿', true)
+        return
+      }
+      setState('AI 改地形中…')
+      try {
+        const normalized = operations.map(item => {
+          if (item === null || typeof item !== 'object' || typeof item.op !== 'string') throw new Error('地形动作格式不对')
+          const args = item.args
+          if (args === null || typeof args !== 'object' || Array.isArray(args)) throw new Error('地形动作缺少参数')
+          return { ...args, op: item.op }
+        })
+        const summary = api.paintTerrain(normalized)
+        window.setTimeout(() => setState(`AI 地形 · 陆地 ${Math.round(summary.landRatio * 100)}%`), 0)
+        setAiToolsStatus(`地形已调整 · 陆地 ${Math.round(summary.landRatio * 100)}%`, false)
+        window.parent.postMessage({ type: 'noven-map-terrain-summary', summary }, '*')
+      } catch (error) {
+        setState('AI 改地形失败', true)
+        console.error('Noven terrain paint failed', error)
+      }
+    }
+
+    async function applyMapEdit(operations, undoKey) {
+      const api = frame.contentWindow?.novenMap
+      if (!ready || !api || !Array.isArray(operations) || operations.length === 0) return
+      if (typeof undoKey === 'string') undoStorageKey = undoKey
+      setState('AI 改图中…')
+      try {
+        const result = api.applyOperations(operations, undoStorageKey)
+        setState(`AI 已改图 · ${result.applied} 项`)
+        if (aiLog && aiLogText) {
+          aiLogText.textContent = `AI 改动 · ${result.applied} 项`
+          aiLog.hidden = false
+        }
+        setAiToolsStatus(`已改 ${result.applied} 项`, true)
+        if (embedded) window.parent.postMessage({ type: 'noven-map-edited', applied: result.applied }, '*')
+        saveToCard(currentStage)
+      } catch (error) {
+        setState('AI 改图失败', true)
+        console.error('Noven AI map edit failed', error)
+        if (embedded) window.parent.postMessage({ type: 'noven-map-edit-failed', message: String(error) }, '*')
+      }
+    }
+
+    function undoAi() {
+      const api = frame.contentWindow?.novenMap
+      if (!ready || !api?.undoOperations) return
+      try {
+        const undone = api.undoOperations(undoStorageKey)
+        if (!undone) {
+          setState('没有可撤销的 AI 改动')
+          setAiToolsStatus('暂无可撤销', false)
+          if (aiLog) aiLog.hidden = true
+          return
+        }
+        const remaining = undoCount()
+        if (aiLogText) aiLogText.textContent = `已撤销 AI 改动 · ${undone.undone} 项`
+        setAiToolsStatus(remaining > 0 ? `已撤销 · 还可撤销 ${remaining} 批` : '已撤销', remaining > 0)
+        setState('已撤销 AI 改动')
+        saveToCard(currentStage)
+        window.setTimeout(() => { if (aiLog) aiLog.hidden = true }, 1800)
+      } catch (error) {
+        setState('撤销 AI 改动失败', true)
+        console.error('Noven AI undo failed', error)
+      }
+    }
+
+    function saveToCard(stage = currentStage) {
+      if (!embedded || !ready) return
+      if (saving) {
+        window.setTimeout(() => saveToCard(stage), 350)
+        return
+      }
+      if (stage === 'blank' || frame.contentWindow?.novenBlank === true) {
+        setState('白膜尚未定稿', true)
+        return
+      }
+      const api = frame.contentWindow?.novenMap
+      if (api === undefined) return
+      saving = true
+      saveButton.disabled = true
+      setState('保存中…')
+      try {
+        const data = api.save()
+        let summary
+        try {
+          const full = api.summary?.()
+          if (full) summary = { ...full, burgs: full.burgs.slice(0, 120) }
+        } catch (summaryError) {
+          console.warn('Noven map summary failed', summaryError)
+        }
+        window.parent.postMessage({ type: 'noven-map-save', data, stage, summary }, '*')
+      } catch (error) {
+        saving = false
+        saveButton.disabled = false
+        setState('保存失败', true)
+        console.error('Noven map save failed', error)
+      }
+    }
+
+    async function generate(options) {
+      if (!ready) return
+      closePanels()
+      if (typeof options.undoKey === 'string') undoStorageKey = options.undoKey
+      clearUndoHistory()
+      clearDraft()
+      finalized = false
+      currentStage = 'world'
+      updateBar()
+      syncDock()
+      finalizeButton.hidden = true
+      humanButton.hidden = true
+      saveButton.disabled = true
+      blankButton.disabled = true
+      randomButton.disabled = true
+      setState('生成中…')
+      try {
+        const win = frame.contentWindow
+        // Replacing the map from the heightmap editor must leave customization
+        // first, otherwise the old blank overlay and its black heightmap stay on top.
+        win.customization = 0
+        try { win.jQuery?.('#brushesPanel')?.dialog?.('close') } catch { /* dialog may not be open */ }
+        try { win.closeDialogs?.() } catch { /* dialogs may not be open */ }
+        win.HeightmapGenerator?.clearData?.()
+        win.document.getElementById('noven-blank-hint')?.remove()
+        win.document.getElementById('heights')?.remove()
+        win.document.body.classList.remove('noven-blank', 'noven-terrain')
+        const exit = win.document.getElementById('exitCustomization')
+        if (exit !== null && exit !== undefined) exit.style.display = 'none'
+        const customizationMenu = win.document.getElementById('customizationMenu')
+        if (customizationMenu !== null && customizationMenu !== undefined) customizationMenu.style.display = 'none'
+        const preset = win.document.getElementById('layersPreset')
+        if (preset !== null && preset !== undefined) preset.disabled = false
+        await frame.contentWindow.novenMap.generate(options)
+        if (preset !== null && preset !== undefined) {
+          preset.value = 'political'
+          preset.dispatchEvent(new Event('change', { bubbles: true }))
+        }
+        win.Layers?.drawAll?.()
+        win.Layers?.hide?.('scaleBar')
+        frame.contentWindow.novenMap.fit?.()
+        win.Layers?.hide?.('ice', 'scaleBar')
+        setState('生成完成')
+        syncDock()
+        window.parent.postMessage({ type: 'noven-map-generated' }, '*')
+        saveToCard('world')
+      } catch (error) {
+        setState('生成失败', true)
+        toast('生成世界失败，请重试')
+        console.error('Noven map generation failed', error)
+      } finally {
+        blankButton.disabled = false
+        randomButton.disabled = false
+      }
+    }
+
+    window.addEventListener('message', event => {
+      if (event.source !== window.parent) return
+      const data = event.data
+      if (data?.type === 'noven-map-saved') {
+        saving = false
+        saveButton.disabled = false
+        setState('已保存到卡')
+      } else if (data?.type === 'noven-map-save-failed') {
+        saving = false
+        saveButton.disabled = false
+        setState(data.message || '保存失败', true)
+      } else if (data?.type === 'noven-map-load' && typeof data.data === 'string') {
+        if (typeof data.undoKey === 'string') undoStorageKey = data.undoKey
+        clearDraft()
+        setState('载入中…')
+        frame.contentWindow?.novenMap?.load(data.data)
+          .then(async () => {
+            const win = frame.contentWindow
+            const loading = win?.document.getElementById('loading')
+            if (loading) loading.style.display = 'none'
+            win?.novenMap?.fit?.()
+            win?.Layers?.hide?.('ice', 'scaleBar')
+            const states = (win?.pack?.states ?? []).filter(state => state?.i && !state.removed).length
+            const cultures = (win?.pack?.cultures ?? []).filter(culture => culture?.i && !culture.removed).length
+            if (states === 0 && cultures <= 1) {
+              currentStage = 'terrain'
+              updateBar()
+              humanButton.hidden = false
+              win?.novenMap?.showTerrain?.()
+              clearUndoHistory()
+              window.parent.postMessage({ type: 'noven-map-terrain-finalized' }, '*')
+            } else {
+              currentStage = 'world'
+              updateBar()
+              humanButton.hidden = true
+              refreshUndoStatus()
+            }
+            setState('已载入')
+            syncDock()
+            if (!worldPanel.hidden) renderWorld()
+            window.parent.postMessage({ type: 'noven-map-loaded' }, '*')
+            if (Array.isArray(data.afterEdit) && data.afterEdit.length > 0) {
+              await applyMapEdit(data.afterEdit, data.undoKey)
+            }
+            if (data.afterHuman === true && currentStage === 'terrain') await generateHumanLayer()
+          })
+          .catch(error => {
+            console.error('Noven map load failed', error)
+            setState('载入失败', true)
+            window.parent.postMessage({ type: 'noven-map-load-failed', message: String(error) }, '*')
+          })
+      } else if (data?.type === 'noven-map-fullscreen' && typeof data.expanded === 'boolean') {
+        fullscreenButton.classList.toggle('active', data.expanded)
+        fullscreenButton.title = data.expanded ? '退出全屏' : '全屏'
+        fullscreenButton.setAttribute('aria-pressed', String(data.expanded))
+        dockFullscreen.classList.toggle('active', data.expanded)
+        dockFullscreen.title = data.expanded ? '退出全屏' : '全屏'
+      } else if (data?.type === 'noven-map-generate' && data.options !== null && typeof data.options === 'object') {
+        void generate(data.options)
+      } else if (data?.type === 'noven-map-blank') {
+        void startBlank(data.options || {})
+      } else if (data?.type === 'noven-map-finalize') {
+        void finalizeTerrain()
+      } else if (data?.type === 'noven-map-human') {
+        void generateHumanLayer()
+      } else if (data?.type === 'noven-map-compose' && data.spec !== null && typeof data.spec === 'object') {
+        void composeMapTerrain(data.spec)
+      } else if (data?.type === 'noven-map-paint' && Array.isArray(data.operations)) {
+        void paintMapTerrain(data.operations)
+      } else if (data?.type === 'noven-map-edit' && Array.isArray(data.operations)) {
+        void applyMapEdit(data.operations, data.undoKey)
+      } else if (data?.type === 'noven-map-stage' && (data.stage === 'terrain' || data.stage === 'world')) {
+        currentStage = data.stage
+        humanButton.hidden = data.stage !== 'terrain'
+        if (data.stage === 'terrain') frame.contentWindow?.novenMap?.showTerrain?.()
+        else frame.contentWindow?.document.body.classList.remove('noven-terrain')
+      }
+    })
+
+    window.addEventListener('message', event => {
+      // The undo button lives in the editor iframe. Standalone previews have no
+      // parent, so accept the host window itself as well as the editor frame.
+      if (event.source !== frame.contentWindow && event.source !== window) return
+      if (event.data?.type === 'noven-map-ai-undo') undoAi()
+    })
+
+    frame.addEventListener('load', () => {
+      ready = false
+      announced = false
+      finalized = false
+      bootSince = Date.now()
+      if (bootEl !== null) bootEl.hidden = false
+      window.novenHostReady = false
+      setState('连接中…')
+      apply()
+      setInterval(apply, 1200)
+      // The upstream autosave is an existing signal that the map changed.
+      const timer = setInterval(() => {
+        const win = frame.contentWindow
+        if (!win || !win.novenMapReady) return
+        clearInterval(timer)
+        win.addEventListener('noven:map-saved', () => { if (embedded) saveToCard() })
+      }, 400)
+    })
+
+    saveButton.addEventListener('click', saveToCard)
+    fullscreenButton.addEventListener('click', () => window.parent.postMessage({ type: 'noven-map-fullscreen-toggle' }, '*'))
+    blankButton.addEventListener('click', () => { void startBlank({ fresh: true }) })
+    finalizeButton.addEventListener('click', () => { void finalizeTerrain() })
+    humanButton.addEventListener('click', () => { void generateHumanLayer() })
+    aiUndoButton?.addEventListener('click', undoAi)
+    randomButton.addEventListener('click', () => generate({ template: 'continents', seed: `noven-${Date.now()}`, width: 1280, height: 800, points: 10000 }))
+    window.addEventListener('beforeunload', () => { if (frame.contentWindow?.novenBlank === true) saveDraft() })
+    wireShell()
+  </script>
+  <script src="./noven-i18n.js?v=13"></script>
+</body>
+</html>

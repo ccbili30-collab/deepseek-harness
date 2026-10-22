@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CardStore } from '../lib/store.js'
 import { applyAndCommit } from '../lib/editor.js'
+import { registerCardTools } from '../lib/tools.js'
 import { decodeMap, encodeMap } from '../lib/formats.js'
 
 const root = mkdtempSync(join(tmpdir(), 'noven-cards-map-'))
@@ -135,6 +136,112 @@ try {
   let rejected = false
   try { await applyAndCommit(store, 'card-m', 'card-m', { kind: 'map_spawn_view', moduleId: mapMod.id }, 'AI') } catch { rejected = true }
   check(rejected, '无 objectId/bbox 拒绝')
+
+  // 5. write_map_document：整份 Fantasy-Map-Generator `.map` 原样落进地图模块文字块。
+  {
+    await store.create('FMG 地图', 'AI', () => ({
+      id: 'card-fmg', kind: 'WORLD', name: 'FMG 地图', modules: [], resources: [], internalCharacters: [], extensions: {},
+      appearance: { readingLayout: 'PAGED' },
+    }))
+    await applyAndCommit(store, 'card-fmg', 'card-fmg', { kind: 'add_module', name: '世界图', widget: 'map' }, 'AI')
+    const fmgDoc = await store.open('card-fmg')
+    const fmgModule = fmgDoc.document.modules.find(m => m.widget?.type === 'map')
+    const payload = '1.154.2|File can be loaded in azgaar.github.io/Fantasy-Map-Generator|2026-1-1|seed\r\nsettings\r\n'
+    await applyAndCommit(store, 'card-fmg', 'card-fmg', { kind: 'write_map_document', moduleId: fmgModule.id, text: payload }, 'AI')
+    const after = await store.open('card-fmg')
+    const afterModule = after.document.modules.find(m => m.id === fmgModule.id)
+    const block = afterModule.blocks.find(b => b.kind === 'text')
+    const stored = new TextDecoder().decode(await store.readPayload('card-fmg', block.content))
+    check(stored === payload, 'write_map_document 原样写入地图文字块')
+    await applyAndCommit(store, 'card-fmg', 'card-fmg', {
+      kind: 'write_map_document', moduleId: fmgModule.id, text: payload,
+      stage: 'terrain', summary: { counts: { states: 0, cultures: 1, burgs: 0, markers: 0 }, states: [] },
+    }, 'AI')
+    const staged = (await store.open('card-fmg')).document.modules.find(m => m.id === fmgModule.id)
+    check(staged?.widget?.mapStage === 'terrain', 'write_map_document 记下地形阶段')
+    check(staged?.widget?.mapSummary?.counts?.states === 0, 'write_map_document 记下地图摘要')
+
+    // 6. request_map_generation：工具排队，生成保存后清除请求。
+    const request = { template: 'blank', empty: true, seed: 't', width: 1280, height: 800, points: 1000 }
+    await applyAndCommit(store, 'card-fmg', 'card-fmg', { kind: 'request_map_generation', moduleId: fmgModule.id, request }, 'AI')
+    const requested = (await store.open('card-fmg')).document.modules.find(m => m.id === fmgModule.id)
+    check(requested?.widget?.request?.template === 'blank' && requested.widget.request.empty === true, 'request_map_generation 排队并保留参数')
+    await applyAndCommit(store, 'card-fmg', 'card-fmg', { kind: 'write_map_document', moduleId: fmgModule.id, text: payload }, 'AI')
+    const cleared = (await store.open('card-fmg')).document.modules.find(m => m.id === fmgModule.id)
+    check(cleared?.widget?.request === undefined, '地图文档写入后清除生成请求')
+
+    // 6b. request_map_edit：改图请求排队，随后保存清除。
+    const editOperations = [{ op: 'States.rename', args: [1, '寒川'] }]
+    await applyAndCommit(store, 'card-fmg', 'card-fmg', { kind: 'request_map_edit', moduleId: fmgModule.id, operations: editOperations }, 'AI')
+    const editQueued = (await store.open('card-fmg')).document.modules.find(m => m.id === fmgModule.id)
+    check(editQueued?.widget?.request?.kind === 'edit' && editQueued.widget.request.operations?.[0]?.op === 'States.rename', 'request_map_edit 排队并保留动作')
+
+    // 7. generate_map 工具：排队参数落到 map 模块的 request 上。
+    const registered = new Map()
+    registerCardTools({ tools: { register: definition => { registered.set(definition.name, definition) } } })
+    const exec = { agent: { session: { id: 'sess-map', header: { cwd: root } } } }
+    const summaryRead = await registered.get('map_summary').execute({
+      root_id: 'card-fmg', target_id: 'card-fmg', module_id: fmgModule.id,
+    }, exec)
+    check(summaryRead.status === 'read' && summaryRead.summary?.counts?.states === 0, 'map_summary 读出已保存摘要')
+    const editToolResult = await registered.get('map_edit').execute({
+      root_id: 'card-fmg', target_id: 'card-fmg', module_id: fmgModule.id,
+      operations: [{ op: 'States.rename', args: [1, '寒川'] }],
+    }, exec)
+    check(editToolResult.status === 'requested', 'map_edit 回 requested')
+    const editToolRequest = (await store.open('card-fmg')).document.modules.find(m => m.id === fmgModule.id)?.widget?.request
+    check(editToolRequest?.kind === 'edit' && editToolRequest.operations?.[0]?.op === 'States.rename', 'map_edit 动作写进地图模块 request')
+
+    const generated = await registered.get('generate_map').execute({
+      root_id: 'card-fmg', target_id: 'card-fmg', module_id: fmgModule.id,
+      template: 'blank', seed: 'tool-test', width: 1024, height: 640, points: 4000,
+    }, exec)
+    check(generated.status === 'requested' && generated.template === 'blank' && generated.empty === true, 'generate_map 回 requested 且 blank 带 empty')
+    const toolRequest = (await store.open('card-fmg')).document.modules.find(m => m.id === fmgModule.id)?.widget?.request
+    check(toolRequest?.template === 'blank' && toolRequest?.seed === 'tool-test' && toolRequest?.width === 1024, 'generate_map 参数写进地图模块 request')
+
+    // 8. 白膜地形：构图/增量/摘要；只在没有地图文档时接受请求。
+    await store.create('AI 白膜', 'AI', () => ({
+      id: 'card-terrain', kind: 'WORLD', name: 'AI 白膜', modules: [], resources: [], internalCharacters: [], extensions: {},
+      appearance: { readingLayout: 'PAGED' },
+    }))
+    await applyAndCommit(store, 'card-terrain', 'card-terrain', { kind: 'add_module', name: '世界图', widget: 'map' }, 'AI')
+    const terrainModule = (await store.open('card-terrain')).document.modules.find(m => m.widget?.type === 'map')
+    const spec = { seed: 'test', landRatio: 0.3, landmasses: [{ shape: 'ellipse', center: [0.5, 0.5], radius: [0.2, 0.16] }] }
+    await applyAndCommit(store, 'card-terrain', 'card-terrain', { kind: 'request_map_compose', moduleId: terrainModule.id, spec }, 'AI')
+    const composeQueued = (await store.open('card-terrain')).document.modules.find(m => m.id === terrainModule.id)
+    check(composeQueued?.widget?.request?.kind === 'compose' && composeQueued.widget.request.spec?.seed === 'test', 'request_map_compose 排队构图')
+    const terrainSummary = { landRatio: 0.3, land: 300, cells: 1000, min: 0, max: 62, ascii: '#.' }
+    await applyAndCommit(store, 'card-terrain', 'card-terrain', { kind: 'record_map_terrain', moduleId: terrainModule.id, summary: terrainSummary }, 'AI')
+    const recorded = (await store.open('card-terrain')).document.modules.find(m => m.id === terrainModule.id)
+    check(recorded?.widget?.mapTerrainSummary?.landRatio === 0.3, 'record_map_terrain 记下地形摘要')
+    check(recorded?.widget?.request === undefined, '地形摘要写入后清除构图请求')
+    await applyAndCommit(store, 'card-terrain', 'card-terrain', { kind: 'request_map_paint', moduleId: terrainModule.id, operations: [{ op: 'add_ridge', args: { path: [[0.2, 0.2], [0.5, 0.3]], height: 40 } }] }, 'AI')
+    const paintQueued = (await store.open('card-terrain')).document.modules.find(m => m.id === terrainModule.id)
+    check(paintQueued?.widget?.request?.kind === 'paint' && paintQueued.widget.request.operations?.[0]?.op === 'add_ridge', 'request_map_paint 排队地形动作')
+    const composeTool = await registered.get('map_compose').execute({
+      root_id: 'card-terrain', target_id: 'card-terrain', module_id: terrainModule.id, spec,
+    }, exec)
+    check(composeTool.status === 'requested', 'map_compose 工具回 requested')
+    const summaryTool = await registered.get('map_terrain_summary').execute({
+      root_id: 'card-terrain', target_id: 'card-terrain', module_id: terrainModule.id,
+    }, exec)
+    check(summaryTool.status === 'read' && summaryTool.summary?.landRatio === 0.3, 'map_terrain_summary 读出摘要')
+    const paintTool = await registered.get('map_paint').execute({
+      root_id: 'card-terrain', target_id: 'card-terrain', module_id: terrainModule.id,
+      operations: [{ op: 'add_ridge', args: { path: [[0.2, 0.2], [0.5, 0.3]], height: 30 } }],
+    }, exec)
+    check(paintTool.status === 'requested', 'map_paint 工具回 requested')
+    const painted = (await store.open('card-terrain')).document.modules.find(m => m.id === terrainModule.id)?.widget?.request
+    check(painted?.kind === 'paint', 'map_paint 动作写进 request')
+
+    const humanTool = await registered.get('generate_map_human').execute({
+      root_id: 'card-fmg', target_id: 'card-fmg', module_id: fmgModule.id,
+    }, exec)
+    check(humanTool.status === 'requested', 'generate_map_human 工具回 requested')
+    const humanRequest = (await store.open('card-fmg')).document.modules.find(m => m.id === fmgModule.id)?.widget?.request
+    check(humanRequest?.kind === 'human', 'generate_map_human 写进 request')
+  }
 
   console.log(failures === 0 ? '\nALL PASS' : `\n${String(failures)} FAILURES`)
   process.exitCode = failures === 0 ? 0 : 1

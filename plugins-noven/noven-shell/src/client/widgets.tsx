@@ -14,6 +14,9 @@ import type { CardCommand, CardModuleDoc } from './card-api.ts'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
 
+/** 旧地图 marker 链接开关：FMG 地图接管后隐藏，等待改绑。 */
+const LEGACY_MAP_LINKS: boolean = false
+
 /** 渲染器拿到的写入面：一条编辑命令 → apply。 */
 export type WidgetSend = (command: CardCommand) => Promise<boolean>
 
@@ -2945,7 +2948,11 @@ export function CollectionWidget({ module, t, send, imageUrl, refTargets, siblin
     : VIEWS.filter(entry => entry.id === 'list' || entry.id === 'form'
       || (entry.id === 'cards' && hasImages) || (entry.id === 'timeline' && hasTime))) : []
   const showAdd = generic && !special && view !== 'cards' && !(view === 'form' && data.items.length === 1)
-  const mapModule = (siblings ?? []).find(candidate => candidate.widget?.type === 'map')
+  // 地图现在是完整 FMG 编辑器文档；旧自定义 marker 链接先隐藏，
+  // 待地理/时间线改绑 FMG markers/burgs 后再恢复。
+  const mapModule: CardModuleDoc | undefined = LEGACY_MAP_LINKS
+    ? (siblings ?? []).find(candidate => candidate.widget?.type === 'map')
+    : undefined
   const placeField = data.fields.find(field => field.name === '地图标记' || field.name === '地点')
   const openPlaceFor = (item: CollItem): void => {
     if (mapModule === undefined) return

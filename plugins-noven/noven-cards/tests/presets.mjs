@@ -43,7 +43,8 @@ for (const file of files) {
   const all = collect(built.document.modules)
   check(all.length > 0, `${file}: 落出模块（${all.length}）`)
   check(new Set(all.map(m => m.id)).size === all.length, `${file}: 模块 id 唯一`)
-  const emptyLeaves = all.filter(m => m.children.length === 0 && m.blocks.length === 0 && m.widget?.type !== 'overview')
+  // 地图模块由完整 FMG 编辑器在打开时生成空白世界，预设不再写旧 MapData 块。
+  const emptyLeaves = all.filter(m => m.children.length === 0 && m.blocks.length === 0 && m.widget?.type !== 'overview' && m.widget?.type !== 'map')
   check(emptyLeaves.length === 0, `${file}: 除总览外无空模块（${emptyLeaves.map(m => m.name).join('/') || '全部有内容'}）`)
   check(!JSON.stringify(built.document).match(/玄天大陆|沈青梧|玄天宗|血刀门|北境|东海|南疆/), `${file}: 不含测试世界/角色数据`)
   for (const module of all) {

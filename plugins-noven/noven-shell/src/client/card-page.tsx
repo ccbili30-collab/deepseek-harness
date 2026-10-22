@@ -17,7 +17,7 @@ import { CollectionWidget, RelationWidget, SceneWidget, TimelineWidget, coll, co
 import { setPlaceFocus } from './place-link.ts'
 import { setModuleLinkFocus } from './module-link.ts'
 import { setCollectionFocus } from './collection-focus.ts'
-import { MapEditor } from './map-editor.tsx'
+import { FmgMapHost } from './fmg-map-host.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
 import { InlineRename, notifyUndo, useArmedMenu } from './ui/interact.tsx'
@@ -364,7 +364,7 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
 
 /** 一个模块盒：标题（点击即改名）+ 正文（模块内富文本 / 预制模块渲染器）。
     子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
-function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, imageResources, saveBlock, saveMarkdown, send, onOpenModule, ask, seedComposer, readFile, onOpenFile, refTargets, siblings, refEdges, mapReferenced }: {
+function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, imageResources, saveBlock, saveMarkdown, send, onOpenModule, ask, seedComposer, readFile, onOpenFile, refTargets, siblings, refEdges }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   /** 宿主卡身份——html 模块的 NOVEN_FRAME.card 拿它。 */
@@ -384,8 +384,6 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
   readonly siblings?: readonly CardModuleDoc[]
   /** 同卡引用派生的关系边（渲染用，不落盘）。 */
   readonly refEdges?: readonly { readonly from: string, readonly to: string, readonly label: string }[]
-  /** 被集合条目引用到的地点名（地图按引用过滤）。 */
-  readonly mapReferenced?: ReadonlySet<string>
   /** 模块向本会话排一句话（AI 任务入口）。 */
   readonly ask: (text: string) => Promise<void>
   /** 把 AI 编辑指令填进会话输入框（自由界面/自由 3D）。 */
@@ -410,7 +408,6 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
         ? [{ mapModuleId: candidate.id, markerId: marker.id, label: marker.label }]
         : [])
   })
-  const timelineModules = (siblings ?? []).filter(candidate => candidate.widget?.type === 'timeline')
   const openPlace = (place: TlPlace): void => {
     setPlaceFocus({ cardId: card.id, mapModuleId: place.mapModuleId, markerId: place.markerId, ...(place.label === undefined ? {} : { label: place.label }) })
     onOpenModule(place.mapModuleId)
@@ -432,12 +429,8 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
     setModuleLinkFocus({ cardId: card.id, targetModuleId: target, sourceModuleId: module.id, sourceModuleName: module.name })
     onOpenModule(target)
   }
-  const filterTimeline = timelineModules[0] === undefined ? undefined : (marker: { readonly id: string, readonly label: string }): void => {
-    setPlaceFocus({ cardId: card.id, mapModuleId: module.id, markerId: marker.id, label: marker.label })
-    onOpenModule(timelineModules[0]!.id)
-  }
   return (
-    <section className="nv-modbox">
+    <section className={`nv-modbox${widget === 'map' ? ' nv-modbox-map' : ''}`}>
       {widget === 'ref' && (
         <RefModule module={module} t={t} addr={addr} loadCard={loadCard} op={op}
           onOpenCard={onOpenCard} refTargets={refTargets} />
@@ -451,8 +444,7 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
           onCreateRelation: relationTarget === undefined ? () => { void send({ kind: 'add_module', name: '关系', preset: 'graph' }) } : undefined }} />}
       {widget === 'scene' && <SceneWidget module={module} t={t} send={send} imageUrl={imageUrl} />}
       {widget === 'relation' && <RelationWidget module={withDerivedRelation(module, refEdges)} t={t} send={send} imageUrl={imageUrl} />}
-      {widget === 'map' && <MapEditor module={module} t={t} send={send} ask={ask} imageUrl={imageUrl} imageResources={imageResources}
-        referenced={mapReferenced} onFilterTimeline={filterTimeline} onOpenSource={onOpenModule} />}
+      {widget === 'map' && <FmgMapHost module={module} t={t} send={send} addr={addr} cardId={card.id} />}
       {widget === 'collection' && <CollectionWidget module={module} t={t} send={send} imageUrl={imageUrl} refTargets={refTargets}
         siblings={siblings} ownerName={card.name} ownerId={card.id} cardKind={card.kind} onOpenModule={onOpenModule} places={mapPlaces} />}
       {widget !== undefined && widget !== 'document' && widget !== 'html'
@@ -995,15 +987,18 @@ function OverviewTile({ module, onOpen, t, cardKind }: {
       : relation !== undefined
         ? relation.edges.length === 0 && relation.nodes.length === 0
         : widget === 'map'
-          ? imageBlock?.resourceId === undefined
+          ? imageBlock?.resourceId === undefined && module.widget?.mapStage === undefined && excerpt === ''
           : (widget === undefined || widget === 'document') && excerpt === ''
   const art = overviewArt(module, cardKind)
+  const mapStage = widget === 'map' ? module.widget?.mapStage : undefined
   return (
     <button type="button" className="nv-ov-tile nv-ov-tile-art" onClick={onOpen}>
       <img className="nv-ov-art" src={MODLIB_ART[art] ?? MODLIB_ART.collection} alt="" />
       <span className="nv-ov-info">
         <span className="nv-ov-name">{module.name}</span>
         {empty && <span className="nv-ov-state">{t('ov.blank')}</span>}
+        {!empty && mapStage === 'terrain' && <span className="nv-ov-state">{t('canvas.map.stageTerrain')}</span>}
+        {!empty && mapStage === 'world' && <span className="nv-ov-state">{t('canvas.map.stageWorld')}</span>}
         <span className="nv-ov-arrow">›</span>
       </span>
     </button>
@@ -1524,7 +1519,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                   imageUrl={imageUrl} imageResources={imageResources}
                   saveBlock={saveBlock} saveMarkdown={saveMarkdown} send={send}
                   onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} seedComposer={seedComposer} readFile={readFile} onOpenFile={onOpenFile}
-                  refTargets={refIndex?.targets} siblings={target.modules} refEdges={refDerived.edges} mapReferenced={refDerived.referenced} />
+                  refTargets={refIndex?.targets} siblings={target.modules} refEdges={refDerived.edges} />
               )}
             </div>
           </>
@@ -1573,7 +1568,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                       imageUrl={imageUrl} imageResources={imageResources}
                     saveBlock={saveBlock} saveMarkdown={saveMarkdown} send={send}
                     onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} seedComposer={seedComposer} readFile={readFile} onOpenFile={onOpenFile}
-                    refTargets={refIndex?.targets} siblings={target.modules} refEdges={refDerived.edges} mapReferenced={refDerived.referenced} />
+                    refTargets={refIndex?.targets} siblings={target.modules} refEdges={refDerived.edges} />
                 ) : (
                   <OverviewPage target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id} cardKind={doc?.kind}
                     t={t} imageUrl={imageUrl} imageResources={imageResources}
