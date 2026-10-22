@@ -264,7 +264,7 @@ function ProfileDialog({ t, open, profile, onClose }: {
         <div className="nv-profedit-field">
           <span className="nv-profedit-label">{t('me.profile.bio')}</span>
           <textarea className="nv-profedit-input nv-profedit-area" rows={3} value={bio}
-            placeholder={t('me.bio')} onChange={e => { setBio(e.target.value) }} />
+            onChange={e => { setBio(e.target.value) }} />
         </div>
       </div>
     </Modal>
@@ -347,7 +347,7 @@ export function Me({ t, useCards, useProjects, useStore, onTab, onOpenCard, onOp
           <div style={{ flex: 1, minWidth: 0 }}>
             <Editable className="nv-profile-name" value={profile.name}
               hint={t('me.profile.editHint')} onCommit={name => { setProfile({ name }) }} />
-            <Editable className="nv-profile-bio" value={profile.bio} placeholder={t('me.bio')}
+            <Editable className="nv-profile-bio" value={profile.bio}
               hint={t('me.profile.editHint')} onCommit={bio => { setProfile({ bio }) }} />
             <div className="nv-profile-mark">{t('me.mark')}</div>
           </div>

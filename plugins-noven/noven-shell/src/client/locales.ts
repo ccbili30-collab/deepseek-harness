@@ -245,7 +245,6 @@ export const zh = {
   'create.draft.ai': 'AI 整理中',
   'create.draft.ai.sub': '「{source}」里整理出的新角色，完成后会提醒你确认',
 
-  'me.bio': '在云上写一列不会到站的火车。',
   'me.mark': 'Created with Noven',
   'me.stat.follows': '关注',
   'me.stat.fans': '粉丝',
@@ -1650,7 +1649,6 @@ export const en: Record<NovenShellLocaleKey, string> = {
   'create.draft.ai': 'AI organizing',
   'create.draft.ai.sub': 'A new character distilled from “{source}” — you’ll be asked to confirm',
 
-  'me.bio': 'Writing a train that never arrives, above the clouds.',
   'me.mark': 'Created with Noven',
   'me.stat.follows': 'Following',
   'me.stat.fans': 'Followers',
