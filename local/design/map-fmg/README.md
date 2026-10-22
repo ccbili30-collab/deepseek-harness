@@ -1,6 +1,6 @@
 # 地图模块 · 完整 FMG 接入
 
-测试线：`noven-map-fmg-only`（worktree `noven-pc-map`）。主仓未动，未提交。
+当前分支：`noven-shell`（主工作树）。v2 单文档工作台改动未提交。
 
 ## 结论
 
@@ -13,7 +13,7 @@
 
 ## 运行方式
 
-- Host 路由：`/api/noven-map-editor/`，由 `noven-shell` Host 半静态服务；`noven-host.html` 同源 iframe 完整编辑器并注入 Noven 主题。
+- Host 路由：`/api/noven-map-editor/`，由 `noven-shell` Host 半静态服务；v2 直接加载 `assets/map-editor/index.html?noven=blank`，壳和编辑器在同一个 document（旧 `noven-host.html` 已停用）。
 - 卡内宿主：`plugins-noven/noven-shell/src/client/fmg-map-host.tsx`。
 - 卡数据：地图模块的第一个文字块就是完整 `.map` 文档；通过 `write_map_document` 命令落卡（草稿路径同卡内其它编辑）。
 - 空地图：新地图模块没有文字块时，宿主直接打开**白膜**——空网格 + 碎块画布，不预生成低岛、不跑国家/文化；用户手绘地形后点「定稿地形」，再按需点「生成人文层」。草稿按 `noven-map-draft:<cardId>:<moduleId>` 自动存在 localStorage，重开恢复。
@@ -31,7 +31,7 @@
 
 ## 中文界面（2026-10-21）
 
-- 入口：`plugins-noven/noven-fmg/upstream/public/noven-i18n.js`，由 `noven-host.html` 以 `?v=` 载入；不改上游业务逻辑。
+- 入口：`plugins-noven/noven-fmg/upstream/public/noven-i18n.js`，v2 由 `index.html` 直接载入并附着当前 document；不改上游业务逻辑。
 - 机制：同源 iframe 内对 `#optionsContainer`、`#dialogs`、`#tooltip`、`#mapOverlay`、`#loading`、`#legend`、`#scaleBar` 做文本、`data-tip`、`title`、`placeholder`、`aria-label` 翻译；MutationObserver 覆盖动态面板。地图上的国家/城邦/河流名属于世界数据，不在翻译范围。
 - 源内改动：`src/data/layer-labels.ts` 图层名改中文（原 `<u>` 热键下划线取消）；`src/components/dialog/table.ts` 分页改「第 x / y 页」。
 - 覆盖：顶栏菜单、图层/样式/选项/工具/关于、对话框标题与表头/统计、宿主条「空白地图/随机世界/保存到卡/全屏」、国家/文化/城邦/省份/宗教/河流/道路/标记/标签/区域/生物群系/商品/单位等编辑器的常用操作提示。
@@ -49,7 +49,24 @@
 - 数据：`widget.mapTerrainSummary` 存最近一次地形摘要；`record_map_terrain` 同时清掉构图/改地形 request，避免轮询重复执行。
 - 队列：地图页首次打开且卡里没有 `.map` 时，先起白膜再执行排队构图（构图会 `fresh:true`，不恢复旧草稿）；地图已打开时轮询直接执行；定稿后 `request_map_human` 会载入地形图再跑 `HumanPipeline` 并存 world。
 
-## 制图台壳（2026-10-22，当前）
+## 单文档工作台 v2（2026-10-22，当前）
+
+旧版把壳放在父页面、FMG 放在 iframe 里：两个 document 各有一套堆叠上下文、字体和弹窗，每加一个面板就要补一层跨文档对齐和遮罩；原生编辑器打开后又变成第二套 UI。v2 把壳搬进 FMG 自己的 `index.html`。
+
+- **一层 iframe**：卡页 `FmgMapHost` 直接加载 `/api/noven-map-editor/index.html?noven=blank&v=15`；`noven-shell.js` / `noven-shell.css` / `noven-i18n.js` 与地图、原生弹窗、遮罩同 document。旧 `noven-host.html` 只留历史文件，不再被加载。
+- **一条阶段主线**：底部只保留「白膜 — 地形 — 人文」三步和唯一主行动（定稿地形 → 生成人文层 → 保存到卡）；世界阶段没有未保存改动时不显示主按钮。没有左轨、没有多用途胶囊、没有第二套撤销。
+- **世界检查器**：右上「世界」打开唯一右侧检查器；搜索 + 六组（政治/文化/地理/聚落与经济/标注/工具与视图），点行直接开原生总览/编辑器；生成后不再自动弹空世界面板。
+- **地图点选**：世界阶段点国家/城市/文化，检查器顶部出现选中卡（名称/政体/首都/人口）和「打开编辑器」；拖拽超过 5px 不触发；中立地不弹。
+- **画笔**：直接用原生 `#brushesPanel`，Noven 样式把它定位成左侧工具卡；9 支笔全中文、半径/力度/作用范围常驻、光标高度 + 地形标签、默认选中抬高；底部保留原生「整理」行（撤销/重做/缩放/平滑/扰动/清空）。
+- **图层/AI/设置**：全部收进「⋯」菜单，不再与画笔并列。图层保留 33 层/13 预设/标准·3D·球体；AI 只做「已应用批次 + 撤销」，诚实指向卡内对话；设置是原生 Options 的右侧表单，隐藏图层/关于页签。
+- **生成**：生成浮层只保留 6 个数量/种子字段，19 个重生成入口收进默认折叠的「重建单项」；世界阶段从菜单可重新生成/重建。
+- **原生编辑器**：`.ui-dialog` 统一纸色、标题/表头中文；编辑器打开时 `body.nv-editor-open` 隐藏工作台 chrome，关闭后恢复。没有跨 document 的遮罩错位。
+- **地图适配**：`fitToWindow` 先清掉上游保存的旧 viewport，再 `resize` + `fit`，宽画布铺满 iframe；`#lakes` 强制水色，`#ice`/`#scaleBar` 隐藏；白膜提示改正为「点底部」。窄卡页侧栏仍是 cover 裁剪，见下条。
+- **实测**（无头 Chrome，1440×813）：白膜碎块 + 画笔 + 高度读数；paint 3817 格陆地 → 定稿 → 生成 20 国/220 省/140 城；点地图国家出选中卡；世界检查器、国家编辑器（中文表头、工作台隐藏）、图层、AI、设置、世界阶段重建浮层全部可达；同源 parent 发 `noven-map-load` 载入测试卡真实 **3.8MB** `.map`（20 国/147 省/651 城），地图、阶段条和「已保存」状态正常，parent 收到 `loaded`。截图 `shell-v2/`。
+- **真实卡页检查（2026-10-22，3084 临时实例 + fixtures）**：卡页的「地图」tab 打开真实 iframe（`/api/noven-map-editor/index.html?noven=blank&v=15`），壳读到 `人文 / 20 国 · 147 省 · 651 城 / 已载入`。但卡页默认把地图放在右侧 **419×860** 窄画布栏：地图按 cover 缩放成约 1376px 宽，左右被裁；底栏和按钮本身适配（stagebar 403×36 在栏内），不是壳溢出。试过按宽度 contain，整图缩成 419×262 的小条、字不可读，已回退。正确修法是卡页打开地图模块时默认展开画布/最大化，而不是在 419px 预览里编辑。截图 `shell-v2/real-card-narrow.png`。
+- **边界**：原生编辑器内部仍是上游表格；深层帮助/专有名词仍英文；生成浮层不替代上游完整 Options；真实卡页窄栏默认展开未改（需要卡页布局决定）；测试卡已删回原状，fixtures 里留了几个临时会话；v2 改动未提交。
+
+## 制图台壳 v1（2026-10-22，已撤）
 
 - **全幅画布**：`noven-host.html` 里 iframe 从 top 0 铺满；地图页没有自己的顶栏。卡页头负责标题，内嵌/全屏只是画布大小变化。
 - **左轨 58px**：画笔 / 世界 / 图层 / AI / 更多。选中态灰沙底，绿色只给主行动、待决点和当前状态。

@@ -417,7 +417,7 @@
     "Preview the heightmap in a 3D scene": "在 3D 场景中预览高度图",
     "Heightmap edit mode": "高度图编辑模式",
     "Heightmap edit mode is active. Click on \"Exit Customization\" to finalize the heightmap":
-      "高度图编辑模式已开启。点顶部「定稿地形」继续。",
+      "高度图编辑模式已开启。点底部「定稿地形」继续。",
     "Cells to change:": "作用范围：",
     "all cells": "全部碎块",
     "only land cells": "只改陆地",
@@ -800,6 +800,28 @@
     No: "否"
   };
 
+  // Common native-editor column and field labels.
+  Object.assign(PHRASES, {
+    State: "国家",
+    Neutrals: "中立",
+    Province: "省份",
+    Culture: "文化",
+    Religion: "宗教",
+    Burgs: "城市",
+    Form: "政体",
+    Capital: "首都",
+    Area: "面积",
+    Population: "人口",
+    Treasury: "国库",
+    Type: "类型",
+    Name: "名称",
+    Cells: "单元格",
+    Emblem: "纹章",
+    Color: "颜色",
+    Bonus: "加成",
+    Rank: "等级"
+  });
+
   const ATTRS = ["data-tip", "title", "placeholder", "aria-label", "alt"];
   const ROOTS = [
     "#optionsContainer",
@@ -1063,7 +1085,7 @@
 
   function boot() {
     const frame = document.getElementById("fmg");
-    if (!(frame instanceof HTMLIFrameElement)) return;
+    if (!(frame instanceof HTMLIFrameElement)) { attach(document); return; }
     const tick = () => {
       try {
         const doc = frame.contentDocument;

@@ -1,0 +1,1470 @@
+/* Noven map workspace.
+   The shell lives in the map document: one stacking context for the canvas,
+   panels, dialogs and overlays. No parent-page chrome, no cross-document masks. */
+
+:root {
+  --nv-paper: #fbf8f0;
+  --nv-paper-2: #f4eee1;
+  --nv-paper-3: #efe7d7;
+  --nv-ink: #2b2f28;
+  --nv-muted: #747a6d;
+  --nv-faint: #a1a598;
+  --nv-line: #ded5c3;
+  --nv-line-soft: #eae3d4;
+  --nv-accent: #2f5d45;
+  --nv-accent-deep: #274d3a;
+  --nv-accent-ink: #f8f5ec;
+  --nv-danger: #a8503f;
+  --nv-ui: "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", system-ui, -apple-system, sans-serif;
+  --nv-serif: "Songti SC", "Noto Serif SC", "Source Han Serif SC", Georgia, serif;
+}
+
+/* Upstream application chrome is not the workspace. Only the map, tooltips,
+   dialogs and the settings sheet remain. */
+#optionsContainer,
+#optionsTrigger,
+#collapsible,
+#customizationMenu,
+#exitCustomization,
+#aboutTab,
+#assistant,
+#assistantBubble,
+#tourPromptButton,
+#newMapButton,
+#saveButton,
+#mapOverlay,
+#loading,
+#ice,
+#scaleBar {
+  display: none !important;
+}
+
+body {
+  background: #efe6d0 !important;
+  font-family: var(--nv-ui) !important;
+  color: var(--nv-ink) !important;
+}
+
+#map {
+  background: #cfe2ee;
+}
+
+/* Native dialogs are part of the same document now; give them one paper
+   language instead of the upstream white/grey chrome. */
+.ui-widget-overlay {
+  background: var(--nv-paper-2) !important;
+  opacity: 1 !important;
+  z-index: 2900 !important;
+}
+
+.ui-dialog {
+  z-index: 3000 !important;
+  max-width: calc(100vw - 24px) !important;
+  background: var(--nv-paper) !important;
+  border: 1px solid var(--nv-line) !important;
+  border-radius: 16px !important;
+  box-shadow: 0 28px 90px rgba(35, 40, 34, 0.22) !important;
+  color: var(--nv-ink) !important;
+  font-family: var(--nv-ui) !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+}
+
+.ui-dialog .ui-dialog-titlebar-collapse {
+  display: none !important;
+}
+
+.ui-dialog .ui-dialog-titlebar {
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--nv-line-soft) !important;
+  border-radius: 0 !important;
+  padding: 13px 16px !important;
+  color: var(--nv-ink) !important;
+}
+
+.ui-dialog .ui-dialog-title {
+  font: 600 14px/1.35 var(--nv-serif) !important;
+  letter-spacing: 0.01em;
+}
+
+.ui-dialog .ui-dialog-titlebar-close {
+  top: 50% !important;
+  right: 12px !important;
+  margin: -13px 0 0 !important;
+  width: 26px !important;
+  height: 26px !important;
+  border: 0 !important;
+  border-radius: 8px !important;
+  background: transparent !important;
+  color: var(--nv-muted) !important;
+}
+
+.ui-dialog .ui-dialog-titlebar-close:hover {
+  background: var(--nv-paper-3) !important;
+  color: var(--nv-ink) !important;
+}
+
+.ui-dialog .ui-dialog-content {
+  background: transparent !important;
+  color: var(--nv-ink) !important;
+  padding: 14px 16px !important;
+  font-size: 11.5px !important;
+  overflow: auto !important;
+}
+
+.ui-dialog .ui-dialog-buttonpane {
+  background: transparent !important;
+  border-top: 1px solid var(--nv-line-soft) !important;
+  margin: 0 !important;
+  padding: 10px 14px !important;
+}
+
+.ui-dialog .ui-dialog-buttonpane button,
+.ui-button {
+  background: #fff !important;
+  border: 1px solid var(--nv-line) !important;
+  border-radius: 8px !important;
+  color: var(--nv-ink) !important;
+  font-family: var(--nv-ui) !important;
+  font-size: 11px !important;
+  padding: 6px 11px !important;
+}
+
+.ui-dialog .ui-dialog-buttonpane button:hover,
+.ui-button:hover {
+  background: var(--nv-paper-3) !important;
+  border-color: var(--nv-faint) !important;
+  color: var(--nv-ink) !important;
+}
+
+.ui-dialog .ui-dialog-buttonpane button:last-child {
+  background: var(--nv-accent) !important;
+  border-color: var(--nv-accent) !important;
+  color: var(--nv-accent-ink) !important;
+}
+
+.ui-dialog table {
+  background: transparent !important;
+  border-collapse: collapse !important;
+}
+
+.ui-dialog th {
+  background: var(--nv-paper-2) !important;
+  color: var(--nv-muted) !important;
+  font-weight: 600 !important;
+  border-color: var(--nv-line-soft) !important;
+}
+
+.ui-dialog td {
+  border-color: var(--nv-line-soft) !important;
+  color: var(--nv-ink) !important;
+}
+
+.ui-dialog input,
+.ui-dialog select,
+.ui-dialog textarea {
+  background: #fff !important;
+  border: 1px solid var(--nv-line) !important;
+  border-radius: 7px !important;
+  color: var(--nv-ink) !important;
+  font-family: var(--nv-ui) !important;
+}
+
+.ui-tabs .ui-tabs-nav {
+  background: transparent !important;
+  border: 0 !important;
+  border-bottom: 1px solid var(--nv-line-soft) !important;
+  padding: 0 0 0 4px !important;
+}
+
+.ui-tabs .ui-tabs-nav li {
+  background: transparent !important;
+  border: 0 !important;
+}
+
+.ui-tabs .ui-tabs-nav li a {
+  color: var(--nv-muted) !important;
+  font-size: 11px !important;
+}
+
+.ui-tabs .ui-tabs-nav li.ui-tabs-active a {
+  color: var(--nv-ink) !important;
+  box-shadow: inset 0 -2px 0 var(--nv-ink) !important;
+}
+
+/* The brush dialog is a left-edge tool card, never a modal. */
+.ui-dialog:has(#brushesPanel) {
+  position: fixed !important;
+  left: 16px !important;
+  right: auto !important;
+  top: auto !important;
+  bottom: 92px !important;
+  width: 272px !important;
+  height: auto !important;
+  max-height: calc(100vh - 128px) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 18px 56px rgba(35, 40, 34, 0.2) !important;
+}
+
+.ui-dialog:has(#brushesPanel) .ui-dialog-titlebar {
+  padding: 11px 13px !important;
+}
+
+.ui-dialog:has(#brushesPanel) .ui-dialog-content {
+  padding: 0 13px 12px !important;
+  max-height: calc(100vh - 184px) !important;
+  overflow: auto !important;
+}
+
+#brushesPanel {
+  background: transparent !important;
+  border: 0 !important;
+  color: var(--nv-ink) !important;
+  font-family: var(--nv-ui) !important;
+}
+
+#brushesPanel .dialog > p,
+#brushesPanel > p {
+  color: var(--nv-muted) !important;
+  font-size: 10px !important;
+  line-height: 1.55 !important;
+}
+
+#brushesButtons {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr !important;
+  gap: 6px !important;
+  width: 100% !important;
+  margin: 9px 0 0 !important;
+}
+
+#brushesButtons > button {
+  display: flex !important;
+  align-items: center !important;
+  gap: 7px !important;
+  min-height: 40px !important;
+  height: auto !important;
+  padding: 7px 8px !important;
+  border: 1px solid var(--nv-line) !important;
+  border-radius: 9px !important;
+  background: #fff !important;
+  color: var(--nv-ink) !important;
+  text-align: left !important;
+}
+
+#brushesButtons > button:hover {
+  background: var(--nv-paper-2) !important;
+}
+
+#brushesButtons > button.pressed {
+  background: var(--nv-paper-3) !important;
+  border-color: var(--nv-faint) !important;
+  box-shadow: inset 0 0 0 1px var(--nv-faint) !important;
+}
+
+#brushesButtons svg {
+  width: 20px !important;
+  height: 20px !important;
+  flex: 0 0 20px !important;
+  color: var(--nv-muted) !important;
+}
+
+#brushesButtons > button.pressed svg {
+  color: var(--nv-ink) !important;
+}
+
+.nv-brush-label {
+  color: var(--nv-ink) !important;
+  font: 600 11px/1.2 var(--nv-ui) !important;
+}
+
+.nv-brush-hint {
+  margin: 0 0 2px !important;
+  color: var(--nv-muted) !important;
+  font: 10px/1.55 var(--nv-ui) !important;
+}
+
+.nv-foot-caption {
+  margin: 10px 0 4px;
+  color: var(--nv-faint);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+#nv-height-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 8px 0 2px;
+  color: var(--nv-muted);
+  font-size: 10px;
+}
+
+#nv-height-value {
+  min-width: 22px;
+  color: var(--nv-ink);
+  font-size: 15px;
+  font-weight: 650;
+  text-align: right;
+}
+
+#nv-height-label {
+  color: var(--nv-faint);
+  font-style: normal;
+  font-size: 9.5px;
+}
+
+#brushesSliders > div,
+#lineSlider > div {
+  display: flex !important;
+  align-items: center !important;
+  gap: 9px !important;
+  height: 30px !important;
+}
+
+#brushesSliders,
+#lineSlider {
+  accent-color: var(--nv-accent) !important;
+}
+
+#brushesPanel label[for="cellTypeFilter"] {
+  color: var(--nv-muted) !important;
+}
+
+#brushesPanel #cellTypeFilter {
+  height: 26px !important;
+  border: 1px solid var(--nv-line) !important;
+  border-radius: 7px !important;
+  background: #fff !important;
+  color: var(--nv-ink) !important;
+  font: 10.5px var(--nv-ui) !important;
+}
+
+#brushPanel .ui-dialog-content,
+#brushesPanel .ui-dialog-content {
+  overflow: auto !important;
+}
+
+/* Map hover text: no box, read once, then leave. */
+body #tooltip {
+  background: transparent !important;
+  color: #f8f5ec !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  text-shadow: 0 1px 3px rgba(20, 24, 20, 0.72), 0 0 10px rgba(20, 24, 20, 0.38) !important;
+  font-family: var(--nv-ui) !important;
+  bottom: 104px !important;
+  left: 50% !important;
+  width: auto !important;
+  transform: translateX(-50%) !important;
+  padding: 0 !important;
+  opacity: 1;
+  transition: opacity 0.45s ease !important;
+}
+
+#tooltip.noven-tip-fading {
+  opacity: 0 !important;
+}
+
+body.noven-blank #tooltip,
+body.noven-terrain #tooltip {
+  color: #3c423a !important;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.82), 0 0 7px rgba(255, 255, 255, 0.62) !important;
+}
+
+body.noven-blank #map,
+body.noven-blank #viewbox,
+body.noven-terrain #map,
+body.noven-terrain #viewbox {
+  background: var(--nv-paper) !important;
+}
+
+body.noven-blank #heights polygon {
+  stroke: #c9d1c9;
+  stroke-width: 0.7;
+}
+
+body.noven-blank #loading {
+  display: none !important;
+}
+
+body.noven-blank #tooltip[data-main]:not([data-main=""]) {
+  display: none !important;
+}
+
+body.noven-terrain #oceanBase {
+  fill: #dfeef2 !important;
+}
+
+body.noven-terrain #oceanLayers path {
+  fill: #eaf4f6 !important;
+}
+
+body.noven-terrain #oceanPattern {
+  display: none !important;
+}
+
+body:not(.noven-blank):not(.noven-terrain) #landmass > rect {
+  fill: #dce3d2 !important;
+}
+
+body.noven-terrain #landmass > rect {
+  fill: #dfe8d2 !important;
+}
+
+body.noven-terrain #terrs {
+  mask: url(#land);
+}
+
+body.noven-terrain #landHeights > rect,
+body.noven-terrain #oceanHeights {
+  display: none !important;
+}
+
+body.noven-terrain #terrs path {
+  opacity: 0.94;
+}
+
+body.noven-terrain #coastline use {
+  stroke: #6f8f7f !important;
+  stroke-width: 1px !important;
+}
+
+body.noven-terrain #rivers path {
+  fill: #4f7d86 !important;
+}
+
+/* Lakes were inheriting the style palette's black placeholder in some view
+   presets. Keep water water-coloured in every stage. */
+#lakes path,
+#lakes use,
+#lakes polygon {
+  fill: #cfe3e6 !important;
+}
+
+/* The workspace itself: one fixed layer above the map. */
+#nv-root {
+  position: fixed;
+  inset: 0;
+  z-index: 800;
+  pointer-events: none;
+  color: var(--nv-ink);
+  font-family: var(--nv-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+#nv-root button {
+  font-family: var(--nv-ui);
+}
+
+#nv-root [hidden] {
+  display: none !important;
+}
+
+/* A native editor is the current context. The map stays visible, but the
+   workspace chrome gets out of its way until the editor closes. */
+body.nv-editor-open #nv-status,
+body.nv-editor-open #nv-actions,
+body.nv-editor-open #nv-panel,
+body.nv-editor-open #nv-menu,
+body.nv-editor-open #nv-stagebar,
+body.nv-editor-open #nv-gen {
+  display: none !important;
+}
+
+#nv-status {
+  position: absolute;
+  left: 16px;
+  top: 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: min(360px, calc(100vw - 160px));
+  padding: 6px 10px;
+  border: 1px solid var(--nv-line);
+  border-radius: 999px;
+  background: rgba(251, 248, 240, 0.92);
+  color: var(--nv-muted);
+  font-size: 10.5px;
+  line-height: 1.2;
+  box-shadow: 0 4px 16px rgba(35, 40, 34, 0.08);
+  pointer-events: none;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#nv-status::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  flex: 0 0 5px;
+  border-radius: 50%;
+  background: var(--nv-accent);
+}
+
+#nv-status[data-error]::before {
+  background: var(--nv-danger);
+}
+
+#nv-actions {
+  position: absolute;
+  right: 16px;
+  top: 14px;
+  display: flex;
+  gap: 6px;
+  pointer-events: auto;
+}
+
+.nv-btn,
+.nv-icon {
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 11px;
+  border: 1px solid var(--nv-line);
+  border-radius: 10px;
+  background: rgba(251, 248, 240, 0.94);
+  color: var(--nv-ink);
+  font-size: 11.5px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow: 0 4px 16px rgba(35, 40, 34, 0.08);
+}
+
+.nv-btn:hover,
+.nv-icon:hover {
+  background: #fff;
+  border-color: var(--nv-faint);
+}
+
+.nv-btn:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+.nv-icon {
+  width: 32px;
+  padding: 0;
+  font-size: 17px;
+  color: var(--nv-muted);
+}
+
+#nv-panel {
+  position: absolute;
+  right: 16px;
+  top: 58px;
+  bottom: 92px;
+  width: min(340px, calc(100vw - 32px));
+  display: flex;
+  flex-direction: column;
+  background: var(--nv-paper);
+  border: 1px solid var(--nv-line);
+  border-radius: 16px;
+  box-shadow: 0 20px 64px rgba(35, 40, 34, 0.18);
+  pointer-events: auto;
+  overflow: hidden;
+}
+
+#nv-panel-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 14px 12px;
+  border-bottom: 1px solid var(--nv-line-soft);
+}
+
+#nv-panel-title {
+  flex: 1;
+  font: 600 14px/1.3 var(--nv-serif);
+  letter-spacing: 0.01em;
+}
+
+#nv-panel-close {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--nv-faint);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#nv-panel-close:hover {
+  background: var(--nv-paper-2);
+  color: var(--nv-ink);
+}
+
+#nv-panel-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  scrollbar-color: var(--nv-line) transparent;
+}
+
+.nv-search {
+  padding: 10px 12px 4px;
+}
+
+.nv-search input {
+  width: 100%;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--nv-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--nv-ink);
+  font: 11px var(--nv-ui);
+  outline: none;
+}
+
+.nv-search input:focus {
+  border-color: var(--nv-faint);
+}
+
+.nv-hint {
+  margin: 0;
+  padding: 8px 14px 4px;
+  color: var(--nv-faint);
+  font-size: 9.5px;
+  line-height: 1.55;
+}
+
+.nv-group {
+  border-top: 1px solid var(--nv-line-soft);
+}
+
+.nv-group:first-of-type {
+  border-top: 0;
+}
+
+.nv-group > summary {
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 10px 14px;
+  cursor: pointer;
+  color: var(--nv-ink);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.nv-group > summary::-webkit-details-marker {
+  display: none;
+}
+
+.nv-group > summary::before {
+  content: "›";
+  flex: 0 0 10px;
+  color: var(--nv-faint);
+  font-size: 13px;
+  transition: transform 0.15s ease;
+}
+
+.nv-group[open] > summary::before {
+  transform: rotate(90deg);
+}
+
+.nv-count {
+  margin-left: auto;
+  color: var(--nv-faint);
+  font-size: 9.5px;
+  font-weight: 400;
+  white-space: nowrap;
+}
+
+.nv-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 14px 8px 31px;
+  border: 0;
+  background: transparent;
+  color: var(--nv-ink);
+  text-align: left;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.nv-row:hover {
+  background: var(--nv-paper-2);
+}
+
+.nv-row .nv-note {
+  color: var(--nv-faint);
+  font-size: 9.5px;
+}
+
+.nv-row .nv-go {
+  margin-left: auto;
+  color: var(--nv-faint);
+  font-size: 13px;
+}
+
+.nv-empty {
+  padding: 28px 16px;
+  color: var(--nv-faint);
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.7;
+}
+
+.nv-selection {
+  margin: 10px 12px 4px;
+  padding: 12px;
+  border: 1px solid var(--nv-line);
+  border-radius: 10px;
+  background: var(--nv-paper-2);
+}
+
+.nv-selection-kicker {
+  display: block;
+  color: var(--nv-faint);
+  font-size: 9px;
+  letter-spacing: 0.12em;
+}
+
+.nv-selection strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--nv-ink);
+  font: 600 14px/1.35 var(--nv-serif);
+}
+
+.nv-selection-detail {
+  display: block;
+  margin-top: 3px;
+  color: var(--nv-muted);
+  font-size: 9.5px;
+  line-height: 1.5;
+}
+
+.nv-selection button {
+  margin-top: 9px;
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--nv-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--nv-ink);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.nv-selection button:hover {
+  background: var(--nv-paper-3);
+}
+
+.nv-preset {
+  padding: 10px 12px 2px;
+}
+
+.nv-preset select {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--nv-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--nv-ink);
+  font: 11px var(--nv-ui);
+}
+
+.nv-view {
+  display: flex;
+  gap: 4px;
+  padding: 9px 12px 4px;
+}
+
+.nv-view button {
+  flex: 1;
+  height: 28px;
+  border: 1px solid var(--nv-line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nv-muted);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.nv-view button:hover {
+  background: var(--nv-paper-2);
+  color: var(--nv-ink);
+}
+
+.nv-view button.active {
+  background: var(--nv-paper-3);
+  border-color: var(--nv-faint);
+  color: var(--nv-ink);
+  font-weight: 600;
+}
+
+.nv-layer-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 31px;
+  color: var(--nv-ink);
+  font-size: 10.5px;
+}
+
+.nv-layer-row:hover {
+  background: var(--nv-paper-2);
+}
+
+.nv-layer-row.off {
+  color: var(--nv-faint);
+}
+
+.nv-eye {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #6f7569 !important;
+  opacity: 1 !important;
+  cursor: pointer;
+}
+
+#nv-root .nv-eye svg {
+  stroke: #4f574e !important;
+  stroke-width: 1.6 !important;
+  opacity: 1 !important;
+}
+
+#nv-root .nv-layer-row.off .nv-eye {
+  color: var(--nv-faint) !important;
+}
+
+#nv-root .nv-layer-row.off .nv-eye svg {
+  stroke: #b0b4a8 !important;
+}
+
+.nv-eye:hover {
+  background: var(--nv-paper-3);
+  color: var(--nv-ink);
+}
+
+.nv-eye svg {
+  width: 14px;
+  height: 14px;
+}
+
+.nv-layer-name {
+  flex: 1;
+}
+
+.nv-gear {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #8b9083 !important;
+  opacity: 1 !important;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.nv-gear:hover {
+  background: var(--nv-paper-3);
+  color: var(--nv-ink);
+}
+
+.nv-ai-note {
+  margin: 0;
+  padding: 14px;
+  color: var(--nv-muted);
+  font-size: 10.5px;
+  line-height: 1.7;
+}
+
+.nv-ai-state {
+  margin: 0 14px 12px;
+  padding: 12px;
+  border: 1px solid var(--nv-line-soft);
+  border-radius: 10px;
+  background: var(--nv-paper-2);
+}
+
+.nv-ai-state strong {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.nv-ai-state span {
+  display: block;
+  margin-top: 4px;
+  color: var(--nv-muted);
+  font-size: 9.5px;
+  line-height: 1.6;
+}
+
+.nv-ai-undo {
+  margin: 0 14px 14px;
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--nv-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--nv-ink);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.nv-ai-undo:hover {
+  background: var(--nv-paper-3);
+}
+
+#nv-stagebar {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  max-width: calc(100vw - 32px);
+  padding: 9px 11px 9px 16px;
+  border: 1px solid var(--nv-line);
+  border-radius: 16px;
+  background: var(--nv-paper);
+  box-shadow: 0 14px 44px rgba(35, 40, 34, 0.18);
+  pointer-events: auto;
+  white-space: nowrap;
+}
+
+#nv-steps {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+#nv-steps button {
+  height: 24px;
+  padding: 0 3px;
+  border: 0;
+  background: transparent;
+  color: var(--nv-faint);
+  font-size: 10px;
+  cursor: default;
+}
+
+#nv-steps button.done {
+  color: var(--nv-muted);
+  cursor: default;
+}
+
+#nv-steps button.active {
+  color: var(--nv-ink);
+  font-weight: 600;
+}
+
+#nv-steps i {
+  width: 10px;
+  height: 1px;
+  background: var(--nv-line);
+}
+
+#nv-stage-info {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 112px;
+}
+
+#nv-stage-name {
+  color: var(--nv-ink);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+#nv-stage-counts {
+  color: var(--nv-faint);
+  font-size: 9.5px;
+}
+
+#nv-primary {
+  height: 32px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--nv-accent);
+  color: var(--nv-accent-ink);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+#nv-primary:hover {
+  background: var(--nv-accent-deep);
+}
+
+#nv-primary:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+#nv-brush-btn {
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--nv-line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--nv-muted);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+#nv-brush-btn:hover {
+  background: var(--nv-paper-2);
+  color: var(--nv-ink);
+}
+
+#nv-menu {
+  position: absolute;
+  right: 16px;
+  top: 58px;
+  width: 194px;
+  padding: 6px;
+  border: 1px solid var(--nv-line);
+  border-radius: 12px;
+  background: var(--nv-paper);
+  box-shadow: 0 18px 56px rgba(35, 40, 34, 0.2);
+  pointer-events: auto;
+}
+
+#nv-menu button {
+  width: 100%;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nv-ink);
+  font-size: 10.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+#nv-menu button:hover {
+  background: var(--nv-paper-2);
+}
+
+#nv-menu button.danger {
+  color: var(--nv-danger);
+}
+
+#nv-menu hr {
+  border: 0;
+  border-top: 1px solid var(--nv-line-soft);
+  margin: 5px 4px;
+}
+
+#nv-gen {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  pointer-events: auto;
+}
+
+#nv-gen-card {
+  width: min(560px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 80px));
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--nv-line);
+  border-radius: 18px;
+  background: var(--nv-paper);
+  box-shadow: 0 30px 96px rgba(35, 40, 34, 0.26);
+  overflow: hidden;
+}
+
+#nv-gen-head {
+  display: flex;
+  align-items: center;
+  padding: 15px 16px 13px;
+  border-bottom: 1px solid var(--nv-line-soft);
+}
+
+#nv-gen-head strong {
+  flex: 1;
+  font: 600 15px/1.3 var(--nv-serif);
+}
+
+#nv-gen-close {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--nv-faint);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+#nv-gen-close:hover {
+  background: var(--nv-paper-2);
+  color: var(--nv-ink);
+}
+
+#nv-gen-body {
+  padding: 14px 16px 4px;
+  overflow: auto;
+}
+
+.nv-gen-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 14px;
+}
+
+.nv-gen-grid label {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  color: var(--nv-muted);
+  font-size: 9.5px;
+}
+
+.nv-gen-grid input {
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid var(--nv-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--nv-ink);
+  font: 11px var(--nv-ui);
+  outline: none;
+}
+
+.nv-gen-grid input:focus {
+  border-color: var(--nv-faint);
+}
+
+.nv-gen-note {
+  margin: 12px 0 0;
+  color: var(--nv-faint);
+  font-size: 9.5px;
+  line-height: 1.65;
+}
+
+.nv-rebuild {
+  margin-top: 13px;
+  padding-top: 11px;
+  border-top: 1px solid var(--nv-line-soft);
+}
+
+.nv-rebuild summary {
+  cursor: pointer;
+  color: var(--nv-muted);
+  font-size: 10px;
+  user-select: none;
+}
+
+.nv-rebuild-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.nv-rebuild-grid button {
+  height: 29px;
+  border: 1px solid var(--nv-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--nv-muted);
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.nv-rebuild-grid button:hover {
+  background: var(--nv-paper-2);
+  color: var(--nv-ink);
+}
+
+#nv-gen-foot {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 1px solid var(--nv-line-soft);
+}
+
+#nv-gen-foot button {
+  height: 32px;
+  padding: 0 13px;
+  border: 1px solid var(--nv-line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--nv-ink);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+#nv-gen-foot button:hover {
+  background: var(--nv-paper-2);
+}
+
+#nv-gen-foot button.primary {
+  border-color: var(--nv-accent);
+  background: var(--nv-accent);
+  color: var(--nv-accent-ink);
+  font-weight: 600;
+}
+
+#nv-gen-foot button.primary:hover {
+  background: var(--nv-accent-deep);
+}
+
+#nv-boot {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--nv-paper);
+  pointer-events: auto;
+  z-index: 950;
+}
+
+#nv-boot[hidden] {
+  display: none !important;
+}
+
+.nv-boot-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 26px 30px;
+  border: 1px solid var(--nv-line);
+  border-radius: 16px;
+  background: var(--nv-paper);
+  box-shadow: 0 18px 60px rgba(35, 40, 34, 0.14);
+}
+
+.nv-boot-card strong {
+  font: 600 16px/1.3 var(--nv-serif);
+}
+
+.nv-boot-card span {
+  max-width: 320px;
+  color: var(--nv-muted);
+  font-size: 10.5px;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.nv-boot-card button {
+  height: 30px;
+  padding: 0 11px;
+  border: 1px solid var(--nv-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--nv-ink);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+#nv-toast {
+  position: absolute;
+  left: 50%;
+  bottom: 84px;
+  transform: translateX(-50%);
+  max-width: min(440px, calc(100vw - 32px));
+  padding: 8px 12px;
+  border: 1px solid var(--nv-line);
+  border-radius: 10px;
+  background: var(--nv-paper);
+  color: var(--nv-ink);
+  font-size: 10.5px;
+  line-height: 1.5;
+  box-shadow: 0 10px 32px rgba(35, 40, 34, 0.16);
+  pointer-events: none;
+}
+
+/* Settings sheet: the upstream Options panel, shown only on demand. It owns
+   the right edge while open, so there is never a second inspector. */
+body.nv-options-open #optionsContainer {
+  display: block !important;
+  opacity: 1 !important;
+  position: fixed !important;
+  left: auto !important;
+  right: 16px !important;
+  top: 58px !important;
+  bottom: 92px !important;
+  width: min(430px, calc(100vw - 32px)) !important;
+  height: auto !important;
+  max-height: none !important;
+  z-index: 1200 !important;
+  border: 1px solid var(--nv-line) !important;
+  border-radius: 16px !important;
+  background: var(--nv-paper) !important;
+  box-shadow: 0 20px 64px rgba(35, 40, 34, 0.18) !important;
+  overflow: hidden !important;
+}
+
+body.nv-options-open #options {
+  display: flex !important;
+  flex-direction: column !important;
+  position: static !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-height: none !important;
+  padding: 0 !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: var(--nv-paper) !important;
+  box-shadow: none !important;
+  overflow: hidden !important;
+}
+
+body.nv-options-open #options .tab {
+  display: flex !important;
+  height: 36px !important;
+  border-bottom: 1px solid var(--nv-line-soft) !important;
+  background: var(--nv-paper-2) !important;
+}
+
+body.nv-options-open #options .tab button.options {
+  display: inline-flex !important;
+  align-items: center !important;
+  height: 36px !important;
+  padding: 0 9px !important;
+  border: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  color: var(--nv-muted) !important;
+  font-size: 10.5px !important;
+  box-shadow: none !important;
+}
+
+body.nv-options-open #options .tab button.options.active {
+  color: var(--nv-ink) !important;
+  box-shadow: inset 0 -2px 0 var(--nv-ink) !important;
+}
+
+body.nv-options-open #options .tab #layersTab,
+body.nv-options-open #options .tab #aboutTab,
+body.nv-options-open #layersTab,
+body.nv-options-open #aboutTab,
+body.nv-options-open #sticked {
+  display: none !important;
+}
+
+body.nv-options-open #options .tabcontent {
+  flex: 1 !important;
+  min-height: 0 !important;
+  overflow: auto !important;
+  padding: 10px 12px 16px !important;
+  background: var(--nv-paper) !important;
+  color: var(--nv-muted) !important;
+  font-size: 10.5px !important;
+}
+
+body.nv-options-open #options p {
+  color: var(--nv-muted) !important;
+  font-size: 10px !important;
+  font-style: normal !important;
+}
+
+body.nv-options-open #options select,
+body.nv-options-open #options input,
+body.nv-options-open #options textarea {
+  border: 1px solid var(--nv-line) !important;
+  border-radius: 7px !important;
+  background: #fff !important;
+  color: var(--nv-ink) !important;
+  font-family: var(--nv-ui) !important;
+}
+
+body.nv-options-open #options .tabcontent li {
+  border: 1px solid var(--nv-line-soft) !important;
+  border-radius: 7px !important;
+  background: #fff !important;
+  color: var(--nv-muted) !important;
+}
+
+@media (max-width: 760px) {
+  #nv-panel {
+    left: 8px;
+    right: 8px;
+    top: 52px;
+    bottom: 86px;
+    width: auto;
+  }
+
+  #nv-stagebar {
+    left: 8px;
+    right: 8px;
+    bottom: 8px;
+    transform: none;
+    gap: 9px;
+    justify-content: space-between;
+  }
+
+  #nv-stage-info {
+    min-width: 0;
+  }
+
+  #nv-stage-counts {
+    display: none;
+  }
+
+  #nv-status {
+    left: 8px;
+    top: 9px;
+    max-width: calc(100vw - 120px);
+  }
+
+  #nv-actions {
+    right: 8px;
+    top: 9px;
+  }
+
+  .ui-dialog:has(#brushesPanel) {
+    left: 8px !important;
+    bottom: 68px !important;
+    width: 248px !important;
+    max-height: calc(100vh - 96px) !important;
+  }
+}
+
+@media (max-width: 520px) {
+  #nv-steps {
+    display: none;
+  }
+
+  #nv-stagebar {
+    padding-left: 12px;
+  }
+
+  .nv-gen-grid {
+    grid-template-columns: 1fr;
+  }
+}

@@ -893,7 +893,7 @@ function showBlankHint(): void {
   hint.setAttribute("text-anchor", "middle");
   hint.setAttribute("pointer-events", "none");
   hint.setAttribute("opacity", ".58");
-  for (const [index, line] of ["白膜 · 不是最终地图", "先涂地形，画完点顶部「定稿地形」"].entries()) {
+  for (const [index, line] of ["白膜 · 不是最终地图", "先涂地形，画完点底部「定稿地形」"].entries()) {
     const tspan = document.createElementNS("http://www.w3.org/2000/svg", "tspan");
     tspan.setAttribute("x", "50%");
     if (index > 0) tspan.setAttribute("dy", "1.45em");
