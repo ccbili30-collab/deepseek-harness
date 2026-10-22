@@ -337,20 +337,15 @@ describe('RightbarSeat presentation', () => {
     expect(seen.at(-1)).toBe('text')
   })
 
-  it('offers a reopen control for a parked canvas in both rail and expanded chrome', async () => {
+  it('offers one rail canvas toggle for both parking and reopening', async () => {
     const h = await mountSeat()
-    h.open('kept.txt')
-    act(() => { h.actions.setCanvasParked(SESSION, true) })
-    // Collapsed panel: the rail keeps the parked canvas reachable.
-    const rail = h.view.container.querySelector<HTMLElement>('[data-sidebar-right-canvas-unpark]')
-    expect(rail).not.toBeNull()
-    fireEvent.click(rail!)
-    expect(h.instance.getSnapshot().bySession[SESSION]!.canvasParked).toBe(false)
-    // Expanded panel: the header carries the same control beside collapse.
-    act(() => { h.actions.setCanvasParked(SESSION, true); h.actions.setExpanded(SESSION, true) })
-    const head = h.view.container.querySelector<HTMLElement>('[data-sidebar-right-canvas-unpark]')
-    expect(head).not.toBeNull()
-    fireEvent.click(head!)
+    h.open('kept.txt', { expandColumn: false })
+    act(() => { h.actions.setExpanded(SESSION, false) })
+    const toggle = (): HTMLElement => element(h.view.container, '[data-sidebar-right-canvas-toggle]')
+    fireEvent.click(toggle())
+    expect(h.instance.getSnapshot().bySession[SESSION]!.canvasParked).toBe(true)
+    // The rail keeps the control in place; the same button brings it back.
+    fireEvent.click(toggle())
     expect(h.instance.getSnapshot().bySession[SESSION]!.canvasParked).toBe(false)
   })
 

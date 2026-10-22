@@ -479,6 +479,10 @@
   transform: scaleX(-1);
 }
 
+.panel[data-drawer-side='right'] .parkGlyph {
+  transform: scaleX(-1);
+}
+
 .unparkGlyph {
   transform: scaleX(-1);
 }

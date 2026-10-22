@@ -1240,6 +1240,9 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
 [class*='navBody'] { position: relative; }
 [class*='panelHead'] { position: absolute; top: 5px; right: 8px; padding: 0; z-index: 10; }
 [data-sidebar-right-mode] { display: none; }
+/* 画布开合统一在抽屉底排（rail 态用轨上同一枚）；上游画布 chrome 与缝上胶囊
+   在本产品不出现，避免同一动作散成两个按钮。 */
+[data-sidebar-right-canvas-park] { display: none !important; }
 
 /* 设计稿 01 底色：抽屉与会话两列底偏灰（pane），控件与画布留白。抽屉面板
    自身不刷色、内部也无白底元素，直接给面板着色；会话列的根容器刷的是
@@ -1278,14 +1281,16 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
    一起过滤，连 emoji 底色也一并压灰，选中底色随 §8 落回灰底。 */
 div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !important; max-height: 62% !important; }
 [data-sidebar-right-expand-rail] ~ nav button { filter: grayscale(1); }
-/* 项目头一行（设计稿 01）：右 padding 给叠进来的收起钮留座。 */
+/* 项目头一行（设计稿 01）：项目名按内容收窄，行尾的眼睛/收起钮留足位置；
+   右 padding 给叠进来的抽屉收起钮留座。 */
 .nv-tree-head { display: flex; align-items: center; gap: 2px; padding: 6px 42px 6px 12px; }
 .nv-tree-head > span { flex: 1; min-width: 0; display: block; }
-.nv-tree-project { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none;
+.nv-tree-project { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; max-width: 100%;
+  border: 0; background: none;
   padding: 4px 6px; font-size: 14px; font-weight: 600; color: var(--nv-primary-text); cursor: pointer; border-radius: 8px; }
 .nv-tree-project:hover { background: var(--nv-hover); }
-.nv-tree-projectname { flex: 1; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nv-tree-caret { color: var(--nv-secondary-text); }
+.nv-tree-projectname { flex: 1; min-width: 0; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nv-tree-caret { flex: none; color: var(--nv-secondary-text); }
 .nv-tree-search { padding: 2px 12px 10px; }
 .nv-tree-searchwrap { position: relative; display: flex; align-items: center; }
 .nv-tree-searchicon { position: absolute; left: 9px; display: inline-flex; color: var(--nv-secondary-text); pointer-events: none; }
@@ -1350,16 +1355,17 @@ div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !impo
 .nv-tree-rolestitle { flex: 1; min-width: 0; }
 .nv-tree-glyph { width: 16px; flex: none; color: var(--nv-secondary-text); font-size: 11px; }
 .nv-tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 底部分两半：「＋ 新建」开对象、「🔧 工具」开功能台（设计稿 01 变体——
-   功能台从主面板挪回工作现场旁）。Menu anchor 根是 inline span——
-   给 flex:1 让两半均分。 */
+/* 底部分三份：画布开合、「＋ 新建」、工具。Menu anchor 根是 inline span——
+   给 flex:1 让三份均分；画布关着时整颗薄荷色，做底排主入口。 */
 .nv-tree-foot { display: flex; gap: 8px; padding: 10px 12px 14px; }
 .nv-tree-foot > span { display: flex; flex: 1; min-width: 0; }
 .nv-tree-new { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%;
   border: 1px solid var(--nv-divider); border-radius: 10px; padding: 9px 0; font-size: 13px;
   background: var(--nv-surface); color: var(--nv-primary-text); cursor: pointer; }
 .nv-tree-new:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); }
+.nv-tree-canvas:not([data-open]) { border-color: rgba(14,159,110,.32); background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 .nv-tree-toolicon { display: inline-flex; color: var(--nv-secondary-text); }
+.nv-tree-canvas .nv-tree-toolicon { color: inherit; }
 /* 分组头的删除钮：与「＋」同族悬停显隐，悬停转危险色。 */
 .nv-tree-del:hover { color: var(--nv-danger); }
 /* 卡尾的「＋ 新建模块」条：和「＋ 新建」同族，缩进对齐模块行。 */
@@ -1369,8 +1375,10 @@ div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !impo
 /* 卡架层组头：与卡行同高的文件夹行，名字加粗半度以示是容器不是实体。 */
 .nv-tree-shelf .nv-tree-name { font-weight: 500; }
 /* 树头的隐藏项开关：只在有隐藏项时出现；掀开时点亮。 */
-.nv-tree-eye { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; border: 0;
+.nv-tree-eye { display: inline-flex; flex: none; align-items: center; gap: 4px; border: 0;
   background: none; padding: 4px 6px; border-radius: 6px; color: var(--nv-secondary-text); cursor: pointer; }
+/* 只有眼睛组的第一枚吃剩余空间，把整组推到项目名右侧；第二枚（隐藏项）跟排。 */
+.nv-tree-project + .nv-tree-eye { margin-left: auto; }
 .nv-tree-eye:hover { color: var(--nv-primary-text); background: var(--nv-accent-soft); }
 .nv-tree-eyecount { font-size: 11px; }
 /* 同级多选：选中行铺一层主题色底；批量操作条挂在树头下。 */
@@ -3660,8 +3668,6 @@ table.nv-coll-table { display: block; font-size: 14px; }
 [data-work][data-canvas-fullscreen] { grid-template-columns: minmax(0px, 1fr) !important; }
 [data-canvas-fullscreen] [data-sidebar-right-panel] { display: none !important; }
 [data-canvas-fullscreen] [data-sidebar-right-canvas-host] { left: 0 !important; right: 0 !important; }
-/* 全屏时没有抽屉可停靠，画布缝上的收起钮一并退场。 */
-[data-canvas-fullscreen] .canvasEdgePark { display: none !important; }
 /* 页签条上的画布全屏钮。 */
 .nv-canvas-fullscreentoggle { margin-left: auto; border: 0; background: none; padding: 4px 7px; color: var(--nv-secondary-text);
   cursor: pointer; border-radius: 6px; display: inline-flex; align-items: center; }
