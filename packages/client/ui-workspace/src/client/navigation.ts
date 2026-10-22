@@ -46,12 +46,16 @@ export interface OpenSessionOptions {
 export interface UiWorkspace {
   /**
    * Select a Session and show its Conversation as one UI navigation action.
+   * A blank Session is seated as a host and routed to the registered
+   * new-session surface instead of revealing its empty Conversation.
    * @param target - known Session identity or durable direct-parent subagent address to display.
    * @param options - `panel: 'preserve'` selects without dismissing the active panel.
    */
   openSession(target: SessionTarget, options?: OpenSessionOptions): void
   /**
    * Connect a Workspace and open its Session unless a later navigation supersedes it.
+   * The connected Session is always a blank host, so a registered new-session
+   * surface owns the page; without one the empty Conversation is revealed.
    * @param workspaceId - target Workspace.
    * @param beforeOpen - optional synchronous preparation for the selected Session,
    * skipped after supersession; a throw aborts the open and releases the retained reference.
@@ -88,9 +92,9 @@ export interface UiWorkspace {
   startSession(workspaceId?: WorkspaceId): void
   /**
    * Redirect the shell's New Session action to a host surface (for example a
-   * creation page). While registered, startSession() opens that surface
-   * instead of creating a blank Session; the surface owns whatever Session it
-   * needs. Registrations ride the caller's effect.
+   * creation page). While registered, startSession() opens that surface and
+   * every blank Session open is seated as its host; the surface owns whatever
+   * Session it needs. Registrations ride the caller's effect.
    * @param open - host action that reveals the new-session surface.
    * @returns disposer restoring the default blank-Session flow.
    */
@@ -259,10 +263,12 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     const targetId = typeof target === 'string' ? target : target.childSessionId
     // A blank Session belongs to its host surface (for example the creation
     // page's composer): revealing its own page would show a stale empty
-    // surface, so a normal open routes to that surface instead.
+    // surface, so a normal open seats it as the host and routes to that
+    // surface instead.
     if (panel === 'reveal' && options?.transition !== 'none'
       && this.newSessionSurface !== undefined
       && this.sessions.list.getSnapshot().byId[targetId]?.blank === true) {
+      this.replaceMain(target, this.lifetime.signal, 'preserve')
       this.newSessionSurface()
       return
     }
@@ -311,6 +317,15 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       throw error
     }
     if (navigation.aborted) return
+    // connectWorkspace always resolves to a blank Session. Revealing it would
+    // strand the viewer on an empty conversation; a registered new-session
+    // surface owns that page and adopts this Session as its host.
+    if (this.sessions.list.getSnapshot().byId[sessionId]?.blank === true
+      && this.newSessionSurface !== undefined) {
+      this.replaceMain(sessionId, navigation, 'preserve', beforeOpen)
+      this.newSessionSurface()
+      return
+    }
     const current = this.mainReference?.sessionId
     if (current === undefined || current === sessionId) {
       this.replaceMain(sessionId, navigation, 'reveal', beforeOpen)
@@ -331,7 +346,15 @@ class UiWorkspaceService extends Service implements UiWorkspace {
 
   startSession(workspaceId?: WorkspaceId): void {
     if (this.newSessionSurface !== undefined) {
-      this.newSessionSurface()
+      if (workspaceId === undefined) {
+        this.newSessionSurface()
+        return
+      }
+      // An explicit workspace needs its blank host first; openWorkspace seats
+      // it and routes a blank target to the surface.
+      void this.openWorkspace(workspaceId).catch(
+        (reason: unknown) => { console.warn('new session failed:', reason) },
+      )
       return
     }
     const workspace = this.workspaces.list.getSnapshot()

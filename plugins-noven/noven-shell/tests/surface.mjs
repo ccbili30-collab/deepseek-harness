@@ -5,6 +5,7 @@
  * @module noven-shell/tests/surface
  */
 import { assembleSurface, parseSurface, surfaceSource } from '../lib/client/surface.js'
+import { islandDoc } from '../lib/client/stage-island.js'
 
 let failures = 0
 const check = (ok, what) => {
@@ -44,6 +45,42 @@ check(parseSurface('<p>legacy html</p>') === undefined, '旧 HTML 不被误判�
 check(parseSurface('{"broken":') === undefined, '损坏 JSON 回退旧 HTML')
 check(parseSurface('{"version":1,"kind":"surface","noven":{"entry":"index.html","files":{},"manifest":{}}}') === undefined, '空 files 拒绝')
 check(parsed?.manifest.description === 'A surface', '保留说明')
+const stateProject = parseSurface(JSON.stringify({ version: 1, kind: 'surface', noven: {
+  ...project,
+  state: { version: 1, kind: 'scene3d', scene: { objects: [{ id: 'cube' }] } },
+  stateVersion: 3,
+} }))
+check(stateProject?.stateVersion === 3 && stateProject.state?.kind === 'scene3d', 'state and revision survive parsing')
+check(!assembleSurface(stateProject).includes('"scene3d"'), 'state is not inlined into the document source')
+const stateDoc = islandDoc('<p>x</p>', {
+  moduleId: 'module-3d',
+  surfaceState: { version: 1, kind: 'scene3d', scene: { objects: [] } },
+  surfaceVersion: 3,
+})
+check(stateDoc.includes('"moduleId":"module-3d"') && stateDoc.includes('"surfaceVersion":3') && stateDoc.includes('"scene3d"'), 'state and module id reach the sandbox frame')
+
+// TypeScript is sugar: types are erased at assembly, imports still inline.
+const typed = parseSurface(JSON.stringify({ version: 1, kind: 'surface', noven: {
+  entry: 'index.html',
+  files: {
+    'index.html': '<script type="module" src="./main.ts"></script>',
+    'main.ts': "import { twice } from './util'\nconst n: number = 2\nconsole.log(twice(n))",
+    'util.ts': 'export const twice = (n: number): number => n * 2',
+  },
+  manifest: { name: 'Typed', description: '', fullscreen: false, chrome: 'game' },
+} }))
+const typedHtml = assembleSurface(typed)
+check(!typedHtml.includes(': number') && typedHtml.includes('const n = 2'), 'TypeScript types are erased')
+check(typedHtml.includes('twice') && !typedHtml.includes("from './util'"), 'extensionless TS import is resolved and inlined')
+check(typed?.manifest.chrome === 'game', 'manifest chrome round-trips')
+const broken = parseSurface(JSON.stringify({ version: 1, kind: 'surface', noven: {
+  entry: 'index.html',
+  files: { 'index.html': '<script type="module" src="./main.ts"></script>', 'main.ts': 'const = ' },
+  manifest: { name: 'Broken', description: '', fullscreen: false },
+} }))
+check(assembleSurface(broken).includes('TypeScript 转译失败'), 'broken TS becomes a readable runtime error')
+const tokenDoc = islandDoc('<p>x</p>', { theme: { dark: false, accent: '#34D399', text: '#16181A', surface: '#FFFFFF' } })
+check(tokenDoc.includes('--nv-space-4') && tokenDoc.includes('--nv-radius-lg') && tokenDoc.includes('--nv-accent:#34D399'), 'surface token sheet is injected')
 
 console.log(failures === 0 ? 'ALL PASS' : `${failures} FAILURES`)
 process.exit(failures === 0 ? 0 : 1)

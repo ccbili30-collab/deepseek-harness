@@ -17,8 +17,8 @@ import { resolvePngHeightmap } from './heightmap-png.ts'
 import { resolveNamebase } from './namebase.ts'
 import { generateWorld, resampleWorld, rasterizeDraft, guessDraftLevel, getGridDims, type HeightmapInput } from 'noven-fmg/world'
 import { collectionPreset, isModulePreset, mapPreset, MODULE_PRESETS, timelinePreset } from './module-presets.ts'
-import { customCollection, customMap, customTimeline, normalizeCustomModule } from './custom-modules.ts'
-import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeScene, encodeScene, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type MapData, type SceneData, type TimelineCalendar } from './formats.ts'
+import { customCollection, customMap, customSurface, customTimeline, normalizeCustomModule } from './custom-modules.ts'
+import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeScene, encodeScene, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, decodeSurface, encodeSurface, isSurfaceState, normalizeSurfacePath, validateSurface, SURFACE_FILE_LIMIT, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type MapData, type SceneData, type SurfaceData, type SurfaceManifest, type TimelineCalendar } from './formats.ts'
 
 /** 编辑命令全集（工具与未来的人工界面共用）。 */
 export type EditorCommand =
@@ -27,10 +27,10 @@ export type EditorCommand =
   | { kind: 'add_module_custom', name: string, parentId?: string | null, definition: unknown }
   | { kind: 'rename_module', moduleId: string, name: string }
   | { kind: 'rename_card', name: string }
-  | { kind: 'write_text', moduleId: string, blockId?: string | null, moduleName: string, text: string, expectedContent?: string }
+  | { kind: 'write_text', moduleId: string, blockId?: string | null, moduleName?: string, text: string, expectedContent?: string }
   | { kind: 'replace_text_range', moduleId: string, blockId: string, expectedContent: string, start: number, end: number, text: string, moduleName?: string }
   | { kind: 'write_markdown', moduleId: string, name: string, text: string }
-  | { kind: 'write_caption', moduleId: string, blockId: string, moduleName: string, text: string }
+  | { kind: 'write_caption', moduleId: string, blockId: string, moduleName?: string, text: string }
   | { kind: 'move_module', moduleId: string, beforeId?: string | null }
   | { kind: 'place_module', moduleId: string, parentId?: string | null, beforeId?: string | null }
   | { kind: 'copy_module', moduleId: string, parentId?: string | null, beforeId?: string | null }
@@ -48,6 +48,16 @@ export type EditorCommand =
   | { kind: 'adopt_image', bytes: Uint8Array, mediaType: string, moduleId?: string | null, afterBlockId?: string | null }
   /** 把项目内文件嵌入模块：图片收成卡资源 + 图片块；.html/.htm 记 widget.path 活引用；.md/.txt 快照成文字块。moduleId 省略时以文件名建一个新模块。 */
   | { kind: 'embed_file', path: string, moduleId?: string | null }
+  // ---------- 自由界面工程：按文件编辑，不整包重写 JSON ----------
+  /** 把旧原始 HTML 模块包成工程，或给已有工程补 manifest。 */
+  | { kind: 'surface_init', moduleId: string, manifest?: Partial<SurfaceManifest> }
+  /** 新建或覆盖一个工程文件；expected 为该模块文字块的 content_ref。 */
+  | { kind: 'surface_write_file', moduleId: string, path: string, text: string, expected?: string }
+  | { kind: 'surface_delete_file', moduleId: string, path: string, expected?: string }
+  | { kind: 'surface_rename_file', moduleId: string, from: string, to: string, expected?: string }
+  | { kind: 'surface_set_manifest', moduleId: string, manifest: Partial<SurfaceManifest>, expected?: string }
+  /** 保存应用运行时状态；expectedVersion 是读取时的 stateVersion。 */
+  | { kind: 'surface_set_state', moduleId: string, state: unknown, expectedVersion?: number }
   | { kind: 'place_character', characterId: string, moduleId?: string | null }
   | { kind: 'add_character', name: string }
   | { kind: 'copy_character', source: ContentDocument }
@@ -267,6 +277,49 @@ async function transformDocument(
     return putWidgetJson(target, encode(mutate(data)))
   }
 
+  // ---------- 自由界面工程（surface） ----------
+  const surfaceModule = (id: string): ContentModule => {
+    const target = module(id)
+    if (target.widget?.type !== 'html') throw new Error('目标模块不是自由界面（html）类型')
+    return target
+  }
+  const surfaceBlockOf = (target: ContentModule): Extract<ContentBlock, { kind: 'text' }> | undefined =>
+    target.blocks.find((candidate): candidate is Extract<ContentBlock, { kind: 'text' }> => candidate.kind === 'text')
+  /** Decode the surface, wrapping a legacy raw-HTML module into index.html. */
+  const surfaceOf = async (target: ContentModule): Promise<SurfaceData> => {
+    const block = surfaceBlockOf(target)
+    const raw = block === undefined ? '' : new TextDecoder().decode(await store.readPayload(cardId, block.content))
+    return decodeSurface(raw) ?? {
+      version: 1,
+      entry: 'index.html',
+      files: { 'index.html': raw.trim() === '' ? '<!doctype html>\n<html><body></body></html>\n' : raw },
+      manifest: { name: target.name, description: '', fullscreen: false },
+    }
+  }
+  const expectSurfaceRef = (target: ContentModule, expected: string | undefined): void => {
+    if (expected === undefined) return
+    const block = surfaceBlockOf(target)
+    if (block === undefined || block.content !== expected) {
+      throw new EditConflict('自由界面在你读取之后被改过，请重新读取后再改', target.id, block?.id ?? '')
+    }
+  }
+  const writeSurface = async (target: ContentModule, data: SurfaceData): Promise<ContentModule[]> => {
+    const report = validateSurface(data)
+    if (!report.ok) throw new Error(`自由界面校验失败：${report.errors.join('；')}`)
+    return putWidgetJson(target, encodeSurface(data))
+  }
+  const manifestPatch = (base: SurfaceManifest, patch: Partial<SurfaceManifest>): SurfaceManifest => ({
+    name: typeof patch.name === 'string' && patch.name.trim() !== '' ? patch.name.trim() : base.name,
+    description: typeof patch.description === 'string' ? patch.description : base.description,
+    ...(patch.cover === undefined
+      ? (base.cover === undefined ? {} : { cover: base.cover })
+      : patch.cover === '' ? {} : { cover: patch.cover }),
+    fullscreen: typeof patch.fullscreen === 'boolean' ? patch.fullscreen : base.fullscreen,
+    ...(patch.chrome === 'none' || patch.chrome === 'game'
+      ? { chrome: patch.chrome }
+      : patch.chrome === undefined && base.chrome !== undefined ? { chrome: base.chrome } : {}),
+  })
+
   let next = card
   switch (command.kind) {
     case 'add_module': {
@@ -306,6 +359,9 @@ async function transformDocument(
       } else if (definition.shape === 'map') {
         created.widget = { type: 'map' }
         created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(customMap()) })
+      } else if (definition.shape === 'surface') {
+        created.widget = { type: 'html' }
+        created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(customSurface(definition)) })
       } else if (definition.sample !== undefined) {
         created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(definition.sample) })
       }
@@ -390,7 +446,7 @@ async function transformDocument(
       const blocks = blockId === null
         ? [...target.blocks, block]
         : target.blocks.map(candidate => candidate.id === blockId ? block : candidate)
-      next = put({ ...card, modules: updateModule(card.modules, target.id, original => ({ ...original, name: command.moduleName, blocks })) })
+      next = put({ ...card, modules: updateModule(card.modules, target.id, original => ({ ...original, name: command.moduleName ?? original.name, blocks })) })
       break
     }
     case 'replace_text_range': {
@@ -428,7 +484,7 @@ async function transformDocument(
         ...card,
         modules: updateModule(card.modules, target.id, original => ({
           ...original,
-          name: command.moduleName,
+          name: command.moduleName ?? original.name,
           blocks: original.blocks.map(candidate => candidate.id === block.id ? { ...block, caption } : candidate),
         })),
       })
@@ -574,6 +630,74 @@ async function transformDocument(
         break
       }
       next = put(await embedInto(card, target.id, bytes, imageMedia))
+      break
+    }
+    case 'surface_init': {
+      const target = surfaceModule(command.moduleId)
+      let data = await surfaceOf(target)
+      if (command.manifest !== undefined) data = { ...data, manifest: manifestPatch(data.manifest, command.manifest) }
+      next = put({ ...card, modules: await writeSurface(target, data) })
+      break
+    }
+    case 'surface_write_file': {
+      const target = surfaceModule(command.moduleId)
+      expectSurfaceRef(target, command.expected)
+      const path = normalizeSurfacePath(command.path)
+      if (typeof path !== 'string') throw new Error(`路径无效：${path.error}`)
+      if (new TextEncoder().encode(command.text).length > SURFACE_FILE_LIMIT) {
+        throw new Error(`文件 ${path} 超过 ${String(SURFACE_FILE_LIMIT)} 字节`)
+      }
+      const data = await surfaceOf(target)
+      const files = { ...data.files, [path]: command.text }
+      next = put({ ...card, modules: await writeSurface(target, { ...data, entry: files[data.entry] === undefined ? path : data.entry, files }) })
+      break
+    }
+    case 'surface_delete_file': {
+      const target = surfaceModule(command.moduleId)
+      expectSurfaceRef(target, command.expected)
+      const path = normalizeSurfacePath(command.path)
+      if (typeof path !== 'string') throw new Error(`路径无效：${path.error}`)
+      const data = await surfaceOf(target)
+      const files = { ...data.files }
+      if (files[path] === undefined) throw new Error(`文件不存在：${path}`)
+      delete files[path]
+      const remaining = Object.keys(files)
+      if (remaining.length === 0) throw new Error('自由界面至少保留一个文件')
+      const entry = files[data.entry] !== undefined ? data.entry : (files['index.html'] !== undefined ? 'index.html' : remaining[0]!)
+      next = put({ ...card, modules: await writeSurface(target, { ...data, entry, files }) })
+      break
+    }
+    case 'surface_rename_file': {
+      const target = surfaceModule(command.moduleId)
+      expectSurfaceRef(target, command.expected)
+      const from = normalizeSurfacePath(command.from)
+      const to = normalizeSurfacePath(command.to)
+      if (typeof from !== 'string') throw new Error(`路径无效：${from.error}`)
+      if (typeof to !== 'string') throw new Error(`路径无效：${to.error}`)
+      const data = await surfaceOf(target)
+      if (data.files[from] === undefined) throw new Error(`文件不存在：${from}`)
+      if (data.files[to] !== undefined) throw new Error(`目标文件已存在：${to}`)
+      const files = { ...data.files, [to]: data.files[from]! }
+      delete files[from]
+      next = put({ ...card, modules: await writeSurface(target, { ...data, entry: data.entry === from ? to : data.entry, files }) })
+      break
+    }
+    case 'surface_set_manifest': {
+      const target = surfaceModule(command.moduleId)
+      expectSurfaceRef(target, command.expected)
+      const data = await surfaceOf(target)
+      next = put({ ...card, modules: await writeSurface(target, { ...data, manifest: manifestPatch(data.manifest, command.manifest) }) })
+      break
+    }
+    case 'surface_set_state': {
+      const target = surfaceModule(command.moduleId)
+      if (!isSurfaceState(command.state)) throw new Error('状态必须是纯 JSON')
+      const data = await surfaceOf(target)
+      const current = data.stateVersion ?? 0
+      if (command.expectedVersion !== undefined && command.expectedVersion !== current) {
+        throw new EditConflict('场景已在别处被修改，请重新打开模块后再保存', target.id, surfaceBlockOf(target)?.id ?? '')
+      }
+      next = put({ ...card, modules: await writeSurface(target, { ...data, state: command.state, stateVersion: current + 1 }) })
       break
     }
     case 'place_character': {

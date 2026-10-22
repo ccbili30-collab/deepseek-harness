@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>3D 编辑器 · 草稿</title>
+  <style>/*__STYLE__*/</style>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="brand"><span class="mark"></span>3D 编辑器 <small>草稿</small></div>
+      <div class="modes" role="group" aria-label="变换模式">
+        <button type="button" data-mode="translate" data-on>移动 <span class="key">W</span></button>
+        <button type="button" data-mode="rotate">旋转 <span class="key">E</span></button>
+        <button type="button" data-mode="scale">缩放 <span class="key">R</span></button>
+      </div>
+      <div class="tools">
+        <button type="button" class="btn mobile-only" id="openLeft" title="打开工具面板">工具</button>
+        <button type="button" class="btn mobile-only" id="openRight" title="打开属性面板">属性</button>
+        <button type="button" class="btn" id="undo" title="撤销 ⌘Z">撤销</button>
+        <button type="button" class="btn" id="redo" title="重做 ⇧⌘Z">重做</button>
+        <span id="saveState" class="save-state" hidden></span>
+        <button type="button" class="btn" id="save" title="保存场景">保存</button>
+        <button type="button" class="btn" id="import" title="导入 .glb / .gltf">导入</button>
+        <button type="button" class="btn primary" id="preview" title="隐藏界面，只看场景">预览</button>
+      </div>
+    </header>
+
+    <aside id="left">
+      <section>
+        <h3>编辑</h3>
+        <div class="modes editmodes" role="group" aria-label="编辑模式">
+          <button type="button" id="objectMode" data-on>物体</button>
+          <button type="button" id="meshMode">网格</button>
+        </div>
+        <div id="meshTools" hidden>
+          <div class="modes pickmodes" role="group" aria-label="网格选择">
+            <button type="button" data-pick="vertex">点</button>
+            <button type="button" data-pick="edge">边</button>
+            <button type="button" data-pick="face" data-on>面</button>
+          </div>
+          <p class="op-label">面</p>
+          <button type="button" class="btn" id="extrude" title="多选面时按整个区域挤出" disabled>挤出面</button>
+          <div class="mesh-ops">
+            <button type="button" class="btn" id="inset" title="每个面独立内插" disabled>内插</button>
+            <button type="button" class="btn" id="faceBevel" title="内插后沿法线抬起的面级倒角" disabled>面倒角</button>
+            <button type="button" class="btn" id="subdivide" title="面心三角细分" disabled>细分</button>
+            <button type="button" class="btn" id="bridge" title="Shift 选两个边数相同的面，连成管壁" disabled>桥接</button>
+          </div>
+          <p class="op-label">边</p>
+          <div class="mesh-ops">
+            <button type="button" class="btn" id="edgeBevel" title="真边倒角；一次选一组互不相邻的边" disabled>倒角</button>
+            <button type="button" class="btn" id="loopCut" title="选一条边，沿闭合四边面环切一圈" disabled>环切</button>
+          </div>
+          <p id="meshInfo" class="empty-note"></p>
+        </div>
+      </section>
+
+      <section>
+        <h3>添加</h3>
+        <div class="add-grid">
+          <button type="button" data-add="box"><span class="glyph">◼</span>方块</button>
+          <button type="button" data-add="sphere"><span class="glyph">●</span>球体</button>
+          <button type="button" data-add="cylinder"><span class="glyph">▮</span>圆柱</button>
+          <button type="button" data-add="cone"><span class="glyph">▲</span>圆锥</button>
+          <button type="button" data-add="torus"><span class="glyph">◎</span>圆环</button>
+          <button type="button" data-add="plane"><span class="glyph">▭</span>平面</button>
+          <button type="button" data-add="capsule"><span class="glyph">⌭</span>胶囊</button>
+        </div>
+      </section>
+
+      <section>
+        <h3>对象</h3>
+        <div id="outliner"></div>
+      </section>
+
+      <section>
+        <h3>灯光</h3>
+        <div class="light-add">
+          <button type="button" class="btn" id="addLightDirectional">＋ 方向光</button>
+          <button type="button" class="btn" id="addLightPoint">＋ 点光</button>
+        </div>
+        <div id="lightlist"></div>
+      </section>
+    </aside>
+
+    <main id="viewport">
+      <canvas id="c"></canvas>
+      <div id="empty" hidden>
+        <h1>从一颗方块开始</h1>
+        <p>先摆体块，选中后切到「网格」，改点、边、面。</p>
+        <div class="empty-actions">
+          <button type="button" class="btn primary" data-add="box">放一颗方块</button>
+        </div>
+        <p class="empty-note">基础几何 + 网格编辑；深度建模去 Blender。</p>
+      </div>
+      <div id="hint">左键旋转 · 滚轮缩放 · 右键平移 · 点击选择 · W/E/R · 网格模式选点/边/面</div>
+      <div id="previewbar">
+        <button type="button" id="exitPreview">退出预览 · Esc</button>
+      </div>
+    </main>
+
+    <aside id="right">
+      <div id="inspector-empty"></div>
+      <div id="inspector" hidden></div>
+    </aside>
+  </div>
+
+  <div id="scrim"></div>
+  <input id="file" type="file" accept=".glb,.gltf,model/gltf-binary,model/gltf+json" hidden>
+  <div id="toast" role="status" aria-live="polite"></div>
+  <script>/*__SCRIPT__*/</script>
+</body>
+</html>

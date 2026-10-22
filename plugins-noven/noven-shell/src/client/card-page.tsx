@@ -9,7 +9,7 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState, type Reac
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { MarkdownDelegateProvider, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardAddr, CardBlockView, CardDocView, CardModuleDoc, CardOpResult, CardState } from './card-api.ts'
-import { CardConflict, cardContentUrl, deleteUserModule, fetchCard, fetchUserModules, type UserModuleDefinition } from './card-api.ts'
+import { CardConflict, cardContentUrl, deleteUserModule, fetchUserModules, postCardDiagnostics, type CardDiagnosticEntry, type UserModuleDefinition } from './card-api.ts'
 import { findModule } from './pages/card-tree.ts'
 import type { EditorSaveResult } from './editor.tsx'
 import { CardMarkdownEditor } from './doc-editor.tsx'
@@ -23,9 +23,10 @@ import { glyph } from './icons.tsx'
 import { InlineRename, notifyUndo, useArmedMenu } from './ui/interact.tsx'
 import { useRetainedCard, useRetainedScroll } from './ui/retain.ts'
 import { MODLIB_ART } from './modlib-art.ts'
-import { createPortal } from 'react-dom'
 import { assembleSurface, parseSurface, surfaceSource, type SurfaceManifest } from './surface.ts'
 import { StageIsland, standaloneDoc, type IslandControl } from './stage-island.tsx'
+import { useAiEdits } from './ai-edits.ts'
+import { useSurfaceView } from './surface-view.ts'
 
 /** 卡页认领的深链协议：noven://card/<id>[/module/<id>] 与 noven://file/<路径>。 */
 const NOVEN_LINK_PROTOCOLS = ['noven:']
@@ -103,11 +104,26 @@ function ModuleLibrary({ t, currentCardId, refTargets, userModules, onPick, onRe
   const groups: readonly ModGroup[] = [worldGroup, characterGroup, commonGroup]
   const refCards = (refTargets ?? []).filter(target => target.cardId !== currentCardId && (target.modules?.length ?? 0) > 0)
   const [refOpen, setRefOpen] = useState(false)
+  const [templateGroup, setTemplateGroup] = useState<'surface' | 'free3d' | undefined>(undefined)
   const [refCard, setRefCard] = useState('')
   const [refModule, setRefModule] = useState('')
   const [refName, setRefName] = useState('')
   const [refView, setRefView] = useState('')
   const [refChars, setRefChars] = useState('')
+  /** Template shelf for the two free-layer tiles; the grid stays one tile each. */
+  const templateOptions = templateGroup === 'surface'
+    ? [
+      { preset: 'surface', label: t('modules.template.surface.blank'), hint: t('modules.template.surface.blank.hint') },
+      { preset: 'surface.dashboard', label: t('modules.template.surface.dashboard'), hint: t('modules.template.surface.dashboard.hint') },
+      { preset: 'surface.gallery', label: t('modules.template.surface.gallery'), hint: t('modules.template.surface.gallery.hint') },
+    ]
+    : templateGroup === 'free3d'
+      ? [
+        { preset: 'free3d.editor', label: t('modules.template.free3d.editor'), hint: t('modules.template.free3d.editor.hint') },
+        { preset: 'free3d', label: t('modules.template.free3d.blank'), hint: t('modules.template.free3d.blank.hint') },
+        { preset: 'free3d.viewer', label: t('modules.template.free3d.viewer'), hint: t('modules.template.free3d.viewer.hint') },
+      ]
+      : []
   const selectedCard = refCards.find(target => target.cardId === refCard)
   const refModules = (selectedCard?.modules ?? []).filter(module => module.type === 'collection' || module.type === 'timeline')
   const selectedModule = refModules.find(module => module.id === refModule)
@@ -133,7 +149,12 @@ function ModuleLibrary({ t, currentCardId, refTargets, userModules, onPick, onRe
             <div className="nv-modlib-grid">
               {group.tiles.map(item => (
                 <button key={`${group.id}:${item.id}`} type="button" className="nv-modlib-tile"
-                  onClick={() => item.ai === true ? onGenerateUserModule() : onPick(item.preset, item.label)}>
+                  data-on={templateGroup === item.preset || undefined}
+                  onClick={() => {
+                    if (item.ai === true) { onGenerateUserModule(); return }
+                    if (item.preset === 'surface' || item.preset === 'free3d') { setTemplateGroup(item.preset); return }
+                    onPick(item.preset, item.label)
+                  }}>
                   {item.art !== undefined
                     ? <img className="nv-modlib-art" src={MODLIB_ART[item.art]} alt="" />
                     : <span className="nv-modlib-emptyart">＋</span>}
@@ -143,6 +164,23 @@ function ModuleLibrary({ t, currentCardId, refTargets, userModules, onPick, onRe
             </div>
           </section>
         ))}
+        {templateGroup !== undefined && (
+          <section className="nv-modlib-templates" aria-label={t('modules.template.title')}>
+            <div className="nv-modlib-grouplabel">{t('modules.template.title')}</div>
+            <div className="nv-modlib-templaterow">
+              {templateOptions.map(option => (
+                <button key={option.preset} type="button" className="nv-modlib-templatebtn"
+                  onClick={() => onPick(option.preset, option.label)}>
+                  <b>{option.label}</b>
+                  <small>{option.hint}</small>
+                </button>
+              ))}
+              <button type="button" className="nv-modlib-templateclose" onClick={() => setTemplateGroup(undefined)}>
+                {t('create.cancel')}
+              </button>
+            </div>
+          </section>
+        )}
         {(userModules ?? []).length > 0 && (
           <div className="nv-modlib-saved">
             <span>{t('modules.user.title')}</span>
@@ -364,9 +402,11 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
 
 /** 一个模块盒：标题（点击即改名）+ 正文（模块内富文本 / 预制模块渲染器）。
     子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
-function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, imageResources, saveBlock, saveMarkdown, send, onOpenModule, ask, seedComposer, readFile, onOpenFile, refTargets, siblings, refEdges, mapReferenced }: {
+function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, imageResources, saveBlock, saveMarkdown, send, onOpenModule, ask, seedComposer, readFile, onOpenFile, refTargets, siblings, refEdges, mapReferenced, locked = false, fill = false, resolveProjectAsset, reportDiagnostics }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
+  /** AI 正在写这个模块：内容只读，子模块入口仍可点。 */
+  readonly locked?: boolean
   /** 宿主卡身份——html 模块的 NOVEN_FRAME.card 拿它。 */
   readonly card: { readonly id: string, readonly name: string, readonly kind: string | undefined }
   readonly imageUrl: (resourceId: string) => string
@@ -400,6 +440,12 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
   readonly readFile?: (path: string) => Promise<string | undefined>
   /** 打开项目文件到画布页签。 */
   readonly onOpenFile?: (path: string) => void
+  /** Page mode: a free surface fills the canvas instead of a capped box. */
+  readonly fill?: boolean
+  /** Project-relative asset bytes resolved by the host (glb/texture/audio/json). */
+  readonly resolveProjectAsset?: (path: string, base?: string) => Promise<Blob | null>
+  /** Console tail reporter: the AI reads it back with surface_diagnostics. */
+  readonly reportDiagnostics?: (moduleId: string, entries: readonly CardDiagnosticEntry[]) => void
 }) {
   const widget = module.widget?.type
   const mapPlaces: TlPlace[] = (siblings ?? []).flatMap(candidate => {
@@ -436,41 +482,51 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
     setPlaceFocus({ cardId: card.id, mapModuleId: module.id, markerId: marker.id, label: marker.label })
     onOpenModule(timelineModules[0]!.id)
   }
+  const bodyRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    const body = bodyRef.current
+    if (body === null) return
+    if (locked) body.setAttribute('inert', '')
+    else body.removeAttribute('inert')
+  }, [locked])
   return (
-    <section className="nv-modbox">
-      {widget === 'ref' && (
-        <RefModule module={module} t={t} addr={addr} loadCard={loadCard} op={op}
-          onOpenCard={onOpenCard} refTargets={refTargets} />
-      )}
-      {widget === 'timeline' && <TimelineWidget module={module} t={t} send={send} cardId={card.id}
-        places={mapPlaces} onOpenPlace={openPlace}
-        links={{ characterTarget: profileTarget, relationTarget, characters: characterNames, relations: relationNames,
-          onOpenCharacter: profileTarget === undefined ? undefined : () => followTimeline(profileTarget),
-          onOpenRelation: relationTarget === undefined ? undefined : () => followTimeline(relationTarget),
-          onCreateCharacter: profileTarget === undefined ? () => { void send({ kind: 'add_module', name: '角色档案', preset: 'profile' }) } : undefined,
-          onCreateRelation: relationTarget === undefined ? () => { void send({ kind: 'add_module', name: '关系', preset: 'graph' }) } : undefined }} />}
-      {widget === 'scene' && <SceneWidget module={module} t={t} send={send} imageUrl={imageUrl} />}
-      {widget === 'relation' && <RelationWidget module={withDerivedRelation(module, refEdges)} t={t} send={send} imageUrl={imageUrl} />}
-      {widget === 'map' && <MapEditor module={module} t={t} send={send} ask={ask} imageUrl={imageUrl} imageResources={imageResources}
-        referenced={mapReferenced} onFilterTimeline={filterTimeline} onOpenSource={onOpenModule} />}
-      {widget === 'collection' && <CollectionWidget module={module} t={t} send={send} imageUrl={imageUrl} refTargets={refTargets}
-        siblings={siblings} ownerName={card.name} ownerId={card.id} cardKind={card.kind} onOpenModule={onOpenModule} places={mapPlaces} />}
-      {widget !== undefined && widget !== 'document' && widget !== 'html'
-        && widget !== 'timeline' && widget !== 'relation' && widget !== 'map' && widget !== 'collection' && widget !== 'scene' && (
-        <div className="nv-modbox-widget">
-          {fmt(t, 'modules.widgetSoon', { name: t((WIDGET_LABEL[widget] ?? 'editor.widget.name') as Parameters<ShellT>[0]) })}
-        </div>
-      )}
-      {widget === 'html' && (
-        <HtmlModule module={module} t={t} cardId={card.id} readFile={readFile} onOpenFile={onOpenFile}
-          card={card} imageUrl={imageUrl} imageResources={imageResources} send={send} ask={ask} seedComposer={seedComposer}
-          onOpenCard={onOpenCard} onOpenModule={onOpenModule}
-          cardData={{ name: card.name, kind: card.kind, modules: siblings ?? [] }} />
-      )}
-      {(widget === undefined || widget === 'document') && (
-        <CardMarkdownEditor markdown={moduleMarkdown(module.blocks)}
-          onSave={(text: string) => { void saveMarkdown(module, text) }} />
-      )}
+    <section className={`nv-modbox${locked ? ' nv-ai-locked' : ''}`} data-ai-locked={locked ? '' : undefined} aria-busy={locked || undefined}>
+      <div className="nv-modbox-body" ref={bodyRef}>
+        {widget === 'ref' && (
+          <RefModule module={module} t={t} addr={addr} loadCard={loadCard} op={op}
+            onOpenCard={onOpenCard} refTargets={refTargets} />
+        )}
+        {widget === 'timeline' && <TimelineWidget module={module} t={t} send={send} cardId={card.id}
+          places={mapPlaces} onOpenPlace={openPlace}
+          links={{ characterTarget: profileTarget, relationTarget, characters: characterNames, relations: relationNames,
+            onOpenCharacter: profileTarget === undefined ? undefined : () => followTimeline(profileTarget),
+            onOpenRelation: relationTarget === undefined ? undefined : () => followTimeline(relationTarget),
+            onCreateCharacter: profileTarget === undefined ? () => { void send({ kind: 'add_module', name: '角色档案', preset: 'profile' }) } : undefined,
+            onCreateRelation: relationTarget === undefined ? () => { void send({ kind: 'add_module', name: '关系', preset: 'graph' }) } : undefined }} />}
+        {widget === 'scene' && <SceneWidget module={module} t={t} send={send} imageUrl={imageUrl} />}
+        {widget === 'relation' && <RelationWidget module={withDerivedRelation(module, refEdges)} t={t} send={send} imageUrl={imageUrl} />}
+        {widget === 'map' && <MapEditor module={module} t={t} send={send} ask={ask} imageUrl={imageUrl} imageResources={imageResources}
+          referenced={mapReferenced} onFilterTimeline={filterTimeline} onOpenSource={onOpenModule} />}
+        {widget === 'collection' && <CollectionWidget module={module} t={t} send={send} imageUrl={imageUrl} refTargets={refTargets}
+          siblings={siblings} ownerName={card.name} ownerId={card.id} cardKind={card.kind} onOpenModule={onOpenModule} places={mapPlaces} />}
+        {widget !== undefined && widget !== 'document' && widget !== 'html'
+          && widget !== 'timeline' && widget !== 'relation' && widget !== 'map' && widget !== 'collection' && widget !== 'scene' && (
+          <div className="nv-modbox-widget">
+            {fmt(t, 'modules.widgetSoon', { name: t((WIDGET_LABEL[widget] ?? 'editor.widget.name') as Parameters<ShellT>[0]) })}
+          </div>
+        )}
+        {widget === 'html' && (
+          <HtmlModule module={module} t={t} cardId={card.id} readFile={readFile} onOpenFile={onOpenFile}
+            card={card} imageUrl={imageUrl} imageResources={imageResources} send={send} ask={ask} seedComposer={seedComposer}
+            onOpenCard={onOpenCard} onOpenModule={onOpenModule} fill={fill} resolveProjectAsset={resolveProjectAsset}
+            reportDiagnostics={reportDiagnostics}
+            cardData={{ name: card.name, kind: card.kind, modules: siblings ?? [] }} />
+        )}
+        {(widget === undefined || widget === 'document') && (
+          <CardMarkdownEditor markdown={moduleMarkdown(module.blocks)} locked={locked}
+            onSave={(text: string) => { void saveMarkdown(module, text) }} />
+        )}
+      </div>
       {module.children.length > 0 && (
         <div className="nv-page-children">
           {module.children.map(child => (
@@ -506,6 +562,7 @@ interface HtmlCardData {
 const HTML_WRITE_KINDS = new Set([
   'collection_set_value', 'collection_update_item', 'collection_add_item', 'collection_move_item',
   'timeline_add_event', 'timeline_update_event', 'timeline_remove_event', 'write_text',
+  'surface_set_state',
 ])
 
 const readTheme = (): { dark: boolean, accent: string, text: string, surface: string } => {
@@ -518,41 +575,126 @@ const readTheme = (): { dark: boolean, accent: string, text: string, surface: st
   }
 }
 
-/** Fullscreen shell for a free surface: cover, story, start/continue, pause, slots, export/share. */
-function GameShell({ html, frame, t, moduleName, cardId, moduleId, cardData, assetTypes, resolveAsset, onCardRead, onCardWrite, ask, onClose, threeSource, manifest, coverUrl, onOpenCard, onOpenModule }: {
-  readonly html: string
-  readonly frame: { card: { name: string, kind?: string }, base: string, theme: { dark: boolean, accent: string, text: string, surface: string }, assets: Record<string, string> }
+/**
+ * Game chrome for a free surface: save/pause/slots/screenshot/export/share.
+ * It is a floating bar over the page, not a shell — the page owns the canvas,
+ * fullscreen is a canvas state, and these buttons only expose actions.
+ */
+function SurfaceGameBar({ t, manifest, status, paused, slots, slotsOpen, actions }: {
   readonly t: ShellT
-  readonly moduleName: string
-  readonly cardId: string
-  readonly moduleId: string
-  readonly cardData: HtmlCardData
-  readonly assetTypes: Record<string, string>
-  readonly resolveAsset: (path: string) => Promise<Blob | null>
-  readonly onCardRead: () => unknown
-  readonly onCardWrite: (command: unknown) => Promise<{ ok: boolean, error?: string }>
-  readonly ask: (text: string) => Promise<void>
-  readonly onClose: () => void
-  readonly threeSource?: string
   readonly manifest?: SurfaceManifest
-  readonly coverUrl?: string
+  readonly status: string
+  readonly paused: boolean
+  readonly slots: readonly { readonly n: number, readonly saved: boolean, readonly at: number }[]
+  readonly slotsOpen: boolean
+  readonly actions: {
+    readonly save: () => void
+    readonly load: () => void
+    readonly pause: () => void
+    readonly slots: () => void
+    readonly saveSlot: (n: number) => void
+    readonly loadSlot: (n: number) => void
+    readonly capture: () => void
+    readonly exportHtml: () => void
+    readonly share: () => void
+  }
+}) {
+  return (
+    <div className="nv-surfacebar">
+      {status !== '' && <span className="nv-surfacebar-status">{status}</span>}
+      {manifest === undefined ? (
+        <>
+          <button type="button" onClick={actions.save}>{t('game.save')}</button>
+          <button type="button" onClick={actions.load}>{t('game.load')}</button>
+        </>
+      ) : (
+        <>
+          <button type="button" onClick={actions.pause}>{paused ? t('game.resume') : t('game.pause')}</button>
+          <button type="button" onClick={actions.slots}>{t('game.slots')}</button>
+        </>
+      )}
+      <button type="button" onClick={actions.capture}>{t('game.screenshot')}</button>
+      <button type="button" onClick={actions.exportHtml}>{t('game.export')}</button>
+      <button type="button" onClick={actions.share}>{t('game.share')}</button>
+      {slotsOpen && (
+        <div className="nv-surfacebar-slots">
+          {[1, 2, 3].map(n => {
+            const slot = slots.find(candidate => candidate.n === n)
+            return (
+              <div className="nv-surfacebar-slot" key={n} data-slot={n}>
+                <b>{fmt(t, 'game.slot', { n })}</b>
+                <span>{slot?.saved === true ? new Date(slot.at).toLocaleString() : t('game.slotEmpty')}</span>
+                <button type="button" onClick={() => actions.saveSlot(n)}>{t('game.saveSlot')}</button>
+                <button type="button" disabled={slot?.saved !== true} onClick={() => actions.loadSlot(n)}>{t('game.loadSlot')}</button>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+/** HTML 小组件：live file 或 inline source 都进同一沙箱；主题/资源/卡数据桥由岛契约提供。 */
+function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, imageResources, send, ask, seedComposer, cardData, onOpenCard, onOpenModule, fill = false, resolveProjectAsset, reportDiagnostics }: {
+  readonly module: CardModuleDoc
+  readonly t: ShellT
+  readonly cardId: string
+  readonly readFile?: (path: string) => Promise<string | undefined>
+  readonly onOpenFile?: (path: string) => void
+  readonly card: { readonly name: string, readonly kind: string | undefined }
+  readonly imageUrl: (resourceId: string) => string
+  readonly imageResources: readonly { readonly id: string, readonly mediaType?: string }[]
+  readonly send: WidgetSend
+  readonly ask: (text: string) => Promise<void>
+  readonly seedComposer?: (text: string) => void
+  readonly cardData: HtmlCardData
   readonly onOpenCard?: (cardId: string, moduleId?: string) => void
   readonly onOpenModule?: (moduleId: string) => void
+  /** Page mode: the surface owns the canvas instead of a capped box in the reading flow. */
+  readonly fill?: boolean
+  /** Project-relative asset bytes (glb/texture/audio/json) resolved by the host. */
+  readonly resolveProjectAsset?: (path: string, base?: string) => Promise<Blob | null>
+  /** Console tail reporter for the AI's surface_diagnostics read-back. */
+  readonly reportDiagnostics?: (moduleId: string, entries: readonly CardDiagnosticEntry[]) => void
 }) {
-  interface SlotInfo { readonly n: number, readonly saved: boolean, readonly at: number }
-  const control = useRef<IslandControl | null>(null)
+  const view = useSurfaceView()
+  const path = module.widget?.path
+  const [fileText, setFileText] = useState<string | null | undefined>(undefined)
+  const [theme, setTheme] = useState(readTheme)
+  const [diagnostics, setDiagnostics] = useState(false)
+  const [logs, setLogs] = useState<readonly { readonly level: string, readonly text: string }[]>([])
+  const [threeSource, setThreeSource] = useState<string | undefined>(undefined)
+  const [threeError, setThreeError] = useState('')
   const [status, setStatus] = useState('')
-  const [started, setStarted] = useState(manifest === undefined)
   const [paused, setPaused] = useState(false)
   const [slotsOpen, setSlotsOpen] = useState(false)
-  const [slots, setSlots] = useState<readonly SlotInfo[]>([])
+  const [slots, setSlots] = useState<readonly { readonly n: number, readonly saved: boolean, readonly at: number }[]>([])
   const pendingSlot = useRef<number | null>(null)
-  const togglePause = (): void => {
-    const next = !paused
-    setPaused(next)
-    control.current?.setPaused(next)
-  }
-  const storageKey = `noven-game:${cardId}:${moduleId}`
+  const control = useRef<IslandControl | null>(null)
+  const reportBuffer = useRef<CardDiagnosticEntry[]>([])
+  const reportTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => {
+    if (reportTimer.current !== undefined) clearTimeout(reportTimer.current)
+    const pending = reportBuffer.current.splice(0)
+    if (pending.length > 0) reportDiagnostics?.(module.id, pending)
+  }, [module.id, reportDiagnostics])
+  const noteLog = useCallback((entry: { readonly level: string, readonly text: string }) => {
+    const normalized: CardDiagnosticEntry = {
+      level: entry.level === 'error' || entry.level === 'warn' ? entry.level : 'log',
+      text: entry.text,
+      at: Date.now(),
+    }
+    setLogs(current => [...current.slice(-39), normalized])
+    if (reportDiagnostics === undefined) return
+    reportBuffer.current.push(normalized)
+    if (reportTimer.current !== undefined) clearTimeout(reportTimer.current)
+    reportTimer.current = setTimeout(() => {
+      const entries = reportBuffer.current.splice(0).slice(-40)
+      if (entries.length > 0) reportDiagnostics(module.id, entries)
+    }, 700)
+  }, [module.id, reportDiagnostics])
+  const storageKey = `noven-game:${cardId}:${module.id}`
   const slotKey = (n: number): string => `${storageKey}:slot:${String(n)}`
   const readSlot = (n: number): { readonly at: number, readonly state: unknown } | undefined => {
     try {
@@ -565,13 +707,6 @@ function GameShell({ html, frame, t, moduleName, cardId, moduleId, cardData, ass
       return undefined
     }
   }
-  useEffect(() => {
-    setSlots([1, 2, 3].map(n => {
-      const slot = readSlot(n)
-      return { n, saved: slot !== undefined, at: slot?.at ?? 0 }
-    }))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storageKey])
   const readSave = (): unknown => {
     try {
       const raw = localStorage.getItem(storageKey)
@@ -580,7 +715,68 @@ function GameShell({ html, frame, t, moduleName, cardId, moduleId, cardData, ass
       return null
     }
   }
-  /** 旧 HTML 模块的单存档；带 manifest 的自由工程走槽位。 */
+  useEffect(() => {
+    setSlots([1, 2, 3].map(n => {
+      const slot = readSlot(n)
+      return { n, saved: slot !== undefined, at: slot?.at ?? 0 }
+    }))
+  }, [storageKey])
+  useEffect(() => {
+    if (path === undefined || readFile === undefined) { setFileText(undefined); return }
+    let live = true
+    setFileText(undefined)
+    void readFile(path).then(text => { if (live) setFileText(text ?? null) })
+    return () => { live = false }
+  }, [path, readFile])
+  useEffect(() => {
+    const observer = new MutationObserver(() => setTheme(readTheme()))
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-theme'] })
+    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
+    const onScheme = (): void => setTheme(readTheme())
+    media?.addEventListener?.('change', onScheme)
+    return () => { observer.disconnect(); media?.removeEventListener?.('change', onScheme) }
+  }, [])
+  const text = module.blocks.find((block): block is CardBlockView & { kind: 'text' } => block.kind === 'text')?.text ?? ''
+  const assets = useMemo(() => Object.fromEntries(imageResources.map(resource => [resource.id, imageUrl(resource.id)])), [imageResources, imageUrl])
+  const assetTypes = useMemo(() => Object.fromEntries(imageResources.map(resource => [resource.id, resource.mediaType ?? ''])), [imageResources])
+  const resolveAsset = useCallback(async (assetPath: string, base?: string): Promise<Blob | null> => {
+    const declared = assets[assetPath]
+    if (declared !== undefined && declared !== '') {
+      const response = await fetch(declared).catch(() => undefined)
+      return response?.ok === true ? response.blob() : null
+    }
+    if (resolveProjectAsset !== undefined && !assetPath.startsWith('data:')) return resolveProjectAsset(assetPath, base)
+    const url = assetPath.startsWith('http') || assetPath.startsWith('/') ? assetPath : imageUrl(assetPath)
+    if (url === '') return null
+    const response = await fetch(url).catch(() => undefined)
+    return response?.ok === true ? response.blob() : null
+  }, [assets, imageUrl, resolveProjectAsset])
+  const surface = useMemo(() => path === undefined ? parseSurface(text) : undefined, [path, text])
+  const html = path === undefined ? (surface === undefined ? text : assembleSurface(surface)) : (typeof fileText === 'string' ? fileText : '')
+  const manifest = surface?.manifest
+  const needsThree = (surface === undefined ? html : surfaceSource(surface)).includes('NOVEN_THREE')
+  useEffect(() => {
+    if (!needsThree) { setThreeSource(undefined); setThreeError(''); return }
+    let live = true
+    setThreeSource(undefined); setThreeError('')
+    void fetch(new URL('/api/noven-three', window.location.origin))
+      .then(async response => {
+        if (!response.ok) throw new Error(`three runtime ${String(response.status)}`)
+        return response.text()
+      })
+      .then(source => { if (live) setThreeSource(source) })
+      .catch((error: unknown) => { if (live) setThreeError(String(error instanceof Error ? error.message : error)) })
+    return () => { live = false }
+  }, [needsThree])
+  const frame = useMemo(() => ({
+    card: { name: card.name, ...(card.kind === undefined ? {} : { kind: card.kind }) },
+    moduleId: module.id,
+    base: path !== undefined && path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '',
+    theme,
+    assets,
+    ...(surface?.state === undefined ? {} : { surfaceState: surface.state }),
+    surfaceVersion: surface?.stateVersion ?? 0,
+  }), [assets, card.kind, card.name, module.id, path, surface, theme])
   const save = (): void => {
     control.current?.requestSave()
     setStatus(t('game.saving'))
@@ -600,19 +796,15 @@ function GameShell({ html, frame, t, moduleName, cardId, moduleId, cardData, ass
     const slot = readSlot(n)
     if (slot === undefined) { setStatus(t('game.noSave')); return }
     control.current?.loadState(slot.state)
-    setStarted(true)
     setPaused(false)
     control.current?.setPaused(false)
     setSlotsOpen(false)
     setStatus(fmt(t, 'game.loadedSlot', { n }))
   }
-  const latestSlot = slots.filter(slot => slot.saved).sort((a, b) => b.at - a.at)[0]
-  const continueLatest = (): void => { if (latestSlot !== undefined) loadSlot(latestSlot.n) }
-  const downloadDataUrl = (data: string, name: string): void => {
-    const anchor = document.createElement('a')
-    anchor.href = data
-    anchor.download = name
-    anchor.click()
+  const togglePause = (): void => {
+    const next = !paused
+    setPaused(next)
+    control.current?.setPaused(next)
   }
   const capture = (): void => { control.current?.capture() }
   const inlineAssets = async (): Promise<Record<string, string>> => {
@@ -642,210 +834,28 @@ function GameShell({ html, frame, t, moduleName, cardId, moduleId, cardData, ass
   const exportHtml = (): void => {
     void (async () => {
       setStatus(t('game.exporting'))
-      const assets = await inlineAssets()
+      const inlined = await inlineAssets()
       let runtimeSource = threeSource
       if (html.includes('NOVEN_THREE') && runtimeSource === undefined) {
         const response = await fetch(new URL('/api/noven-three', window.location.origin)).catch(() => undefined)
         if (response === undefined || !response.ok) { setStatus(t('game.exportFailed')); return }
         runtimeSource = await response.text()
       }
-      const documentHtml = standaloneDoc(html, { ...frame, assets }, cardData, storageKey, runtimeSource)
+      const documentHtml = standaloneDoc(html, { ...frame, assets: inlined }, cardData, storageKey, runtimeSource)
       const blob = new Blob([documentHtml], { type: 'text/html;charset=utf-8' })
       const url = URL.createObjectURL(blob)
       const anchor = document.createElement('a')
       anchor.href = url
-      anchor.download = `${moduleName.replace(/[\\/:*?"<>|]/g, '_') || 'game'}.html`
+      anchor.download = `${(manifest?.name ?? module.name).replace(/[\\/:*?"<>|]/g, '_') || 'surface'}.html`
       anchor.click()
       window.setTimeout(() => URL.revokeObjectURL(url), 5000)
-      setStatus(fmt(t, 'game.exportedAssets', { n: Object.keys(assets).length }))
+      setStatus(fmt(t, 'game.exportedAssets', { n: Object.keys(inlined).length }))
     })()
   }
   const share = (): void => {
-    const link = `noven://card/${cardId}/module/${moduleId}`
+    const link = `noven://card/${cardId}/module/${module.id}`
     void navigator.clipboard?.writeText(link).then(() => setStatus(t('game.shared'))).catch(() => setStatus(link))
   }
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
-      if (slotsOpen) { setSlotsOpen(false); return }
-      if (paused) { setPaused(false); control.current?.setPaused(false); return }
-      if (manifest !== undefined && started) { setPaused(true); return }
-      onClose()
-    }
-    window.addEventListener('keydown', onKey)
-    return () => { window.removeEventListener('keydown', onKey) }
-  }, [manifest, started, paused, slotsOpen, onClose])
-  return createPortal(
-    <div className="nv-game-shell" data-surface={manifest === undefined ? undefined : 'manifest'}>
-      <div className="nv-game-shell-head">
-        <b>{manifest?.name ?? moduleName ?? t('game.title')}</b>
-        <span className="nv-game-shell-status">{status}</span>
-        <span className="nv-game-shell-spacer" />
-        {manifest === undefined ? (
-          <>
-            <button type="button" onClick={save}>{t('game.save')}</button>
-            <button type="button" onClick={load}>{t('game.load')}</button>
-          </>
-        ) : (
-          <>
-            <button type="button" onClick={togglePause}>{paused ? t('game.resume') : t('game.pause')}</button>
-            <button type="button" onClick={() => setSlotsOpen(value => !value)}>{t('game.slots')}</button>
-          </>
-        )}
-        <button type="button" onClick={capture}>{t('game.screenshot')}</button>
-        <button type="button" onClick={exportHtml}>{t('game.export')}</button>
-        <button type="button" onClick={share}>{t('game.share')}</button>
-        <button type="button" className="nv-game-shell-close" onClick={onClose}>{t('game.exit')}</button>
-      </div>
-      {slotsOpen && (
-        <div className="nv-game-slots">
-          {[1, 2, 3].map(n => {
-            const slot = slots.find(candidate => candidate.n === n)
-            return (
-              <div className="nv-game-slot" key={n} data-slot={n}>
-                <b>{fmt(t, 'game.slot', { n })}</b>
-                <span>{slot?.saved === true ? new Date(slot.at).toLocaleString() : t('game.slotEmpty')}</span>
-                <button type="button" onClick={() => saveSlot(n)}>{t('game.saveSlot')}</button>
-                <button type="button" disabled={slot?.saved !== true} onClick={() => loadSlot(n)}>{t('game.loadSlot')}</button>
-              </div>
-            )
-          })}
-        </div>
-      )}
-      <div className={`nv-game-shell-stage${started ? '' : ' nv-game-covered'}`}>
-        <StageIsland html={html} frame={frame} t={t} fillParent controlRef={control} threeSource={threeSource}
-          resolveAsset={resolveAsset} onCardRead={onCardRead} onCardWrite={onCardWrite}
-          onScreenshot={result => {
-            if (result.error !== undefined) setStatus(result.error)
-            else if (result.data !== undefined) downloadDataUrl(result.data, `${manifest?.name ?? moduleName ?? 'game'}.png`)
-          }}
-          onGameSave={state => {
-            try {
-              if (manifest !== undefined && pendingSlot.current !== null) {
-                const n = pendingSlot.current
-                pendingSlot.current = null
-                localStorage.setItem(slotKey(n), JSON.stringify({ at: Date.now(), state }))
-                setSlots(current => current.map(slot => slot.n === n ? { ...slot, saved: true, at: Date.now() } : slot))
-                setStatus(fmt(t, 'game.savedSlot', { n }))
-                return
-              }
-              localStorage.setItem(storageKey, JSON.stringify(state))
-              setStatus(t('game.saved'))
-            } catch {
-              setStatus(t('game.saveFailed'))
-            }
-          }}
-          onGameLoad={() => readSave()}
-          onCall={call => { if (call.kind === 'compose' || call.kind === 'send') void ask(call.text ?? ''); else if (call.kind === 'openModule' && call.moduleId !== undefined) { setModuleLinkFocus({ cardId, targetModuleId: call.moduleId, sourceModuleId: moduleId, sourceModuleName: moduleName }); if (call.itemId !== undefined) setCollectionFocus({ cardId, moduleId: call.moduleId, itemId: call.itemId }); onOpenModule?.(call.moduleId) } else if (call.kind === 'openCard' && call.cardId !== undefined) onOpenCard?.(call.cardId); else if (call.kind === 'navigate' && call.target !== undefined) { const target = call.target; if (target.cardId !== undefined) onOpenCard?.(target.cardId, target.moduleId); else if (target.moduleId !== undefined) { setModuleLinkFocus({ cardId, targetModuleId: target.moduleId, sourceModuleId: moduleId, sourceModuleName: moduleName }); if (target.itemId !== undefined) setCollectionFocus({ cardId, moduleId: target.moduleId, itemId: target.itemId }); onOpenModule?.(target.moduleId) } } }} />
-      </div>
-      {manifest !== undefined && !started && (
-        <div className="nv-game-start">
-          <div className="nv-game-start-cover">
-            {coverUrl === undefined || coverUrl === ''
-              ? <span>{manifest.name.slice(0, 1)}</span>
-              : <img src={coverUrl} alt="" />}
-          </div>
-          <div className="nv-game-start-story">
-            <small>{t('game.surfaceKicker')}</small>
-            <h1>{manifest.name}</h1>
-            {manifest.description !== '' && <p>{manifest.description}</p>}
-          </div>
-          <div className="nv-game-start-actions">
-            <button type="button" className="nv-game-start-primary" onClick={() => { setPaused(false); setStarted(true) }}>{t('game.start')}</button>
-            {latestSlot !== undefined && <button type="button" onClick={continueLatest}>{t('game.continue')}</button>}
-            <button type="button" onClick={onClose}>{t('game.exit')}</button>
-          </div>
-        </div>
-      )}
-      {manifest !== undefined && paused && (
-        <div className="nv-game-pause">
-          <div>
-            <small>{t('game.paused')}</small>
-            <h2>{manifest.name}</h2>
-            <button type="button" className="nv-game-start-primary" onClick={togglePause}>{t('game.resume')}</button>
-            <button type="button" onClick={onClose}>{t('game.exit')}</button>
-          </div>
-        </div>
-      )}
-    </div>,
-    document.body,
-  )
-}
-
-/** HTML 小组件：live file 或 inline source 都进同一沙箱；主题/资源/卡数据桥由岛契约提供。 */
-function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, imageResources, send, ask, seedComposer, cardData, onOpenCard, onOpenModule }: {
-  readonly module: CardModuleDoc
-  readonly t: ShellT
-  readonly cardId: string
-  readonly readFile?: (path: string) => Promise<string | undefined>
-  readonly onOpenFile?: (path: string) => void
-  readonly card: { readonly name: string, readonly kind: string | undefined }
-  readonly imageUrl: (resourceId: string) => string
-  readonly imageResources: readonly { readonly id: string, readonly mediaType?: string }[]
-  readonly send: WidgetSend
-  readonly ask: (text: string) => Promise<void>
-  readonly seedComposer?: (text: string) => void
-  readonly cardData: HtmlCardData
-  readonly onOpenCard?: (cardId: string, moduleId?: string) => void
-  readonly onOpenModule?: (moduleId: string) => void
-}) {
-  const path = module.widget?.path
-  const [fileText, setFileText] = useState<string | null | undefined>(undefined)
-  const [theme, setTheme] = useState(readTheme)
-  const [playing, setPlaying] = useState(false)
-  const [diagnostics, setDiagnostics] = useState(false)
-  const [logs, setLogs] = useState<readonly { readonly level: string, readonly text: string }[]>([])
-  const [threeSource, setThreeSource] = useState<string | undefined>(undefined)
-  const [threeError, setThreeError] = useState('')
-  const control = useRef<IslandControl | null>(null)
-  useEffect(() => {
-    if (path === undefined || readFile === undefined) { setFileText(undefined); return }
-    let live = true
-    setFileText(undefined)
-    void readFile(path).then(text => { if (live) setFileText(text ?? null) })
-    return () => { live = false }
-  }, [path, readFile])
-  useEffect(() => {
-    const observer = new MutationObserver(() => setTheme(readTheme()))
-    observer.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-theme'] })
-    const media = window.matchMedia?.('(prefers-color-scheme: dark)')
-    const onScheme = (): void => setTheme(readTheme())
-    media?.addEventListener?.('change', onScheme)
-    return () => { observer.disconnect(); media?.removeEventListener?.('change', onScheme) }
-  }, [])
-  const text = module.blocks.find((block): block is CardBlockView & { kind: 'text' } => block.kind === 'text')?.text ?? ''
-  const assets = useMemo(() => Object.fromEntries(imageResources.map(resource => [resource.id, imageUrl(resource.id)])), [imageResources, imageUrl])
-  const resolveAsset = useCallback(async (assetPath: string): Promise<Blob | null> => {
-    const url = assetPath.startsWith('http') || assetPath.startsWith('/') ? assetPath : imageUrl(assetPath)
-    if (url === '') return null
-    const response = await fetch(url).catch(() => undefined)
-    return response?.ok === true ? response.blob() : null
-  }, [imageUrl])
-  const surface = useMemo(() => path === undefined ? parseSurface(text) : undefined, [path, text])
-  const html = path === undefined ? (surface === undefined ? text : assembleSurface(surface)) : (typeof fileText === 'string' ? fileText : '')
-  const manifest = surface?.manifest
-  const needsThree = (surface === undefined ? html : surfaceSource(surface)).includes('NOVEN_THREE')
-  const coverUrl = manifest?.cover === undefined ? '' : /^(data:|https?:|\/)/.test(manifest.cover) ? manifest.cover : imageUrl(manifest.cover)
-  const fullLauncher = manifest?.fullscreen === true
-  useEffect(() => {
-    if (!needsThree) { setThreeSource(undefined); setThreeError(''); return }
-    let live = true
-    setThreeSource(undefined); setThreeError('')
-    void fetch(new URL('/api/noven-three', window.location.origin))
-      .then(async response => {
-        if (!response.ok) throw new Error(`three runtime ${String(response.status)}`)
-        return response.text()
-      })
-      .then(source => { if (live) setThreeSource(source) })
-      .catch((error: unknown) => { if (live) setThreeError(String(error instanceof Error ? error.message : error)) })
-    return () => { live = false }
-  }, [needsThree])
-  const frame = useMemo(() => ({
-    card: { name: card.name, ...(card.kind === undefined ? {} : { kind: card.kind }) },
-    base: path !== undefined && path.includes('/') ? path.slice(0, path.lastIndexOf('/')) : '',
-    theme,
-    assets,
-  }), [assets, card.kind, card.name, path, theme])
   const onCardWrite = useCallback(async (command: unknown): Promise<{ ok: boolean, error?: string }> => {
     if (typeof command !== 'object' || command === null) return { ok: false, error: 'command must be an object' }
     const kind = typeof (command as Record<string, unknown>).kind === 'string' ? String((command as Record<string, unknown>).kind) : ''
@@ -867,63 +877,85 @@ function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, i
         <button type="button" className="nv-htmlfile-open" onClick={() => onOpenFile(path)}>{t('editor.file.open')}</button>
       )}
       <button type="button" className="nv-htmlfile-open" onClick={() => seedComposer?.(fmt(t, 'editor.html.aiPrompt', { name: module.name }))}>{t('editor.html.aiEdit')}</button>
-      {!fullLauncher && (
-        <>
-          <button type="button" className="nv-htmlfile-open" onClick={() => setDiagnostics(value => !value)}>{t('editor.html.diagnostics')}{logs.length > 0 ? ` ${String(logs.length)}` : ''}</button>
-          <button type="button" className="nv-htmlfile-open" onClick={() => control.current?.capture()}>{t('editor.html.screenshot')}</button>
-          <button type="button" className="nv-htmlfile-open" disabled={html === ''} onClick={() => setPlaying(true)}>{t('editor.html.play')}</button>
-        </>
+      <button type="button" className="nv-htmlfile-open" onClick={() => setDiagnostics(value => !value)}>{t('editor.html.diagnostics')}{logs.length > 0 ? ` ${String(logs.length)}` : ''}</button>
+      <button type="button" className="nv-htmlfile-open" onClick={capture}>{t('editor.html.screenshot')}</button>
+      {view !== undefined && (
+        <button type="button" className="nv-htmlfile-open" data-active={view.immersive || undefined}
+          onClick={view.toggleImmersive}>{view.immersive ? t('editor.html.exitFullscreen') : t('editor.html.fullscreen')}</button>
       )}
     </div>
   )
   return (
-    <div className="nv-htmlfile">
+    <div className={`nv-htmlfile${fill ? ' nv-htmlfile-fill' : ''}`}>
       {sourceBar}
       {path !== undefined && fileText === undefined && <div className="nv-htmlfile-empty">{t('canvas.files.loading')}</div>}
       {path !== undefined && fileText === null && <div className="nv-htmlfile-empty">{t('editor.file.missing')}</div>}
       {html === '' ? (
         <div className="nv-htmlfile-empty">{t('editor.html.empty')}</div>
-      ) : fullLauncher && manifest !== undefined ? (
-        <div className="nv-surface-launch">
-          <figure>{coverUrl === '' ? <span>{manifest.name.slice(0, 1)}</span> : <img src={coverUrl} alt="" />}</figure>
-          <div className="nv-surface-story"><h3>{manifest.name}</h3>{manifest.description !== '' && <p>{manifest.description}</p>}</div>
-          <button type="button" onClick={() => setPlaying(true)}>{t('surface.start')}</button>
-        </div>
       ) : needsThree && threeError !== '' ? (
         <div className="nv-htmlfile-empty">{threeError}</div>
       ) : needsThree && threeSource === undefined ? (
         <div className="nv-htmlfile-empty">{t('editor.html.runtimeLoading')}</div>
       ) : (
         <HtmlBoundary t={t}>
-          <StageIsland html={html} frame={frame} t={t} cap={module.widget?.height ?? 520}
-            controlRef={control} showSource={false} threeSource={threeSource}
-            resolveAsset={resolveAsset}
-            onCardRead={() => cardData}
-            onCardWrite={onCardWrite}
-            onConsole={entry => setLogs(current => [...current.slice(-39), entry])}
-            onScreenshot={result => {
-              if (result.error !== undefined) {
-                setLogs(current => [...current.slice(-39), { level: 'error', text: result.error ?? '' }])
-                setDiagnostics(true)
-                return
-              }
-              if (result.data === undefined) return
-              const anchor = document.createElement('a')
-              anchor.href = result.data
-              anchor.download = `${module.name || 'surface'}.png`
-              anchor.click()
-              setLogs(current => [...current.slice(-39), { level: 'log', text: t('editor.html.shotSaved') }])
-            }}
-            onCall={call => {
-              if (call.kind === 'compose' || call.kind === 'send') void ask(call.text ?? '')
-              else if (call.kind === 'openModule' && call.moduleId !== undefined) { setModuleLinkFocus({ cardId, targetModuleId: call.moduleId, sourceModuleId: module.id, sourceModuleName: module.name }); if (call.itemId !== undefined) setCollectionFocus({ cardId, moduleId: call.moduleId, itemId: call.itemId }); onOpenModule?.(call.moduleId) }
-              else if (call.kind === 'openCard' && call.cardId !== undefined) onOpenCard?.(call.cardId)
-              else if (call.kind === 'navigate' && call.target !== undefined) {
-                const target = call.target
-                if (target.cardId !== undefined) onOpenCard?.(target.cardId, target.moduleId)
-                else if (target.moduleId !== undefined) { setModuleLinkFocus({ cardId, targetModuleId: target.moduleId, sourceModuleId: module.id, sourceModuleName: module.name }); if (target.itemId !== undefined) setCollectionFocus({ cardId, moduleId: target.moduleId, itemId: target.itemId }); onOpenModule?.(target.moduleId) }
-              }
-            }} />
+          <div className={`nv-htmlfile-stage${fill ? ' nv-htmlfile-stage-fill' : ''}`}>
+            <StageIsland html={html} frame={frame} t={t} controlRef={control} showSource={false} threeSource={threeSource}
+              fillParent={fill}
+              {...(fill ? {} : { cap: module.widget?.height ?? 520 })}
+              resolveAsset={resolveAsset}
+              onCardRead={() => cardData}
+              onCardWrite={onCardWrite}
+              onConsole={noteLog}
+              onEscape={() => {
+                if (view === undefined) return
+                if (view.immersive) { view.toggleImmersive(); return }
+                if (view.canvasFullscreen) view.toggleCanvasFullscreen()
+              }}
+              onGameSave={state => {
+                try {
+                  if (manifest !== undefined && pendingSlot.current !== null) {
+                    const n = pendingSlot.current
+                    pendingSlot.current = null
+                    localStorage.setItem(slotKey(n), JSON.stringify({ at: Date.now(), state }))
+                    setSlots(current => current.map(slot => slot.n === n ? { ...slot, saved: true, at: Date.now() } : slot))
+                    setStatus(fmt(t, 'game.savedSlot', { n }))
+                    return
+                  }
+                  localStorage.setItem(storageKey, JSON.stringify(state))
+                  setStatus(t('game.saved'))
+                } catch {
+                  setStatus(t('game.saveFailed'))
+                }
+              }}
+              onGameLoad={() => readSave()}
+              onScreenshot={result => {
+                if (result.error !== undefined) {
+                  noteLog({ level: 'error', text: result.error ?? '' })
+                  setDiagnostics(true)
+                  return
+                }
+                if (result.data === undefined) return
+                const anchor = document.createElement('a')
+                anchor.href = result.data
+                anchor.download = `${module.name || 'surface'}.png`
+                anchor.click()
+                noteLog({ level: 'log', text: t('editor.html.shotSaved') })
+              }}
+              onCall={call => {
+                if (call.kind === 'compose' || call.kind === 'send') void ask(call.text ?? '')
+                else if (call.kind === 'openModule' && call.moduleId !== undefined) { setModuleLinkFocus({ cardId, targetModuleId: call.moduleId, sourceModuleId: module.id, sourceModuleName: module.name }); if (call.itemId !== undefined) setCollectionFocus({ cardId, moduleId: call.moduleId, itemId: call.itemId }); onOpenModule?.(call.moduleId) }
+                else if (call.kind === 'openCard' && call.cardId !== undefined) onOpenCard?.(call.cardId)
+                else if (call.kind === 'navigate' && call.target !== undefined) {
+                  const target = call.target
+                  if (target.cardId !== undefined) onOpenCard?.(target.cardId, target.moduleId)
+                  else if (target.moduleId !== undefined) { setModuleLinkFocus({ cardId, targetModuleId: target.moduleId, sourceModuleId: module.id, sourceModuleName: module.name }); if (target.itemId !== undefined) setCollectionFocus({ cardId, moduleId: target.moduleId, itemId: target.itemId }); onOpenModule?.(target.moduleId) }
+                }
+              }} />
+            {fill && manifest?.chrome !== 'none' && (
+              <SurfaceGameBar t={t} manifest={manifest} status={status} paused={paused} slots={slots} slotsOpen={slotsOpen}
+                actions={{ save, load, pause: togglePause, slots: () => setSlotsOpen(value => !value), saveSlot, loadSlot, capture, exportHtml, share }} />
+            )}
+          </div>
         </HtmlBoundary>
       )}
       {diagnostics && (
@@ -933,14 +965,6 @@ function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, i
             ? <p>{t('editor.html.noLogs')}</p>
             : logs.map((entry, index) => <div key={`${String(index)}:${entry.level}`} data-level={entry.level}><span>{entry.level}</span>{entry.text}</div>)}
         </div>
-      )}
-      {playing && html !== '' && (
-        <GameShell html={html} frame={frame} t={t} moduleName={module.name} cardId={cardId} moduleId={module.id} cardData={cardData} threeSource={threeSource}
-          onOpenCard={onOpenCard} onOpenModule={onOpenModule}
-          manifest={manifest} coverUrl={coverUrl}
-          assetTypes={Object.fromEntries(imageResources.map(resource => [resource.id, resource.mediaType ?? '']))}
-          resolveAsset={resolveAsset} onCardRead={() => cardData} onCardWrite={onCardWrite} ask={ask}
-          onClose={() => setPlaying(false)} />
       )}
     </div>
   )
@@ -976,11 +1000,12 @@ function overviewArt(module: CardModuleDoc, cardKind?: string): string {
 }
 
 /** 总览里一页模块：模块库同款插画 + 名称，点击翻到那一页。 */
-function OverviewTile({ module, onOpen, t, cardKind }: {
+function OverviewTile({ module, onOpen, t, cardKind, editing }: {
   readonly module: CardModuleDoc
   readonly onOpen: () => void
   readonly t: ShellT
   readonly cardKind?: string
+  readonly editing: boolean
 }) {
   const widget = module.widget?.type
   const excerpt = module.blocks.find(b => b.kind === 'text')?.text?.trim() ?? ''
@@ -999,10 +1024,12 @@ function OverviewTile({ module, onOpen, t, cardKind }: {
           : (widget === undefined || widget === 'document') && excerpt === ''
   const art = overviewArt(module, cardKind)
   return (
-    <button type="button" className="nv-ov-tile nv-ov-tile-art" onClick={onOpen}>
+    <button type="button" className={`nv-ov-tile nv-ov-tile-art${editing ? ' nv-ov-tile-ai' : ''}`}
+      onClick={onOpen} aria-busy={editing || undefined}>
       <img className="nv-ov-art" src={MODLIB_ART[art] ?? MODLIB_ART.collection} alt="" />
       <span className="nv-ov-info">
         <span className="nv-ov-name">{module.name}</span>
+        {editing && <span className="nv-ai-tag">{t('ai.tag')}</span>}
         {empty && <span className="nv-ov-state">{t('ov.blank')}</span>}
         <span className="nv-ov-arrow">›</span>
       </span>
@@ -1014,7 +1041,8 @@ function OverviewTile({ module, onOpen, t, cardKind }: {
  * 总览页：这张卡其余各页的成果橱窗——每页一块，只读摘要 + 迷你图 + 跳转；
  * 总览模块自己写的文字块作为页首导语（仍可直接编辑）。
  */
-function OverviewPage({ target, overviewModule, isCharacter, cardKind, t, imageUrl, imageResources, saveMarkdown, roles, rolesOpen, onToggleRoles, onOpenRole, onOpenModule, onAdd, backlinks, onOpenRefCard }: {
+function OverviewPage({ cardId, target, overviewModule, isCharacter, cardKind, t, imageUrl, imageResources, saveMarkdown, roles, rolesOpen, onToggleRoles, onOpenRole, onOpenModule, onAdd, backlinks, onOpenRefCard }: {
+  readonly cardId: string
   readonly target: Omit<CardDocView, 'characters'> | CardDocView
   readonly overviewModule: CardModuleDoc | undefined
   readonly isCharacter: boolean
@@ -1035,6 +1063,8 @@ function OverviewPage({ target, overviewModule, isCharacter, cardKind, t, imageU
   /** 点被引用行：打开来源卡。 */
   readonly onOpenRefCard?: (cardId: string) => void
 }) {
+  const aiModules = useAiEdits().cards.get(cardId)
+  const overviewLocked = overviewModule !== undefined && aiModules?.has(overviewModule.id) === true
   const flattenLeaves = (modules: readonly CardModuleDoc[]): CardModuleDoc[] => modules.flatMap(module =>
     module.children.length === 0 ? [module] : flattenLeaves(module.children))
   const tiles = flattenLeaves(target.modules.filter(m => !isOverviewModule(m)))
@@ -1060,8 +1090,8 @@ function OverviewPage({ target, overviewModule, isCharacter, cardKind, t, imageU
     <div className="nv-ov">
       {worldCover !== undefined && <img className="nv-ov-cover" src={imageUrl(worldCover)} alt="" />}
       {overviewModule !== undefined && (overviewModule.blocks?.length ?? 0) > 0 && (
-        <div className="nv-ov-intro">
-          <CardMarkdownEditor markdown={introMarkdown}
+        <div className={`nv-ov-intro${overviewLocked ? ' nv-ai-locked' : ''}`} data-ai-locked={overviewLocked ? '' : undefined} aria-busy={overviewLocked || undefined}>
+          <CardMarkdownEditor markdown={introMarkdown} locked={overviewLocked}
             onSave={(text: string) => { void saveMarkdown(overviewModule, text) }} />
         </div>
       )}
@@ -1069,6 +1099,7 @@ function OverviewPage({ target, overviewModule, isCharacter, cardKind, t, imageU
       <div className="nv-ov-grid">
         {shownTiles.map(module => (
           <OverviewTile key={module.id} module={module} t={t} cardKind={cardKind}
+            editing={aiModules?.has(module.id) === true}
             onOpen={() => onOpenModule(module.id)} />
         ))}
       </div>
@@ -1139,7 +1170,7 @@ interface ModuleRefBacklink {
   readonly refModuleName: string
 }
 
-export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t, owner, loadCard, op, ask, seedComposer, readFile, onOpenFile, onOpenCard }: {
+export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t, owner, loadCard, op, ask, seedComposer, readFile, onOpenFile, onOpenCard, resolveProjectAsset }: {
   readonly addr: CardAddr
   readonly cardId: string
   readonly pageModuleId?: string
@@ -1163,11 +1194,19 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
   readonly onOpenFile?: (path: string) => void
   /** noven://card/<id>[/module/<id>] 深链：开卡总览页签或模块页签。 */
   readonly onOpenCard?: (cardId: string, moduleId?: string) => void
+  /** Project-relative asset bytes for free surfaces (glb/texture/audio/json). */
+  readonly resolveProjectAsset?: (path: string, base?: string) => Promise<Blob | null>
 }) {
   /** 温层（设计理念 §14）：见过的卡直接渲快照、后台刷新，不回 loading。 */
   const retained = useRetainedCard(addr, cardId, loadCard)
+  /** 自由界面的运行日志落到项目诊断环，AI 用 surface_diagnostics 回读。 */
+  const reportDiagnostics = useCallback((moduleId: string, entries: readonly CardDiagnosticEntry[]) => {
+    void postCardDiagnostics(addr, cardId, moduleId, entries)
+  }, [addr, cardId])
   const state = retained.state
   const setState = retained.setState
+  const aiEdits = useAiEdits()
+  const aiCardEditing = aiEdits.cards.has(cardId)
   /** 总览页内钻角色：undefined = 卡根。 */
   const [roleId, setRoleId] = useState<string | undefined>(undefined)
   const [version, setVersion] = useState('')
@@ -1177,8 +1216,6 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
   const [cardRenaming, setCardRenaming] = useState(false)
   const cardArm = useArmedMenu(useMemo(() => [{ id: 'delete', confirmLabel: t('ui.armed.delete') }], [t]))
   const [rolesOpen, setRolesOpen] = useState(false)
-  /** 预览态：展示的是提案合并后的文档，编辑通道锁死（先接受或拒绝）。 */
-  const [preview, setPreview] = useState<CardState | undefined>(undefined)
   const [userModules, setUserModules] = useState<readonly UserModuleDefinition[]>([])
   const [refIndex, setRefIndex] = useState<{ readonly targets: readonly RefTarget[], readonly backlinks: Record<string, readonly RefBacklink[]>, readonly moduleBacklinks?: Record<string, readonly ModuleRefBacklink[]> } | undefined>(undefined)
   useEffect(() => {
@@ -1194,9 +1231,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       .catch(() => { /* 索引缺席只是没有选择器与反查，不阻塞卡页 */ })
   }, [addr.root, owner])
 
-  const doc: CardDocView | undefined = preview !== undefined ? preview.document
-    : typeof state === 'object' && state !== null ? state.document : undefined
-  const proposal = typeof state === 'object' && state !== null ? state.proposal : undefined
+  const doc: CardDocView | undefined = typeof state === 'object' && state !== null ? state.document : undefined
   /** 同卡引用派生：关系图额外边 + 地图被引用地点集合（渲染层派生，不落盘）。 */
   const refDerived = useMemo(() => {
     const edges: { from: string, to: string, label: string }[] = []
@@ -1236,6 +1271,13 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     : pageOwner !== undefined && pageOwner.id !== doc?.id ? pageOwner.id : undefined
 
   const refresh = retained.refresh
+  // AI writes commit directly; once its last call settles (after the visible
+  // hold), pull the committed document so the page lands on the new content.
+  const aiEditingRef = useRef(false)
+  useEffect(() => {
+    if (aiEditingRef.current && !aiCardEditing) void refresh()
+    aiEditingRef.current = aiCardEditing
+  }, [aiCardEditing, refresh])
   const scrollRef = useRef<HTMLDivElement>(null)
   useRetainedScroll(scrollRef, scrollKey, typeof state === 'object' && state !== null)
   useEffect(() => {
@@ -1263,10 +1305,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     if (url.hostname === 'file' && parts.length > 0) onOpenFile?.(parts.join('/'))
   }, [onOpenCard, onOpenFile])
 
-  /** 预览态下一切写都挡在门前——版本对应的是头稿，不是提案预览。 */
-  const locked = preview !== undefined
   const saveBlock = useCallback(async (module: CardModuleDoc, blockId: string, text: string, expected: string): Promise<EditorSaveResult> => {
-    if (locked) { setNotice(t('prop.locked')); return 'error' }
     try {
       const result = await op(addr, {
         op: 'apply', cardId, targetId, version,
@@ -1280,10 +1319,9 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       setNotice(String(error instanceof Error ? error.message : error))
       return 'error'
     }
-  }, [addr, cardId, locked, op, refresh, t, targetId, version])
+  }, [addr, cardId, op, refresh, t, targetId, version])
 
   const saveMarkdown = useCallback(async (module: CardModuleDoc, text: string): Promise<EditorSaveResult> => {
-    if (locked) { setNotice(t('prop.locked')); return 'error' }
     try {
       const result = await op(addr, {
         op: 'apply', cardId, targetId, version,
@@ -1297,11 +1335,10 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       setNotice(String(error instanceof Error ? error.message : error))
       return 'error'
     }
-  }, [addr, cardId, locked, op, refresh, t, targetId, version])
+  }, [addr, cardId, op, refresh, t, targetId, version])
 
   /** 预制模块命令直发：apply → 记 version → 刷新。错误进 notice 条。 */
   const send = useCallback<WidgetSend>(async command => {
-    if (locked) { setNotice(t('prop.locked')); return false }
     try {
       const result = await op(addr, { op: 'apply', cardId, targetId, version, command })
       if (result.version !== undefined) setVersion(result.version)
@@ -1311,10 +1348,10 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       setNotice(String(error instanceof Error ? error.message : error))
       return false
     }
-  }, [addr, cardId, locked, op, refresh, t, targetId, version])
+  }, [addr, cardId, op, refresh, t, targetId, version])
 
   const addCustomModule = useCallback((definition: UserModuleDefinition) => {
-    if (target === undefined || locked) return
+    if (target === undefined) return
     setLibrary(false)
     void op(addr, {
       op: 'apply', cardId, targetId, version,
@@ -1325,7 +1362,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       const created = result.createdModuleIds?.[0]
       if (created !== undefined) onOpenCard?.(cardId, created)
     }).catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
-  }, [addr, cardId, locked, onOpenCard, op, refresh, target, targetId, version])
+  }, [addr, cardId, onOpenCard, op, refresh, target, targetId, version])
   const removeUserModule = useCallback((id: string) => {
     void deleteUserModule(addr, id).then(ok => {
       if (ok) setUserModules(current => current.filter(module => module.id !== id))
@@ -1338,7 +1375,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     else void ask(text)
   }, [ask, seedComposer, t, target?.name])
   const addRefModule = useCallback((spec: RefSpec) => {
-    if (target === undefined || locked) return
+    if (target === undefined) return
     setLibrary(false)
     void op(addr, {
       op: 'apply', cardId, targetId, version,
@@ -1352,9 +1389,9 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       const created = result.createdModuleIds?.[0]
       if (created !== undefined) onOpenCard?.(cardId, created)
     }).catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
-  }, [addr, cardId, locked, onOpenCard, op, refresh, target, targetId, version])
+  }, [addr, cardId, onOpenCard, op, refresh, target, targetId, version])
   const addModule = useCallback((preset: string, name?: string) => {
-    if (target === undefined || locked) return
+    if (target === undefined) return
     setLibrary(false)
     // 模板名只是货架名；实例名独立。重名时自动加序号，之后可随时改。
     const used = new Set<string>()
@@ -1374,23 +1411,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       const created = result.createdModuleIds?.[0]
       if (created !== undefined) onOpenCard?.(cardId, created)
     }).catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
-  }, [addr, cardId, locked, op, refresh, t, target, targetId, version])
-
-  /** 预览切换：拉 preview=1 的合并文档到独立的展示态。 */
-  const togglePreview = useCallback(() => {
-    if (preview !== undefined) { setPreview(undefined); return }
-    void fetchCard(addr, cardId, true).then(next => {
-      if (next === undefined) setNotice(t('editor.conflict'))
-      else setPreview(next)
-    })
-  }, [addr, cardId, preview, t])
-
-  /** 接受或拒绝整份提案；结算后退出预览并重拉。 */
-  const settleProposal = useCallback((settle: 'accept' | 'reject') => {
-    void op(addr, { op: settle, cardId })
-      .then(() => { setPreview(undefined); void refresh() })
-      .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
-  }, [addr, cardId, op, refresh])
+  }, [addr, cardId, op, refresh, t, target, targetId, version])
 
   const imageUrl = useCallback((resourceId: string): string => {
     const ref = typeof state === 'object' && state !== null
@@ -1421,26 +1442,24 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
   const overviewModule = target.modules.find(isOverviewModule)
   const foundPage = pageModuleId === undefined ? undefined : findModule(target.modules, pageModuleId)
   const pageModule = foundPage === undefined || isOverviewModule(foundPage) ? undefined : foundPage
-  /** 关系图与地图没有第二层画框：页头让位，画布铺满整列。 */
-  const bleed = pageModule?.widget?.type === 'relation' || pageModule?.widget?.type === 'map'
+  /** 关系图、地图与自由模块没有第二层画框：页头让位，画布铺满整列。 */
+  const pageWidget = pageModule?.widget?.type
+  const bleed = pageWidget === 'relation' || pageWidget === 'map'
+    || (pageModuleId !== undefined && (pageWidget === 'html' || pageWidget === 'scene'))
+  /** html 页面用满整列：无高度上限、无内滚动，作品自己占满画布。 */
+  const fillPage = pageWidget === 'html'
   const pagePresentation = pageModule?.widget?.type === 'collection' ? coll(pageModule.widget.data).presentation : undefined
   // 卡总览是索引/地图，用满画布；模块页里合集用满画布，阅读页收在 1120。
   const widePage = pageModule === undefined || (pageModule.widget?.type === 'collection'
     ? pagePresentation?.layout !== 'profile'
     : pageModule.widget?.type === 'html' || pageModule.widget?.type === 'scene')
   const imageResources = state.resources.filter(r => r.mediaType.startsWith('image/')).map(r => ({ id: r.id, mediaType: r.mediaType }))
-  /** 合并请求只挂它碰过的页：模块页按 moduleId，概览页挂卡层/角色/无头稿页可去的兜底变更。 */
-  const pageHasProposal = proposal !== undefined && proposal !== null && (() => {
-    if (pageModuleId !== undefined) {
-      return pageOwner !== undefined && proposal.changes.some(c => c.targetId === pageOwner.id && c.moduleId === pageModuleId)
-    }
-    return proposal.changes.some(c => {
-      if (c.moduleId === target.id) return true
-      if (c.targetId !== target.id) return false
-      return findModule(target.modules, c.moduleId) === undefined
-        && !doc.characters.some(ch => ch.id === c.moduleId)
-    })
-  })()
+  /** 这一页正被 AI 写：模块页看本模块，总览页任一模块都算（瓦片各自标）。 */
+  const aiModules = aiEdits.cards.get(cardId)
+  const aiPageEditing = aiModules !== undefined
+    && (pageModuleId === undefined || aiModules.has(pageModuleId))
+  /** 锁定只及正在写的那个模块；总览页的导语模块由 OverviewPage 自己判。 */
+  const pageLocked = pageModule !== undefined && aiModules?.has(pageModule.id) === true
   const cardMenuControl = (
     <Menu portal open={cardMenu} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
       onClose={() => { cardArm.reset(); setCardMenu(false) }}
@@ -1488,42 +1507,24 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     : `${kindLabel} · ${pageModule.name}`
   return (
     <MarkdownDelegateProvider linkProtocols={NOVEN_LINK_PROTOCOLS} openLink={openLink} openFile={onOpenFile}>
-    <div className="nv-cardpage">
+    <div className={`nv-cardpage${aiPageEditing ? ' nv-cardpage-ai' : ''}`} data-ai-editing={aiPageEditing ? '' : undefined}>
       {notice !== undefined && <div className="nv-canvas-conflict">{notice}</div>}
-      {pageHasProposal && (
-        <div className="nv-prop">
-          <span className="nv-prop-badge">{fmt(t, 'prop.count', { count: proposal.changes.length })}</span>
-          <span className="nv-prop-list">
-            {proposal.changes.slice(0, 4).map(change => (
-              <span key={`${change.moduleId}-${change.kind}`} className={`nv-prop-item${change.stale ? ' nv-prop-stale' : ''}`}>
-                <i>{t(`prop.kind.${change.kind}`)}</i>{change.name}
-              </span>
-            ))}
-            {proposal.changes.length > 4 && <span className="nv-prop-item">…</span>}
-          </span>
-          <span className="nv-prop-actions">
-            <button type="button" className="nv-prop-btn" onClick={togglePreview}>
-              {preview !== undefined ? t('prop.exitPreview') : t('prop.preview')}
-            </button>
-            <button type="button" className="nv-prop-btn nv-prop-accept" onClick={() => settleProposal('accept')}>{t('prop.accept')}</button>
-            <button type="button" className="nv-prop-btn nv-prop-reject" onClick={() => settleProposal('reject')}>{t('prop.reject')}</button>
-          </span>
-        </div>
-      )}
       <div className={`nv-cardpage-scroll${bleed ? ' nv-cardpage-scroll-bleed' : ''}`} ref={scrollRef}>
         {bleed ? (
           <>
             <button type="button" className="nv-page-bleedback" onClick={() => onOpenCard?.(cardId)}>
               ‹ {doc.name}
             </button>
+            {aiPageEditing && <span className="nv-ai-pill nv-ai-pill-bleed">{t('ai.editing')}</span>}
             <div className="nv-cardpage-bleed">
               {pageModule !== undefined && (
-                <ModuleBox module={pageModule} t={t}
+                <ModuleBox module={pageModule} t={t} locked={pageLocked}
                   card={{ id: cardId, name: doc.name, kind: doc.kind }}
                   addr={addr} loadCard={loadCard} op={op} onOpenCard={onOpenCard}
                   imageUrl={imageUrl} imageResources={imageResources}
                   saveBlock={saveBlock} saveMarkdown={saveMarkdown} send={send}
                   onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} seedComposer={seedComposer} readFile={readFile} onOpenFile={onOpenFile}
+                  fill={fillPage} resolveProjectAsset={resolveProjectAsset} reportDiagnostics={reportDiagnostics}
                   refTargets={refIndex?.targets} siblings={target.modules} refEdges={refDerived.edges} mapReferenced={refDerived.referenced} />
               )}
             </div>
@@ -1560,6 +1561,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                   <span className="nv-pagehead-refcount">{fmt(t, 'card.refCount', { n: refIndex?.moduleBacklinks?.[`${cardId}:${pageModule.id}`]?.length ?? 0 })}</span>
                 )}
                 <span className="nv-pagehead-kicker">{headerKicker}</span>
+                {aiPageEditing && <span className="nv-ai-pill">{t('ai.editing')}</span>}
                 {state.hasDraft && <span className="nv-cardpage-draft">{t('me.draft')}</span>}
                 {cardMenuControl}
               </div>
@@ -1567,15 +1569,16 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
             {pageModuleId !== undefined ? (
               <div className="nv-cardpage-module">
                 {pageModule !== undefined ? (
-                  <ModuleBox module={pageModule} t={t}
+                  <ModuleBox module={pageModule} t={t} locked={pageLocked}
                     card={{ id: cardId, name: doc.name, kind: doc.kind }}
                     addr={addr} loadCard={loadCard} op={op} onOpenCard={onOpenCard}
                       imageUrl={imageUrl} imageResources={imageResources}
                     saveBlock={saveBlock} saveMarkdown={saveMarkdown} send={send}
                     onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} seedComposer={seedComposer} readFile={readFile} onOpenFile={onOpenFile}
+                    resolveProjectAsset={resolveProjectAsset} reportDiagnostics={reportDiagnostics}
                     refTargets={refIndex?.targets} siblings={target.modules} refEdges={refDerived.edges} mapReferenced={refDerived.referenced} />
                 ) : (
-                  <OverviewPage target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id} cardKind={doc?.kind}
+                  <OverviewPage cardId={cardId} target={target} overviewModule={overviewModule} isCharacter={target.id !== doc.id} cardKind={doc?.kind}
                     t={t} imageUrl={imageUrl} imageResources={imageResources}
                     saveMarkdown={saveMarkdown}
                     roles={doc.characters} rolesOpen={rolesOpen}
@@ -1585,7 +1588,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                 )}
               </div>
             ) : (
-              <OverviewPage target={target} overviewModule={overviewModule} isCharacter={roleId !== undefined} cardKind={doc?.kind}
+              <OverviewPage cardId={cardId} target={target} overviewModule={overviewModule} isCharacter={roleId !== undefined} cardKind={doc?.kind}
                 t={t} imageUrl={imageUrl} imageResources={imageResources}
                 saveMarkdown={saveMarkdown}
                 roles={doc.characters} rolesOpen={rolesOpen}

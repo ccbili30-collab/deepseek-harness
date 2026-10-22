@@ -254,10 +254,12 @@ export function PlainTextDocEditor({ text, onChange }: {
  * 图片块以 `card-image:<resourceId>#<blockId>` 语法随行，保存时由卡系统还原成图片块。
  * @param markdown - 模块当前正文（图片行含 card-image 语法）。
  * @param onSave - 防抖后的整模块 markdown 快照。
+ * @param locked - AI 正在写这个模块：只读展示，不接管输入。
  */
-export function CardMarkdownEditor({ markdown, onSave }: {
+export function CardMarkdownEditor({ markdown, onSave, locked = false }: {
   readonly markdown: string
   readonly onSave: (markdown: string) => void
+  readonly locked?: boolean
 }) {
   useBlockNoteStyles()
   const editor = useCreateBlockNote({ dictionary: zh })
@@ -282,26 +284,57 @@ export function CardMarkdownEditor({ markdown, onSave }: {
       ready.current = true
     }, 120)
   }, [editor, markdown])
+  // The editor is uncontrolled after mount. An external write (AI direct
+  // commit, another tab) arrives as a new `markdown` prop; reparse it instead
+  // of leaving the stale document on screen. A local save echoes its own text
+  // and is skipped by the last-value check.
+  useEffect(() => {
+    if (markdown === last.current) return
+    last.current = markdown
+    const extracted = extractImageWidths(markdown)
+    editor.replaceBlocks(editor.document, editor.tryParseMarkdownToBlocks(extracted.markdown))
+    window.setTimeout(() => {
+      const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
+      imageBlocksOf(editor.document).forEach((block, index) => {
+        const width = extracted.widths[index]
+        if (width === undefined) return
+        editor.updateBlock(block.id, { type: 'image', props: { previewWidth: percentToPx(width, contentWidth) } })
+      })
+    }, 0)
+  }, [editor, markdown])
   useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
+  const commit = useCallback((): void => {
+    if (!ready.current) return
+    const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
+    const widths = imageBlocksOf(editor.document).map(block => {
+      const width = previewWidthOf(block)
+      return width === undefined ? undefined : pxToPercent(width, contentWidth)
+    })
+    const text = applyImageWidths(editor.blocksToMarkdownLossy(), widths)
+    if (text === last.current) return
+    last.current = text
+    onSave(text)
+  }, [editor, onSave])
+  // AI 接手前把已经敲下的内容先提交：锁定发生在 800ms 防抖窗内时，
+  // 不能把用户最后几下输入静默丢掉。
+  useEffect(() => {
+    if (!locked || timer.current === undefined) return
+    window.clearTimeout(timer.current)
+    timer.current = undefined
+    commit()
+  }, [commit, locked])
   return (
     <div className="nv-card-bn" ref={box}>
       <BlockNoteView
         editor={editor}
         theme="light"
+        editable={!locked}
         onChange={() => {
+          if (locked) return
           if (timer.current !== undefined) window.clearTimeout(timer.current)
           timer.current = window.setTimeout(() => {
             timer.current = undefined
-            if (!ready.current) return
-            const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
-            const widths = imageBlocksOf(editor.document).map(block => {
-              const width = previewWidthOf(block)
-              return width === undefined ? undefined : pxToPercent(width, contentWidth)
-            })
-            const text = applyImageWidths(editor.blocksToMarkdownLossy(), widths)
-            if (text === last.current) return
-            last.current = text
-            onSave(text)
+            commit()
           }, 800)
         }}
       />

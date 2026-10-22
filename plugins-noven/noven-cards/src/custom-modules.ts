@@ -8,11 +8,11 @@ import { mkdir, readFile, readdir, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { mintId } from './model.ts'
 import {
-  encodeCollection, encodeMap, encodeTimeline,
-  type CollectionData, type CollectionFieldType, type CollectionPresentation, type CollectionView, type TimelineData,
+  encodeCollection, encodeMap, encodeSurface, encodeTimeline, normalizeSurfacePath,
+  type CollectionData, type CollectionFieldType, type CollectionPresentation, type CollectionView, type SurfaceData, type TimelineData,
 } from './formats.ts'
 
-export type CustomModuleShape = 'collection' | 'timeline' | 'map' | 'doc'
+export type CustomModuleShape = 'collection' | 'timeline' | 'map' | 'doc' | 'surface'
 
 export interface CustomModuleField {
   readonly name: string
@@ -32,6 +32,8 @@ export interface CustomModuleDefinition {
   readonly unit?: string
   readonly timelineView?: 'diary' | 'horizontal'
   readonly sample?: string
+  /** Free surface project (shape 'surface'): reusable HTML/CSS/JS or three.js work. */
+  readonly surface?: SurfaceData
   /** Optional window contract; generated from fields when AI omits it. */
   readonly presentation?: CollectionPresentation
   readonly createdAt: string
@@ -39,9 +41,38 @@ export interface CustomModuleDefinition {
 
 const FIELD_TYPES = new Set<CollectionFieldType>(['text', 'longtext', 'chips', 'date', 'person', 'image', 'place', 'link', 'number', 'time'])
 const VIEWS = new Set<CollectionView>(['list', 'cards', 'form', 'timeline', 'map', 'profile', 'graph'])
-const SHAPES = new Set<CustomModuleShape>(['collection', 'timeline', 'map', 'doc'])
+const SHAPES = new Set<CustomModuleShape>(['collection', 'timeline', 'map', 'doc', 'surface'])
 
 const modulesDir = (root: string): string => join(root, '.noven', 'modules')
+
+/** Validate a reusable free surface: safe paths, an existing entry, a manifest. */
+function normalizeSurface(raw: unknown): SurfaceData | undefined {
+  if (typeof raw !== 'object' || raw === null) return undefined
+  const source = raw as Record<string, unknown>
+  if (typeof source.entry !== 'string' || typeof source.files !== 'object' || source.files === null) return undefined
+  const files: Record<string, string> = {}
+  for (const [path, content] of Object.entries(source.files as Record<string, unknown>)) {
+    if (typeof content !== 'string') continue
+    const normalized = normalizeSurfacePath(path)
+    if (typeof normalized === 'string') files[normalized] = content
+  }
+  if (Object.keys(files).length === 0) return undefined
+  const entry = normalizeSurfacePath(source.entry)
+  if (typeof entry !== 'string' || files[entry] === undefined) return undefined
+  const manifest = typeof source.manifest === 'object' && source.manifest !== null ? source.manifest as Record<string, unknown> : {}
+  return {
+    version: 1,
+    entry,
+    files,
+    manifest: {
+      name: typeof manifest.name === 'string' && manifest.name !== '' ? manifest.name : 'Free surface',
+      description: typeof manifest.description === 'string' ? manifest.description : '',
+      ...(typeof manifest.cover === 'string' && manifest.cover !== '' ? { cover: manifest.cover } : {}),
+      fullscreen: manifest.fullscreen === true,
+      ...(manifest.chrome === 'none' || manifest.chrome === 'game' ? { chrome: manifest.chrome } : {}),
+    },
+  }
+}
 
 /** Validate and normalize an incoming definition; returns a human-readable error when invalid. */
 export function normalizeCustomModule(raw: unknown, existingId?: string): CustomModuleDefinition | string {
@@ -106,6 +137,8 @@ export function normalizeCustomModule(raw: unknown, existingId?: string): Custom
   } : undefined
   const unit = typeof source.unit === 'string' && source.unit.trim() !== '' ? source.unit.trim() : undefined
   const timelineView = source.timelineView === 'diary' || source.timelineView === 'horizontal' ? source.timelineView : undefined
+  const surface = shape === 'surface' ? normalizeSurface(source.surface) : undefined
+  if (shape === 'surface' && surface === undefined) return 'surface modules need a valid entry + files'
   return {
     id: existingId ?? (typeof source.id === 'string' && source.id !== '' ? source.id : `user-${Date.now().toString(36)}-${mintId().slice(0, 6)}`),
     name, shape,
@@ -117,6 +150,7 @@ export function normalizeCustomModule(raw: unknown, existingId?: string): Custom
     ...(unit === undefined ? {} : { unit }),
     ...(timelineView === undefined ? {} : { timelineView }),
     ...(typeof source.sample === 'string' && source.sample.trim() !== '' ? { sample: source.sample.trim() } : {}),
+    ...(surface === undefined ? {} : { surface }),
     ...(presentation === undefined ? {} : { presentation }),
     createdAt: typeof source.createdAt === 'string' && source.createdAt !== '' ? source.createdAt : new Date().toISOString(),
   }
@@ -188,4 +222,10 @@ export function customTimeline(def: CustomModuleDefinition): string {
 /** Build an empty editable map payload. */
 export function customMap(): string {
   return encodeMap({ version: 1, description: '', markers: [], objects: [], draft: [], palette: [] })
+}
+
+/** Build a reusable free surface payload. */
+export function customSurface(def: CustomModuleDefinition): string {
+  if (def.surface === undefined) throw new Error('surface definition is missing')
+  return encodeSurface(def.surface)
 }

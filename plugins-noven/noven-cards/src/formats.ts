@@ -1218,13 +1218,31 @@ export function encodeRelation(data: RelationData): string {
 
 // ---------- 自由界面工程 ----------
 
-/** Manifest for a free surface: the launcher and the runtime contract. */
+/** Manifest for a free surface: identity, library cover, and host chrome. */
 export interface SurfaceManifest {
   readonly name: string
   readonly description: string
   /** Card image resource id, data URL, or ordinary URL. */
   readonly cover?: string
+  /** Preference flag only: pages open full-canvas by default. */
   readonly fullscreen: boolean
+  /** Host chrome: 'game' shows save/pause/export, 'none' keeps the page bare. */
+  readonly chrome?: 'none' | 'game'
+}
+
+/** Plain JSON stored as a surface's runtime state. */
+export type SurfaceState = null | boolean | number | string | SurfaceState[] | { [key: string]: SurfaceState }
+
+/**
+ * Narrow a parsed value to JSON that can round-trip through the state field.
+ * @param value - value read from a surface envelope or a save command.
+ * @returns whether every nested value is JSON.
+ */
+export function isSurfaceState(value: unknown): value is SurfaceState {
+  if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return true
+  if (Array.isArray(value)) return value.every(isSurfaceState)
+  if (typeof value === 'object') return Object.values(value).every(isSurfaceState)
+  return false
 }
 
 /** A free surface project: one entry file plus its file map and manifest. */
@@ -1233,6 +1251,14 @@ export interface SurfaceData {
   readonly entry: string
   readonly files: Record<string, string>
   readonly manifest: SurfaceManifest
+  /**
+   * Durable runtime state owned by the surface app (for example a 3D scene).
+   * Opaque JSON: the host stores it, the app interprets it. Written through
+   * `surface_set_state`, never by rewriting the source files.
+   */
+  readonly state?: SurfaceState
+  /** Monotonic state revision; writers pass the revision they loaded. */
+  readonly stateVersion?: number
 }
 
 const surfacePath = (path: string): string => path.replace(/^\.?\//, '')
@@ -1263,7 +1289,12 @@ export function decodeSurface(raw: string | undefined): SurfaceData | undefined 
       description: typeof manifest.description === 'string' ? manifest.description : '',
       ...(typeof manifest.cover === 'string' && manifest.cover !== '' ? { cover: manifest.cover } : {}),
       fullscreen: manifest.fullscreen === true,
+      ...(manifest.chrome === 'none' || manifest.chrome === 'game' ? { chrome: manifest.chrome } : {}),
     },
+    ...(isSurfaceState(source.state) ? { state: source.state } : {}),
+    ...(typeof source.stateVersion === 'number' && Number.isInteger(source.stateVersion) && source.stateVersion >= 0
+      ? { stateVersion: source.stateVersion }
+      : {}),
   }
 }
 
@@ -1271,6 +1302,116 @@ export function decodeSurface(raw: string | undefined): SurfaceData | undefined 
 export function encodeSurface(data: SurfaceData): string {
   if (data.files[data.entry] === undefined) throw new Error('surface entry 不在 files 中')
   return `${JSON.stringify({ version: 1, kind: 'surface', noven: data }, null, 2)}\n`
+}
+
+/** One surface file's byte ceiling; larger files must live in project assets. */
+export const SURFACE_FILE_LIMIT = 1024 * 1024
+/** One surface project's total byte ceiling. */
+export const SURFACE_TOTAL_LIMIT = 8 * 1024 * 1024
+/** One surface runtime-state byte ceiling (blocks dense scenes without assets). */
+export const SURFACE_STATE_LIMIT = 1024 * 1024
+
+/**
+ * Normalize a project-relative surface path, or explain why it is refused.
+ * Paths are portable keys inside the module's text block, not filesystem
+ * paths: no absolute roots, no parent traversal, no backslashes.
+ * @param path - caller-supplied path.
+ * @returns the normalized key, or a human-readable refusal.
+ */
+export function normalizeSurfacePath(path: string): string | { readonly error: string } {
+  const raw = path.trim().replace(/^\.\//, '')
+  if (raw === '') return { error: 'path is empty' }
+  if (raw.length > 200) return { error: 'path is longer than 200 characters' }
+  if (raw.startsWith('/') || /^[A-Za-z]:[\\/]/.test(raw)) return { error: 'absolute paths are not allowed' }
+  if (raw.includes('\\')) return { error: 'use forward slashes in surface paths' }
+  if (raw.split('/').some(segment => segment === '' || segment === '.' || segment === '..')) return { error: 'empty, "." and ".." path segments are not allowed' }
+  if (/[\u0000-\u001f]/.test(raw)) return { error: 'control characters are not allowed in paths' }
+  return raw
+}
+
+export interface SurfaceValidation {
+  readonly ok: boolean
+  readonly entry: string
+  readonly errors: readonly string[]
+  readonly files: readonly { readonly path: string, readonly bytes: number }[]
+  /** Relative imports with no matching file in the project. */
+  readonly unresolved: readonly { readonly from: string, readonly spec: string }[]
+  /** Serialized runtime-state bytes; 0 when the surface has no state. */
+  readonly state_bytes: number
+  readonly total_bytes: number
+}
+
+/** Resolve a relative import against the importing file's directory. */
+function resolveSurfaceImport(from: string, spec: string): string {
+  const dir = from.includes('/') ? from.slice(0, from.lastIndexOf('/') + 1) : ''
+  const parts = `${dir}${spec}`.split('/')
+  const out: string[] = []
+  for (const part of parts) {
+    if (part === '' || part === '.') continue
+    if (part === '..') { out.pop(); continue }
+    out.push(part)
+  }
+  return out.join('/')
+}
+
+/**
+ * Static validation for one surface project: entry, path safety, byte caps,
+ * and relative ESM imports. Runtime errors are reported by the live sandbox,
+ * not here.
+ * @param data - decoded surface project.
+ * @returns the report; `ok` is true only when `errors` is empty.
+ */
+export function validateSurface(data: SurfaceData): SurfaceValidation {
+  const errors: string[] = []
+  const files: { path: string, bytes: number }[] = []
+  let total = 0
+  for (const [path, content] of Object.entries(data.files)) {
+    const normalized = normalizeSurfacePath(path)
+    if (typeof normalized !== 'string') { errors.push(`${path}: ${normalized.error}`); continue }
+    const bytes = new TextEncoder().encode(content).length
+    if (bytes > SURFACE_FILE_LIMIT) errors.push(`${path}: ${String(bytes)} bytes exceeds the ${String(SURFACE_FILE_LIMIT)}-byte file limit`)
+    total += bytes
+    files.push({ path: normalized, bytes })
+  }
+  let stateBytes = 0
+  if (data.state !== undefined) {
+    let serialized: string | undefined
+    try {
+      serialized = JSON.stringify(data.state)
+    } catch {
+      // BigInt or a cyclic value read from a damaged file; stored state must be plain JSON.
+      errors.push('state must be JSON-serializable')
+    }
+    if (serialized === undefined) {
+      if (!errors.includes('state must be JSON-serializable')) errors.push('state must be JSON-serializable')
+    } else {
+      stateBytes = new TextEncoder().encode(serialized).length
+      if (stateBytes > SURFACE_STATE_LIMIT) {
+        errors.push(`state is ${String(stateBytes)} bytes; the limit is ${String(SURFACE_STATE_LIMIT)}`)
+      }
+      total += stateBytes
+    }
+  }
+  if (data.stateVersion !== undefined && (!Number.isInteger(data.stateVersion) || data.stateVersion < 0)) {
+    errors.push('stateVersion must be a non-negative integer')
+  }
+  if (total > SURFACE_TOTAL_LIMIT) errors.push(`project is ${String(total)} bytes; the limit is ${String(SURFACE_TOTAL_LIMIT)}`)
+  const entry = normalizeSurfacePath(data.entry)
+  if (typeof entry !== 'string') errors.push(`entry: ${entry.error}`)
+  else if (data.files[entry] === undefined) errors.push(`entry "${entry}" is not in files`)
+  const unresolved: { from: string, spec: string }[] = []
+  for (const [path, content] of Object.entries(data.files)) {
+    if (!/\.m?js$|\.ts$|\.tsx$/i.test(path)) continue
+    const pattern = /(?:\bfrom\s*|\bimport\s*\(\s*|\bimport\s+)(['"])(\.[^'"]+)\1/g
+    let match: RegExpExecArray | null
+    while ((match = pattern.exec(content)) !== null) {
+      const spec = match[2]!
+      const target = resolveSurfaceImport(path, spec)
+      const candidates = [target, `${target}.js`, `${target}.mjs`, `${target}.ts`, `${target}.tsx`, `${target}/index.js`, `${target}/index.ts`]
+      if (!candidates.some(candidate => data.files[candidate] !== undefined)) unresolved.push({ from: path, spec })
+    }
+  }
+  return { ok: errors.length === 0, entry: typeof entry === 'string' ? entry : data.entry, errors, files, unresolved, state_bytes: stateBytes, total_bytes: total }
 }
 
 // ---------- 总览布局 ----------

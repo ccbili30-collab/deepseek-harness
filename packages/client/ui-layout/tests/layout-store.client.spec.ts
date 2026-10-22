@@ -12,6 +12,7 @@ describe('createLayoutStore', () => {
     const { store } = createLayoutStore().create()
     expect(store.getSnapshot()).toEqual({
       panelInfo: { activePanelId: null },
+      canvasFullscreen: false,
       layoutInfo: {
         sidebar: 280,
         sidebarCollapsed: false,
@@ -31,6 +32,16 @@ describe('createLayoutStore', () => {
       },
       geometry: { active: null, byId: {} },
     })
+  })
+
+  it('toggles canvas fullscreen without touching recorded geometry', () => {
+    const { store, actions } = createLayoutStore().create()
+    const before = store.getSnapshot().layoutInfo
+    actions.setCanvasFullscreen(true)
+    expect(store.getSnapshot().canvasFullscreen).toBe(true)
+    expect(store.getSnapshot().layoutInfo).toEqual(before)
+    actions.closeRightbar()
+    expect(store.getSnapshot().canvasFullscreen).toBe(false)
   })
 
   it('persists column preferences and restores them in a later instance', () => {

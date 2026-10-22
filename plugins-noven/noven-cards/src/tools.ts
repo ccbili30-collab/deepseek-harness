@@ -20,12 +20,11 @@ import { flattenModules, organizeFolders, assertValid, findTarget, emptyCardDocu
 import { BindingStore } from './bindings.ts'
 import { CardStore, cardsRoot, type SavedCard } from './store.ts'
 import { applyAndCommit, resolveWorldHeightmap, type EditorCommand } from './editor.ts'
-import { calendarOf, decodeCollection, decodeMap, decodeRelation, decodeTimeline } from './formats.ts'
+import { calendarOf, decodeCollection, decodeMap, decodeRelation, decodeTimeline, decodeSurface, normalizeSurfacePath, validateSurface } from './formats.ts'
+import { readDiagnostics } from './diagnostics.ts'
 import { buildPresetDocument, listPresets, loadPreset } from './presets.ts'
 import { MODULE_PRESETS } from './module-presets.ts'
 import { generateWorld, applyWorldEdits } from 'noven-fmg/world'
-import { proposeEdit, proposeTransform, proposalChanges, proposalPreview } from './proposals.ts'
-import { aiTrustOf } from './trust.ts'
 import { buildBulkModules, parseBulkTree } from './bulk.ts'
 import { exportCard, importExchange, importForeignFile, readProjectFile } from './exchange.ts'
 import { dirExists, loadRegistry, normalizeRoot } from 'noven-ledger'
@@ -69,13 +68,11 @@ type CommandBuilder = (args: Record<string, unknown>) => EditorCommand
 export function registerCardTools(ctx: Context): void {
   const tools = ctx.tools
 
-  /** 读这张卡当前最新的内容：草稿 > head，再叠加未确认的 AI 提案（模型应看见自己挂起的改动）。 */
+  /** 读这张卡当前最新的内容：草稿 > head。 */
   async function currentCard(store: CardStore, cardId: string): Promise<ContentDocument> {
     const saved = await store.open(cardId)
     if (saved === undefined) throw new Error(`卡不存在或已删除：${cardId}（先 list_cards）`)
-    const base = (await store.draft(cardId))?.document ?? saved.document
-    const proposal = await store.proposal(cardId)
-    return proposal === undefined ? base : proposalPreview(base, proposal)
+    return (await store.draft(cardId))?.document ?? saved.document
   }
 
   function locate(document: ContentDocument, targetId: string): ContentDocument {
@@ -143,7 +140,7 @@ export function registerCardTools(ctx: Context): void {
 
   tools.register(defineTool({
     name: 'save_user_module',
-    description: '把一个声明式模块定义保存到本项目的用户模块库（.noven/modules），之后用户可以在“新建模块 → 我的模块”里预览并添加到任意卡。用于用户要求“做一个可复用的门派名册/图鉴/年表模块”时。definition 必须包含 name、shape（collection/timeline/map/doc）；collection 还要 fields[{name,type}]，可选 view、cardAspect、labels，以及 presentation 窗口契约（contract、layout、core、optional、detail、editor、assets、links）；缺省时服务端会从 fields 生成 presentation。timeline 可选 unit、timelineView。只保存定义，不直接改卡。',
+    description: '把一个声明式模块定义保存到本项目的用户模块库（.noven/modules），之后用户可以在“新建模块 → 我的模块”里预览并添加到任意卡。用于用户要求“做一个可复用的门派名册/图鉴/年表/界面”时。definition 必须包含 name、shape（collection/timeline/map/doc/surface）；collection 还要 fields[{name,type}]，可选 view、cardAspect、labels，以及 presentation 窗口契约（contract、layout、core、optional、detail、editor、assets、links）；缺省时服务端会从 fields 生成 presentation。timeline 可选 unit、timelineView。surface 传 surface:{entry,files,manifest}（与自由界面工程同构，可带 three.js）。只保存定义，不直接改卡。',
     parameters: {
       definition: { type: 'json', required: true, description: '完整模块定义 JSON；示例：{"name":"门派名册","shape":"collection","fields":[{"name":"名称","type":"text"},{"name":"徽记","type":"image"},{"name":"立场","type":"chips"}],"view":"cards","cardAspect":"square","labels":{"add":"添加门派"},"presentation":{"contract":"sect-roster","layout":"heraldry","core":["名称","徽记"],"optional":["立场"],"detail":[{"title":"立场","fields":["立场"]}],"editor":{"create":["名称","徽记"],"detail":["立场"]},"assets":[{"id":"emblem","role":"徽记","ratio":"1:1","render":"96x96","export":"192x192"}],"links":["place"]}}' },
     },
@@ -198,9 +195,7 @@ export function registerCardTools(ctx: Context): void {
       const rootId = String(args.root_id)
       const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, rootId, optionalId(args.project) ?? undefined)
       const draft = await resolved.store.draft(rootId)
-      const proposal = await resolved.store.proposal(rootId)
-      const base = draft?.document ?? resolved.saved.document
-      const card = proposal === undefined ? base : proposalPreview(base, proposal)
+      const card = draft?.document ?? resolved.saved.document
       const dirName = await resolved.store.dirName(rootId)
       return {
         status: 'read',
@@ -210,7 +205,6 @@ export function registerCardTools(ctx: Context): void {
         draft_version: draft?.version ?? resolved.saved.version,
         has_unsaved_draft: draft !== undefined,
         source: draft?.source ?? resolved.saved.source,
-        ...(proposal !== undefined ? { pending_proposal: true, proposal_changes: proposalChanges(base, proposal).length } : {}),
         page_limit: PAGE_LIMIT,
         card: summarize(locate(card, String(args.target_id))),
       }
@@ -251,6 +245,122 @@ export function registerCardTools(ctx: Context): void {
         has_more: next < codepoints.length,
         ...(next < codepoints.length ? { next_offset: next } : {}),
         text: slice.join(''),
+      }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'surface_read',
+    description: '读取自由界面（HTML/自由 3D）工程：entry、manifest、文件清单、字节大小与静态校验结果；给 path 时回该文件正文和 content_ref。改工程前先读，写入时把它当 content_ref 传回。旧原始 HTML 模块会被识别为待迁移（legacy）。运行时错误用 surface_diagnostics 读。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '自由界面模块编号' },
+      path: { type: 'string', description: '可选：只读这一个工程文件' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec): Promise<Record<string, JsonValue>> {
+      const cwd = sessionCwd(exec)
+      const root = String(args.root_id)
+      const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, root)
+      const target = locate(card, String(args.target_id))
+      const module = flattenModules(target.modules).find(candidate => candidate.id === args.module_id)
+      if (module === undefined) throw new Error('目标模块不存在或不属于当前卡片')
+      if (module.widget?.type !== 'html') throw new Error('目标模块不是自由界面（html）类型')
+      const block = module.blocks.find(candidate => candidate.kind === 'text')
+      const raw = block === undefined || block.kind !== 'text' ? '' : new TextDecoder().decode(await resolved.store.readPayload(root, block.content))
+      const surface = decodeSurface(raw)
+      if (surface === undefined) {
+        return {
+          status: 'read', legacy: true, ...(block?.kind === 'text' ? { content_ref: block.content } : {}), bytes: raw.length,
+          hint: '这是旧原始 HTML 模块。用 surface_write_file 写 index.html 会自动包成工程；也可以先 surface_init。',
+        }
+      }
+      const validation = validateSurface(surface)
+      const requested = args.path === undefined ? undefined : normalizeSurfacePath(String(args.path))
+      if (requested !== undefined && typeof requested !== 'string') throw new Error(`路径无效：${requested.error}`)
+      const file = requested === undefined ? undefined : surface.files[requested]
+      return {
+        status: 'read',
+        ...(block?.kind === 'text' ? { content_ref: block.content } : {}),
+        entry: surface.entry,
+        manifest: { ...surface.manifest },
+        files: validation.files.map(file => ({ path: file.path, bytes: file.bytes })),
+        state_version: surface.stateVersion ?? 0,
+        state_bytes: validation.state_bytes,
+        ...(surface.state === undefined ? {} : { state: surface.state }),
+        total_bytes: validation.total_bytes,
+        validation: {
+          ok: validation.ok,
+          errors: [...validation.errors],
+          unresolved: validation.unresolved.map(item => ({ from: item.from, spec: item.spec })),
+        },
+        ...(requested !== undefined
+          ? file === undefined ? { missing: requested } : { path: requested, text: file }
+          : {}),
+      }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'surface_validate',
+    description: '静态校验一个自由界面工程：entry 是否存在、路径是否越界、单文件/总字节是否超限、相对 import 是否有着落。运行时错误（脚本抛错、画布报错）用 surface_diagnostics，不在这里。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '自由界面模块编号' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec): Promise<Record<string, JsonValue>> {
+      const cwd = sessionCwd(exec)
+      const root = String(args.root_id)
+      const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
+      const card = await currentCard(resolved.store, root)
+      const target = locate(card, String(args.target_id))
+      const module = flattenModules(target.modules).find(candidate => candidate.id === args.module_id)
+      if (module === undefined) throw new Error('目标模块不存在或不属于当前卡片')
+      if (module.widget?.type !== 'html') throw new Error('目标模块不是自由界面（html）类型')
+      const block = module.blocks.find(candidate => candidate.kind === 'text')
+      const raw = block === undefined || block.kind !== 'text' ? '' : new TextDecoder().decode(await resolved.store.readPayload(root, block.content))
+      const surface = decodeSurface(raw)
+      if (surface === undefined) return { status: 'read', legacy: true, ok: false, errors: ['不是工程格式：用 surface_init 迁移或 surface_write_file 写 index.html'] }
+      const report = validateSurface(surface)
+      return {
+        status: 'read', ok: report.ok, ...(block?.kind === 'text' ? { content_ref: block.content } : {}), entry: report.entry,
+        files: report.files.map(file => ({ path: file.path, bytes: file.bytes })), total_bytes: report.total_bytes,
+        errors: [...report.errors],
+        unresolved: report.unresolved.map(item => ({ from: item.from, spec: item.spec })),
+      }
+    },
+  }))
+
+  tools.register(defineTool({
+    name: 'surface_diagnostics',
+    description: '读取自由界面最近一次运行的控制台与报错（宿主在页面打开时上报，按模块环形保留）。写完/改完自由界面后用它确认有没有跑起来；没有日志通常意味着页面还没被打开过。',
+    parameters: {
+      ...TARGET_PARAMS,
+      module_id: { type: 'string', required: true, description: '自由界面模块编号' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec): Promise<Record<string, JsonValue>> {
+      const cwd = sessionCwd(exec)
+      const root = String(args.root_id)
+      const resolved = await resolveCard(cwd, exec.agent?.session?.id as SessionId | undefined, root, optionalId(args.project) ?? undefined)
+      const moduleId = String(args.module_id)
+      const report = await readDiagnostics(resolved.projectRoot, root, moduleId)
+      if (report === undefined) {
+        return {
+          status: 'read', entries: [],
+          hint: '还没有运行日志。让用户打开这个模块（或点「运行日志」）后重试；宿主只在页面渲染时上报。',
+        }
+      }
+      return {
+        status: 'read',
+        updated_at: new Date(report.updatedAt).toISOString(),
+        dropped: report.dropped,
+        entries: report.entries.map(entry => ({
+          level: entry.level, text: entry.text,
+          ...(entry.at === undefined ? {} : { at: new Date(entry.at).toISOString() }),
+        })),
       }
     },
   }))
@@ -360,7 +470,7 @@ export function registerCardTools(ctx: Context): void {
 
   tools.register(defineTool({
     name: 'list_module_presets',
-    description: '列出模块库的内置模块预设（规则/语录/势力/种族/文化/能力/装备/图鉴/时间线/地图/HTML 等），含 id、widget、字段、默认视图和呈现契约。先用它选 preset，再用 add_module_preset 落模块；不要手写同样的字段表。',
+    description: '列出模块库的内置模块预设（规则/语录/势力/种族/文化/能力/装备/图鉴/时间线/地图/自由界面 surface/自由 3D free3d，以及 surface.dashboard、surface.gallery、free3d.viewer 模板），含 id、widget、字段、默认视图和呈现契约。先用它选 preset，再用 add_module_preset 落模块；可交互界面与 3D 优先走自由模块，不要手写同样的字段表。',
     parameters: {},
     output: { schema: RESULT_SCHEMA, render },
     async execute() {
@@ -588,30 +698,14 @@ export function registerCardTools(ctx: Context): void {
         assertValid(document)
         return { document, located }
       }
-      if (await aiTrustOf(resolved.projectRoot, root) === 'auto') {
-        const { saved, nextDocument, target } = await store.exclusive(root, async () => {
-          const draft = await store.ensureDraft(root, 'AI')
-          const { document, located } = buildNext(draft.document)
-          const updated = await store.updateDraft(root, undefined, document, 'AI')
-          return { saved: await store.commit(root, updated.version), nextDocument: document, target: located }
-        })
-        await bindManaged(cwd, exec, root, resolved.projectRoot)
-        return { ...savedResult(root, saved, target.id), project_root: resolved.projectRoot, created_module_ids: built.createdModuleIds, created_block_ids: built.createdBlockIds, ...cardTag(nextDocument, target.id) }
-      }
-      let located: ContentDocument | undefined
-      const outcome = await proposeTransform(store, root, async preview => {
-        const built_doc = buildNext(preview)
-        located = built_doc.located
-        return built_doc.document
+      const { saved, nextDocument, target } = await store.exclusive(root, async () => {
+        const draft = await store.ensureDraft(root, 'AI')
+        const { document, located } = buildNext(draft.document)
+        const updated = await store.updateDraft(root, undefined, document, 'AI')
+        return { saved: await store.commit(root, updated.version), nextDocument: document, target: located }
       })
       await bindManaged(cwd, exec, root, resolved.projectRoot)
-      return {
-        status: 'proposed', pending: true, root_id: root, target_id: targetId,
-        project_root: resolved.projectRoot,
-        created_module_ids: built.createdModuleIds, created_block_ids: built.createdBlockIds,
-        ...(located !== undefined ? cardTag(proposalPreview(resolved.saved.document, outcome.proposal), located.id) : {}),
-        next: '改动已作为提案放在画布上，等待用户确认——不要宣称已完成',
-      }
+      return { ...savedResult(root, saved, target.id), project_root: resolved.projectRoot, created_module_ids: built.createdModuleIds, created_block_ids: built.createdBlockIds, ...cardTag(nextDocument, target.id) }
     },
   }))
 
@@ -630,8 +724,67 @@ export function registerCardTools(ctx: Context): void {
       const blockId = raw.length > 0 && !NEW_BLOCK_HINTS.has(raw.toLowerCase()) ? raw : null
       const name = moduleNameOf(args)
       const expected = typeof args.content_ref === 'string' && args.content_ref.trim().length > 0 ? args.content_ref.trim() : undefined
-      return { kind: 'write_text', moduleId: String(args.module_id), blockId, moduleName: name ?? '', text: String(args.text), ...(expected !== undefined ? { expectedContent: expected } : {}) }
+      return { kind: 'write_text', moduleId: String(args.module_id), blockId, ...(name !== undefined ? { moduleName: name } : {}), text: String(args.text), ...(expected !== undefined ? { expectedContent: expected } : {}) }
     })
+
+  // ---------- 自由界面工程：逐文件写，不整包重写 ----------
+  const manifestArgs = (args: Record<string, unknown>): { name?: string, description?: string, cover?: string, fullscreen?: boolean, chrome?: 'none' | 'game' } => ({
+    ...(args.name === undefined ? {} : { name: String(args.name) }),
+    ...(args.description === undefined ? {} : { description: String(args.description) }),
+    ...(args.cover === undefined ? {} : { cover: String(args.cover) }),
+    ...(args.fullscreen === undefined ? {} : { fullscreen: args.fullscreen === true }),
+    ...(args.chrome === 'none' || args.chrome === 'game' ? { chrome: args.chrome } : {}),
+  })
+  const manifestParams = {
+    name: { type: 'string', description: '作品名（manifest.name）' },
+    description: { type: 'string', description: '作品说明（manifest.description）' },
+    cover: { type: 'string', description: '封面：卡图片资源编号、data URL 或普通 URL' },
+    fullscreen: { type: 'boolean', description: '是否推荐全屏打开（仅提示，页面默认已整页）' },
+    chrome: { type: 'string', description: "'game' 显示存档/暂停/导出，'none' 只留全屏" },
+  } as const
+  registerEditTool(tools, 'surface_init',
+    '把旧原始 HTML 模块包成自由界面工程（index.html + manifest），或给已有工程补 manifest。之后用 surface_write_file 按文件改；不需要为了迁移手工重写整段 HTML。',
+    { module_id: { type: 'string', required: true, description: '自由界面模块编号' }, ...manifestParams },
+    args => ({ kind: 'surface_init', moduleId: String(args.module_id), ...(Object.keys(manifestArgs(args)).length === 0 ? {} : { manifest: manifestArgs(args) }) }))
+  registerEditTool(tools, 'surface_write_file',
+    '新建或覆盖自由界面的一个文件并保存（index.html/style.css/main.js，可带子目录）。按文件改，不要整包重写 JSON；相对 import 可以用 ./ 引用同工程文件。写入后 surface_validate 静态校验、surface_diagnostics 看运行日志。',
+    {
+      module_id: { type: 'string', required: true, description: '自由界面模块编号' },
+      path: { type: 'string', required: true, description: '工程内路径，如 index.html、style.css、main.js' },
+      text: { type: 'string', required: true, description: '完整文件正文' },
+      content_ref: { type: 'string', description: 'surface_read 返回的 content_ref；别人改过就拒绝，避免覆盖' },
+    },
+    args => ({
+      kind: 'surface_write_file', moduleId: String(args.module_id), path: String(args.path), text: String(args.text),
+      ...(typeof args.content_ref === 'string' && args.content_ref !== '' ? { expected: args.content_ref } : {}),
+    }))
+  registerEditTool(tools, 'surface_delete_file',
+    '删除自由界面工程里的一个文件并保存；入口文件被删时自动落到 index.html 或剩余第一个文件。至少保留一个文件。',
+    {
+      module_id: { type: 'string', required: true, description: '自由界面模块编号' },
+      path: { type: 'string', required: true, description: '要删除的工程内路径' },
+      content_ref: { type: 'string', description: 'surface_read 返回的 content_ref' },
+    },
+    args => ({
+      kind: 'surface_delete_file', moduleId: String(args.module_id), path: String(args.path),
+      ...(typeof args.content_ref === 'string' && args.content_ref !== '' ? { expected: args.content_ref } : {}),
+    }))
+  registerEditTool(tools, 'surface_rename_file',
+    '重命名自由界面工程里的一个文件并保存；入口文件跟着改名。目标已存在时拒绝。',
+    {
+      module_id: { type: 'string', required: true, description: '自由界面模块编号' },
+      from_path: { type: 'string', required: true, description: '原路径' },
+      to_path: { type: 'string', required: true, description: '新路径' },
+      content_ref: { type: 'string', description: 'surface_read 返回的 content_ref' },
+    },
+    args => ({
+      kind: 'surface_rename_file', moduleId: String(args.module_id), from: String(args.from_path), to: String(args.to_path),
+      ...(typeof args.content_ref === 'string' && args.content_ref !== '' ? { expected: args.content_ref } : {}),
+    }))
+  registerEditTool(tools, 'surface_set_manifest',
+    '修改自由界面的 manifest：作品名、说明、封面、全屏偏好、宿主 chrome。不改文件正文。',
+    { module_id: { type: 'string', required: true, description: '自由界面模块编号' }, ...manifestParams },
+    args => ({ kind: 'surface_set_manifest', moduleId: String(args.module_id), manifest: manifestArgs(args) }))
 
   registerEditTool(tools, 'write_module_markdown',
     '完整替换一个模块的 Markdown 正文并保存；保留子模块、布局、编号和标签。已有图片用 ![说明](card-image:资源编号#图片块编号) 独占一行；只在掌握全部正文时使用，长文局部修改仍用 replace_text_range。',
@@ -666,14 +819,27 @@ export function registerCardTools(ctx: Context): void {
       name: { type: 'string', description: '模块名称（省略=保持现名）' },
       text: { type: 'string', required: true, description: '新图注；空字符串清除图注' },
     },
-    args => ({ kind: 'write_caption', moduleId: String(args.module_id), blockId: String(args.block_id), moduleName: moduleNameOf(args) ?? '', text: String(args.text) }))
+    args => {
+      const name = moduleNameOf(args)
+      return { kind: 'write_caption', moduleId: String(args.module_id), blockId: String(args.block_id), ...(name !== undefined ? { moduleName: name } : {}), text: String(args.text) }
+    })
 
   // ---------- 结构 ----------
-  registerEditTool(tools, 'add_module', '在目标卡根部新增空模块并保存。空模块尚无正文，不代表内容创作完成。',
-    { name: { type: 'string', required: true, description: '模块名称' } },
-    args => ({ kind: 'add_module', name: String(args.name) }))
+  registerEditTool(tools, 'add_module',
+    '在目标卡根部新增模块并保存。想做可交互界面、游戏、图表或 3D，用 preset=surface（自由界面）或 preset=free3d（自由 3D），不要先落一个空模块再手写正文；文本类内容才建空文档模块（空模块尚无正文，不代表创作完成）。',
+    {
+      name: { type: 'string', required: true, description: '模块名称' },
+      preset: { type: 'string', description: '模块预设 id（surface/free3d/html 等；先 list_module_presets）' },
+      widget: { type: 'string', description: '特殊渲染器类型（html 等）；一般优先用 preset' },
+      layout: { type: 'string', description: 'VERTICAL（竖向）或 HORIZONTAL（横向），缺省 VERTICAL' },
+    },
+    args => ({
+      kind: 'add_module', name: String(args.name), layout: layoutOf(args.layout) ?? 'VERTICAL',
+      ...(args.preset !== undefined ? { preset: String(args.preset) } : {}),
+      ...(args.widget !== undefined ? { widget: String(args.widget) } : {}),
+    }))
 
-  registerEditTool(tools, 'add_child_module', '在指定父级末尾创建真实子模块并保存（可独立打开、移动和修改；不要用正文标题冒充子模块）。HTML 模块可用 NOVEN_FRAME.openCard/openModule/navigate 做跳转，详见 widget 参数。',
+  registerEditTool(tools, 'add_child_module', '在指定父级末尾创建真实子模块并保存（可独立打开、移动和修改；不要用正文标题冒充子模块）。做自由界面/3D 优先用 add_module_preset 的 surface/free3d；HTML 模块可用 NOVEN_FRAME.openCard/openModule/navigate 做跳转，详见 widget 参数。',
     {
       name: { type: 'string', required: true, description: '模块名称' },
       parent_id: { type: 'string', description: '父模块编号；空/省略为卡根部' },
@@ -685,17 +851,18 @@ export function registerCardTools(ctx: Context): void {
           '这两类建好后**必须**用 timeline_*/collection_* 专用工具填数据，不要手写 JSON；' +
           'relation=人物关系图（用 widget_set_data 写 nodes/edges，节点带 x/y 摆位 0..1）；' +
           'map=地图模块（世界生成：widget_set_data 写 world 源；语义草稿：写 draft+palette 后把 heightmap 置 draft 重算）；' +
-          'html=自定义小组件（正文块直接写 HTML 源码，沙箱渲染）；' +
+          'html=自由界面（沙箱渲染任意 HTML/CSS/JS；工程文件用 surface_write_file 按文件写，不要整包重写）；' +
           'HTML 里可调 NOVEN_FRAME.openCard(cardId)、NOVEN_FRAME.openModule(moduleId,itemId)、NOVEN_FRAME.navigate({cardId,moduleId,itemId}) 做跳转，' +
+          'NOVEN_FRAME.asset(path)/assetAsync(path) 读卡内图片或项目文件（glb/纹理/音频/JSON），' +
           '目标编号从 read_card / collection_describe / timeline_describe 取；' +
           '例：<button onclick="NOVEN_FRAME.navigate({moduleId: \'模块编号\'})">打开</button>；' +
-          'scene=3D 场景（优先用 add_module_preset 的 scene 预设落对象和相机）',
+          'scene=旧的结构化 3D 摆件板（CSS 3D）；真正的自由 3D 用 add_module_preset 的 free3d（three.js）',
       },
     },
     args => ({ kind: 'add_module', name: String(args.name), parentId: optionalId(args.parent_id), layout: layoutOf(args.layout) ?? 'VERTICAL', ...(args.widget !== undefined ? { widget: String(args.widget) } : {}) }))
 
   registerEditTool(tools, 'add_module_preset',
-    '按模块库内置预设新建模块（规则/语录/势力/种族/文化/能力/装备/图鉴/时间线/地图/HTML 等）。preset 用 list_module_presets 的 id；name 是落卡后的模块名。预设会带字段、默认视图、呈现契约和样例，不要再用 collection_add_field 重造。',
+    '按模块库内置预设新建模块（规则/语录/势力/种族/文化/能力/装备/图鉴/时间线/地图/自由界面 surface/自由 3D free3d 等）。preset 用 list_module_presets 的 id；name 是落卡后的模块名。预设会带字段、默认视图、呈现契约和样例，不要再用 collection_add_field 重造。可交互界面与 3D 优先走 surface/free3d，不要写 .html 文件。',
     {
       name: { type: 'string', required: true, description: '模块名称' },
       preset: { type: 'string', required: true, description: '模块预设 id（先 list_module_presets）' },
@@ -1474,34 +1641,20 @@ async function resolveCard(cwd: string, sessionId: SessionId | undefined, cardId
 }
 
 /**
- * 编辑一条命令；卡的信任档（cardMeta.aiTrust）决定去向：'auto' 直接提交，
- * 默认 'propose' 落成提案等用户确认。跨项目照常——卡在哪就改哪。
+ * 编辑一条命令并直接提交。AI 写入不再经过提案确认：改完即生效，
+ * 客户端用 tool/call 到 tool/result 之间的流光提示编辑正在进行。
  */
 async function editAndCommit(exec: { agent?: { session: { id?: string, header: { cwd?: string } } } }, root: string, target: string, command: EditorCommand, project?: string): Promise<Record<string, JsonValue>> {
   const cwd = sessionCwd(exec)
   const sessionId = exec.agent?.session?.id as SessionId | undefined
   const resolved = await resolveCard(cwd, sessionId, root, project)
   await bindManaged(cwd, exec, root, resolved.projectRoot)
-  if (await aiTrustOf(resolved.projectRoot, root) === 'auto') {
-    const { outcome, saved } = await applyAndCommit(resolved.store, root, target, command, 'AI')
-    return {
-      status: 'saved', root_id: root, target_id: target, revision: saved.revision, next_draft_version: saved.version,
-      project_root: resolved.projectRoot,
-      created_module_ids: outcome.createdModuleIds, created_block_ids: outcome.createdBlockIds,
-      ...cardTag(outcome.draft.document, target),
-    }
-  }
-  const outcome = await proposeEdit(resolved.store, root, target, command)
-  const preview = proposalPreview(resolved.saved.document, outcome.proposal)
+  const { outcome, saved } = await applyAndCommit(resolved.store, root, target, command, 'AI')
   return {
-    status: 'proposed', pending: true, root_id: root, target_id: target,
+    status: 'saved', root_id: root, target_id: target, revision: saved.revision, next_draft_version: saved.version,
     project_root: resolved.projectRoot,
-    proposal_changes: proposalChanges(resolved.saved.document, outcome.proposal).map(change => ({
-      module_id: change.moduleId, name: change.name, kind: change.kind, stale: change.stale,
-    })),
     created_module_ids: outcome.createdModuleIds, created_block_ids: outcome.createdBlockIds,
-    ...cardTag(preview, target),
-    next: '改动已作为提案放在画布上，等待用户确认——不要宣称已完成；用户接受后才生效',
+    ...cardTag(outcome.draft.document, target),
   }
 }
 

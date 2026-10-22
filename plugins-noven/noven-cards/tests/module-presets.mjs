@@ -4,7 +4,7 @@
  * Run after build: node tests/module-presets.mjs
  */
 import { MODULE_PRESETS, collectionPreset, isModulePreset, mapPreset, timelinePreset } from '../lib/module-presets.js'
-import { decodeCollection, decodeMap, decodeScene, decodeSurface, decodeTimeline, encodeScene, encodeTimeline } from '../lib/formats.js'
+import { decodeCollection, decodeMap, decodeScene, decodeSurface, decodeTimeline, encodeScene, encodeTimeline, validateSurface } from '../lib/formats.js'
 import { COLLECTION_CONTRACTS, contractFor } from '../lib/collection-contracts.js'
 
 let failed = 0
@@ -47,9 +47,19 @@ check(surfaceProject?.manifest.fullscreen === false && (surfaceProject?.manifest
 const free3dProject = decodeSurface(MODULE_PRESETS.free3d?.sample)
 check(free3dProject?.entry === 'index.html' && Object.keys(free3dProject.files).length === 3, 'free3d: entry + multi-file project')
 check(free3dProject?.files['main.js']?.includes('NOVEN_THREE') === true, 'free3d: local three.js runtime registered')
-check(free3dProject?.manifest.fullscreen === true && (free3dProject?.manifest.cover ?? '').length > 20, 'free3d: manifest fullscreen + cover')
+check(free3dProject?.manifest.fullscreen === false && free3dProject.manifest.chrome === 'game' && (free3dProject?.manifest.cover ?? '').length > 20, 'free3d: inline by default + game chrome + cover')
 check(MODULE_PRESETS.free3d?.sample?.includes('WebGLRenderer') === true, 'free3d: uses WebGLRenderer')
 check(!/玄天大陆|北境|东海|南疆|沈青梧/.test(MODULE_PRESETS.scene.sample ?? '' + JSON.stringify(MODULE_PRESETS.scene.scene)), 'scene: no test world names')
+for (const id of ['surface.dashboard', 'surface.gallery', 'free3d.viewer']) check(isModulePreset(id), `template ${id} registered`)
+const viewer = decodeSurface(MODULE_PRESETS['free3d.viewer'].sample)
+check(viewer?.files['main.js']?.includes('OrbitControls') === true && viewer.manifest.chrome === 'game', 'viewer template uses OrbitControls + game chrome')
+const editor = decodeSurface(MODULE_PRESETS['free3d.editor'].sample)
+check(editor?.entry === 'index.html' && Object.keys(editor.files).length === 3, 'editor template: entry + multi-file project')
+check(editor?.files['main.js']?.includes("import('NOVEN_THREE')") === true, 'editor template: shared three runtime')
+check(editor?.files['main.js']?.includes('TransformControls') === true, 'editor template: transform gizmo from the runtime')
+check(editor?.files['main.js']?.includes('surface_set_state') === true, 'editor template: saves scene state to the card')
+check(editor?.manifest.fullscreen === true && editor.manifest.chrome === 'none', 'editor template: fullscreen, no game chrome')
+check(editor === undefined ? false : validateSurface(editor).ok, 'editor template: surface validates')
 check(MODULE_PRESETS.html?.widget === 'html' && typeof MODULE_PRESETS.html?.sample === 'string', 'html: runtime sample registered')
 check(MODULE_PRESETS.scene?.widget === 'scene' && (MODULE_PRESETS.scene?.scene?.objects.length ?? 0) > 0, 'scene: sample scene registered')
 const sceneRound = decodeScene(encodeScene(MODULE_PRESETS.scene.scene))

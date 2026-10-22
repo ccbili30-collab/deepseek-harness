@@ -53,6 +53,7 @@ async function bench(collapsed = false) {
     seedSessionGeometry: vi.fn(),
     seedUnitShare: vi.fn(),
     navGeometryDiffers: vi.fn(() => false),
+    setCanvasFullscreen: vi.fn(),
     canvasClaims: { provide: () => () => {}, claim: () => null, subscribe: () => () => {} },
   } satisfies ILayout
   await runtime.mount({

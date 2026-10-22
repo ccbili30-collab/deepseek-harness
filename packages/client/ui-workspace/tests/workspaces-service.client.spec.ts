@@ -304,7 +304,7 @@ function bench(options: BenchOptions = {}) {
     setRightbar: vi.fn(), settleRightbar: vi.fn(),
     setUnit: vi.fn(), openRightbar: vi.fn(), closeRightbar: vi.fn(),
     setUnitSide: vi.fn(), enterSession: vi.fn(),
-    seedSessionGeometry: vi.fn(), seedUnitShare: vi.fn(),
+    seedSessionGeometry: vi.fn(), seedUnitShare: vi.fn(), setCanvasFullscreen: vi.fn(),
   }, () => true, createSnapshotStore({ activePanelId: null }), createSnapshotStore({
     sidebarCollapsed: false, narrowExpanded: false, unitSide: 'right', rightbarCollapsed: false, byId: {}, active: null,
   }), navDiffers)
@@ -458,7 +458,7 @@ describe('UiWorkspaceService', () => {
     expect(open).toHaveBeenCalledTimes(1)
   })
 
-  it('routes a blank Session open to the registered new-session surface', () => {
+  it('routes a blank Session open to the registered new-session surface and seats it as the host', () => {
     const b = bench({
       workspaces: workspaceState([workspace('a', [sid('host')])]),
       sessions: sessionState([summary('host', { cwd: '/w/a', blank: true })]),
@@ -467,7 +467,38 @@ describe('UiWorkspaceService', () => {
     b.uiWorkspace.registerNewSessionSurface(open)
     b.uiWorkspace.openSession(sid('host'))
     expect(open).toHaveBeenCalledTimes(1)
-    expect(b.sessions.retain).not.toHaveBeenCalled()
+    expect(b.sessions.retain).toHaveBeenCalledWith(sid('host'), { source: 'mainView' })
+    expect(b.selectPanel).not.toHaveBeenCalled()
+  })
+
+  it('seats a Workspace blank through the new-session surface instead of revealing its empty page', async () => {
+    const b = bench({
+      workspaces: workspaceState([workspace('a', [sid('real')]), workspace('b', [sid('blank-b')])]),
+      sessions: sessionState([
+        summary('real', { cwd: '/w/a' }),
+        summary('blank-b', { cwd: '/w/b', blank: true }),
+      ]),
+    })
+    const open = vi.fn()
+    const beforeOpen = vi.fn()
+    b.uiWorkspace.registerNewSessionSurface(open)
+    await b.uiWorkspace.openWorkspace(wid('b'), beforeOpen)
+    expect(b.sessions.retain).toHaveBeenCalledWith(sid('blank-b'), { source: 'mainView' })
+    expect(beforeOpen).toHaveBeenCalledExactlyOnceWith(sid('blank-b'))
+    expect(open).toHaveBeenCalledTimes(1)
+    expect(b.selectPanel).not.toHaveBeenCalled()
+  })
+
+  it('connects an explicit Workspace before opening the new-session surface', async () => {
+    const b = bench({
+      workspaces: workspaceState([workspace('a'), workspace('b', [sid('blank-b')])]),
+      sessions: sessionState([summary('blank-b', { cwd: '/w/b', blank: true })]),
+    })
+    const open = vi.fn()
+    b.uiWorkspace.registerNewSessionSurface(open)
+    b.uiWorkspace.startSession(wid('b'))
+    await vi.waitFor(() => { expect(open).toHaveBeenCalledTimes(1) })
+    expect(b.sessions.retain).toHaveBeenCalledWith(sid('blank-b'), { source: 'mainView' })
   })
 
   it('finds the reusable blank without a Host round-trip', () => {

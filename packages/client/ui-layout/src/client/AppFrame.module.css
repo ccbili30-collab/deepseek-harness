@@ -439,3 +439,14 @@
 .overlayLayer > * {
   pointer-events: auto;
 }
+
+/* Canvas-only presentation: the navigation column and the conversation leave
+   the grid, leaving the canvas's right column as the whole work layer. The
+   attribute is transient; removing it restores the recorded tracks exactly. */
+.frame[data-canvas-fullscreen] [data-sidebar-col] {
+  display: none;
+}
+
+.work[data-canvas-fullscreen] [data-center-col] {
+  display: none;
+}

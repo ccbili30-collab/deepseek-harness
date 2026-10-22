@@ -41,7 +41,9 @@ const LAYOUT_NOTE = `这个工作区的文件约定：
 - 卡/ 是用户的卡本体——每张卡一个以卡名命名的目录（card.json + contents/）。它是 Finder 里看得见的内容，不是内部状态；改卡走制卡工具，别直接改文件。
 - .noven/project.json 只是项目身份标记。作品清单、卡绑定、工作台注册表都在应用侧账本，不在这个目录里——找不到不等于丢了。
 - 卡/、.noven/、整个项目目录都属于用户数据：除非用户明确要求删除，否则先说明影响再确认。
-- 软件功能与用法查内置手册：help 工具（不带参数回目录）。用户问"怎么用"时先查再答，别凭印象。`
+- 要做可看、可交互的东西——界面、游戏、3D、图表、小工具、可视化——默认建卡 + 自由界面（surface）或自由 3D（free3d）模块，在画布里直接渲染和操作；不要先在项目里写 .html 文件。自由界面是工程而不是一段源码：surface_read → surface_write_file 按文件改 → surface_validate → surface_diagnostics 自检。
+- 只有沙箱做不了时才落文件：需要项目二进制资产、外网、未内置的库或必须被其他工具消费。落文件后用 module_embed_file 把它挂回卡里，保证用户在卡里也能看到。
+- 软件功能与用法查内置手册：help 工具（不带参数回目录）。自由模块的桥与限制查 help({topic:"surfaces"})。用户问"怎么用"时先查再答，别凭印象。`
 
 /** Per-card excerpt bound — enough for the model to work with, bounded so a fat card cannot flood the turn. */
 const EXCERPT_CHARS = 3000

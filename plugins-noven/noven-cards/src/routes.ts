@@ -21,6 +21,7 @@ import { isModulePreset } from './module-presets.ts'
 import { deleteCustomModule, listCustomModules, normalizeCustomModule, saveCustomModule } from './custom-modules.ts'
 import { decodeCollection, decodeMap, decodeRelation, decodeScene, decodeTimeline } from './formats.ts'
 import { buildExportPackage, importExchange, importForeignFile } from './exchange.ts'
+import { appendDiagnostics } from './diagnostics.ts'
 import { acceptProposal, proposalChanges, proposalPreview, rejectProposal } from './proposals.ts'
 import { aiTrustOf, setAiTrust, type AiTrust } from './trust.ts'
 
@@ -410,6 +411,11 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
         ?? (typeof command.resourceId === 'string' || (typeof command.imageBase64 === 'string' && typeof command.mediaType === 'string') ? undefined : 'missing image')
     case 'collection_set_view': return needs(['moduleId', 'view'])
     case 'embed_file': return needs(['path'])
+    case 'surface_init': return needs(['moduleId'])
+    case 'surface_write_file': return needs(['moduleId', 'path']) ?? ('text' in command ? undefined : 'missing text')
+    case 'surface_delete_file': return needs(['moduleId', 'path'])
+    case 'surface_rename_file': return needs(['moduleId']) ?? ('from' in command && 'to' in command ? undefined : 'missing from/to')
+    case 'surface_set_manifest': return needs(['moduleId']) ?? ('manifest' in command ? undefined : 'missing manifest')
     case 'collection_set_style': return needs(['moduleId', 'artStyle'])
     case 'set_layout': return needs(['layoutKey']) ?? ('layout' in command ? undefined : 'missing layout')
     default: return undefined
@@ -460,6 +466,13 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
 
   try {
     switch (String(body.op ?? '')) {
+      case 'diagnostics': {
+        const moduleId = String(body.moduleId ?? '')
+        if (cardId === '' || moduleId === '') return bad('missing cardId/moduleId')
+        const entries = Array.isArray(body.entries) ? body.entries : []
+        const stored = await appendDiagnostics(resolved.root, cardId, moduleId, entries)
+        return new Response(JSON.stringify({ ok: true, entries: stored.entries.length, updated_at: stored.updatedAt }), { headers: JSON_HEADERS })
+      }
       case 'create': {
         const kind = String(body.kind ?? '')
         const name = String(body.name ?? '').trim()

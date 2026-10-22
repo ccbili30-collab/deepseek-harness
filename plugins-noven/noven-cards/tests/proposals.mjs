@@ -14,7 +14,7 @@ import { CardStore } from '../lib/store.js'
 import { registerCardTools } from '../lib/tools.js'
 import { applyAndCommit } from '../lib/editor.js'
 import { acceptProposal, proposalChanges, proposalPreview, proposeEdit, rejectProposal } from '../lib/proposals.js'
-import { aiTrustOf, setAiTrust } from '../lib/trust.js'
+import { aiTrustOf } from '../lib/trust.js'
 import { decodeCollection, decodeLayout, decodeTimeline, encodeCollection, encodeLayout, encodeTimeline, formatTime } from '../lib/formats.js'
 
 const root = mkdtempSync(join(tmpdir(), 'noven-cards-proposals-'))
@@ -96,21 +96,17 @@ try {
   check(saved5b.document.resources.length === 1 && saved5b.document.resources[0].mediaType === 'image/png', '素材资源补丁随提案接受落地')
   check((await store.open('card-p')).document.resources.length === 1, '接受的资源写入 head')
 
-  // 6. 信任档：默认 propose → 工具回 proposed；auto → 工具直接 saved
-  check(await aiTrustOf(root, 'card-p') === 'propose', '信任档缺省为 propose')
+  // 6. AI 工具直接提交：不再经过提案确认，也不看旧的信任档
+  check(await aiTrustOf(root, 'card-p') === 'propose', '旧信任档仍可读（工具已不使用）')
   const registered = new Map()
   registerCardTools({ tools: { register: def => { registered.set(def.name, def) } } })
   const exec = { agent: { session: { id: 'sess-p', header: { cwd: root } } } }
-  const proposed = await registered.get('rename_card').execute({ root_id: 'card-p', target_id: 'card-p', name: '提案世界改名' }, exec)
-  check(proposed.status === 'proposed' && proposed.pending === true, '工具在 propose 档下回 proposed')
-  const headAfterTool = await store.open('card-p')
-  check(headAfterTool.document.name === '提案世界', 'proposed 的改名没碰 head')
-  await rejectProposal(store, 'card-p')
-  await setAiTrust(root, 'card-p', 'auto')
-  check(await aiTrustOf(root, 'card-p') === 'auto', '信任档可切到 auto')
-  const saved6 = await registered.get('rename_card').execute({ root_id: 'card-p', target_id: 'card-p', name: '自动世界' }, exec)
-  check(saved6.status === 'saved' && (await store.open('card-p')).document.name === '自动世界', 'auto 档下工具直接提交')
-  await setAiTrust(root, 'card-p', 'propose')
+  const saved6 = await registered.get('rename_card').execute({ root_id: 'card-p', target_id: 'card-p', name: '直接世界' }, exec)
+  check(saved6.status === 'saved' && (await store.open('card-p')).document.name === '直接世界', '工具直接提交')
+  check(await store.proposal('card-p') === undefined, '直接提交不产生提案')
+  const wrote6 = await registered.get('write_module_text').execute({ root_id: 'card-p', target_id: 'card-p', module_id: 'm-a', block_id: '', text: '直接写正文' }, exec)
+  const afterWrite = await store.open('card-p')
+  check(wrote6.status === 'saved' && afterWrite.document.modules[0].name === '模块甲', '省略 name 时不清空模块名')
 
   // 7. 时间线 v2 编解码
   const timeline = {

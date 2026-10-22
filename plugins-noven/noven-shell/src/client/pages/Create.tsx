@@ -9,6 +9,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ShellT } from './Home.tsx'
+import { CreateHero } from '../create-hero.tsx'
 import type { RenderFactorySlot, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { WorkspaceId, WorkspaceSnapshot, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -64,14 +65,17 @@ export function Create({ t, useWorkspaces, useSessions, renderFactorySlot, ensur
 
   // The host's first prompt is the real submission. The app immediately
   // stands up a fresh blank as the new current when one engages, so the
-  // handoff must follow the Session this page hosted — the first blank it saw
-  // — not whatever the main view points at by then. A mount-time real Session
-  // is not a submission: only a Session this page watched go blank → engaged.
+  // handoff must follow the Session this page hosted — the current blank
+  // before engagement, not whatever the main view points at afterwards. A
+  // mount-time real Session is not a submission: only a Session this page
+  // watched go blank → engaged.
   const [hostedId, setHostedId] = useState<SessionId | undefined>(undefined)
-  useEffect(() => {
-    if (hostBlank === true && hostId !== undefined) setHostedId(prev => prev ?? hostId)
-  }, [hostBlank, hostId])
   const hostEngaged = useSessions(s => hostedId !== undefined && s.byId[hostedId]?.blank === false)
+  useEffect(() => {
+    // A workspace switch re-hosts the page on another blank: follow it until
+    // one engages, then keep the engaged id as the handoff target.
+    if (hostBlank === true && hostId !== undefined && !hostEngaged) setHostedId(hostId)
+  }, [hostBlank, hostId, hostEngaged])
   const revealedRef = useRef(false)
   useEffect(() => {
     if (!hostEngaged || revealedRef.current) return
@@ -103,11 +107,7 @@ export function Create({ t, useWorkspaces, useSessions, renderFactorySlot, ensur
   return (
     <div className="nv-page nv-create-page">
       <div className="nv-create-ritual">
-        <header className="nv-create-intro">
-          <span className="nv-create-eyebrow">{t('create.ritual.eyebrow')}</span>
-          <h1>{t('create.ritual.title')}</h1>
-          <p>{t('create.ritual.sub')}</p>
-        </header>
+        <CreateHero t={t} />
 
         {/* The composer mounts only on a real blank host: bound to a real
             Session it would queue prompts into it. It stays mounted through

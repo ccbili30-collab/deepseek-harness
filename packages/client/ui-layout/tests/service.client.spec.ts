@@ -20,6 +20,7 @@ function fakePanels(): PanelActions {
     setUnit: vi.fn(),
     openRightbar: vi.fn(),
     closeRightbar: vi.fn(),
+    setCanvasFullscreen: vi.fn(),
   }
 }
 

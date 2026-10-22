@@ -7,6 +7,18 @@
  */
 
 const CSS = `
+/* 随包字体：标题思源黑体（650 子集）与输入框灵感句文楷。均为 OFL，
+   许可证在 assets/fonts/；子集只保留当前用字，避免整包数十 MB。 */
+@font-face {
+  font-family: 'Source Han Sans SC';
+  src: url('/api/noven-assets?name=source-han-sans-650.woff2') format('woff2');
+  font-weight: 650; font-style: normal; font-display: swap;
+}
+@font-face {
+  font-family: 'LXGW WenKai';
+  src: url('/api/noven-assets?name=wenkai-quote.woff2') format('woff2');
+  font-weight: 400; font-style: normal; font-display: swap;
+}
 :root {
   --nv-canvas: #F4F5F4;
   --nv-pane: #F7F8F9;
@@ -290,19 +302,53 @@ html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: norm
    windows and the column scrolls, so nothing clips. */
 .nv-create-ritual::before { content: ""; display: block; flex: 0 1 calc(46% - 190px); min-height: 20px; }
 .nv-create-ritual::-webkit-scrollbar { display: none; }
-.nv-create-intro { text-align: center; margin: 0 auto; max-width: 720px; }
-.nv-create-eyebrow { display: block; margin-bottom: 10px; font-size: 10px; font-weight: 700; letter-spacing: .2em; color: var(--nv-accent-deep); }
-.nv-create-intro h1 { margin: 0; font-size: clamp(30px, 4vw, 46px); line-height: 1.15; letter-spacing: -.045em; font-weight: 650;
-  /* The anchor line never wraps: a narrow compensated column would otherwise
-     break the title mid-phrase and move its optical center. */
+.nv-create-intro { width: min(100%, 720px); max-width: 720px; text-align: center; margin: 0 auto; }
+/* 花体签名：替代原来的「NOVEN · 创作现场」眉题。系统花体栈，macOS/Windows
+   各有原生字体；Linux 退回 cursive。 */
+.nv-create-signature { display: block; margin-bottom: 10px; font-family: "Snell Roundhand", "Apple Chancery", "Segoe Script", "Brush Script MT", cursive;
+  font-size: 17px; line-height: 1.2; color: var(--nv-accent-deep); letter-spacing: .01em; }
+/* 打字行：整句随字宽居中，前缀和对象始终连在一起；不预留空槽，避免短词时
+   整行偏左。横向的轻微位移就是打字本身的节奏。 */
+.nv-create-typed { margin: 0; display: flex; align-items: baseline; justify-content: center;
+  font-family: "Source Han Sans SC", "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: clamp(30px, 4vw, 46px); line-height: 1.15; letter-spacing: -.02em; font-weight: 650;
   white-space: nowrap; }
-.nv-create-intro p { margin: 8px 0 0; color: var(--nv-secondary-text); font-size: 14px; line-height: 1.7; }
+/* 整句同色：前缀和后半句都是黑的，靠字体本身撑住分量。 */
+.nv-create-typed-prefix { color: var(--nv-primary-text); font-weight: 650; }
+.nv-create-typed-word { display: inline-block; margin-left: .16em; color: var(--nv-primary-text); font-weight: 650; }
+.nv-create-caret { display: inline-block; width: 2px; height: .92em; margin-left: .08em; vertical-align: -.08em;
+  background: var(--nv-accent-deep); animation: nv-create-caret 1s step-end infinite; }
+@keyframes nv-create-caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+/* 标题下的小说句：上下滚动轮播、点击换句；宽度取最长句，避免跟标题宽度抖动。 */
+.nv-create-novel { position: relative; display: block; width: max-content; max-width: 100%;
+  height: 1.7em; margin: 10px auto 0; padding: 0; border: 0; appearance: none; background: none;
+  font-family: "LXGW WenKai", "Kaiti SC", "STKaiti", "KaiTi", serif;
+  font-size: 15px; font-weight: 400; line-height: 1.7; color: var(--nv-secondary-text);
+  text-align: center; cursor: pointer; }
+.nv-create-novel-ruler { display: grid; height: 1.7em; visibility: hidden; overflow: hidden; pointer-events: none; }
+.nv-create-novel-ruler > span { grid-area: 1 / 1; white-space: nowrap; }
+.nv-create-novel:focus-visible { outline: 2px solid var(--nv-accent); outline-offset: 4px; border-radius: 4px; }
+.nv-create-novel-line { position: absolute; inset: 0; display: block; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nv-create-novel-out { animation: nv-create-novel-out 520ms cubic-bezier(.22,.61,.36,1) both; }
+.nv-create-novel-in { animation: nv-create-novel-in 520ms cubic-bezier(.22,.61,.36,1) both; }
+@keyframes nv-create-novel-out { from { transform: translateY(0); opacity: 1; } to { transform: translateY(-105%); opacity: 0; } }
+@keyframes nv-create-novel-in { from { transform: translateY(105%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .nv-create-caret { animation: none; opacity: 1; }
+  .nv-create-novel-out, .nv-create-novel-in { animation: none; }
+}
 /* The embedded real composer (conversation.content) sits in the same 780px
-   column as the old card; the hero's own brand shell and its BlankDock guide
-   stay home — the ritual page keeps the composer alone as the hero. */
+   column as the old card; the hero's own brand shell stays home — the ritual
+   page keeps the composer alone as the hero. */
 .nv-create-hero { width: min(780px, 100%); margin: 0 auto; }
 .nv-create-hero [data-conversation-hero-shell] { display: none; }
-.nv-create-hero .nv-create-guide { display: none; }
+/* 输入框占位轮播：33 句世界观前提落在原生占位层，文楷；原生 placeholder 让位。 */
+.nv-input-quote { position: absolute; inset: 4px 8px auto 14px; z-index: 1; pointer-events: none; user-select: none;
+  font-family: "LXGW WenKai", "Kaiti SC", "STKaiti", "KaiTi", serif; font-size: inherit; line-height: inherit;
+  color: var(--dsw-alias-label-caption, var(--nv-secondary-text));
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+[data-composer-card]:has(.nv-input-quote) [data-composer-placeholder] { visibility: hidden; }
 .nv-create-paths { width: min(780px, 100%); margin: 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .nv-create-path { min-width: 0; display: grid; grid-template-columns: 34px minmax(0,1fr) 18px; align-items: center; gap: 11px;
   padding: 13px 14px; border: .5px solid var(--nv-divider); border-radius: 14px; background: rgba(255,255,255,.72); color: var(--nv-primary-text);
@@ -335,7 +381,7 @@ html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: norm
 @media (max-width: 760px) {
   .nv-create-ritual { width: min(100% - 32px, 920px); }
   .nv-create-paths { grid-template-columns: 1fr; }
-  .nv-create-intro h1 { font-size: 31px; }
+  .nv-create-typed { font-size: 31px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .nv-create-path, .nv-create-mini { transition: none; }
@@ -924,11 +970,6 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
    原生标题组（旧标语+预览版徽标）随 mark 一并隐藏。 */
 [class*="headline"] > [class*="titleGroup"] { display: none; }
 
-.nv-slash-chips { display: flex; flex: none; gap: 8px; padding: 0 4px; }
-@keyframes nv-chip-in { from { opacity: 0; transform: translateX(-10px); } to { opacity: 1; transform: none; } }
-.nv-slash-chip { display: inline-flex; align-items: center; flex: none; height: 26px; padding: 0 12px; border-radius: 999px; border: 0.5px solid var(--nv-divider); background: var(--nv-surface); font-size: 12.5px; white-space: nowrap; color: var(--nv-primary-text); cursor: pointer; animation: nv-chip-in var(--nv-dur-ui) var(--nv-ease-out) both; }
-.nv-slash-chip:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
-
 /* 会话顶栏绑定 chips（01b：项目 / 背景 / 管理） */
 .nv-hchip { display: inline-flex; align-items: center; height: 22px; padding: 0 9px; margin-left: 4px; border-radius: 999px; border: 0.5px solid var(--nv-divider); background: transparent; font-size: 11px; color: var(--nv-secondary-text); cursor: pointer; }
 .nv-hchip:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
@@ -1306,7 +1347,6 @@ div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !impo
 .nv-tree-rolestitle { flex: 1; min-width: 0; }
 .nv-tree-glyph { width: 16px; flex: none; color: var(--nv-secondary-text); font-size: 11px; }
 .nv-tree-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nv-tree-pending { width: 6px; height: 6px; border-radius: 50%; background: var(--nv-accent-deep); flex: none; }
 /* 底部分两半：「＋ 新建」开对象、「🔧 工具」开功能台（设计稿 01 变体——
    功能台从主面板挪回工作现场旁）。Menu anchor 根是 inline span——
    给 flex:1 让两半均分。 */
@@ -1371,10 +1411,42 @@ div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !impo
 .nv-canvas-dots { display: inline-flex; gap: 4px; align-items: center; flex: none; }
 .nv-canvas-dot { width: 6px; height: 6px; border-radius: 50%; }
 .nv-dot-working { background: var(--nv-accent); animation: nv-dot-breathe 1.6s ease-in-out infinite; }
-.nv-dot-pending { background: #2EA85C; }
 .nv-dot-error { background: var(--nv-danger); }
 .nv-dot-unsaved { background: var(--nv-secondary-text); }
 @keyframes nv-dot-breathe { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+/* AI 编辑流光：画布上缘扫光 + 页签底色流动 + 胶囊标签，三处共用一份会话态。 */
+.nv-canvas[data-ai-editing]::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--nv-accent), transparent); background-size: 200% 100%;
+  animation: nv-ai-flow 1.6s linear infinite; pointer-events: none; z-index: 5; }
+.nv-canvas-tab-ai { color: var(--nv-accent-deep);
+  background: linear-gradient(100deg, transparent 20%, rgba(52, 211, 153, .18) 50%, transparent 80%);
+  background-size: 220% 100%; animation: nv-ai-flow 1.8s linear infinite; }
+.nv-ai-tag { display: inline-flex; align-items: center; justify-content: center; min-width: 18px; height: 15px;
+  padding: 0 4px; border-radius: 4px; background: var(--nv-accent-deep); color: #fff;
+  font-size: 9px; font-weight: 700; letter-spacing: .04em; flex: none; }
+.nv-ai-pill { display: inline-flex; align-items: center; gap: 6px; padding: 3px 9px; border-radius: 999px;
+  color: var(--nv-accent-deep); border: 1px solid rgba(14, 159, 110, .24);
+  background: linear-gradient(100deg, rgba(52, 211, 153, .10), rgba(52, 211, 153, .30), rgba(52, 211, 153, .10));
+  background-size: 220% 100%; font-size: 10.5px; font-weight: 600; white-space: nowrap;
+  animation: nv-ai-flow 1.8s linear infinite; }
+.nv-ai-pill::before { content: ''; width: 6px; height: 6px; border-radius: 50%;
+  background: var(--nv-accent-deep); animation: nv-dot-breathe 1.4s ease-in-out infinite; }
+.nv-ai-pill-canvas { position: absolute; right: 14px; bottom: 14px; z-index: 6;
+  box-shadow: 0 4px 14px rgba(16, 20, 18, .08); }
+.nv-ai-pill-bleed { position: absolute; top: 14px; right: 16px; z-index: 2; }
+/* AI 正在写的模块：内容只读，模块上缘一条薄绿流光；与页签/画布同源。 */
+.nv-ai-locked { position: relative; }
+.nv-ai-locked::before { content: ''; position: absolute; left: 0; right: 0; top: -9px; height: 1.5px;
+  background: linear-gradient(90deg, transparent, var(--nv-accent), transparent); background-size: 200% 100%;
+  animation: nv-ai-flow 1.8s linear infinite; pointer-events: none; }
+.nv-ai-locked::after { content: ''; position: absolute; inset: -8px -10px; border-radius: 14px;
+  box-shadow: inset 0 0 0 1px rgba(14, 159, 110, .12); pointer-events: none; }
+@keyframes nv-ai-flow { from { background-position: 0% 50%; } to { background-position: 200% 50%; } }
+@media (prefers-reduced-motion: reduce) {
+  .nv-ai-pill, .nv-ai-pill::before, .nv-ai-tag, .nv-canvas-tab-ai,
+  .nv-canvas[data-ai-editing]::after, .nv-cardpage-ai::before, .nv-cardpage-ai .nv-pagehead,
+  .nv-ov-tile-ai::after, .nv-ai-locked::before { animation: none; }
+}
 .nv-canvas-plus { border: 0; background: none; padding: 4px 8px; font-size: 15px; color: var(--nv-secondary-text); cursor: pointer; }
 .nv-canvas-plus:hover { color: var(--nv-accent-deep); }
 .nv-canvas-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
@@ -1631,6 +1703,13 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 /* 卡页：头栏 + 模块竖排堆叠（设计稿 J02），模块导航归抽屉树 */
 /* 卡页：白纸一页，内容 666 居中；页头是唯一的分隔线，模块自己不再套卡片。 */
 .nv-cardpage { position: relative; height: 100%; display: flex; flex-direction: column; background: var(--nv-surface); font-size: 16px; }
+/* 卡页被 AI 写：页头一层很淡的流动薄荷，正文不盖遮罩——阅读和点选照常。 */
+.nv-cardpage-ai { box-shadow: inset 0 0 0 1px rgba(14, 159, 110, .18); }
+.nv-cardpage-ai::before { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2px;
+  background: linear-gradient(90deg, transparent, var(--nv-accent), transparent); background-size: 200% 100%;
+  animation: nv-ai-flow 1.6s linear infinite; pointer-events: none; z-index: 3; }
+.nv-cardpage-ai .nv-pagehead { background: linear-gradient(100deg, transparent 20%, var(--nv-accent-soft) 50%, transparent 80%);
+  background-size: 220% 100%; animation: nv-ai-flow 2.4s linear infinite; }
 .nv-cardpage-more { width: 28px; height: 28px; border: 0; border-radius: 8px;
   background: none; color: var(--nv-secondary-text); font-size: 18px; line-height: 1; cursor: pointer; }
 .nv-cardpage-more:hover { background: var(--nv-hover); color: var(--nv-primary-text); }
@@ -1660,25 +1739,6 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   background: rgba(255,255,255,.94); color: var(--nv-secondary-text); cursor: pointer;
   box-shadow: 0 1px 4px rgba(20,30,26,.06); }
 .nv-page-bleedback:hover { color: var(--nv-primary-text); border-color: var(--nv-accent); }
-
-/* AI 提案条：挂起提案的确认入口——数量徽标 + 改动名清单 + 预览/接受/拒绝 */
-.nv-prop { display: flex; align-items: center; gap: 10px; padding: 8px 18px;
-  background: var(--nv-accent-soft); border-bottom: 1px solid var(--nv-divider); }
-.nv-prop-badge { font-size: 11px; font-weight: 600; color: var(--nv-accent-deep);
-  background: var(--nv-surface); border: 1px solid var(--nv-accent); border-radius: 999px; padding: 2px 9px; flex: none; }
-.nv-prop-list { flex: 1; min-width: 0; display: flex; gap: 6px; overflow: hidden; }
-.nv-prop-item { font-size: 11px; color: var(--nv-secondary-text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.nv-prop-item i { font-style: normal; color: var(--nv-accent-deep); margin-right: 3px; }
-.nv-prop-stale { color: var(--nv-warn); }
-.nv-prop-stale i { color: var(--nv-warn); }
-.nv-prop-actions { display: flex; gap: 6px; flex: none; }
-.nv-prop-btn { border: 1px solid var(--nv-divider); background: var(--nv-surface); color: var(--nv-primary-text);
-  font-size: 11px; padding: 3px 10px; border-radius: 7px; cursor: pointer; }
-.nv-prop-btn:hover { border-color: var(--nv-accent); }
-.nv-prop-accept { background: var(--nv-accent); border-color: var(--nv-accent); color: #fff; }
-.nv-prop-accept:hover { background: var(--nv-accent-deep); }
-.nv-prop-reject { color: var(--nv-warn); }
-.nv-prop-reject:hover { border-color: var(--nv-warn); }
 
 /* 模块正文：页头已承担标题，模块只留内容。 */
 .nv-modbox { position: relative; }
@@ -1793,6 +1853,18 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-modlib-foot { margin-top: 14px; font-size: 11.5px; color: var(--nv-secondary-text); }
 .nv-modlib-group { margin-bottom: 16px; }
 .nv-modlib-grouplabel { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: .08em; color: var(--nv-secondary-text); }
+/* 自由界面 / 自由 3D 的模板架：两块瓦片各展开一组起始工程，不把 3→6 块塞进主网格。 */
+.nv-modlib-tile[data-on] .nv-modlib-art { outline: 2px solid var(--nv-accent); }
+.nv-modlib-templates { margin: -4px 0 16px; padding: 12px; border: 1px solid var(--nv-divider); border-radius: 12px; background: var(--nv-pane); }
+.nv-modlib-templaterow { display: flex; flex-wrap: wrap; gap: 8px; }
+.nv-modlib-templatebtn { flex: 1 1 132px; display: flex; flex-direction: column; align-items: flex-start; gap: 3px;
+  padding: 9px 11px; border: 1px solid var(--nv-divider); border-radius: 10px; background: var(--nv-surface);
+  color: var(--nv-primary-text); font: inherit; cursor: pointer; text-align: left; }
+.nv-modlib-templatebtn b { font-size: 12.5px; }
+.nv-modlib-templatebtn small { font-size: 11px; color: var(--nv-secondary-text); line-height: 1.4; }
+.nv-modlib-templatebtn:hover { border-color: var(--nv-accent); background: var(--nv-accent-soft); }
+.nv-modlib-templateclose { align-self: center; border: 0; background: none; color: var(--nv-secondary-text);
+  font: inherit; font-size: 11px; cursor: pointer; padding: 4px 6px; }
 .nv-modlib-saved { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: -2px 0 14px; }
 .nv-modlib-saved > span:first-child { color: var(--nv-secondary-text); font-size: 10.5px; letter-spacing: .06em; }
 .nv-modlib-saveditem { display: inline-flex; align-items: center; border: 1px solid var(--nv-divider); border-radius: 999px; background: var(--nv-surface); overflow: hidden; }
@@ -2306,6 +2378,11 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   cursor: pointer; transition: border-color var(--nv-dur-micro), background var(--nv-dur-micro); }
 .nv-ov-tile:hover { border-color: #dcdedd; background: #fafafa; }
 .nv-ov-tile:focus-visible { outline: 2px solid var(--nv-accent); outline-offset: 2px; }
+.nv-ov-tile-ai { position: relative; overflow: hidden; border-radius: 16px;
+  box-shadow: inset 0 0 0 1px rgba(14, 159, 110, .35); }
+.nv-ov-tile-ai::after { content: ''; position: absolute; inset: 0; pointer-events: none; border-radius: inherit;
+  background: linear-gradient(110deg, transparent 30%, rgba(52, 211, 153, .16) 50%, transparent 70%);
+  background-size: 220% 100%; animation: nv-ai-flow 1.9s linear infinite; }
 .nv-ov-tile-art { display: flex; flex-direction: column; gap: 9px; min-height: 0; padding: 0; border: 0;
   border-radius: 0; background: transparent; }
 .nv-ov-tile-art:hover { background: transparent; }
@@ -3268,55 +3345,8 @@ table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 16px; }
 }
 /* 副对话卸妆（IDE 侧翼）：只留消息流与输入卡——品牌、标语、工作区行、点子卡退出。 */
 [data-unit-side='left'] [data-center-col] [data-conversation-hero-shell],
-[data-unit-side='left'] [data-center-col] [class*='heroWorkspaceRow'],
-[data-unit-side='left'] [data-center-col] .nv-create-guide,
-[data-unit-side='left'] [data-center-col] .nv-handcraft-chip { display: none; }
+[data-unit-side='left'] [data-center-col] [class*='heroWorkspaceRow'] { display: none; }
 
-/* ——— 创作空白页引导（挂在真实输入框上方的 conversation.input.dock）——— */
-.nv-create-guide { display: flex; flex-direction: column; gap: 14px; width: min(calc(100% - 8px), 760px);
-  margin: 0 auto; padding: 0 4px; animation: nv-guide-in var(--nv-dur-ui) var(--nv-ease-out) both; }
-@keyframes nv-guide-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.nv-create-guide-drafting { display: none; }
-.nv-guide-block { display: flex; flex-direction: column; gap: 8px; }
-.nv-guide-label { font-size: 12px; color: var(--nv-secondary-text); letter-spacing: .02em; padding: 0 2px; }
-.nv-guide-drafts { display: flex; flex-wrap: wrap; gap: 8px; }
-.nv-guide-draft { display: inline-flex; align-items: center; gap: 9px; max-width: 100%;
-  padding: 8px 12px 8px 9px; border: 0.5px solid var(--nv-divider); border-radius: 12px;
-  background: var(--nv-surface); color: var(--nv-primary-text); cursor: pointer; text-align: left;
-  transition: border-color var(--nv-dur-micro) var(--nv-ease-out), box-shadow var(--nv-dur-micro) var(--nv-ease-out); }
-.nv-guide-draft:hover { border-color: rgba(14,159,110,.28); box-shadow: 0 6px 18px rgba(28,64,51,.06); }
-.nv-guide-draft-icon { width: 28px; height: 28px; flex: none; display: grid; place-items: center; border-radius: 9px;
-  background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-guide-draft-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-.nv-guide-draft-body strong { font-size: 12.5px; font-weight: 620; max-width: 240px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nv-guide-draft-body small { font-size: 11px; color: var(--nv-secondary-text); }
-.nv-guide-draft-go { color: var(--nv-secondary-text); font-size: 13px; }
-.nv-guide-ideas { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.nv-guide-idea { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 10px 12px;
-  border: 0.5px solid var(--nv-divider); border-radius: 12px; background: var(--nv-surface);
-  color: var(--nv-primary-text); font-size: 13px; line-height: 1.45; text-align: left; cursor: pointer;
-  transition: border-color var(--nv-dur-micro) var(--nv-ease-out), transform var(--nv-dur-micro) var(--nv-ease-out); }
-.nv-guide-idea:hover { border-color: rgba(14,159,110,.28); transform: translateY(-1px); }
-.nv-guide-idea-icon { flex: none; width: 26px; height: 26px; display: grid; place-items: center;
-  border-radius: 9px; background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
-.nv-guide-actions { display: flex; align-items: center; gap: 10px; }
-.nv-guide-actions .nv-slash-chips { flex: 1 1 auto; flex-wrap: wrap; }
-.nv-guide-actions:has(.nv-handcraft-chip-alone) { justify-content: flex-end; }
-.nv-handcraft-chip-alone { margin-left: auto; }
-.nv-handcraft-arrow { font-size: 12px; opacity: .7; }
-@media (max-width: 900px) {
-  .nv-create-guide { width: 100%; }
-  .nv-guide-ideas { grid-template-columns: 1fr; }
-}
-@media (prefers-reduced-motion: reduce) {
-  .nv-create-guide, .nv-guide-idea, .nv-guide-draft { animation: none; transition: none; }
-}
-.nv-slash-chips { display: flex; flex: none; align-items: center; gap: 8px; padding: 0 4px; }
-.nv-handcraft-chip { display: inline-flex; align-items: center; gap: 5px; flex: none; height: 26px; margin-left: auto; padding: 0 11px; border-radius: 999px;
-  border: 0; background: none; font-size: 12.5px; white-space: nowrap; color: var(--nv-secondary-text); cursor: pointer;
-  transition: color var(--nv-dur-micro) var(--nv-ease-out), background var(--nv-dur-micro) var(--nv-ease-out); }
-.nv-handcraft-chip:hover { color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
 /* Fullscreen HTML game shell */
 .nv-game-shell { position: fixed; inset: 0; z-index: 1200; display: flex; flex-direction: column; background: #11150f; color: #f4f6f1; }
 .nv-game-shell-head { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid rgba(255,255,255,.12); font-size: 12.5px; }
@@ -3804,6 +3834,59 @@ table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 16px; }
   .nv-coll-layout-skillSheet .nv-coll-grid,
   .nv-coll-layout-gallery .nv-coll-grid { grid-template-columns: 1fr; }
 }
+
+/* ---------- 自由模块：整页 / 两级全屏 / 悬浮 chrome ---------- */
+/* 卡页 bleed 里的自由模块占满整列，页面本身不再滚。 */
+.nv-cardpage-bleed > .nv-modbox { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.nv-cardpage-bleed > .nv-modbox > .nv-modbox-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.nv-htmlfile-fill { flex: 1; min-height: 0; height: 100%; gap: 0; position: relative; }
+.nv-htmlfile-stage { position: relative; flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.nv-htmlfile-stage-fill { height: 100%; }
+/* 整页态：工具条浮在作品上，静止时淡出，悬停/聚焦复原。 */
+.nv-htmlfile-fill .nv-htmlfile-bar { position: absolute; top: 10px; right: 12px; z-index: 8;
+  padding: 4px 6px; border: 1px solid var(--nv-divider); border-radius: 999px;
+  background: color-mix(in srgb, var(--nv-surface) 88%, transparent); backdrop-filter: blur(8px);
+  box-shadow: 0 2px 10px rgba(20,30,26,.06); opacity: .38; transition: opacity var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-htmlfile-fill .nv-htmlfile-bar:hover, .nv-htmlfile-fill .nv-htmlfile-bar:focus-within { opacity: 1; }
+.nv-htmlfile-fill .nv-htmlfile-bar .nv-tree-glyph { display: none; }
+.nv-htmlfile-bar [data-active] { color: var(--nv-accent-deep); border-color: var(--nv-accent); }
+/* 游戏 chrome：底部右侧一条，和页面工具条同一套淡出规则。 */
+.nv-surfacebar { position: absolute; right: 12px; bottom: 12px; z-index: 8; display: flex; align-items: center; gap: 4px;
+  padding: 4px 6px; border: 1px solid var(--nv-divider); border-radius: 999px;
+  background: color-mix(in srgb, var(--nv-surface) 88%, transparent); backdrop-filter: blur(8px);
+  box-shadow: 0 2px 10px rgba(20,30,26,.06); font-size: 11.5px; color: var(--nv-secondary-text);
+  opacity: .38; transition: opacity var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-surfacebar:hover, .nv-surfacebar:focus-within { opacity: 1; }
+.nv-surfacebar button { border: 0; background: none; color: inherit; font: inherit; padding: 4px 7px; border-radius: 999px; cursor: pointer; }
+.nv-surfacebar button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-surfacebar button:disabled { opacity: .4; cursor: default; }
+.nv-surfacebar-status { padding: 0 6px; color: var(--nv-accent-deep); white-space: nowrap; }
+.nv-surfacebar-slots { position: absolute; right: 0; bottom: calc(100% + 8px); display: flex; gap: 8px; padding: 10px;
+  border: 1px solid var(--nv-divider); border-radius: 12px; background: var(--nv-surface); box-shadow: 0 6px 24px rgba(20,30,26,.12); }
+.nv-surfacebar-slot { display: flex; flex-direction: column; gap: 5px; min-width: 120px; font-size: 11.5px; }
+.nv-surfacebar-slot b { color: var(--nv-primary-text); }
+.nv-surfacebar-slot span { color: var(--nv-secondary-text); }
+.nv-surfacebar-slot button { border: 1px solid var(--nv-divider); border-radius: 8px; padding: 3px 8px; }
+/* 整页态的诊断抽屉浮在底部，不参与作品布局。 */
+.nv-htmlfile-fill .nv-htmlfile-diag { position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 9;
+  max-height: 38%; overflow: auto; background: var(--nv-surface); box-shadow: 0 6px 24px rgba(20,30,26,.12); }
+/* 画布全屏：抽屉面板让位，画布宿主铺满工作层。网格只在属性存在时覆盖，
+   退出即回原记录。 */
+[data-canvas-fullscreen]:not([data-work]) { grid-template-columns: 0 minmax(0px, 1fr) !important; }
+[data-work][data-canvas-fullscreen] { grid-template-columns: minmax(0px, 1fr) !important; }
+[data-canvas-fullscreen] [data-sidebar-right-panel] { display: none !important; }
+[data-canvas-fullscreen] [data-sidebar-right-canvas-host] { left: 0 !important; right: 0 !important; }
+/* 页签条上的画布全屏钮。 */
+.nv-canvas-fullscreentoggle { margin-left: auto; border: 0; background: none; padding: 4px 7px; color: var(--nv-secondary-text);
+  cursor: pointer; border-radius: 6px; display: inline-flex; align-items: center; }
+.nv-canvas-fullscreentoggle:hover { color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
+.nv-canvas-fullscreentoggle[data-active] { color: var(--nv-accent-deep); }
+
+/* 空白会话 hero：原生鱼标槽位改渲染创作页同一套 hero；旧品牌、标语和
+   引导 dock 不再出现。headline 原本是鱼标 + 标题的横排，这里改成整块。 */
+[data-conversation-hero-shell] [class*='headline'] { display: block; }
+[data-conversation-hero-shell] [class*='fishHitbox'] { display: block; width: 100%; }
+[data-conversation-hero-shell] .nv-create-intro { margin: 0 auto; }
 
 `
 

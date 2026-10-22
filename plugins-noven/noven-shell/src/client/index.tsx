@@ -58,13 +58,15 @@ import { SidecarTab, type SidecarMessage, type SidecarState } from './tabs/Sidec
 import { SettingsTab } from './tabs/Settings.tsx'
 import { fetchSidecar, sidecarOp, type SidecarOp } from './sidecar-api.ts'
 import type { SessionEventLikeEntry, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { HeroBrandMarkOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { HeaderChips } from './tabs/HeaderChips.tsx'
 import type { HeaderChipsInjected } from './tabs/HeaderChips.tsx'
 import { FootLauncher } from './sidebar.tsx'
 import type { FootLauncherInjected, FootLauncherProps } from './sidebar.tsx'
 import { CardReceiptTail, CardToolView, CARD_READ_TOOLS, CARD_WRITE_TOOLS, type CardReceiptInjected } from './toolviews.tsx'
 import { cardSavedDefinition, savedMeta } from './card-receipt.ts'
-import { BlankDock, type BlankDockInjected } from './inputdock.tsx'
+import { CreateHero } from './create-hero.tsx'
+import { InputQuote } from './input-quote.tsx'
 import { applyQuote } from './quote.tsx'
 import { applyBranches } from './branches.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
@@ -73,6 +75,7 @@ import { applyArrangement, type ArrangementDeps } from './arrangement.ts'
 import { enterCreateScene, enterHandcraftScene } from './creation-transition.ts'
 import { injectNovenStyles } from './style.ts'
 import { CanvasHost, createCanvasStore, activeKey, fileTabKind, docKey, dirKey, statusKey, type CanvasInjected, type CanvasState, type DocEntry, type DirEntry, type ImportPack, type ProjectFocus, type SimRow, type TabFlags } from './canvas.tsx'
+import { aiEditsSource } from './ai-edits.ts'
 import { ContentTree, type TreeInjected } from './tree.tsx'
 import type { TranscriptMsg, TranscriptState } from './stage-phone.tsx'
 import { foldConvEntries, type ConvChannel, type ConvEntry, type ConvMsg, type ConvsMap } from './conv.tsx'
@@ -371,8 +374,6 @@ function SettingsTabIcon({ size }: { size?: number }) { return glyph.gear(size ?
 
 /** Required browser services: slots, panel selection, theme, copy, right rail, session navigation, command and skill catalogs. */
 export const inject = ['slots', 'locale', 'layout', 'theme', 'sidebarPanels', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiWorkspace', 'uiSession', 'remote', 'remote.commands', 'remote.session', 'remote.skills', 'remote.workspaceFiles', 'sessions', 'workspaces']
-
-interface ChipEntry { name: string; description: string }
 
 /** One row in the 本会话产出 list — a card this session's settled writes saved. */
 export interface SessionOutputRow {
@@ -1118,40 +1119,6 @@ function bindingsCatalog(bindings: ReturnType<typeof bindingCache>, sessions: Cl
   }
 }
 
-/** One session's slash catalog — user-invocable skills first, then commands — as a lazily-pulled observable for the chip row. */
-function commandCatalog(remote: ClientContext['remote'], sessionId: Parameters<ClientContext['remote']['commands']['list']>[0]) {
-  let skills: readonly ChipEntry[] = []
-  let commands: readonly ChipEntry[] = []
-  let snapshot: readonly ChipEntry[] = []
-  const listeners = new Set<() => void>()
-  let started = false
-  const publish = () => {
-    const seen = new Set<string>()
-    snapshot = [...skills, ...commands].filter(({ name }) => !seen.has(name) && seen.add(name))
-    for (const listener of listeners) listener()
-  }
-  const pull = () => {
-    void remote.skills.list({ sessionId }).then((result) => {
-      if (!result.ok) return
-      skills = result.value.skills.map(({ name, description }) => ({ name, description }))
-      publish()
-    }).catch(() => { /* catalog unavailable — the row stays hidden */ })
-    void remote.commands.list(sessionId).then((result) => {
-      if (!result.ok) return
-      commands = result.value.map(({ name, description }) => ({ name, description }))
-      publish()
-    }).catch(() => { /* catalog unavailable — the row stays hidden */ })
-  }
-  return {
-    getSnapshot: () => snapshot,
-    subscribe: (listener: () => void) => {
-      listeners.add(listener)
-      if (!started) { started = true; pull() }
-      return () => { listeners.delete(listener) }
-    },
-  }
-}
-
 export function apply(ctx: ClientContext): void {
   injectNovenStyles()
   // 设定管理员是 sidecar 的内部预设，不进用户的模式选择列表。预设仍注册、
@@ -1471,13 +1438,17 @@ export function apply(ctx: ClientContext): void {
   }
 
   /**
-   * 手作 = 同一条会话换成 IDE 排布：导航收轨、抽屉+画布展开、对话退到副窗。
-   * 会话、草稿、输入框都不换；动效就是栏位的真实移动（AppFrame 的列缓动）。
-   * @param sessionId - 当前可见的会话。
+   * The creation page is a focused ritual surface: its host blank must not
+   * inherit IDE geometry from a reused handcraft session (nav collapsed, canvas
+   * open). Put the host back on the agent arrangement before showing the page.
    */
-  const enterHandcraft = (sessionId: SessionId): void => {
-    applyArrangement(arrangementDeps(), sessionId, 'ide')
-    setCanvasParked(sessionId, false)
+  const resetCreateLayout = (sessionId: SessionId | undefined): void => {
+    if (sessionId === undefined) return
+    applyArrangement(arrangementDeps(), sessionId, 'agent')
+    ctx.layout.setSidebarCollapsed?.(false)
+    ctx.layout.setUnitSide?.('right')
+    setCanvasParked(sessionId, true)
+    ctx.layout.closeRightbar()
   }
 
   // ——— 四栏外壳：导航栏（图标 + 会话列表）原样不动；抽屉上区装内容树；
@@ -1586,7 +1557,9 @@ export function apply(ctx: ClientContext): void {
     canvasInstance.actions.open({
       key: moduleId === undefined ? `card:${cardId}` : `mod:${cardId}:${moduleId}`,
       kind: 'card', title, owner: session, cardId,
-      cardAddr: { root: rootOf(addr) }, moduleId, ...(addModule ? { addModule: true } : {}) })
+      cardAddr: { root: rootOf(addr) }, moduleId,
+      presentation: moduleId === undefined ? 'inline' : 'page',
+      ...(addModule ? { addModule: true } : {}) })
     raiseCanvas()
   }
 
@@ -1855,15 +1828,22 @@ export function apply(ctx: ClientContext): void {
     if (ctx.layout.panelInfo.getSnapshot().activePanelId === CREATE_ID) return
     openingCreateSurface = true
     void enterCreateScene(() => {
-      // Select a reusable blank host inside the same commit: the page's first
-      // render then already has hostBlank, so the composer mounts with the
-      // title instead of arriving a beat later through the async ensure.
+      // Host seat inside the same commit: the page's first render then already
+      // has hostBlank, so the composer mounts with the title instead of
+      // arriving a beat later through the async ensure. A host that routed a
+      // specific blank here (workspace switch, blank session open) has already
+      // selected it — seat that one, never a recent-workspace guess.
       const seam = ctx.uiWorkspace as {
         reusableBlank?: () => SessionId | undefined
         openSession?: (target: SessionId, options?: { panel?: 'preserve', transition?: 'none' }) => void
       }
-      const blank = seam.reusableBlank?.()
-      if (blank !== undefined) seam.openSession?.(blank, { panel: 'preserve', transition: 'none' })
+      const current = Object.values(ctx.sessions.list.getSnapshot().byId)
+        .find(row => (row.retainedBy.mainView ?? 0) > 0)
+      const blank = current?.blank === true ? current.id : seam.reusableBlank?.()
+      if (blank !== undefined) {
+        seam.openSession?.(blank, { panel: 'preserve', transition: 'none' })
+        resetCreateLayout(blank)
+      }
       ctx.layout.selectPanel(CREATE_ID)
     }).finally(() => { openingCreateSurface = false })
   }
@@ -1899,25 +1879,53 @@ export function apply(ctx: ClientContext): void {
     reconcile()
     return () => { stopSessions(); stopWorkspaces?.() }
   }, 'noven-shell: archive fallback surface')
-  // A restored blank Session would show the retired empty-session page: on the
-  // first main selection after startup, route it to the creation page. This is
-  // deliberately one-shot — later blank main views belong to their surface
-  // (handcraft's IDE hosts one), and a standing watch would hijack them.
+  // A restored blank Session would show the retired empty-session page: during
+  // startup, route it to the creation page and keep reasserting until the panel
+  // actually owns the main view. The watch is bounded to startup — later blank
+  // main views belong to their surface (handcraft's IDE hosts one).
   ctx.effect(() => {
-    let done = false
-    const finish = (): void => { done = true }
+    let stopped = false
+    let resetId: SessionId | undefined
+    const stop = (): void => { stopped = true }
     const check = (): void => {
-      if (done || inCreateScene()) return
+      if (stopped || inCreateScene()) return
+      const active = ctx.layout.panelInfo.getSnapshot().activePanelId
       const list = ctx.sessions.list.getSnapshot()
       const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
       if (current === undefined) return
-      finish()
-      if (current.blank === true && ctx.layout.panelInfo.getSnapshot().activePanelId === null) onCreateSurface()
+      if (current.blank !== true) { stop(); return }
+      if (active === CREATE_ID) {
+        if (resetId !== current.id) {
+          resetId = current.id
+          resetCreateLayout(current.id)
+        }
+        stop()
+        return
+      }
+      // Another panel may be transient during hydration; wait for the main
+      // view to settle rather than dropping the route.
+      if (active !== null) return
+      if (resetId !== current.id) {
+        resetId = current.id
+        // Restored blank: put the host back on the agent arrangement and seat
+        // the page in place. Running the creation scene here would capture the
+        // retired empty-session page and animate it out on every reload.
+        resetCreateLayout(current.id)
+      }
+      ctx.layout.selectPanel(CREATE_ID)
     }
-    const stop = ctx.sessions.list.subscribe(check)
-    const timer = window.setTimeout(finish, 5000)
+    const stopSessions = ctx.sessions.list.subscribe(check)
+    const stopPanels = ctx.layout.panelInfo.subscribe(check)
+    const interval = window.setInterval(check, 200)
+    const timer = window.setTimeout(stop, 20000)
     check()
-    return () => { stop(); window.clearTimeout(timer) }
+    return () => {
+      stop()
+      stopSessions()
+      stopPanels()
+      window.clearInterval(interval)
+      window.clearTimeout(timer)
+    }
   }, 'noven-shell: restored blank surface')
   const NAV: readonly { id: MainPanelId; order: number; label: () => string; Icon: (p: { size: number; active: boolean }) => React.ReactNode }[] = [
     { id: CREATE_ID, order: 5, label: () => t('nav.create'), Icon: CreateIcon },
@@ -2159,6 +2167,18 @@ export function apply(ctx: ClientContext): void {
         canvasInstance.actions.openDialog(sessionId, kind, dir)
         raiseCanvas()
       },
+      openModule: () => {
+        // 「新建 → 新增模块」永远落一个新的无分组卡：模块库直接弹出，选中的模块
+        // 落在卡根。要给已有卡加模块，用卡行尾的「＋」。
+        const addr: CardAddr = { sessionId, ...(focusSnapshot === undefined ? {} : { root: focusSnapshot.root }) }
+        void cardOp(addr, { op: 'create', kind: 'CHARACTER', name: t('create.module.defaultName'), starter: 'blank' })
+          .then(created => {
+            if (created.cardId === undefined) return
+            treeSource.refresh()
+            openCanvasCard(created.cardId, addr, undefined, sessionId, true)
+          })
+          .catch((reason: unknown) => { console.warn('noven-shell: module create failed:', reason) })
+      },
       openProject: () => {
         const focus = focusSnapshot
         if (focus === undefined) return
@@ -2246,6 +2266,7 @@ export function apply(ctx: ClientContext): void {
       hooks: {
         project: projectFocus,
         tree: treeSource,
+        edits: aiEditsSource(ctx.sessions, sessionId),
         transcript: transcriptSource(ctx.sessions, sessionId),
         sims: simSessionsSource(ctx.sessions, ctx.workspaces, canvasInstance, sessionId),
         simTranscript: simTranscriptSource(ctx.sessions, canvasInstance, sessionId),
@@ -2329,6 +2350,24 @@ export function apply(ctx: ClientContext): void {
       listCards: async sid => (await fetchCardList({ sessionId: sid })).map(row => ({ cardId: row.cardId, name: row.name })),
       embedFile: (cardId, moduleId, path) => {
         void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'embed_file', path, moduleId }))
+      },
+      // The client compiles against the published ui-layout types; the local
+      // frame adds this method. Narrow locally, and fall back to the frame
+      // attributes so a release bundle without the API still collapses.
+      setCanvasFullscreen: on => {
+        const layout = ctx.layout as typeof ctx.layout & { setCanvasFullscreen?: (on: boolean) => void }
+        if (typeof layout.setCanvasFullscreen === 'function') {
+          layout.setCanvasFullscreen(on)
+          return
+        }
+        const work = document.querySelector<HTMLElement>('[data-work]')
+        const frame = work?.parentElement
+        if (frame === null || frame === undefined || work === null) return
+        const targets = [frame, work]
+        for (const target of targets) {
+          if (on) target.setAttribute('data-canvas-fullscreen', '')
+          else target.removeAttribute('data-canvas-fullscreen')
+        }
       },
     }),
   }, CanvasHost))
@@ -2722,54 +2761,15 @@ export function apply(ctx: ClientContext): void {
     name: 'conversation.chat.turnTail', id: 'noven-card-saved', order: 30, locale: NS,
     inject: (sessionId: Parameters<typeof ctx.remote.commands.list>[0]): CardReceiptInjected => ({ openCard: (id: string) => { face.openCard(id, { sessionId }) } }),
   }, CardReceiptTail))
+
+  // 输入框占位：33 句世界观前提在这里打字、清空、换句。挂在 dock 上是为了
+  // 拿到活的 draft 状态；组件自己把文字送进输入卡片的占位层，不占 dock 高度。
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
-    name: 'conversation.input.dock', id: 'noven-slash-chips', order: 10, locale: NS,
-    inject: (sessionId: SessionId): BlankDockInjected => ({
-      hooks: {
-        commands: commandCatalog(ctx.remote, sessionId),
-        // 只在本会话就是可见会话且导航已收轨时视作 IDE：排布结构归会话。
-        ide: {
-          getSnapshot: () => {
-            const geometry = ctx.layout.sessionGeometry?.getSnapshot()
-            return geometry !== undefined && geometry.active === sessionId
-              && geometry.sidebarCollapsed && geometry.unitSide === 'left'
-          },
-          subscribe: listener => ctx.layout.sessionGeometry?.subscribe(listener) ?? (() => {}),
-        },
-        // 继续区：只列本项目的未保存草稿。getSnapshot 必须返回稳定引用
-        //（useSyncExternalStore）：按 sessions/cards 两份源快照记忆化。
-        drafts: (() => {
-          let memo: readonly { cardId: string; name: string; workspaceRoot: string; sessionId: string | undefined; modules: number }[] = []
-          let memoCards: readonly unknown[] | undefined
-          let memoRoot: string | undefined
-          return {
-            getSnapshot: () => {
-              const allCards = cards.getSnapshot()
-              const root = ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd
-              if (allCards === memoCards && root === memoRoot) return memo
-              memoCards = allCards
-              memoRoot = root
-              memo = root === undefined ? [] : allCards
-                .filter(row => row.hasDraft && row.workspaceRoot === root)
-                .map(row => ({
-                  cardId: row.cardId, name: row.name, workspaceRoot: row.workspaceRoot,
-                  sessionId: row.sessionId, modules: row.modules,
-                }))
-              return memo
-            },
-            subscribe(listener: () => void) {
-              const a = cards.subscribe(listener)
-              const b = ctx.sessions.list.subscribe(listener)
-              return () => { a(); b() }
-            },
-          }
-        })(),
-      },
-      openDraft: draft => {
-        // 在画布卡页打开草稿（排布会抬起画布标签）。
-        face.openCard(draft.cardId, { ...(draft.sessionId !== undefined ? { sessionId: draft.sessionId as SessionId } : {}), root: draft.workspaceRoot })
-      },
-      handcraft: () => { enterHandcraft(sessionId) },
-    }),
-  }, BlankDock))
+    name: 'conversation.input.dock', id: 'noven-input-quote', order: 20, locale: NS,
+  }, InputQuote))
+
+  // 空白会话的 hero 槽位：用创作页同一套 hero 覆盖 noven-brand 的旧标牌。
+  ctx.slots.inject('conversation.hero.brand.mark', () => ctx.slots.register({
+    name: 'conversation.hero.brand.mark', priority: -1, locale: NS,
+  }, (props: HeroBrandMarkOwnerProps & PropsLocale<'novenShell'>) => <CreateHero t={props.t} />))
 }

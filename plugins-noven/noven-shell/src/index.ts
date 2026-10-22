@@ -17,9 +17,10 @@ const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets')
 /** 自由 3D 沙箱的本地 three.js 运行时（与 standalone 导出同一份源码）。 */
 const THREE_PATH = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets', 'three-runtime.js')
 let threeBody: Promise<Buffer> | undefined
-const ASSET_NAME = /^[a-z0-9-]+\.(webp|png|jpg|svg)$/
+const ASSET_NAME = /^[a-z0-9-]+\.(webp|png|jpg|svg|woff2)$/
 const TYPES: Record<string, string> = {
   webp: 'image/webp', png: 'image/png', jpg: 'image/jpeg', svg: 'image/svg+xml',
+  woff2: 'font/woff2',
 }
 
 /** Serve one packaged asset; unknown or malformed names are a plain 404. */
@@ -28,7 +29,10 @@ async function serveAsset(request: Request): Promise<Response> {
   if (!ASSET_NAME.test(name)) return new Response('not found', { status: 404 })
   try {
     const body = await readFile(join(ASSETS_DIR, name))
-    return new Response(body, { headers: { 'content-type': sniffType(body) ?? TYPES[name.slice(name.lastIndexOf('.') + 1)] } })
+    return new Response(body, { headers: {
+      'content-type': sniffType(body) ?? TYPES[name.slice(name.lastIndexOf('.') + 1)],
+      'cache-control': 'public, max-age=3600',
+    } })
   } catch {
     return new Response('not found', { status: 404 })
   }

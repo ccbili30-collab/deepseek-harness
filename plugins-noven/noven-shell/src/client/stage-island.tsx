@@ -13,6 +13,12 @@ import type { FoldedArchive } from './stage-archive.ts'
  */
 export interface IslandFrame {
   readonly card?: { readonly name?: string; readonly kind?: string }
+  /** Owning HTML module; a surface passes it back when saving its state. */
+  readonly moduleId?: string
+  /** Durable surface state injected at boot (app-owned JSON). */
+  readonly surfaceState?: unknown
+  /** Revision of the injected state; save commands pass it back. */
+  readonly surfaceVersion?: number
   readonly session?: string
   readonly state?: Record<string, unknown>
   readonly max?: Record<string, unknown>
@@ -68,6 +74,13 @@ export interface IslandDocOptions {
   readonly threeUrl?: string
 }
 
+/** Type, spacing, radius, shadow, and motion tokens shared by every surface. */
+const SURFACE_TOKENS = '--nv-font-sans:system-ui,-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;'
+  + '--nv-radius-sm:8px;--nv-radius-md:12px;--nv-radius-lg:20px;'
+  + '--nv-space-1:4px;--nv-space-2:8px;--nv-space-3:12px;--nv-space-4:16px;--nv-space-5:24px;--nv-space-6:32px;'
+  + '--nv-shadow-1:0 1px 4px rgba(20,30,26,.07);--nv-shadow-2:0 8px 30px rgba(20,30,26,.12);'
+  + '--nv-dur-micro:120ms;--nv-dur-short:200ms;--nv-dur-scene:420ms;--nv-ease-out:cubic-bezier(.22,.8,.28,1);'
+
 /** UTF-8 → base64（分块，避免大源码触发参数上限）。 */
 const base64Utf8 = (text: string): string => {
   const bytes = new TextEncoder().encode(text)
@@ -109,8 +122,21 @@ function dispatch(){ try{ window.dispatchEvent(new Event('noven:frame')) }catch(
 function want(id,path){ if(STANDALONE) return; pending++; post({noven:'assetReq',id:id,path:path,base:N.base}) }
 N.asset=function(id){
   if(N.assets[id]) return N.assets[id];
-  if(WANT[id]) want(id, WANT[id]);
+  if(/^(data:|blob:|https?:)/.test(String(id))) return String(id);
+  if(WANT[id]) want(id, WANT[id]); else want(id, String(id));
   return ''
+};
+N.assetAsync=function(id){
+  var key=String(id), path=WANT[key]||key;
+  if(N.assets[key]) return Promise.resolve(N.assets[key]);
+  return new Promise(function(resolve){
+    var done=false;
+    function finish(v){ if(done) return; done=true; window.removeEventListener('noven:frame',check); resolve(v||'') }
+    function check(){ if(N.assets[key]) finish(N.assets[key]) }
+    window.addEventListener('noven:frame',check);
+    want(key,path);
+    setTimeout(function(){ finish(N.assets[key]||'') },15000);
+  })
 };
 N.assetReq=function(id,path){ want(id,String(path)) };
 N.query=function(d,i,from){ post({noven:'query',domain:String(d==null?'':d),id:String(i==null?'':i),from:from==null?undefined:String(from)}) };
@@ -216,6 +242,9 @@ window.addEventListener('error',function(e){
   post({noven:'err',text:String(e.message||'error')+' @'+loc.slice(-30)+':'+(e.lineno||0)})
 });
 window.addEventListener('unhandledrejection',function(e){ post({noven:'err',text:String(e.reason||'rejection')}) });
+// Escape belongs to the host while the page owns the canvas: forward it so
+// fullscreen exits even when the keyboard focus sits inside this iframe.
+document.addEventListener('keydown',function(e){ if(e.key==='Escape'){ post({noven:'escape'}) } },true);
 function report(){
   var b=document.body;
   var h=Math.ceil(Math.max(b?b.scrollHeight:0,document.documentElement.scrollHeight));
@@ -238,8 +267,9 @@ if(STANDALONE){
 }catch(bootErr){ try{ parent.postMessage({noven:'err',text:'boot: '+String(bootErr&&bootErr.stack||bootErr).slice(0,400)},'*') }catch(_e){} }
 })()`
     const theme = frame.theme
-  const themeCss = theme === undefined ? '' : `:root{${theme.dark === true ? 'color-scheme:dark;' : ''}--nv-accent:${theme.accent ?? ''};--nv-text:${theme.text ?? ''};--nv-primary-text:${theme.text ?? ''};--nv-surface:${theme.surface ?? ''};}`
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline' data: blob:; font-src data:; media-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src data: blob:"><style>html,body{margin:0;padding:0;background:transparent}${themeCss}</style><script>${boot}</script></head><body>${documentHtml}</body></html>`
+  // Product tokens every surface can lean on; a free page may override them.
+  const themeCss = `:root{${SURFACE_TOKENS}${theme === undefined ? '' : `${theme.dark === true ? 'color-scheme:dark;' : ''}--nv-accent:${theme.accent ?? ''};--nv-text:${theme.text ?? ''};--nv-primary-text:${theme.text ?? ''};--nv-surface:${theme.surface ?? ''};`}}`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline' data: blob: 'wasm-unsafe-eval'; font-src data: blob:; media-src data: blob:; worker-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src data: blob:"><style>html,body{margin:0;padding:0;background:transparent}${themeCss}</style><script>${boot}</script></head><body>${documentHtml}</body></html>`
 }
 
 /** 独立分发文件：卡数据内嵌、资源为 data URL、存档留在浏览器本地。 */
@@ -261,7 +291,7 @@ export interface IslandControl {
 }
 
 /** StageIsland 的道具面：html 为岛源，frame 为契约帧（变化走热推不重挂）。 */
-export function StageIsland({ html, frame, fillParent = false, cap = 520, t, onCall, onFallback, resolveAsset, controlRef, onCardRead, onCardWrite, onGameSave, onGameLoad, onConsole, onScreenshot, showSource = true, threeSource }: {
+export function StageIsland({ html, frame, fillParent = false, cap = 520, t, onCall, onFallback, resolveAsset, controlRef, onCardRead, onCardWrite, onGameSave, onGameLoad, onConsole, onEscape, onScreenshot, showSource = true, threeSource }: {
   readonly html: string
   readonly frame: IslandFrame
   /** 转录内岛自量高封顶（px）；舞台岛 fillParent 占满。 */
@@ -281,6 +311,8 @@ export function StageIsland({ html, frame, fillParent = false, cap = 520, t, onC
   readonly onGameLoad?: () => unknown | Promise<unknown>
   /** Console lines captured inside the sandbox (AI/dev feedback). */
   readonly onConsole?: (entry: { readonly level: 'log' | 'warn' | 'error', readonly text: string }) => void
+  /** Escape pressed inside the island; the host owns the fullscreen chain. */
+  readonly onEscape?: () => void
   /** Canvas screenshot result; error when the surface has no canvas. */
   readonly onScreenshot?: (result: { readonly data?: string, readonly error?: string }) => void
   /** Show the in-frame source toggle; free surfaces hide it from users. */
@@ -371,20 +403,26 @@ export function StageIsland({ html, frame, fillParent = false, cap = 520, t, onC
       } else if (d.noven === 'console') {
         const level = d.level === 'error' || d.level === 'warn' ? d.level : 'log'
         onConsole?.({ level, text: String(d.text ?? '') })
+      } else if (d.noven === 'escape') {
+        onEscape?.()
       } else if (d.noven === 'screenshot') {
         onScreenshot?.(typeof d.data === 'string' && d.data !== '' ? { data: d.data } : { error: String(d.error ?? 'screenshot failed') })
       } else if (d.noven === 'ready') {
         clearReady()
         onCall?.({ kind: 'ready' })
       } else if (d.noven === 'err') {
+        const text = String(d.text ?? 'error')
+        // Runtime failures also join the diagnostics tail so the AI can read
+        // them back after a write.
+        onConsole?.({ level: 'error', text })
         // 全屏岛运行中崩溃也算失败（r2 B7），退回原生对话；内联岛只亮错误条。
         if (fillParent && onFallback !== undefined) { clearReady(); onFallback() }
-        else setError(String(d.text ?? 'error'))
+        else setError(text)
       }
     }
     window.addEventListener('message', onMessage)
     return () => window.removeEventListener('message', onMessage)
-  }, [cap, onCall, resolveAsset, fillParent, onFallback, clearReady, onCardRead, onCardWrite, onGameSave, onGameLoad, onConsole, onScreenshot])
+  }, [cap, onCall, resolveAsset, fillParent, onFallback, clearReady, onCardRead, onCardWrite, onGameSave, onGameLoad, onConsole, onEscape, onScreenshot])
 
   /** 壳侧入口：开/关选元素捕获（包装页捕获下一次点击并回报）。 */
   const setPick = useCallback((on: boolean): void => {
@@ -399,9 +437,37 @@ export function StageIsland({ html, frame, fillParent = false, cap = 520, t, onC
   const capture = useCallback((): void => {
     frameRef.current?.contentWindow?.postMessage({ noven: 'capture' }, '*')
   }, [])
-  const setPaused = useCallback((paused: boolean): void => {
-    frameRef.current?.contentWindow?.postMessage({ noven: 'gamePaused', paused }, '*')
+  // Two pause sources: the user's explicit pause and the page being invisible
+  // (tab hidden, drawer collapsed, canvas off-screen). Surfaces opt in through
+  // NOVEN_FRAME.gamePaused, so an idle 3D scene stops burning frames.
+  const userPaused = useRef(false)
+  const hiddenPaused = useRef(false)
+  const pushPaused = useCallback((): void => {
+    frameRef.current?.contentWindow?.postMessage({ noven: 'gamePaused', paused: userPaused.current || hiddenPaused.current }, '*')
   }, [])
+  const setPaused = useCallback((paused: boolean): void => {
+    userPaused.current = paused
+    pushPaused()
+  }, [pushPaused])
+  useEffect(() => {
+    const onVisibility = (): void => {
+      hiddenPaused.current = document.visibilityState === 'hidden'
+      pushPaused()
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    let observer: IntersectionObserver | undefined
+    if (typeof IntersectionObserver !== 'undefined' && frameRef.current !== null) {
+      observer = new IntersectionObserver(entries => {
+        for (const entry of entries) hiddenPaused.current = !entry.isIntersecting
+        pushPaused()
+      })
+      observer.observe(frameRef.current)
+    }
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility)
+      observer?.disconnect()
+    }
+  }, [pushPaused])
   useEffect(() => {
     if (controlRef === undefined) return
     controlRef.current = { setPick, requestSave, loadState, capture, setPaused }
@@ -417,7 +483,7 @@ export function StageIsland({ html, frame, fillParent = false, cap = 520, t, onC
       {showSrc ? (
         <pre className="nv-isl-src">{html}</pre>
       ) : (
-        <iframe ref={frameRef} sandbox="allow-scripts" className="nv-isl-frame"
+        <iframe ref={frameRef} sandbox="allow-scripts allow-pointer-lock" className="nv-isl-frame"
           style={fillParent ? undefined : { height }} srcDoc={srcDoc} title={t('work.island.title')} />
       )}
       {error !== null && !showSrc && (

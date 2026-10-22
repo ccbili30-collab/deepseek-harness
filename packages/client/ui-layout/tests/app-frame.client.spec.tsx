@@ -242,6 +242,18 @@ describe('AppFrame', () => {
     expect(slotCalls.find(c => c.key === 'main')).toEqual({ key: 'main', props: {}, options: { entryKey: 'conversation' } })
   })
 
+  it('collapses to the canvas column while canvas fullscreen is on', () => {
+    const { frame, instance } = mountFrame()
+    const work = frame.querySelector<HTMLElement>('[data-work]')!
+    act(() => { instance.actions.setCanvasFullscreen(true) })
+    expect(frame.hasAttribute('data-canvas-fullscreen')).toBe(true)
+    expect(frame.style.gridTemplateColumns).toBe('0 minmax(0px, 1fr)')
+    expect(work.style.gridTemplateColumns).toBe('minmax(0px, 1fr)')
+    act(() => { instance.actions.setCanvasFullscreen(false) })
+    expect(frame.hasAttribute('data-canvas-fullscreen')).toBe(false)
+    expect(frame.style.gridTemplateColumns).toMatch(/^280px minmax\(0px, 1fr\)$/)
+  })
+
   it('renders the main, sidebar, and root-scoped rightbar outlets without a current Session', () => {
     selectedSession = undefined
     const { frame, getByTestId } = mountFrame()

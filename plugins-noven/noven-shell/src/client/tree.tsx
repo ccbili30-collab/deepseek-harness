@@ -75,6 +75,8 @@ export interface TreeInjected {
   readonly openWork: (path: string, title: string) => void
   readonly openFiles: () => void
   readonly openCreate: (kind: CreateKind, dir?: string, opts?: { expandColumn?: boolean }) => void
+  /** 新增模块：新建一张无分组卡并直接开模块库；给已有卡加模块用卡行「＋」。 */
+  readonly openModule: () => void
   /** 项目名点击：画布全屏打开当前项目的创作库页（返回由面板栈还原）。 */
   readonly openProject: (opts?: { expandColumn?: boolean }) => void
   /** 改作品清单里的展示名（账本轴，与文件名无关）。 */
@@ -197,12 +199,11 @@ function fileDrop(e: DragEvent): string | undefined {
 }
 
 /** 一行模块：图标 + 名 + 悬停行尾的 ⋯ 菜单（重命名/复制/归档）。 */
-function ModuleRow({ module, depth, cardId, current, pending, t, onOpen, ops }: {
+function ModuleRow({ module, depth, cardId, current, t, onOpen, ops }: {
   readonly module: TreeModuleRow
   readonly depth: number
   readonly cardId: string
   readonly current: boolean
-  readonly pending: boolean
   readonly t: ShellT
   readonly onOpen: (moduleId: string, name: string) => void
   readonly ops: ModuleOps
@@ -224,7 +225,6 @@ function ModuleRow({ module, depth, cardId, current, pending, t, onOpen, ops }: 
         <button type="button" className="nv-tree-main" onClick={() => onOpen(module.id, module.name)}>
           <span className="nv-tree-glyph">{moduleIcon(module.type, module.name)}</span>
           <span className="nv-tree-name">{module.name}</span>
-          {pending && <span className="nv-tree-pending" title={t('tree.pending')} />}
         </button>
       )}
       <Menu portal open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
@@ -271,13 +271,12 @@ export interface CardOps {
   readonly present: (path: string, view: 'hidden' | 'file') => void
 }
 
-/** 一棵模块子树：行点击打开所属卡页。`pendingModules` = 提案碰过的模块 id 集。 */
-function ModuleRows({ modules, depth, cardId, currentKey, pendingModules, onOpen, t, ops }: {
+/** 一棵模块子树：行点击打开所属卡页。 */
+function ModuleRows({ modules, depth, cardId, currentKey, onOpen, t, ops }: {
   readonly modules: readonly TreeModuleRow[]
   readonly depth: number
   readonly cardId: string
   readonly currentKey: string | undefined
-  readonly pendingModules: ReadonlySet<string> | undefined
   readonly onOpen: (moduleId: string, name: string) => void
   readonly t: ShellT
   readonly ops: ModuleOps
@@ -287,9 +286,8 @@ function ModuleRows({ modules, depth, cardId, currentKey, pendingModules, onOpen
       {modules.map(module => (
         <div key={module.id}>
           <ModuleRow module={module} depth={depth} cardId={cardId} t={t} onOpen={onOpen} ops={ops}
-            pending={pendingModules?.has(module.id) === true}
             current={currentKey === `mod:${cardId}:${module.id}`} />
-          <ModuleRows modules={module.children} depth={depth + 1} cardId={cardId} currentKey={currentKey} pendingModules={pendingModules} onOpen={onOpen} t={t} ops={ops} />
+          <ModuleRows modules={module.children} depth={depth + 1} cardId={cardId} currentKey={currentKey} onOpen={onOpen} t={t} ops={ops} />
         </div>
       ))}
     </>
@@ -590,7 +588,6 @@ function CardBranch({ card, depth, currentKey, fileView, sel, t, onOpen, onAdd, 
           }}>
             <span className="nv-tree-cardicon">{cardIcon(card.kind)}</span>
             <span className="nv-tree-name">{fileView === true ? card.dir : card.name}</span>
-            {card.pending && <span className="nv-tree-pending" title={t('tree.pending')} />}
           </button>
         )}
         <Menu portal open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
@@ -646,8 +643,7 @@ function CardBranch({ card, depth, currentKey, fileView, sel, t, onOpen, onAdd, 
             <span className="nv-tree-glyph">{glyph.bolt(13)}</span>
             <span className="nv-tree-name">{t('tree.overview')}</span>
           </button>
-          <ModuleRows modules={card.modules.filter(m => !isOverviewRow(m))} depth={depth} cardId={card.cardId} currentKey={currentKey} onOpen={onOpen} t={t} ops={ops}
-            pendingModules={card.pendingScopes === undefined ? undefined : new Set(card.pendingScopes.map(s => s.moduleId))} />
+          <ModuleRows modules={card.modules.filter(m => !isOverviewRow(m))} depth={depth} cardId={card.cardId} currentKey={currentKey} onOpen={onOpen} t={t} ops={ops} />
           {card.characters.length > 0 && (
             <>
               <div className="nv-tree-roleshead" style={{ paddingLeft: 28 + depth * 14 }}>
@@ -1162,14 +1158,14 @@ export function ContentTree(props: TreeProps) {
     { id: 'group', label: t('create.group.title'), icon: glyph.folder(14) },
     { id: 'card', label: t('create.card.title'), icon: glyph.layers(14) },
     { id: 'studio', label: t('create.studio.title'), icon: glyph.phone(14) },
-    { id: 'doc', label: t('create.doc.title'), icon: glyph.file(14) },
-    { id: 'comic', label: t('create.comic.title'), icon: glyph.image(14) },
+    { id: 'module', label: t('create.module.title'), icon: glyph.grid(14) },
     { id: 'import', label: t('canvas.start.import'), icon: glyph.upload(14) },
   ]
   const createMenuSelect = (id: string): void => {
     setMenuOpen(false)
-    // Studio 是开关不是新建对象：翻转组存续态，其余 kinds 走新建面板。
+    // Studio 是开关不是新建对象；模块走「有卡加卡根、无卡建无分组卡」的专用入口。
     if (id === 'studio') { props.toggleStudio(); return }
+    if (id === 'module') { props.openModule(); return }
     props.openCreate(id as CreateKind)
   }
   const toolMenuItems = [
@@ -1202,8 +1198,7 @@ export function ContentTree(props: TreeProps) {
           { key: 'group', label: t('create.group.title'), icon: glyph.folder(15), run: () => props.openCreate('group', undefined, RAIL) },
           { key: 'card', label: t('create.card.title'), icon: glyph.layers(15), run: () => props.openCreate('card', undefined, RAIL) },
           { key: 'studio', label: t('create.studio.title'), icon: glyph.phone(15), run: props.toggleStudio, on: studioOn },
-          { key: 'doc', label: t('create.doc.title'), icon: glyph.file(15), run: () => props.openCreate('doc', undefined, RAIL) },
-          { key: 'comic', label: t('create.comic.title'), icon: glyph.image(15), run: () => props.openCreate('comic', undefined, RAIL) },
+          { key: 'module', label: t('create.module.title'), icon: glyph.grid(15), run: props.openModule },
           { key: 'import', label: t('canvas.start.import'), icon: glyph.upload(15), run: () => props.openCreate('import', undefined, RAIL) },
         ].map(item => (
           <button key={item.key} type="button" className="nv-tree-railbtn" title={item.label} aria-label={item.label}

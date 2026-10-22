@@ -55,6 +55,12 @@ export type LayoutState = {
     /** Null selects the Conversation; global panels keep the current Session intact. */
     activePanelId: MainPanelId | null
   }
+  /**
+   * Canvas-only presentation: the work layer collapses to the right column so
+   * the canvas covers the frame. Transient view state, never persisted; the
+   * product canvas owns when it enters and leaves.
+   */
+  canvasFullscreen: boolean
   layoutInfo: LayoutInfo
   geometry: {
     /** Session id whose structural geometry is live in layoutInfo; null before the first session lands. */
@@ -177,6 +183,7 @@ type LayoutActions = {
   setUnit: (draft: LayoutState, px: number) => void
   openRightbar: (draft: LayoutState, track: boolean, fullscreen: boolean, rail: boolean) => void
   closeRightbar: (draft: LayoutState) => void
+  setCanvasFullscreen: (draft: LayoutState, on: boolean) => void
 }
 
 /**
@@ -192,6 +199,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
   const handle = defineStore({
     init: (): LayoutState => ({
       panelInfo: { activePanelId: null },
+      canvasFullscreen: false,
       layoutInfo: {
         sidebar: SIDEBAR_DEFAULT,
         viewportWidth: window.innerWidth,
@@ -319,6 +327,10 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         d.layoutInfo.rightbarTrack = false
         d.layoutInfo.rightbarRail = false
         d.layoutInfo.rightbarFullscreen = false
+        d.canvasFullscreen = false
+      },
+      setCanvasFullscreen: (d: LayoutState, on: boolean) => {
+        d.canvasFullscreen = on
       },
     },
   })

@@ -8,7 +8,6 @@
 卡/<卡名>/
   card.json      # 卡文档：编号、名字、模块树、资源、世界内角色
   draft.json     # 未提交的草稿（只在你保存过草稿时存在）
-  proposal.json  # 挂起的 AI 提案（只在有待确认改动时存在）
   contents/      # 正文与图片载荷（按内容寻址）
   revisions/     # 历史版本 r1.json、r2.json……
 ```
@@ -27,16 +26,16 @@ create_card_bulk { name, kind, modules_json }
 
 次选路径：`create_card` 建空卡 → `add_module_bulk` 逐棵补子树。只在需要分步决策时用。
 
-## 改卡：默认是提案，不用接力版本号
+## 改卡：直接落盘，不用接力版本号
 
 ```
-read_card { root_id }                    → 返回结构 + 当前版本 + 挂起提案数
-add_module_bulk / write_module_text …    → 回执：status "proposed" + 提案改动清单
+read_card { root_id }                    → 返回结构 + 当前版本
+add_module_bulk / write_module_text …    → 回执：status "saved" + next_draft_version
 ```
 
-- **AI 的写入默认落成提案**：工具回执 `status: "proposed"` 时，改动已写进 `proposal.json` 叠在画布上等用户确认——**不要宣称已完成**。用户接受后才落到 `card.json`；read_card 读的仍是叠加提案后的预览，可以继续在其上改
-- 每张卡有一个信任档（`library.json` 的 `cardMeta[id].aiTrust`）：`propose`（默认）走提案，`auto` 时写操作直接提交、回执 `status: "saved"` + `next_draft_version`
-- 写操作**总是套用到最新内容**（人保存不会被挂起的提案挤掉）；`draft_version` 可以省略。只有你读取后被改过的**同一个文字块**会被拒（提示重新读取）
+- **AI 的写入直接提交到 `card.json`**：没有提案、没有信任档、不需要用户确认。回执 `status: "saved"` 就是已经生效，可以如实告诉用户完成了。
+- 旧版 `proposal.json` / `aiTrust` 已经废弃；不要再向用户提提案、接受/拒绝或信任档。
+- 写操作**总是套用到最新内容**；`draft_version` 可以省略。只有你读取后被改过的**同一个文字块**会被拒（提示重新读取）
 - 想保护一个文字块：局部修改用 `replace_text_range`（带 `content_ref`）；整块替换时给 `write_module_text` 也传 `content_ref`
 - 正文太长时用 `read_text_block` 分页读；图片资源用 `read_card_image`
 
@@ -49,6 +48,12 @@ add_module_bulk / write_module_text …    → 回执：status "proposed" + 提�
 
 时间取**数字**，显示靠历法模板；未放置的事件 `at` 省略即可。旧版 `nodes`/`items` 投影由编码时自动重算，不用你维护。
 
+## 自由界面 / 自由 3D：优先于写文件
+
+要做可交互的东西——界面、游戏、3D、图表、小工具——默认建卡 + `surface`（自由界面）或 `free3d`（自由 3D）模块，在画布里直接渲染。工程是 `entry + files + manifest`，用 `surface_read` / `surface_write_file` 按文件改，`surface_validate` 静态校验，`surface_diagnostics` 读运行日志。完整桥、three.js、限制和文件退路见 `help({ topic: "surfaces" })`。
+
+只有沙箱做不了（项目二进制资产、外网、未内置库、必须被其他工具消费）才写文件；写完用 `module_embed_file` 挂回卡里。
+
 ## 跨项目的卡
 
 `list_cards` 只列本会话项目的卡库。其他项目的卡：
@@ -60,7 +65,7 @@ add_module_bulk / write_module_text …    → 回执：status "proposed" + 提�
 ## 导入导出
 
 - `export_card`：导出交换包（`.novex.zip`——结构 + 载荷 + SHA-256 清单）
-- `import_card`：导入后产生未提交草稿，**必须 `commit_import` 确认**后才算入库——这是产品流程，不是可绕过的步骤
+- `import_card`：导入后产生未提交草稿，**必须 `commit_import` 确认**后才算入库——这是导入流程，不是日常改卡；日常改卡直接落盘
 
 ## 用户消息开头的 `<noven-selection …/>`
 

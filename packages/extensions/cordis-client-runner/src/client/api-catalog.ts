@@ -336,13 +336,13 @@ export const SERVICE_API: readonly ServiceApiEntry[] = [
     description: 'Workspace archive and directory operations consumed by Client UI domains.',
     methods: [
       {
-        signature: 'openSession(target: SessionTarget): void',
-        description: 'Select a Session and show its Conversation as one UI navigation action.',
-        parameters: [{ name: 'target', description: 'known Session identity or durable direct-parent subagent address to display.' }],
+        signature: 'openSession(target: SessionTarget, options?: OpenSessionOptions): void',
+        description: 'Select a Session and show its Conversation as one UI navigation action. A blank Session is seated as a host and routed to the registered new-session surface instead of revealing its empty Conversation.',
+        parameters: [{ name: 'target', description: 'known Session identity or durable direct-parent subagent address to display.' }, { name: 'options', description: '`panel: \'preserve\'` selects without dismissing the active panel.' }],
       },
       {
         signature: 'openWorkspace(workspaceId: WorkspaceId, beforeOpen?: (sessionId: SessionId) => void): Promise<void>',
-        description: 'Connect a Workspace and open its Session unless a later navigation supersedes it.',
+        description: 'Connect a Workspace and open its Session unless a later navigation supersedes it. The connected Session is always a blank host, so a registered new-session surface owns the page; without one the empty Conversation is revealed.',
         parameters: [{ name: 'workspaceId', description: 'target Workspace.' }, { name: 'beforeOpen', description: 'optional synchronous preparation for the selected Session, skipped after supersession; a throw aborts the open and releases the retained reference.' }],
         returns: 'completion; a superseded request may create a Session but does not open it.',
         throws: ['on failure; a refused creation is also shown through the Workspace notice unless a later navigation or disposal superseded the request.'],
@@ -706,6 +706,10 @@ export const TYPE_API: readonly TypeApiEntry[] = [
   {
     name: 'ObservableSnapshot',
     declaration: 'export interface ObservableSnapshot<T> {\n    getSnapshot(): T;\n    subscribe(fn: () => void): () => void;\n}',
+  },
+  {
+    name: 'OpenSessionOptions',
+    declaration: 'export interface OpenSessionOptions {\n    readonly panel?: \'preserve\';\n    readonly transition?: \'none\';\n}',
   },
   {
     name: 'OpenState',

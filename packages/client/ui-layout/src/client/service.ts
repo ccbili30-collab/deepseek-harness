@@ -133,6 +133,13 @@ export interface ILayout {
    * @returns true when the resolved nav collapse or the unit side differs.
    */
   navGeometryDiffers(from: string, to: string): boolean
+  /**
+   * Enter or leave the canvas-only presentation: the work layer collapses to
+   * the right column so the canvas covers the frame. Transient view state —
+   * never persisted; the product canvas owns its own Escape chain.
+   * @param on - true to cover the frame, false to restore the recorded layout.
+   */
+  setCanvasFullscreen(on: boolean): void
 }
 
 /** Cross-plugin panel-action face (ctx.layout). */
@@ -237,5 +244,10 @@ export class LayoutController implements ILayout {
   /** Compare two sessions' nav-visible structural geometry. */
   navGeometryDiffers(from: string, to: string): boolean {
     return this.navDiffers(from, to)
+  }
+
+  /** Enter or leave the canvas-only presentation. */
+  setCanvasFullscreen(on: boolean): void {
+    this.panels.setCanvasFullscreen(on)
   }
 }

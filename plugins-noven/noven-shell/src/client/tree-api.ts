@@ -18,7 +18,7 @@ export interface TreeModuleRow {
   readonly routing?: string
 }
 
-/** 树里的一张卡：封面是 payload ref，`pending` 标记有挂起的 AI 提案。
+/** 树里的一张卡：封面是 payload ref。
     `dir` 是卡目录相对 `卡/` 的路径（可含架层，如 `大包/白起`），
     `shelf` 是它的父架路径（'' = 卡/ 顶层）；`hidden` 来自呈现轴元数据。 */
 export interface TreeCardRow {
@@ -26,32 +26,12 @@ export interface TreeCardRow {
   readonly name: string
   readonly kind: string
   readonly revision: number
-  readonly pending: boolean
-  /** 提案碰过的页面 scope（{targetId, moduleId} 对）；无提案时空数组。 */
-  readonly pendingScopes?: readonly { readonly targetId: string; readonly moduleId: string }[]
   readonly cover: string | null
   readonly dir: string
   readonly shelf: string
   readonly hidden?: boolean
   readonly modules: readonly TreeModuleRow[]
   readonly characters: readonly { readonly id: string; readonly name: string }[]
-}
-
-/** 提案是否碰过某页：模块页按 moduleId 匹配；概览页（moduleId 为空）收卡层变更
-    （moduleId === 卡 id）与无处可去的无头变更。与卡页 banner 的 pageHasProposal
-    同一条归属规则——灯和 banner 不许各算各的。 */
-export function pagePending(card: TreeCardRow, moduleId: string | undefined): boolean {
-  const scopes = card.pendingScopes
-  if (scopes === undefined || scopes.length === 0) return false
-  if (moduleId !== undefined) return scopes.some(s => s.moduleId === moduleId)
-  const moduleIds = new Set<string>()
-  const walk = (rows: readonly TreeModuleRow[]): void => {
-    for (const row of rows) { moduleIds.add(row.id); walk(row.children) }
-  }
-  walk(card.modules)
-  const charIds = new Set(card.characters.map(c => c.id))
-  return scopes.some(s => s.moduleId === card.cardId
-    || (s.targetId === card.cardId && !moduleIds.has(s.moduleId) && !charIds.has(s.moduleId)))
 }
 
 /** 树里的文稿行：`id` 为空表示文稿目录兜底扫到、未登记进作品清单。 */

@@ -148,6 +148,8 @@ export function AppFrame({
   canvasClaims,
 }: AppFrameProps) {
   const layoutInfo = useStore(state => state.layoutInfo)
+  /** Canvas-only presentation: the frame collapses to the right column. */
+  const canvasFullscreen = useStore(state => state.canvasFullscreen)
   const frameRef = useRef<HTMLDivElement | null>(null)
   // A global panel occupying the main seat has no swappable sibling: the
   // conv/unit sort only exists while the conversation faces the unit.
@@ -211,7 +213,10 @@ export function AppFrame({
   // Pulled, never reported: the claim is derivable from the session's surface,
   // so a retained surface reactivating with its canvas open counts without
   // waiting on any report. The drawn panel gates it — no panel, no track.
-  const claimedCanvas = useSyncExternalStore(canvasClaims.subscribe, () => canvasClaims.claim(currentSessionId))
+  const claimedCanvas = useSyncExternalStore(
+    listener => canvasClaims.subscribe(listener),
+    () => canvasClaims.claim(currentSessionId),
+  )
   const canvas = layoutInfo.rightbarShown ? claimedCanvas : null
   // The panel's anchored edge inside the unit column: opposite the canvas when
   // one is claimed; facing away from the conversation (its own outer edge)
@@ -457,9 +462,10 @@ export function AppFrame({
       style={{
         ...(document.documentElement.hasAttribute('data-windows-titlebar')
           ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
-        gridTemplateColumns: `${cols.sidebar}px minmax(0px, 1fr)`,
+        gridTemplateColumns: canvasFullscreen ? '0 minmax(0px, 1fr)' : `${cols.sidebar}px minmax(0px, 1fr)`,
       }}
       data-sidebar-collapsed={sidebarCollapsed || undefined}
+      data-canvas-fullscreen={canvasFullscreen || undefined}
       data-dragging={dragging || undefined}
       data-animating={outerAnim > 0 || undefined}
     >
@@ -468,7 +474,7 @@ export function AppFrame({
         useSessions={useSessions}
         usePanelInfo={usePanelInfo}
       />
-      <div className={css.sidebarCol}>
+      <div className={css.sidebarCol} data-sidebar-col>
         {sidebar}
       </div>
       <div
@@ -479,6 +485,7 @@ export function AppFrame({
         data-rightbar-collapsed={(cols.rightbar === 0 && canvas === null) || undefined}
         data-rightbar-fullscreen={layoutInfo.rightbarFullscreen || undefined}
         data-rightbar-instant={layoutInfo.rightbarInstant || undefined}
+        data-canvas-fullscreen={canvasFullscreen || undefined}
         data-dragging={dragging || undefined}
         data-animating={workAnim > 0 || undefined}
         style={{
@@ -486,30 +493,32 @@ export function AppFrame({
           // ident, and the ::view-transition-*(noven-work) rules match the
           // literal name (ui-workspace page-turn.ts).
           viewTransitionName: 'noven-work',
-          gridTemplateColumns: unitLeft
-            ? `minmax(0px, ${rightTrackMax}px) minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr)`
-            : `minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightTrackMax}px)`,
+          gridTemplateColumns: canvasFullscreen
+            ? 'minmax(0px, 1fr)'
+            : unitLeft
+              ? `minmax(0px, ${rightTrackMax}px) minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr)`
+              : `minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightTrackMax}px)`,
         }}
       >
         <CenterColumn order={unitLeft ? 2 : 1}>{main}</CenterColumn>
         <RightbarColumn order={unitLeft ? 1 : 2}>
           {renderSlot('rightbar', { width: normal.rightbar, viewportWidth: viewport, canShow: normal.rightbar > 0, collapsePreview: layoutInfo.rightbarCollapsePreview })}
         </RightbarColumn>
-        {layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && !rail && normal.rightbar > 0
+        {!canvasFullscreen && layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && !rail && normal.rightbar > 0
           && (canvas === null || layoutInfo.rightbarTrack) && (
           <DragHandle side="rightbar" left={rightbarHandleLeft - cols.sidebar} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onRightbarEnd} />
         )}
         {/* The unit seam exists only while a canvas claims the column: it moves
             the whole region against the conversation, the panel's own handle
             keeps dividing canvas from panel inside it. */}
-        {canvas !== null && layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && (
+        {!canvasFullscreen && canvas !== null && layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && (
           <DragHandle side="unit" left={unitHandleLeft - cols.sidebar} onStart={onUnitStart} onDrag={onUnitDrag} onEnd={onDragEnd} />
         )}
       </div>
       {/* The sidebar seam belongs to the stable layer: a frame-level handle at
           the navigation/work border, animated only by the user's own sidebar
           toggle (the collapsed rail is fixed-width: none while closed). */}
-      {!sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
+      {!canvasFullscreen && !sidebarCollapsed && <DragHandle side="sidebar" left={cols.sidebar} onStart={onSidebarStart} onDrag={onSidebarDrag} onEnd={onDragEnd} />}
       <div className={css.overlayLayer} data-shell-overlay>
         {overlays}
       </div>

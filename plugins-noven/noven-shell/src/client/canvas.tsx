@@ -16,10 +16,12 @@ import type { CardAddr, CardOp, CardOpResult, CardState } from './card-api.ts'
 import type { ImportReport } from './tree-api.ts'
 
 import { CardPage } from './card-page.tsx'
+import { AiEditsContext, useAiEdits, type AiEditsSnapshot } from './ai-edits.ts'
+import { SurfaceViewContext } from './surface-view.ts'
 import { metaOf, wordCount, type MdLabels } from './editor.tsx'
 import { BlockNoteDocEditor, PlainTextDocEditor, type OutlineItem, type OutlineMark } from './doc-editor.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
-import { pagePending, type NovenTree, type TreeModuleRow } from './tree-api.ts'
+import type { NovenTree, TreeModuleRow } from './tree-api.ts'
 import { CreateDialog, type CreateKind, type CreateRequest } from './creation.tsx'
 import { glyph } from './icons.tsx'
 import { InlineRename, notifyUndo, useArmedMenu } from './ui/interact.tsx'
@@ -58,6 +60,12 @@ export interface CanvasTab {
   readonly cardAddr?: CardAddr
   /** 树里点模块行时的深链目标：卡页打开后滚到/切到该模块。 */
   readonly moduleId?: string
+  /**
+   * Reserved presentation contract: `page` pages may render full-canvas
+   * without reading chrome. Free surfaces currently derive it from the
+   * module widget; the field is the future canvas-unification seam.
+   */
+  readonly presentation?: 'inline' | 'page'
   /** 树里卡行尾「＋」的信号：卡页就绪即弹模块库；消费时清掉（不留在持久态）。 */
   readonly addModule?: boolean
   /** doc 体：工作区相对路径；files 体不带。 */
@@ -464,7 +472,7 @@ export const docKey = (sessionId: SessionId, path: string): string => `${session
 export const dirKey = (sessionId: SessionId, path: string): string => `${sessionId}|${path}`
 
 /** 页签状态点词汇：页体把实体态镜像上来，页签条只负责画。 */
-export type TabFlag = 'working' | 'pending' | 'error' | 'unsaved'
+export type TabFlag = 'working' | 'error' | 'unsaved'
 export type TabFlags = Partial<Record<TabFlag, boolean>>
 /** 状态键：owner 会话 + 页签 key（状态不随画布持久——瞬态态留在会话内温层）。 */
 export const statusKey = (owner: SessionId, tabKey: string): string => `${owner}|${tabKey}`
@@ -493,6 +501,8 @@ export interface CanvasInjected {
     readonly project: ObservableSnapshot<ProjectFocus | undefined>
     /** 内容树快照——起点页据此决定空态。 */
     readonly tree: ObservableSnapshot<NovenTree | undefined>
+    /** 本会话正在被 AI 写的卡/模块；画布、页签与卡页共用这一份快照。 */
+    readonly edits: ObservableSnapshot<AiEditsSnapshot>
     /** 会话可见消息流——作品页「手机」档的戏台复刻屏拿它当转录。 */
     readonly transcript: ObservableSnapshot<TranscriptState>
     /** 项目根下的会话清单（模拟器「返回界面」的数据源）。 */
@@ -559,6 +569,8 @@ export interface CanvasInjected {
   readonly listCards: (sessionId: SessionId) => Promise<readonly { cardId: string; name: string }[]>
   /** 文件嵌入模块：moduleId 为 null 时在卡根以文件名新建模块（与树行「放入模块」同一链路）。 */
   readonly embedFile: (cardId: string, moduleId: string | null, path: string) => void
+  /** 画布全屏：帧级呈现状态，导航/抽屉/对话列让位，画布盖住整个窗口。 */
+  readonly setCanvasFullscreen: (on: boolean) => void
 }
 
 type CanvasProps = PropsRuntime<'sidebar.right.pane.tab'> & PropsLocale<'novenShell'> & PropsStore<ReturnType<typeof createCanvasStore>> & InjectFace<CanvasInjected>
@@ -676,7 +688,7 @@ function ManualTab({ tab, t }: { readonly tab: CanvasTab; readonly t: ShellT }) 
 /**
  * 卡体：卡页（设定总览 + 分页模块）。
  */
-function CardTab({ tab, t, loadCard, op, ask, seedComposer, readFile, onOpenFile, onOpenCard, close, consumeAddModule }: {
+function CardTab({ tab, t, loadCard, op, ask, seedComposer, readFile, resolveProjectAsset, onOpenFile, onOpenCard, close, consumeAddModule }: {
   readonly tab: CanvasTab
   readonly t: ShellT
   readonly loadCard: CanvasInjected['loadCard']
@@ -685,6 +697,8 @@ function CardTab({ tab, t, loadCard, op, ask, seedComposer, readFile, onOpenFile
   readonly seedComposer: (text: string) => void
   /** 读项目内文件文本（html 活引用 / markdown 文件链接）。 */
   readonly readFile: (path: string) => Promise<string | undefined>
+  /** 读项目内任意文件字节（自由模块的 glb/纹理/音频/JSON）。 */
+  readonly resolveProjectAsset: (path: string, base?: string) => Promise<Blob | null>
   readonly onOpenFile: (path: string) => void
   /** noven:// 深链跨卡跳页：同地址（同项目）开/换 card 页签。 */
   readonly onOpenCard: (cardId: string, moduleId?: string) => void
@@ -717,6 +731,7 @@ function CardTab({ tab, t, loadCard, op, ask, seedComposer, readFile, onOpenFile
         ask={ask}
         seedComposer={seedComposer}
         readFile={readFile}
+        resolveProjectAsset={resolveProjectAsset}
         onOpenFile={onOpenFile}
         onOpenCard={onOpenCard}
       />
@@ -1795,7 +1810,7 @@ function FilesTab({ t, sessionId, useDirs, refreshDir, openDoc }: {
 }
 
 /** 单页签的渲染体：哪个叶的活动页是它，就由哪片叶渲——同 key 可以在两片叶各渲一份（双视口）。 */
-function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardFile, importRef, project, tree }: {
+function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardFile, resolveProjectAsset, importRef, project, tree }: {
   readonly tab: CanvasTab
   readonly t: ShellT
   readonly session: SessionId
@@ -1804,6 +1819,7 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
   readonly props: CanvasProps
   readonly openDoc: (path: string, title: string) => void
   readonly readCardFile: (path: string) => Promise<string | undefined>
+  readonly resolveProjectAsset: (path: string, base?: string) => Promise<Blob | null>
   readonly importRef: React.RefObject<HTMLInputElement | null>
   readonly project: ProjectFocus | undefined
   readonly tree: NovenTree | undefined
@@ -1873,12 +1889,13 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
       )}
       {tab.kind === 'card' && (
         <CardTab tab={tab} t={t} loadCard={props.loadCard} op={props.cardOp} ask={props.ask} seedComposer={seedComposer}
-          readFile={readCardFile}
+          readFile={readCardFile} resolveProjectAsset={resolveProjectAsset}
           onOpenFile={path => openDoc(path, path.split('/').pop() ?? path)}
           onOpenCard={(cardId, moduleId) => actions.open({
             key: moduleId === undefined ? `card:${cardId}` : `mod:${cardId}:${moduleId}`,
             kind: 'card', title: '', owner: session, cardId,
             cardAddr: tab.cardAddr, moduleId,
+            presentation: moduleId === undefined ? 'inline' : 'page',
           })}
           close={closeTab} consumeAddModule={consumeAddModule} />
       )}
@@ -1943,9 +1960,13 @@ function dropZone(e: React.DragEvent, el: HTMLElement): DropZone {
 }
 
 /** 一片叶：页签条 + 活动页体 + 拖放落区（拖页签经过时显形）。 */
-function LeafView({ leaf, focused, t, session, actions, props, tabByKey, project, tree, sims, statusMap, simOpenMap, openDoc, readCardFile, importRef, dragKey, setDragKey, dropSpot, setDropSpot }: {
+function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCanvasFullscreen, t, session, actions, props, tabByKey, project, tree, sims, statusMap, simOpenMap, openDoc, readCardFile, resolveProjectAsset, importRef, dragKey, setDragKey, dropSpot, setDropSpot }: {
   readonly leaf: CanvasLeaf
   readonly focused: boolean
+  /** Module fullscreen: the page fills the canvas and the strip steps aside. */
+  readonly immersive?: boolean
+  readonly canvasFullscreen: boolean
+  readonly toggleCanvasFullscreen: () => void
   readonly t: ShellT
   readonly session: SessionId
   readonly actions: CanvasProps['actions']
@@ -1958,6 +1979,7 @@ function LeafView({ leaf, focused, t, session, actions, props, tabByKey, project
   readonly simOpenMap: Readonly<Record<string, SessionId>>
   readonly openDoc: (path: string, title: string) => void
   readonly readCardFile: (path: string) => Promise<string | undefined>
+  readonly resolveProjectAsset: (path: string, base?: string) => Promise<Blob | null>
   readonly importRef: React.RefObject<HTMLInputElement | null>
   readonly dragKey: string | undefined
   readonly setDragKey: (key: string | undefined) => void
@@ -1965,6 +1987,7 @@ function LeafView({ leaf, focused, t, session, actions, props, tabByKey, project
   readonly setDropSpot: (spot: { readonly leaf: string; readonly zone: DropZone } | undefined) => void
 }) {
   const studioOn = props.useStore(s => project !== undefined && s.studioOn?.[project.root] === true)
+  const aiEdits = useAiEdits()
   const strip = useMemo(() => {
     // chat 页签就是 Studio 面：组关着时整条不出（持久叶里残留的 'chat' 一并滤掉）。
     const keys = [...(leaf.tabs.includes('start') ? [] : ['start']),
@@ -1984,24 +2007,20 @@ function LeafView({ leaf, focused, t, session, actions, props, tabByKey, project
   return (
     <div className="nv-leaf"
       onMouseDownCapture={() => actions.focusLeaf(session, leaf.id)}>
-      <div className="nv-canvas-strip" role="tablist" data-leaf={leaf.id}>
+      {!immersive && <div className="nv-canvas-strip" role="tablist" data-leaf={leaf.id}>
         {strip.map(row => {
           // 状态点两路汇合：页体上报的（statusMap）+ 页签条从实体源直推的
-          // （chat=模拟会话在跑、card=有挂起提案）——镜像实体态，页不发明状态。
+          // （chat=模拟会话在跑）——镜像实体态，页不发明状态。
           const flags = statusMap[statusKey(session, row.key)]
           const chatRunning = row.kind === 'chat' && project !== undefined
             && sims.find(r => r.id === simOpenMap[project.root])?.running === true
-          // 灯按页归属：mod: 页签只在本模块被提案碰过时亮，概览页签走
-          // pagePending 的概览规则——不再是"卡有提案整串页签全亮"。
-          const cardRow = row.kind === 'card' ? tree?.cards.find(c => c.cardId === row.cardId) : undefined
-          const cardPending = cardRow !== undefined && pagePending(cardRow, row.moduleId)
           const working = flags?.working === true || chatRunning
-          const pending = flags?.pending === true || cardPending
           const error = flags?.error === true
           const unsaved = flags?.unsaved === true
+          const aiEditing = row.kind === 'card' && row.cardId !== undefined && aiEdits.cards.has(row.cardId)
           return (
-          <div key={row.key} role="tab" aria-selected={row.key === active}
-            className={`nv-canvas-tab${row.key === active ? ' nv-canvas-tab-on' : ''}`}
+          <div key={row.key} role="tab" aria-selected={row.key === active} aria-busy={aiEditing || undefined}
+            className={`nv-canvas-tab${row.key === active ? ' nv-canvas-tab-on' : ''}${aiEditing ? ' nv-canvas-tab-ai' : ''}`}
             draggable
             onDragStart={e => { e.dataTransfer.setData('application/x-noven-tab', row.key); e.dataTransfer.effectAllowed = 'move'; setDragKey(row.key) }}
             onDragEnd={e => {
@@ -2013,9 +2032,9 @@ function LeafView({ leaf, focused, t, session, actions, props, tabByKey, project
             }}
             onClick={() => actions.select(session, row.key)}>
             <span className="nv-canvas-tabtitle">{tabTitle(row, t)}</span>
+            {aiEditing && <span className="nv-ai-tag" title={t('ai.editing')}>{t('ai.tag')}</span>}
             <span className="nv-canvas-dots">
               {working && <span className="nv-canvas-dot nv-dot-working" title={t('canvas.dot.working')} />}
-              {pending && <span className="nv-canvas-dot nv-dot-pending" title={t('canvas.dot.pending')} />}
               {error && <span className="nv-canvas-dot nv-dot-error" title={t('canvas.dot.error')} />}
               {unsaved && <span className="nv-canvas-dot nv-dot-unsaved" title={t('canvas.dot.unsaved')} />}
             </span>
@@ -2028,12 +2047,15 @@ function LeafView({ leaf, focused, t, session, actions, props, tabByKey, project
         })}
         <button type="button" className="nv-canvas-plus" aria-label={t('canvas.tab.new')}
           onClick={() => actions.open(startTab(session), leaf.id)}>+</button>
-      </div>
+        <button type="button" className="nv-canvas-fullscreentoggle" data-active={canvasFullscreen || undefined}
+          aria-label={t('canvas.fullscreen')} title={t('canvas.fullscreen')}
+          onClick={toggleCanvasFullscreen}>{glyph.expand(13)}</button>
+      </div>}
       <div className="nv-canvas-body">
         {activeTab !== undefined && (
           <TabBody tab={activeTab} t={t} session={session} useStore={props.useStore} actions={actions}
-            props={props} openDoc={openDoc} readCardFile={readCardFile} importRef={importRef}
-            project={project} tree={tree} />
+            props={props} openDoc={openDoc} readCardFile={readCardFile} resolveProjectAsset={resolveProjectAsset}
+            importRef={importRef} project={project} tree={tree} />
         )}
       </div>
       {dragKey !== undefined && (
@@ -2109,7 +2131,7 @@ function tabTitle(row: CanvasTab, t: ShellT): string {
  * 浮窗：撕下来的页签 = 前台工作面。头栏拖动即移动；拖到任何页签条上
  * 亮绿特效，松手归叶变回页签。右/下/角三向拉伸。
  */
-function FloatFrame({ float, tab, t, session, actions, props, openDoc, readCardFile, importRef, project, tree }: {
+function FloatFrame({ float, tab, t, session, actions, props, openDoc, readCardFile, resolveProjectAsset, importRef, project, tree }: {
   readonly float: FloatPage
   readonly tab: CanvasTab
   readonly t: ShellT
@@ -2118,6 +2140,7 @@ function FloatFrame({ float, tab, t, session, actions, props, openDoc, readCardF
   readonly props: CanvasProps
   readonly openDoc: (path: string, title: string) => void
   readonly readCardFile: (path: string) => Promise<string | undefined>
+  readonly resolveProjectAsset: (path: string, base?: string) => Promise<Blob | null>
   readonly importRef: React.RefObject<HTMLInputElement | null>
   readonly project: ProjectFocus | undefined
   readonly tree: NovenTree | undefined
@@ -2170,8 +2193,8 @@ function FloatFrame({ float, tab, t, session, actions, props, openDoc, readCardF
       </div>
       <div className="nv-float-body">
         <TabBody tab={tab} t={t} session={session} useStore={props.useStore} actions={actions}
-          props={props} openDoc={openDoc} readCardFile={readCardFile} importRef={importRef}
-          project={project} tree={tree} />
+          props={props} openDoc={openDoc} readCardFile={readCardFile} resolveProjectAsset={resolveProjectAsset}
+          importRef={importRef} project={project} tree={tree} />
       </div>
       <div className="nv-float-size nv-float-size-e" onPointerDown={onSizeDown('e')} />
       <div className="nv-float-size nv-float-size-s" onPointerDown={onSizeDown('s')} />
@@ -2259,6 +2282,7 @@ export function CanvasHost(props: CanvasProps) {
   const dialogRow = useStore(s => s.dialog)
   const project = props.useProject(v => v)
   const tree = props.useTree(v => v)
+  const edits = props.useEdits(v => v)
   const sims = props.useSims(v => v)
   const statusMap = props.useStatus(v => v)
   const importPack = props.useImportPack(v => v)
@@ -2267,6 +2291,10 @@ export function CanvasHost(props: CanvasProps) {
   const floatsMap = useStore(s => s.floats)
   const [dragKey, setDragKey] = useState<string | undefined>(undefined)
   const [dropSpot, setDropSpot] = useState<{ readonly leaf: string; readonly zone: DropZone } | undefined>(undefined)
+  /** Module fullscreen: the tab key whose page fills the canvas. */
+  const [immersiveKey, setImmersiveKey] = useState<string | undefined>(undefined)
+  /** Canvas fullscreen: the frame collapses to this column. */
+  const [canvasFullscreen, setCanvasFullscreen] = useState(false)
   // 会话切片 + 布局自愈（v3 快照无 layout 时建单叶，老现场不丢）。
   const tabs = useMemo(() => allTabs.filter(row => row.owner === session), [allTabs, session])
   const floats = useMemo(() => floatsMap?.[session] ?? [], [floatsMap, session])
@@ -2286,6 +2314,15 @@ export function CanvasHost(props: CanvasProps) {
   // 卡页 html 活引用的文件读回调必须稳定——否则 HtmlModule 的 effect 每次
   // 渲染都重跑，iframe 反复卸载重挂（肉眼可见的闪烁）。
   const readCardFile = useCallback((path: string) => props.readDoc(session, path), [props.readDoc, session])
+  // Free surfaces read project bytes (glb/texture/audio/json) through the same
+  // session-fenced frame route the workbench canvas uses.
+  const resolveProjectAsset = useCallback((assetPath: string, base?: string): Promise<Blob | null> => {
+    const ap = new URLSearchParams({ session, path: assetPath })
+    if (base !== undefined && base !== '') ap.set('base', base)
+    return fetch(new URL(`api/noven-frame?${ap.toString()}`, document.baseURI).href)
+      .then(response => (response.ok ? response.blob() : null))
+      .catch(() => null)
+  }, [session])
   useEffect(() => {
     if (dialog?.kind === 'import') { actions.closeDialog(); importRef.current?.click() }
   }, [dialog, actions])
@@ -2331,19 +2368,63 @@ export function CanvasHost(props: CanvasProps) {
     }
     seenTargets.current = { cards, modules }
   }, [tree, tabs, session, actions, project])
+  const focusedLeaf = leafById(node, focusMap?.[session] ?? '') ?? leavesOf(node)[0]
+  const activeTabKey = focusedLeaf?.active ?? 'start'
+  const immersiveLeaf = immersiveKey === undefined ? undefined : leafWith(node, immersiveKey)
+  const immersive = immersiveKey !== undefined && immersiveLeaf?.active === immersiveKey
+  const toggleCanvasFullscreen = useCallback((): void => {
+    setCanvasFullscreen(current => !current)
+  }, [])
+  const toggleImmersive = useCallback((): void => {
+    setImmersiveKey(current => current === undefined ? activeTabKey : undefined)
+  }, [activeTabKey])
+  // Switching the active page leaves module fullscreen: the new page did not
+  // ask for it. Canvas fullscreen is a frame mode and survives tab switches.
+  useEffect(() => { setImmersiveKey(undefined) }, [activeTabKey])
+  // The frame renders from ui-layout; the canvas keeps the local chain value
+  // and mirrors it through a ref so a fresh injected face object does not
+  // re-commit the same frame state on every render. Leaving drops the mode.
+  const setFrameFullscreen = useRef(props.setCanvasFullscreen)
+  setFrameFullscreen.current = props.setCanvasFullscreen
+  useEffect(() => { setFrameFullscreen.current(canvasFullscreen) }, [canvasFullscreen])
+  useEffect(() => () => { setFrameFullscreen.current(false) }, [])
+  useEffect(() => {
+    if (!immersive && !canvasFullscreen) return
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape') return
+      const target = event.target
+      if (target instanceof Element && target.closest('input, textarea, [contenteditable]')) return
+      // A menu or dialog above the page owns Escape first.
+      if (document.querySelector('[role="dialog"], [role="menu"]') !== null) return
+      event.preventDefault()
+      event.stopPropagation()
+      if (immersive) { setImmersiveKey(undefined); return }
+      setCanvasFullscreen(false)
+    }
+    document.addEventListener('keydown', onKey, true)
+    return () => { document.removeEventListener('keydown', onKey, true) }
+  }, [immersive, canvasFullscreen])
   const leafProps = {
     t, session, actions, props, tabByKey, project, tree, sims, statusMap, simOpenMap,
-    openDoc, readCardFile, importRef, dragKey, setDragKey, dropSpot, setDropSpot,
-    focusLeaf: focusMap?.[session],
+    openDoc, readCardFile, resolveProjectAsset, importRef, dragKey, setDragKey, dropSpot, setDropSpot,
+    focusLeaf: focusMap?.[session], canvasFullscreen, toggleCanvasFullscreen,
   }
+  const aiEditing = edits.cards.size > 0
   return (
-    <div className="nv-canvas">
+    <AiEditsContext.Provider value={edits}>
+    <SurfaceViewContext.Provider value={{ immersive, canvasFullscreen, toggleImmersive, toggleCanvasFullscreen }}>
+    <div className="nv-canvas" data-ai-editing={aiEditing ? '' : undefined}
+      data-immersive={immersive || undefined} data-canvas-fullscreen={canvasFullscreen || undefined}>
       <input ref={importRef} type="file" accept=".zip,.png,.json,.txt" hidden
         onChange={e => { const file = e.target.files?.[0]; e.target.value = ''; if (file !== undefined) props.importCard(file) }} />
-      {isLeaf(node)
-        // 焦点标记只在多分栏时有意义——单叶恒焦点，打标就成页签条上一条多余的色线。
-        ? <LeafView {...leafProps} leaf={node} focused={false} />
-        : <SplitView node={node} leafProps={leafProps} actions={actions} session={session} />}
+      {immersive && immersiveLeaf !== undefined
+        // Module fullscreen renders one leaf only: the layout tree is left
+        // untouched, so exiting restores every split exactly.
+        ? <LeafView {...leafProps} leaf={immersiveLeaf} focused={false} immersive />
+        : isLeaf(node)
+          // 焦点标记只在多分栏时有意义——单叶恒焦点，打标就成页签条上一条多余的色线。
+          ? <LeafView {...leafProps} leaf={node} focused={false} />
+          : <SplitView node={node} leafProps={leafProps} actions={actions} session={session} />}
       {dialog !== null && dialog.kind !== 'import' && (
         <CreateDialog kind={dialog.kind} dir={dialog.dir} t={t}
           worlds={(tree?.cards ?? []).filter(c => c.kind === 'WORLD').map(c => ({ cardId: c.cardId, name: c.name }))}
@@ -2357,11 +2438,14 @@ export function CanvasHost(props: CanvasProps) {
         // 浮窗 portal 到 body——画布被收起/停靠时窗仍在前台工作。
         return tab === undefined ? null : createPortal(
           <FloatFrame key={f.key} float={f} tab={tab} t={t} session={session} actions={actions}
-            props={props} openDoc={openDoc} readCardFile={readCardFile} importRef={importRef}
-            project={project} tree={tree} />,
+            props={props} openDoc={openDoc} readCardFile={readCardFile} resolveProjectAsset={resolveProjectAsset}
+            importRef={importRef} project={project} tree={tree} />,
           document.body,
         )
       })}
+      {aiEditing && !immersive && <div className="nv-ai-pill nv-ai-pill-canvas" role="status">{t('ai.editing')}</div>}
     </div>
+    </SurfaceViewContext.Provider>
+    </AiEditsContext.Provider>
   )
 }

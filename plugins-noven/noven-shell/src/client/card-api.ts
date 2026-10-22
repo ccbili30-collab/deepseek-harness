@@ -68,16 +68,6 @@ export interface CardDocView {
 
 export interface CardResourceView { readonly id: string; readonly ref: string; readonly mediaType: string }
 
-/** One row of a pending AI proposal's change list (`GET` `proposal.changes`). */
-export interface ProposalChangeView {
-  readonly targetId: string
-  readonly moduleId: string
-  readonly name: string
-  readonly kind: 'added' | 'removed' | 'changed' | 'moved'
-  /** Human edited the same module while the proposal hung — accepting overwrites it. */
-  readonly stale: boolean
-}
-
 /** `GET /api/noven-cards` payload: effective document + the version edits must carry. */
 export interface CardState {
   readonly cardId: string
@@ -92,9 +82,6 @@ export interface CardState {
   readonly coverResourceId: string | null
   readonly canUndo?: boolean
   readonly canRedo?: boolean
-  /** Pending AI proposal summary; `preview=1` fetches merge the proposal into `document`. */
-  readonly hasProposal?: boolean
-  readonly proposal?: { readonly pending: boolean; readonly baseRevision: number; readonly changes: readonly ProposalChangeView[] } | null
 }
 
 /** A card's home: the session whose workspace holds it, or the workspace root itself. */
@@ -107,9 +94,35 @@ const api = (addr: CardAddr): string => addr.sessionId !== undefined
   ? `/api/noven-cards?session=${encodeURIComponent(addr.sessionId)}`
   : `/api/noven-cards?root=${encodeURIComponent(addr.root ?? '')}`
 
-/** Fetch one card's editable state; `preview` merges the pending AI proposal into the document. */
-export async function fetchCard(addr: CardAddr, cardId: string, preview = false): Promise<CardState | undefined> {
-  const response = await fetch(`${api(addr)}&card=${encodeURIComponent(cardId)}${preview ? '&preview=1' : ''}`).catch(() => undefined)
+/** One sandbox console line posted for a free surface. */
+export interface CardDiagnosticEntry {
+  readonly level: 'log' | 'warn' | 'error'
+  readonly text: string
+  readonly at?: number
+}
+
+/**
+ * Post a free surface's console tail to the project's diagnostics ring. The AI
+ * reads it back with `surface_diagnostics`; failures are silent because this
+ * is observability, never a user action.
+ * @param addr - card home (session or project root).
+ * @param cardId - owning card.
+ * @param moduleId - surface module.
+ * @param entries - console lines to append.
+ * @returns resolves when the post settles, regardless of outcome.
+ */
+export async function postCardDiagnostics(addr: CardAddr, cardId: string, moduleId: string, entries: readonly CardDiagnosticEntry[]): Promise<void> {
+  if (entries.length === 0) return
+  await fetch(api(addr), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'diagnostics', cardId, moduleId, entries }),
+  }).catch(() => undefined)
+}
+
+/** Fetch one card's editable state. */
+export async function fetchCard(addr: CardAddr, cardId: string): Promise<CardState | undefined> {
+  const response = await fetch(`${api(addr)}&card=${encodeURIComponent(cardId)}`).catch(() => undefined)
   if (response === undefined || !response.ok) return undefined
   return (await response.json()) as CardState
 }
@@ -139,7 +152,7 @@ export async function fetchCardList(addr: CardAddr): Promise<readonly CardListRo
 export interface CardCommand { readonly kind: string; readonly [key: string]: unknown }
 
 export interface CardOp {
-  readonly op: 'create' | 'apply' | 'commit' | 'discard' | 'import' | 'delete' | 'restore' | 'undo' | 'redo' | 'move' | 'accept' | 'reject'
+  readonly op: 'create' | 'apply' | 'commit' | 'discard' | 'import' | 'delete' | 'restore' | 'undo' | 'redo' | 'move'
   readonly cardId?: string
   readonly targetId?: string
   readonly version?: string
@@ -153,8 +166,6 @@ export interface CardOp {
   /** Move op: the session whose workspace receives the card, or `targetRoot` for session-less targets. */
   readonly targetSession?: SessionId
   readonly targetRoot?: string
-  /** Accept/reject ops: limit the settlement to these module ids; absent = whole proposal. */
-  readonly moduleIds?: readonly string[]
 }
 
 export class CardConflict extends Error {
@@ -232,7 +243,7 @@ export function cardContentUrl(workspaceRoot: string, dir: string, ref: string):
 export interface UserModuleDefinition {
   readonly id: string
   readonly name: string
-  readonly shape: 'collection' | 'timeline' | 'map' | 'doc'
+  readonly shape: 'collection' | 'timeline' | 'map' | 'doc' | 'surface'
   readonly summary?: string
   readonly fields?: readonly { readonly name: string, readonly type: string }[]
   readonly view?: string

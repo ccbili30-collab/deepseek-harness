@@ -38,7 +38,8 @@ interface Topic {
 
 export const TOPICS: readonly Topic[] = [
   { slug: 'overview', file: 'overview.md', summary: '产品心智模型：项目、卡、挂载、工作台、创作库、设定管理员，东西都存在哪' },
-  { slug: 'cards', file: 'cards.md', summary: '制卡工作流：建卡、模块树、版本接力、正文分页、导入导出' },
+  { slug: 'cards', file: 'cards.md', summary: '制卡工作流：建卡、模块树、直接提交、正文分页、导入导出' },
+  { slug: 'surfaces', file: 'surfaces.md', summary: '自由界面与自由 3D：工程格式、逐文件工具、NOVEN_FRAME 桥、three.js、限制' },
   { slug: 'projects', file: 'projects.md', summary: '项目与挂载：多项目、引用卡、跨项目读写、搬卡、绑定与权限' },
   { slug: 'workbench', file: 'workbench.md', summary: '工作台与创作库：把成果摆进侧栏、登记作品、阶段与历史版本' },
   { slug: 'sidecar', file: 'sidecar.md', summary: '设定管理员：每项目的常驻设定整理会话、实体库与草稿确认' },
