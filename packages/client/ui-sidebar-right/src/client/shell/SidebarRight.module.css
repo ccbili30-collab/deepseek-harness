@@ -491,14 +491,12 @@
   transform: none;
 }
 
-/* A selfChrome page draws its own top bar; the park affordance then stands
-   as a pill straddling the canvas's panel-facing seam. */
+/* A visible close control for every page, set inside the canvas clear of the
+   seam drag handle (which owns the exact edge). */
 .canvasEdgePark {
   position: absolute;
   top: 50%;
-  left: -13px;
-  /* Above the frame's column-seam drag handle (z-index 11): the handle
-     straddles the same edge and would otherwise swallow the click. */
+  left: 16px;
   z-index: 12;
   display: inline-flex;
   align-items: center;
@@ -517,7 +515,7 @@
 
 .canvas[data-canvas-side='left'] .canvasEdgePark {
   left: auto;
-  right: -13px;
+  right: 16px;
 }
 
 .canvasEdgePark:hover {

@@ -572,19 +572,11 @@ function CanvasHost(panel: PanelProps & { width: number; toggleSidebar: () => vo
                   <CloseGlyph />
                 </button>
               </Tooltip>
-              <Tooltip label={t('canvas.collapse')} side="bottom" delayMs={500}>
-                <button type="button" className={css.iconButton}
-                  aria-label={t('canvas.collapse')}
-                  data-sidebar-right-canvas-park
-                  onClick={() => { panel.actions.setCanvasParked(panel.sessionId, true) }}>
-                  <ParkGlyph />
-                </button>
-              </Tooltip>
             </header>
           )}
-          {/* A page owning its own chrome gets the same affordance on the seam:
-          a pill straddling the canvas's drawer-facing edge. */}
-          {open && tab !== undefined && definition?.selfChrome === true && (
+          {/* One close control for every page, set inside the canvas just off
+              the drawer seam so the seam's drag handle stays unobstructed. */}
+          {open && tab !== undefined && surface.layout.expanded && (
             <Tooltip label={t('canvas.collapse')} side="bottom" delayMs={500}>
               <button type="button" className={css.canvasEdgePark}
                 aria-label={t('canvas.collapse')}
