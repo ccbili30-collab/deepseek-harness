@@ -371,10 +371,7 @@ export function AppFrame({
   }, [actions])
   const onRightbarStart = useCallback(() => { rightbarBase.current = rightbarWidth.current; setDragging(true) }, [])
   const onRightbarDrag = useCallback((dx: number) => {
-    // The canvas/drawer seam follows the pointer direction asked for in the
-    // product: dragging left moves the seam left, expanding the side the
-    // pointer travels toward.
-    actions.setRightbar(rightbarBase.current + (anchorLeft ? -dx : dx))
+    actions.setRightbar(rightbarBase.current + (anchorLeft ? dx : -dx))
   }, [actions, anchorLeft])
   const productTitle = process.env.DSH_CLIENT_TITLE ?? t('brand.localBuild')
   // The rendered template lets the grid solve the squeeze natively: the centre
@@ -440,8 +437,7 @@ export function AppFrame({
   const unitBase = useRef(0)
   const onUnitStart = useCallback(() => { unitBase.current = unitWRef.current; setDragging(true) }, [])
   const onUnitDrag = useCallback((dx: number) => {
-    // Mirrored like the drawer seam: the unit boundary follows the pointer.
-    actions.setUnit(unitBase.current + (unitLeft ? -dx : dx))
+    actions.setUnit(unitBase.current + (unitLeft ? dx : -dx))
   }, [actions, unitLeft])
   const sidebar = useMemo(() => renderSlot('sidebar', {
     collapsed: sidebarCollapsed,

@@ -597,8 +597,8 @@ describe('AppFrame right panel presentation', () => {
     expect(tracks(frame)).toEqual([280, 0])
     expect(rightOwner().width).toBe(320)
     drag(handleFor(frame, 'rightbar'), 680, 690)
-    expect(instance.getSnapshot().layoutInfo.rightbar).toBe(330)
-    expect(rightOwner().width).toBe(330)
+    expect(instance.getSnapshot().layoutInfo.rightbar).toBe(310)
+    expect(rightOwner().width).toBe(310)
     expect(tracks(frame)[1]).toBe(0)
   })
 })
@@ -632,32 +632,31 @@ describe('AppFrame pointer resizing', () => {
     expect(tracks(frame)[1]).toBe(320)
     expect(handle.style.left).toBe('500px')
     drag(handle, 500, 510)
-    expect(instance.getSnapshot().layoutInfo.rightbar).toBe(330)
-    expect(rightOwner().width).toBe(330)
-    expect(tracks(frame)[1]).toBe(330)
-    expect(handle.style.left).toBe('490px')
+    expect(instance.getSnapshot().layoutInfo.rightbar).toBe(310)
+    expect(rightOwner().width).toBe(310)
+    expect(tracks(frame)[1]).toBe(310)
+    expect(handle.style.left).toBe('510px')
   })
 
-  it('reaches the 70% limit on an outward drag and parks the rail below the floor', () => {
+  it('widens to the 70% limit and parks the rail request below the floor through pointer input', () => {
     frameWidth = 3000
     const { frame, instance, rightOwner } = mountFrame()
     act(() => { instance.actions.toggleSidebar(); instance.actions.openRightbar(true, false, false) })
-    const start = 0
-    drag(handleFor(frame, 'rightbar'), start, 1800)
-    expect(rightOwner().width).toBe(2100)
-    expect(tracks(frame)[1]).toBe(2100)
+    drag(handleFor(frame, 'rightbar'), 1650, 0)
+    expect(rightOwner().width).toBe(1970)
+    expect(tracks(frame)[1]).toBe(1970)
     // Below the floor the panel offers zero width: the occupant collapses to
     // its rail while the dragged preference survives for the return.
-    drag(handleFor(frame, 'rightbar'), 0, -2200)
-    expect(instance.getSnapshot().layoutInfo).toMatchObject({ rightbar: 2100, rightbarCollapsed: true })
+    drag(handleFor(frame, 'rightbar'), 900, 3000)
+    expect(instance.getSnapshot().layoutInfo).toMatchObject({ rightbar: 1970, rightbarCollapsed: true })
     expect(rightOwner()).toEqual({ width: 0, viewportWidth: 3000, canShow: false, collapsePreview: false })
     expect(tracks(frame)[1]).toBe(0)
     act(() => { instance.actions.openRightbar(true, false, true) })
     expect(tracks(frame)[1]).toBe(56)
     expect(rightOwner().width).toBe(56)
     act(() => { instance.actions.openRightbar(true, false, false) })
-    expect(instance.getSnapshot().layoutInfo).toMatchObject({ rightbar: 2100, rightbarCollapsed: false })
-    expect(rightOwner().width).toBe(2100)
+    expect(instance.getSnapshot().layoutInfo).toMatchObject({ rightbar: 1970, rightbarCollapsed: false })
+    expect(rightOwner().width).toBe(1970)
   })
 
   it('halves conversation and canvas on the first user open, then owns the ratio by drag', () => {
@@ -672,14 +671,13 @@ describe('AppFrame pointer resizing', () => {
     expect(unit.style.left).toBe('660px')
     expect(handleFor(frame, 'rightbar').style.left).toBe('1320px')
     drag(unit, 660, 760)
-    expect(instance.getSnapshot().layoutInfo.unit).toBe(1080)
-    expect(tracks(frame)).toEqual([280, 1080])
+    expect(instance.getSnapshot().layoutInfo.unit).toBe(880)
+    expect(tracks(frame)).toEqual([280, 880])
     // The panel stays anchored to the right edge while the seam moves.
     expect(handleFor(frame, 'rightbar').style.left).toBe('1320px')
     // The floor keeps the drawn panel plus a canvas page inside the unit:
     // 320 panel + 280 canvas minimum.
-    const seam = parseFloat(handleFor(frame, 'unit').style.left)
-    drag(handleFor(frame, 'unit'), seam, -1000)
+    drag(unit, 760, 3000)
     expect(tracks(frame)).toEqual([280, 600])
     act(() => { instance.actions.openRightbar(true, false, true) })
     expect(frame.querySelector('[data-side="unit"]')).not.toBeNull()
