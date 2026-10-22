@@ -1542,6 +1542,12 @@ export function apply(ctx: ClientContext): void {
     canvasSide?: { get(): 'left' | 'right'; toggle(): void }
     canvas?: {
       getSnapshot(): { readonly kind: string } | undefined
+      subscribe?(listener: () => void): () => void
+    }
+    /** 画布 claim：有活动页且未停靠时给 side，停靠/空画布为 null。 */
+    canvasClaims?: {
+      claim(sessionId: SessionId | null): 'left' | 'right' | null
+      subscribe(listener: () => void): () => void
     }
   }
 
@@ -1994,6 +2000,26 @@ export function apply(ctx: ClientContext): void {
         getSnapshot: () => activeKey(canvasInstance.getSnapshot(), sessionId),
         subscribe: listener => canvasInstance.subscribe(listener),
       }
+      /** 画布是否真的展开：claim 在有活动页且未停靠时给 side，停靠/空画布为 null。 */
+      const claims = rightExtras.canvasClaims
+      const canvasOpenSnap: ObservableSnapshot<boolean> = {
+        getSnapshot: () => claims === undefined
+          ? rightExtras.canvas?.getSnapshot() !== undefined
+          : claims.claim(sessionId) !== null,
+        subscribe: listener => {
+          const stopTabs = canvasInstance.subscribe(listener)
+          const stopClaims = claims?.subscribe(listener)
+          return () => { stopTabs(); stopClaims?.() }
+        },
+      }
+      /** 底排只放一枚画布开合：开着就停靠，关着就抬回；无页先开起点页。 */
+      const toggleCanvas = (): void => {
+        if (canvasOpenSnap.getSnapshot()) { setCanvasParked(sessionId, true); return }
+        if (activeKey(canvasInstance.getSnapshot(), sessionId) === undefined) {
+          canvasInstance.actions.select(sessionId, 'start')
+        }
+        raiseCanvas()
+      }
       /** 工具菜单功能行 = 右栏 guide 清单——与 ⋯ 菜单同一枚举源。 */
       const featureTabsSnap: ObservableSnapshot<readonly SidebarRightGuideBox[]> = {
         getSnapshot: () => ctx.sidebarRightTabs.guide(),
@@ -2029,6 +2055,7 @@ export function apply(ctx: ClientContext): void {
         tree: treeSource, project: projectFocus, projects,
         sims: simSessionsSource(ctx.sessions, ctx.workspaces, canvasInstance, sessionId),
         dock: dockFloatSnap, bottomPanel: bottomOpenSnap, studio: studioOnSnap, activeTab: activeTabSnap,
+        canvas: canvasOpenSnap,
         featureTabs: featureTabsSnap,
       },
       openSim: id => {
@@ -2040,6 +2067,7 @@ export function apply(ctx: ClientContext): void {
       },
       createSim,
       toggleStudio,
+      toggleCanvas,
       deleteGroup: name => {
         void treeOp({ sessionId, root: focusSnapshot?.root }, { op: 'rmdir', name })
           .then(ok => {
