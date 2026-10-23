@@ -1,0 +1,40 @@
+{
+  "checks": [
+    {
+      "name": "state click works over the height layer",
+      "ok": true,
+      "detail": "{\"text\":\"国家面积428,960 mi²颜色\",\"target\":\"Koyavik\",\"selected\":\"state8\",\"hint\":\"高度图 · 目标 Koyavik · 拖动=涂，Shift=擦，单击=选中 · 预览\"}"
+    },
+    {
+      "name": "3D view does not leave the height layer visible",
+      "ok": true,
+      "detail": "{\"mode\":\"3d\",\"height\":\"none\",\"viewbox\":\"inline\",\"canvas\":[{\"w\":1440,\"h\":900,\"display\":\"block\",\"vis\":\"visible\"}],\"frame\":\"none\"}"
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": [],
+  "sel": {
+    "text": "国家面积428,960 mi²颜色",
+    "target": "Koyavik",
+    "selected": "state8",
+    "hint": "高度图 · 目标 Koyavik · 拖动=涂，Shift=擦，单击=选中 · 预览"
+  },
+  "three": {
+    "mode": "3d",
+    "height": "none",
+    "viewbox": "inline",
+    "canvas": [
+      {
+        "w": 1440,
+        "h": 900,
+        "display": "block",
+        "vis": "visible"
+      }
+    ],
+    "frame": "none"
+  }
+}

@@ -161,7 +161,7 @@
     Transform: "变换",
     Wrap: "扭曲",
     "Heightmap customization tools:": "高度图编辑工具：",
-    "Paint Brushes": "白膜画笔",
+    "Paint Brushes": "地形笔",
     "Template Editor": "模板编辑器",
     "Image Converter": "图像转换器",
     Preview: "预览",
@@ -857,8 +857,8 @@
     labels: "标签",
     zone: "区域",
     zones: "区域",
-    burg: "城邦",
-    burgs: "城邦",
+    burg: "城市",
+    burgs: "城市",
     regiment: "军团",
     regiments: "军团",
     fleet: "舰队",
@@ -868,11 +868,78 @@
     unit: "单位",
     units: "单位",
     note: "笔记",
-    notes: "笔记"
+    notes: "笔记",
+    lake: "湖泊",
+    lakes: "湖泊",
+    feature: "地理要素",
+    features: "地理要素",
+    biome: "生物群系",
+    biomes: "生物群系",
+    emblem: "纹章",
+    emblems: "纹章",
+    journey: "旅程",
+    journeys: "旅程",
+    good: "商品",
+    goods: "商品"
   };
   const entity = name => ENTITIES[name.toLowerCase()] ?? translateText(name);
 
+  const FIELD_ZH = {
+    name: "名称", subtype: "子类型", group: "分组", area: "面积",
+    "shore length": "岸线长度", elevation: "海拔", "average depth": "平均深度",
+    "max depth": "最大深度", supply: "补给", evaporation: "蒸发",
+    inlets: "入流", outlet: "出流", population: "人口",
+    "rural population": "乡村人口", "urban population": "城市人口",
+    culture: "文化", religion: "宗教", capital: "首都", province: "省份",
+    state: "国家", type: "类型", form: "政体", deity: "神祇", code: "代码",
+    treasury: "国库", taxes: "税收", expansionism: "扩张性",
+    habitability: "宜居度", color: "颜色", size: "大小", font: "字体",
+    text: "文字", opacity: "不透明度", width: "宽度", height: "高度",
+    depth: "深度", coordinates: "坐标", cells: "单元格", burgs: "城市",
+    market: "市场", good: "商品", unit: "单位", emblem: "纹章",
+    port: "港口", rank: "等级", notes: "笔记", note: "笔记",
+    biome: "生物群系", habitability: "宜居度"
+  };
+
+  const VALUE_ZH = {
+    freshwater: "淡水", saltwater: "咸水", salt: "咸水", dry: "干涸",
+    sinkhole: "落水洞", frozen: "冰封", lava: "熔岩",
+    no: "否", yes: "是", all: "全部", land: "陆地", water: "水域",
+    none: "无", true: "是", false: "否", global: "全球",
+    state: "国家", culture: "文化", monarchy: "君主制",
+    republic: "共和制", union: "联合", theocracy: "神权制",
+    anarchy: "无政府", generic: "通用", hunting: "狩猎",
+    highland: "高地", river: "河流", lake: "湖泊", naval: "航海",
+    nomadic: "游牧", folk: "民间", organized: "组织化",
+    cult: "教派", heresy: "异端",
+    kingdom: "王国", empire: "帝国", principality: "公国",
+    "grand duchy": "大公国", duchy: "公国", beylik: "贝伊国",
+    shogunate: "幕府", caliphate: "哈里发国", horde: "汗国",
+    confederation: "联邦", federation: "联邦", commonwealth: "共同体",
+    protectorate: "保护国", "free city": "自由市", "tribal": "部落"
+  };
+
+  const BIOME_ZH = {
+    Marine: "海洋",
+    "Tropical seasonal forest": "热带季雨林",
+    Savanna: "稀树草原",
+    "Temperate deciduous forest": "温带落叶林",
+    "Tropical rainforest": "热带雨林",
+    "Temperate rainforest": "温带雨林",
+    Wetland: "湿地",
+    Grassland: "草原",
+    Taiga: "针叶林",
+    "Hot desert": "热带沙漠",
+    Tundra: "冻原",
+    Glacier: "冰川",
+    "Cold desert": "寒漠"
+  };
+
   const RULES = [
+    [
+      /^Biome:\s*(.+)$/i,
+      (_match, biome) => `群系：${BIOME_ZH[biome] ?? biome}`
+    ],
     [
       /^(.+?): click to toggle, drag to raise or lower the layer\. Ctrl \+ click to edit layer style$/,
       (_match, name) => `${translateText(name)}：点击开关，拖动调整层级；Ctrl + 点击编辑图层样式`
@@ -993,7 +1060,23 @@
     [
       /^(state|province|culture|religion|river|route|marker|label|zone|burg)s? displayed$/i,
       (_match, name) => `显示${entity(name)}数`
-    ]
+    ],
+  [
+    /^Edit (state|province|culture|religion|river|route|marker|label|zone|burg|biome|lake|feature|emblem|regiment|market|good|journey|unit|note)$/i,
+    (_match, name) => `编辑${entity(name)}`
+  ],
+  [
+    /^(State|States|Burg|Burgs|Culture|Cultures|Religion|Religions|Province|Provinces|Biome|Biomes|River|Rivers|Marker|Markers|Label|Labels|Zone|Zones|Lake|Lakes|Feature|Features) Editor$/i,
+    (_match, name) => `${entity(name)}编辑器`
+  ],
+  [
+    /^(Name|Subtype|Group|Area|Shore length|Elevation|Average depth|Max depth|Supply|Evaporation|Inlets|Outlet|Population|Rural population|Urban population|Culture|Religion|Capital|Province|State|Type|Form|Deity|Code|Treasury|Taxes|Expansionism|Biome|Habitability|Color|Size|Font|Text|Opacity|Width|Height|Depth|Coordinates|Cells|Burgs|Market|Good|Unit|Emblem|Port|Rank|Notes|Note)\s*:?$/i,
+    (_match, field) => `${FIELD_ZH[field.toLowerCase()] ?? field}：`
+  ],
+  [
+    /^(freshwater|saltwater|salt|dry|sinkhole|frozen|lava|no|yes|all|land|water|none|true|false|global|state|culture|monarchy|republic|union|theocracy|anarchy|generic|hunting|highland|river|lake|naval|nomadic|folk|organized|cult|heresy|kingdom|empire|principality|grand duchy|duchy|beylik|shogunate|caliphate|horde|confederation|federation|commonwealth|protectorate|free city|tribal)$/i,
+    (_match, value) => VALUE_ZH[value.toLowerCase()] ?? value
+  ],
   ];
 
   const ascii = /[A-Za-z]{2}/;

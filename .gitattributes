@@ -17,3 +17,7 @@ docs/persistence-changes/historical-formats/*.schema.json linguist-generated=tru
 # Generated single-file three.js bundle: upstream shader blocks carry trailing
 # whitespace. It is regenerated, never hand-edited, so the whitespace gate skips it.
 plugins-noven/noven-shell/assets/three-runtime.js whitespace=-trailing-space
+
+# Generated Fantasy-Map-Generator editor bundle: upstream minified chunks carry
+# trailing whitespace inside embedded strings. It is regenerated, never edited.
+plugins-noven/noven-shell/assets/map-editor/** whitespace=-trailing-space
