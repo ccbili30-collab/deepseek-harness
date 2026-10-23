@@ -27,6 +27,8 @@ import { assembleSurface, parseSurface, surfaceSource, type SurfaceManifest } fr
 import { StageIsland, standaloneDoc, type IslandControl } from './stage-island.tsx'
 import { useAiEdits } from './ai-edits.ts'
 import { useSurfaceView } from './surface-view.ts'
+import { isOverviewModule, moduleMarkdown } from './module-text.ts'
+import { SettingPage } from './setting-page.tsx'
 
 /** 卡页认领的深链协议：noven://card/<id>[/module/<id>] 与 noven://file/<路径>。 */
 const NOVEN_LINK_PROTOCOLS = ['noven:']
@@ -254,11 +256,6 @@ function ModuleLibrary({ t, currentCardId, refTargets, userModules, onPick, onRe
   )
 }
 
-/** 「总览」模块的判定：起手模块带 widget.type='overview'；旧卡退化为约定名。 */
-function isOverviewModule(module: CardModuleDoc): boolean {
-  return module.widget?.type === 'overview' || module.name === '设定总览'
-}
-
 /** 模块类型名 → 树/总览共用的语义图标。 */
 const MODULE_GLYPH: Record<string, (size: number) => ReturnType<typeof glyph.file>> = {
   overview: glyph.bolt,
@@ -273,13 +270,6 @@ const MODULE_GLYPH: Record<string, (size: number) => ReturnType<typeof glyph.fil
 function moduleGlyph(module: CardModuleDoc, size: number): ReturnType<typeof glyph.file> {
   const icon = MODULE_GLYPH[module.widget?.type ?? ''] ?? glyph.file
   return icon(size)
-}
-
-/** 模块正文 → markdown：文字块原样、图片块写成 card-image 行（保存时由卡系统还原）。 */
-function moduleMarkdown(blocks: readonly CardBlockView[]): string {
-  return blocks.map(block => block.kind === 'text'
-    ? block.text ?? ''
-    : `![${block.caption ?? ''}](card-image:${block.resourceId ?? ''}#${block.id}${block.width === undefined ? '' : ` "w=${String(Math.round(block.width))}%"`})`).join('\n\n')
 }
 
 /** 同项目跨卡引用：加载源卡，渲染源模块，编辑写回源卡；本卡只保留视图/过滤/覆盖。 */
@@ -405,11 +395,13 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
 
 /** 一个模块盒：标题（点击即改名）+ 正文（模块内富文本 / 预制模块渲染器）。
     子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
-function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, imageResources, saveBlock, saveMarkdown, send, onOpenModule, ask, seedComposer, readFile, onOpenFile, refTargets, siblings, refEdges, locked = false, fill = false, resolveProjectAsset, reportDiagnostics }: {
+function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, imageResources, saveBlock, saveMarkdown, send, onOpenModule, ask, seedComposer, readFile, onOpenFile, refTargets, siblings, refEdges, locked = false, readOnly = false, fill = false, resolveProjectAsset, reportDiagnostics }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   /** AI 正在写这个模块：内容只读，子模块入口仍可点。 */
   readonly locked?: boolean
+  /** 设定页的阅读态：内容只读，不显示 AI 锁样式。 */
+  readonly readOnly?: boolean
   /** 宿主卡身份——html 模块的 NOVEN_FRAME.card 拿它。 */
   readonly card: { readonly id: string, readonly name: string, readonly kind: string | undefined }
   readonly imageUrl: (resourceId: string) => string
@@ -479,14 +471,15 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
     onOpenModule(target)
   }
   const bodyRef = useRef<HTMLDivElement | null>(null)
+  const bodyLocked = locked || readOnly
   useEffect(() => {
     const body = bodyRef.current
     if (body === null) return
-    if (locked) body.setAttribute('inert', '')
+    if (bodyLocked) body.setAttribute('inert', '')
     else body.removeAttribute('inert')
-  }, [locked])
+  }, [bodyLocked])
   return (
-    <section className={`nv-modbox${widget === 'map' ? ' nv-modbox-map' : ''}${locked ? ' nv-ai-locked' : ''}`} data-ai-locked={locked ? '' : undefined} aria-busy={locked || undefined}>
+    <section className={`nv-modbox${widget === 'map' ? ' nv-modbox-map' : ''}${locked ? ' nv-ai-locked' : ''}${readOnly ? ' nv-readonly' : ''}`} data-ai-locked={locked ? '' : undefined} data-readonly={readOnly ? '' : undefined} aria-busy={locked || undefined}>
       <div className="nv-modbox-body" ref={bodyRef}>
         {widget === 'ref' && (
           <RefModule module={module} t={t} addr={addr} loadCard={loadCard} op={op}
@@ -518,7 +511,7 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
             cardData={{ name: card.name, kind: card.kind, modules: siblings ?? [] }} />
         )}
         {(widget === undefined || widget === 'document') && (
-          <CardMarkdownEditor markdown={moduleMarkdown(module.blocks)} locked={locked}
+          <CardMarkdownEditor markdown={moduleMarkdown(module.blocks)} locked={bodyLocked}
             onSave={(text: string) => { void saveMarkdown(module, text) }} />
         )}
       </div>
@@ -1420,6 +1413,15 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       ? '' : cardContentUrl(addr.root ?? '', state.dir, ref)
   }, [addr.root, state])
 
+  /** 卡名/角色名写入：总览页与设定页共用。 */
+  const commitCardRename = useCallback((next: string | undefined): void => {
+    setCardRenaming(false)
+    if (next === undefined) return
+    void op(addr, { op: 'apply', cardId, targetId, version, command: { kind: 'rename_card', name: next } })
+      .then(result => { if (result.version !== undefined) setVersion(result.version); void refresh() })
+      .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
+  }, [addr, cardId, op, refresh, targetId, version])
+
   if (state === 'loading') return <div className="nv-canvas-missing">{t('canvas.files.loading')}</div>
   if (state === undefined || doc === undefined) {
     return <div className="nv-canvas-missing">{t('cardpage.missing')}</div>
@@ -1459,6 +1461,20 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     && (pageModuleId === undefined || aiModules.has(pageModuleId))
   /** 锁定只及正在写的那个模块；总览页的导语模块由 OverviewPage 自己判。 */
   const pageLocked = pageModule !== undefined && aiModules?.has(pageModule.id) === true
+  /** 默认页（无模块页签）交给设定页；模块页仍走原编辑器。 */
+  const settingHome = pageModuleId === undefined
+  /** 设定页里的模块阅读态：同一 ModuleBox，锁住写入口，保留渲染。 */
+  const renderSettingModule = (module: CardModuleDoc): ReactNode => (
+    <ModuleBox module={module} t={t} readOnly
+      locked={aiModules?.has(module.id) === true}
+      card={{ id: cardId, name: doc.name, kind: doc.kind }}
+      addr={addr} loadCard={loadCard} op={op} onOpenCard={onOpenCard}
+      imageUrl={imageUrl} imageResources={imageResources}
+      saveBlock={saveBlock} saveMarkdown={saveMarkdown} send={send}
+      onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} seedComposer={seedComposer} readFile={readFile} onOpenFile={onOpenFile}
+      resolveProjectAsset={resolveProjectAsset} reportDiagnostics={reportDiagnostics}
+      refTargets={refIndex?.targets} siblings={target.modules} refEdges={refDerived.edges} />
+  )
   const cardMenuControl = (
     <Menu portal open={cardMenu} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
       onClose={() => { cardArm.reset(); setCardMenu(false) }}
@@ -1508,8 +1524,27 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     <MarkdownDelegateProvider linkProtocols={NOVEN_LINK_PROTOCOLS} openLink={openLink} openFile={onOpenFile}>
     <div className={`nv-cardpage${aiPageEditing ? ' nv-cardpage-ai' : ''}`} data-ai-editing={aiPageEditing ? '' : undefined}>
       {notice !== undefined && <div className="nv-canvas-conflict">{notice}</div>}
-      <div className={`nv-cardpage-scroll${bleed ? ' nv-cardpage-scroll-bleed' : ''}`} ref={scrollRef}>
-        {bleed ? (
+      <div className={`nv-cardpage-scroll${bleed && !settingHome ? ' nv-cardpage-scroll-bleed' : ''}`} ref={scrollRef}>
+        {settingHome ? (
+          <SettingPage
+            key={target.id}
+            target={target}
+            doc={doc}
+            t={t}
+            imageUrl={imageUrl}
+            renderModule={renderSettingModule}
+            onEditModule={id => onOpenCard?.(cardId, id)}
+            onAddModule={() => setLibrary(true)}
+            onOpenRole={setRoleId}
+            onBackRole={() => setRoleId(undefined)}
+            isRole={roleId !== undefined}
+            menu={cardMenuControl}
+            draft={state.hasDraft}
+            aiEditing={aiPageEditing}
+            renaming={cardRenaming}
+            onRename={commitCardRename}
+          />
+        ) : bleed ? (
           <>
             {aiPageEditing && <span className="nv-ai-pill nv-ai-pill-bleed">{t('ai.editing')}</span>}
             <div className="nv-cardpage-bleed">
@@ -1540,14 +1575,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                   </button>
                 )}
                 {cardRenaming ? (
-                  <InlineRename className="nv-pagehead-rename" value={doc.name}
-                    onDone={next => {
-                      setCardRenaming(false)
-                      if (next === undefined) return
-                      void op(addr, { op: 'apply', cardId, targetId, version, command: { kind: 'rename_card', name: next } })
-                        .then(result => { if (result.version !== undefined) setVersion(result.version); void refresh() })
-                        .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
-                    }} />
+                  <InlineRename className="nv-pagehead-rename" value={target.name} onDone={commitCardRename} />
                 ) : (
                   <h1 className="nv-pagehead-title">{headerTitle}</h1>
                 )}
