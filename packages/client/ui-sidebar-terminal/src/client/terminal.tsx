@@ -28,9 +28,23 @@ export function TerminalBody({ useTabInfo, useTerminal, useTheme, view, t }: Ter
   const state = useTerminal(tab.id)
   useEffect(() => model.mount(), [model])
   if (state === undefined) return null
+  return <TerminalSurface state={state} model={model} theme={theme} t={t} visible={tab.visible}
+    label={t('title')} onNew={() => { tab.actions.openTab('terminal', { replaceTab: true }) }} />
+}
+
+/** Status, recovery, and the emulator; shared by the sidebar tab and canvas pages. */
+export function TerminalSurface({ state, model, theme, t, visible, label, onNew }: {
+  readonly state: TerminalViewState
+  readonly model: TerminalView
+  readonly theme: ThemeSnapshot
+  readonly t: TerminalBodyProps['t']
+  readonly visible: boolean
+  readonly label: string
+  readonly onNew: () => void
+}): ReactNode {
   const newTerminal = <Button variant="primary" size={state.issue === 'missingTerminal' ? 'md' : 'sm'}
     icon={<span className={css.actionIcon} aria-hidden="true"><IconPlusOutlineRegular /></span>}
-    onClick={() => { tab.actions.openTab('terminal', { replaceTab: true }) }}>
+    onClick={onNew}>
     {t('new')}
   </Button>
   if (state.issue === 'missingTerminal') return <section className={css.root} data-sidebar-terminal>
@@ -63,7 +77,7 @@ export function TerminalBody({ useTabInfo, useTerminal, useTheme, view, t }: Ter
           : <Button variant="outline" size="sm" onClick={() => { model.connect() }}>{t('reconnect')}</Button>)}
         {ended && newTerminal}
       </div>}
-      {state.info !== undefined && <TerminalScreen state={state} model={model} visible={tab.visible} label={t('title')} theme={theme} />}
+      {state.info !== undefined && <TerminalScreen state={state} model={model} visible={visible} label={label} theme={theme} />}
       {error !== undefined && <p className={css.error} role="alert">{t('failed', { message: error })}</p>}
     </section>
   )

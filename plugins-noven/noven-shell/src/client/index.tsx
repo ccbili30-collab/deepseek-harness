@@ -370,7 +370,7 @@ function SidecarTabIcon({ size }: { size?: number }) { return glyph.sparkle(size
 function SettingsTabIcon({ size }: { size?: number }) { return glyph.gear(size ?? 16) }
 
 /** Required browser services: slots, panel selection, theme, copy, right rail, session navigation, command and skill catalogs. */
-export const inject = ['slots', 'locale', 'layout', 'theme', 'sidebarPanels', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiWorkspace', 'uiSession', 'remote', 'remote.commands', 'remote.session', 'remote.skills', 'remote.workspaceFiles', 'sessions', 'workspaces']
+export const inject = ['slots', 'locale', 'layout', 'theme', 'sidebarPanels', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiWorkspace', 'uiSession', 'remote', 'remote.commands', 'remote.session', 'remote.skills', 'remote.workspaceFiles', 'sessions', 'workspaces', 'canvasPages']
 
 /** One row in the 本会话产出 list — a card this session's settled writes saved. */
 export interface SessionOutputRow {
@@ -1123,6 +1123,8 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => installPanelGhost(), 'noven-shell: panel ghost')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'noven-shell: dictionaries')
   const t = ctx.locale.bind(NS)
+  /** Host-registered canvas page kinds (terminal today; tasks/browser can join later). */
+  const canvasPages = ctx.canvasPages
 
   // Noven palette over the shipped tokens (light drives the product; dark
   // keeps the same accents on dark surfaces).
@@ -1561,6 +1563,18 @@ export function apply(ctx: ClientContext): void {
   const raiseCanvas = (): void => {
     try { ctx.sidebarRight.openTab(CANVAS_KIND) }
     catch { /* 座未挂（无绑定会话）——对象标签照开，画布等座出现再抬 */ }
+  }
+
+  /** 打开一个 host 注册页（终端等）：每个实例独立 key，关闭页签时页面自己清理资源。 */
+  const openCanvasPage = (sessionId: SessionId, kind: string): void => {
+    const definition = canvasPages?.get(kind)
+    if (definition === undefined) return
+    const pageKey = `${kind}:${crypto.randomUUID()}`
+    canvasInstance.actions.open({
+      key: `page:${pageKey}`, kind: 'page', title: definition.title(),
+      owner: sessionId, pageKind: kind, pageKey,
+    })
+    raiseCanvas()
   }
 
   /**
@@ -2207,6 +2221,7 @@ export function apply(ctx: ClientContext): void {
           raiseCanvas()
           return
         }
+        if (canvasPages?.get(kind) !== undefined) { openCanvasPage(sessionId, kind); return }
         ctx.sidebarRight.openTab(kind)
       },
       /** 挂窗 = conv 页的浮窗形态：开着（浮着或钉成页签）再点收起。 */
@@ -2425,6 +2440,8 @@ export function apply(ctx: ClientContext): void {
     inject: (sessionId): CanvasInjected => ({
       session: sessionId,
       openCard: cardId => { openCanvasCard(cardId, currentCardAddr(), undefined, sessionId) },
+      pages: canvasPages,
+      openPage: kind => { openCanvasPage(sessionId, kind) },
       hooks: {
         project: projectFocus,
         tree: treeSource,

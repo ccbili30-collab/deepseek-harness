@@ -10,9 +10,12 @@ import type { Context } from '@deepseek-ai/cordis'
 import { createSlotRenderer } from './scoped-slots.tsx'
 import { buildRenderApp } from './app.tsx'
 import { SlotRegistry } from './registry.ts'
+import { createCanvasPages, type CanvasPages } from './canvas-pages.ts'
 
 export { SlotRegistry } from './registry.ts'
 export type { RootOwnerProps } from './registry.ts'
+export { createCanvasPages } from './canvas-pages.ts'
+export type { CanvasPageDefinition, CanvasPageProps, CanvasPages } from './canvas-pages.ts'
 
 export type {
   ChainRenderOpts, HostObservable, RenderOpts, SnapshotSelectorHook, SlotRenderer,
@@ -43,6 +46,8 @@ declare module '@deepseek-ai/cordis' {
   interface Context {
     /** Renderer-owned UI composition registry. */
     slots: SlotRegistry
+    /** Host-owned canvas page kinds contributed by feature plugins. */
+    canvasPages: CanvasPages
     /** Mount face provided after the UI renderer activates. */
     uiRenderer: UiRendererService
   }
@@ -89,6 +94,7 @@ function mountApp(container: HTMLElement, app: () => ReactNode): Root {
 export function apply(ctx: Context): void {
   const slots = new SlotRegistry(ctx)
   slots.install(createSlotRenderer())
+  ctx.reflect.provide('canvasPages', createCanvasPages())
   ctx.reflect.provide('uiRenderer', {
     mount: (container: HTMLElement): (() => void) => {
       const root = mountApp(container, buildRenderApp({ ctx }))

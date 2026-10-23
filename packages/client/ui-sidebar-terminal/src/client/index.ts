@@ -14,13 +14,15 @@ import { PluginArtworkTerminal } from '@deepseek-ai/dsh-client-ui-primitives'
 import { TerminalGuide, type TerminalGuideInjected } from './TerminalGuide.tsx'
 import { LazyTerminalBody } from './LazyTerminalBody.tsx'
 import { TerminalTitle } from './TerminalTitle.tsx'
+import { createTerminalCanvasPage } from './TerminalCanvasPage.tsx'
 // import { TerminalRecovery, type TerminalRecoveryInjected } from './TerminalRecovery.tsx'
 // import { TerminalCleanup, type TerminalCleanupInjected } from './TerminalCleanup.tsx'
 import type { TerminalBodyInjected, TerminalInjected } from './face.ts'
 import { en, zh } from './locales.ts'
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 
 /** Services needed by the terminal's two sidebar seats. */
-export const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs', 'webTerminals', 'theme', 'shortcuts']
+export const inject = ['slots', 'locale', 'sidebarRight', 'sidebarRightTabs', 'webTerminals', 'theme', 'shortcuts', 'canvasPages']
 
 /**
  * Register the terminal type, observable views and background process cleanup.
@@ -72,6 +74,19 @@ export function apply(ctx: Context): void {
     id, kind: 'terminal', multiple: true, priority: 'builtin', title: () => t('title'),
     guide: [{ id: 'new', order: 20, title: () => t('new'), description: () => t('description'), icon: PluginArtworkTerminal }],
   }), 'ui-sidebar-terminal.type')
+  ctx.effect(() => ctx.canvasPages.register({
+    kind: 'terminal',
+    title: () => t('title'),
+    component: createTerminalCanvasPage({
+      view: (sessionId, key) => ctx.webTerminals.view(sessionId, key, key),
+      close: (sessionId, key) => ctx.webTerminals.close(sessionId, key, key),
+      theme: {
+        getSnapshot: () => ctx.theme.getTheme(),
+        subscribe: listener => ctx.on('theme/change', listener),
+      },
+      t,
+    }),
+  }), 'ui-sidebar-terminal.canvas-page')
   ctx.effect(() => ctx.sidebarRight.registerCloseHandler('terminal', (sessionId, tab) => {
     ctx.webTerminals.close(sessionId, tab.id, tab.contentId, terminalId(sessionId, tab.id))
   }), 'ui-sidebar-terminal.close')

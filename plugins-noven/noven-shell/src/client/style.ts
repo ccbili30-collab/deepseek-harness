@@ -1496,6 +1496,9 @@ button.nv-tree-switch[data-canvas-on] { background: var(--nv-accent); }
 /* 画布里的创作库页：把右栏的产出列表放进画布阅读列，而不是贴着抽屉宽度。 */
 .nv-canvas-library { flex: 1; min-height: 0; overflow-y: auto; width: 100%; }
 .nv-canvas-library .nv-ctx { max-width: 820px; margin: 0 auto; padding: 24px; }
+/* 画布里的 host 注册页（终端等）：页面自己铺满画布内容区。 */
+.nv-canvas-page { flex: 1; min-height: 0; height: 100%; display: flex; flex-direction: column; overflow: hidden; }
+.nv-canvas-page > * { flex: 1; min-height: 0; }
 /* 画布里的卡页：模块导航由抽屉树承担（树行深链到模块），卡内大纲栏不再重复出现。 */
 .nv-canvas-cardbody .nv-ed-rail { display: none; }
 .nv-canvas-missing { padding: 40px; text-align: center; color: var(--nv-secondary-text); }

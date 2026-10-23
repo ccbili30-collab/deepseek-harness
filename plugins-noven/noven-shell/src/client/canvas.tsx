@@ -6,6 +6,7 @@
  * @module noven-shell/client/canvas
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { ComponentType } from 'react'
 import { createPortal } from 'react-dom'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
@@ -52,7 +53,7 @@ const IMAGE_WORK_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg
 /** 画布上一个打开的对象：key 去重，kind 派发体组件，owner 归属会话（C9）。 */
 export interface CanvasTab {
   readonly key: string
-  readonly kind: 'start' | 'chat' | 'card' | 'doc' | 'files' | 'work' | 'conv' | 'manual' | 'library'
+  readonly kind: 'start' | 'chat' | 'card' | 'doc' | 'files' | 'work' | 'conv' | 'manual' | 'library' | 'page'
   readonly title: string
   /** 会话域归属——"开着什么"是每个会话自己的工作现场，跨会话不串。 */
   readonly owner: SessionId
@@ -76,6 +77,9 @@ export interface CanvasTab {
   readonly convChannel?: ConvChannel
   /** manual 体：翻开的手册主题（noven-docs 的 slug）。 */
   readonly slug?: string
+  /** page 体：host-registered page kind and this occurrence's identity. */
+  readonly pageKind?: string
+  readonly pageKey?: string
 }
 
 /** 一页从页签条撕下的对象：键引用同一个 CanvasTab，坐标尺寸归浮窗态。 */
@@ -501,11 +505,30 @@ export interface CanvasOutputRow {
   readonly kind: string | undefined
 }
 
+/** One host-registered canvas page kind (terminal, task manager, browser…). */
+export interface CanvasPageView {
+  readonly kind: string
+  readonly title: () => string
+  readonly component: ComponentType<{
+    readonly sessionId: string
+    readonly pageKey: string
+    readonly close: () => void
+    readonly openPage: (kind: string) => void
+  }>
+}
+
 export interface CanvasInjected {
   /** 这片画布属于哪段会话：标签按它切片，文档读写也走这个会话的工作区。 */
   readonly session: SessionId
   /** 打开一张卡：创作库页的行用。 */
   readonly openCard: (cardId: string) => void
+  /** Host-registered page kinds; absent on older hosts. */
+  readonly pages?: {
+    get(kind: string): CanvasPageView | undefined
+    subscribe(listener: () => void): () => void
+  }
+  /** Open one registered page kind as a new canvas tab. */
+  readonly openPage: (kind: string) => void
   readonly hooks: {
     /** 当前项目（绑定会话的 cwd + 创作库标题）；无项目时空态禁写。 */
     readonly project: ObservableSnapshot<ProjectFocus | undefined>
@@ -1935,6 +1958,16 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
       {tab.kind === 'library' && (
         <LibraryCanvasTab t={t} useOutputs={props.useOutputs} openCard={props.openCard} />
       )}
+      {tab.kind === 'page' && tab.pageKind !== undefined && (() => {
+        const definition = props.pages?.get(tab.pageKind)
+        if (definition === undefined) return <div className="nv-canvas-missing">{t('canvas.page.missing')}</div>
+        const Page = definition.component
+        return (
+          <div className="nv-canvas-page">
+            <Page sessionId={session} pageKey={tab.pageKey ?? tab.key} close={closeTab} openPage={props.openPage} />
+          </div>
+        )
+      })()}
     </>
   )
 }
