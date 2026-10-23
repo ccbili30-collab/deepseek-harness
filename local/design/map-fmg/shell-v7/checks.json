@@ -1,0 +1,101 @@
+{
+  "checks": [
+    {
+      "name": "blank has owned height layer",
+      "ok": true,
+      "detail": "{\"exists\":true,\"count\":9954,\"visible\":\"inline\",\"base\":\"height\"}"
+    },
+    {
+      "name": "loaded map has owned height layer",
+      "ok": true,
+      "detail": "{\"layer\":true,\"count\":9954,\"visible\":\"inline\",\"order\":[\"ocean\",\"landmass\",\"texture\",\"terrs\",\"lakes\",\"biomes\",\"nv-height-layer\",\"cells\",\"gridOverlay\",\"coordinates\",\"compass\",\"rivers\"],\"base\":\"height\",\"terrs\":\"none\",\"biomes\":\"none\",\"gridV\":true,\"vertices\":true,\"first\":0}"
+    },
+    {
+      "name": "loaded height view hides native terrain/biomes",
+      "ok": true,
+      "detail": "{\"terrs\":\"none\",\"biomes\":\"none\"}"
+    },
+    {
+      "name": "found a sea cell with a white-film polygon",
+      "ok": true,
+      "detail": "{\"cell\":2181,\"packCell\":25,\"gridH\":0,\"packH\":0,\"x\":489.05145263671875,\"y\":235.31491088867188,\"fill\":\"transparent\"}"
+    },
+    {
+      "name": "sea polygon turns land colored during drag",
+      "ok": true,
+      "detail": "{\"grid\":48,\"pack\":0,\"fill\":\"rgb(209, 217, 157)\"}"
+    },
+    {
+      "name": "sea polygon stays land colored after release",
+      "ok": true,
+      "detail": "{\"grid\":48,\"fill\":\"rgb(209, 217, 157)\"}"
+    },
+    {
+      "name": "derived pack cell is land and states survive",
+      "ok": true,
+      "detail": "{\"grid\":48,\"pack\":48,\"fill\":\"rgb(209, 217, 157)\",\"features\":3,\"states\":20}"
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": [],
+  "blankLayer": {
+    "exists": true,
+    "count": 9954,
+    "visible": "inline",
+    "base": "height"
+  },
+  "loaded": {
+    "layer": true,
+    "count": 9954,
+    "visible": "inline",
+    "order": [
+      "ocean",
+      "landmass",
+      "texture",
+      "terrs",
+      "lakes",
+      "biomes",
+      "nv-height-layer",
+      "cells",
+      "gridOverlay",
+      "coordinates",
+      "compass",
+      "rivers"
+    ],
+    "base": "height",
+    "terrs": "none",
+    "biomes": "none",
+    "gridV": true,
+    "vertices": true,
+    "first": 0
+  },
+  "sea": {
+    "cell": 2181,
+    "packCell": 25,
+    "gridH": 0,
+    "packH": 0,
+    "x": 489.05145263671875,
+    "y": 235.31491088867188,
+    "fill": "transparent"
+  },
+  "mid": {
+    "grid": 48,
+    "pack": 0,
+    "fill": "rgb(209, 217, 157)"
+  },
+  "released": {
+    "grid": 48,
+    "fill": "rgb(209, 217, 157)"
+  },
+  "after": {
+    "grid": 48,
+    "pack": 48,
+    "fill": "rgb(209, 217, 157)",
+    "features": 3,
+    "states": 20
+  }
+}

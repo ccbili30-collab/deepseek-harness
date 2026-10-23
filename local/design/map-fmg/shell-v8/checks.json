@@ -1,0 +1,71 @@
+{
+  "checks": [
+    {
+      "name": "state overlay is visible above the height layer without labels",
+      "ok": true,
+      "detail": "{\"base\":\"height\",\"heightDisplay\":\"inline\",\"regions\":\"inline\",\"labels\":\"none\",\"opacity\":\"0.24\",\"order\":6,\"regionsOrder\":15}"
+    },
+    {
+      "name": "render view hides the height layer and shows biomes",
+      "ok": true,
+      "detail": "{\"base\":\"geo\",\"height\":\"none\",\"biomes\":\"inline\",\"regions\":\"inline\",\"routes\":\"inline\"}"
+    },
+    {
+      "name": "wheel zoom changes the viewbox scale and keeps the layer inside it",
+      "ok": true,
+      "detail": "{\"beforeZoom\":{\"scale\":0.9450000524520874,\"zoom\":\"100%\"},\"zoom\":{\"scale\":1.2757500410079956,\"zoom\":\"135%\",\"overlap\":true,\"parent\":\"viewbox\"}}"
+    },
+    {
+      "name": "terrain paints at the zoomed screen position",
+      "ok": true,
+      "detail": "{\"target\":{\"c\":2596,\"h\":0,\"x\":890.8739624023438,\"y\":200.22093200683594},\"before\":0,\"after\":27}"
+    },
+    {
+      "name": "undo restores the zoomed stroke",
+      "ok": true,
+      "detail": "{\"before\":0,\"after\":27,\"undone\":0}"
+    },
+    {
+      "name": "pan moves the viewbox",
+      "ok": true,
+      "detail": "{\"panBefore\":-96.4800033569336,\"panAfter\":0}"
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": [],
+  "ov": {
+    "base": "height",
+    "heightDisplay": "inline",
+    "regions": "inline",
+    "labels": "none",
+    "opacity": "0.24",
+    "order": 6,
+    "regionsOrder": 15
+  },
+  "geo": {
+    "base": "geo",
+    "height": "none",
+    "biomes": "inline",
+    "regions": "inline",
+    "routes": "inline"
+  },
+  "zoom": {
+    "scale": 1.2757500410079956,
+    "zoom": "135%",
+    "overlap": true,
+    "parent": "viewbox"
+  },
+  "target": {
+    "c": 2596,
+    "h": 0,
+    "x": 890.8739624023438,
+    "y": 200.22093200683594
+  },
+  "before": 0,
+  "after": 27,
+  "undone": 0
+}

@@ -1,0 +1,120 @@
+{
+  "checks": [
+    {
+      "name": "standalone blank boots",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "blank hides view switcher",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "world inspector button removed",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "blank primary is finalize",
+      "ok": true,
+      "detail": "定稿地形 →"
+    },
+    {
+      "name": "terrain finalizes into geography view",
+      "ok": true,
+      "detail": "{\"stage\":\"terrain\",\"activeView\":\"geo\",\"stageName\":\"地形\"}"
+    },
+    {
+      "name": "three views plus add",
+      "ok": true,
+      "detail": "[{\"text\":\"地理\",\"disabled\":false,\"view\":\"geo\"},{\"text\":\"文明\",\"disabled\":true,\"view\":\"states\"},{\"text\":\"文化\",\"disabled\":true,\"view\":\"cultures\"},{\"text\":\"＋\",\"disabled\":false}]"
+    },
+    {
+      "name": "civilization disabled on terrain",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "geography click opens a small card",
+      "ok": true,
+      "detail": "{\"kind\":\"地理\",\"facts\":\"纬度低纬 · 热地形高地群系草原面积1,345,689 km²\",\"placeholder\":\"给这个地点命名\"}"
+    },
+    {
+      "name": "geography card shows map-derived facts",
+      "ok": true,
+      "detail": "纬度低纬 · 热地形高地群系草原面积1,345,689 km²"
+    },
+    {
+      "name": "geography naming is empty by default",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "user names a geography place",
+      "ok": true,
+      "detail": "{\"count\":1,\"x\":640,\"y\":400,\"group\":\"added\"}"
+    },
+    {
+      "name": "fixture world loads into civilization view",
+      "ok": true,
+      "detail": "{\"states\":20,\"cultures\":14,\"stage\":\"文明\",\"active\":\"文明\"}"
+    },
+    {
+      "name": "civilization card only shows area",
+      "ok": true,
+      "detail": "{\"kind\":\"文明\",\"name\":\"Ceciania\",\"facts\":\"面积268,864 mi²\",\"text\":\"\\n        \\n          文明\\n          ×\\n        \\n        Ceciania\\n        面积268,864 mi²\\n        名称\\n        点地图换一个文明。\\n      \"}"
+    },
+    {
+      "name": "culture card shows area and covered civilizations",
+      "ok": true,
+      "detail": "{\"kind\":\"文化\",\"facts\":\"面积276,208 mi²覆盖文明Cherenia、Koyavik、Nobleria、Ceciania、Vologoki\",\"text\":\"\\n        \\n          文化\\n          ×\\n        \\n        Portuzian\\n        面积276,208 mi²覆盖文明Cherenia、Koyavik、Nobleria、Ceciania、Vologoki\\n        名称\\n        文化可以跨过文明边界。\\n      \"}"
+    },
+    {
+      "name": "culture card has no latitude/wealth rows",
+      "ok": true,
+      "detail": "面积276,208 mi²覆盖文明Cherenia、Koyavik、Nobleria、Ceciania、Vologoki"
+    },
+    {
+      "name": "geography label is selectable after world generation",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "custom area layer paints cells",
+      "ok": true,
+      "detail": "{\"id\":11,\"name\":\"宗教\",\"cells\":142,\"hidden\":false}"
+    },
+    {
+      "name": "custom layer click shows a small card",
+      "ok": true,
+      "detail": "{\"kind\":\"图层\",\"facts\":\"面积228,448 mi²\"}"
+    },
+    {
+      "name": "AI names a civilization and undo restores",
+      "ok": true,
+      "detail": "{\"before\":\"Trubcia\",\"named\":{\"name\":\"测试文明\",\"fullName\":\"测试文明\"},\"undone\":{\"undone\":2},\"afterUndo\":\"Trubcia\",\"place\":\"测试地点\",\"zone\":{\"id\":12,\"type\":\"Noven\",\"cells\":353}}"
+    },
+    {
+      "name": "AI adds a geography place",
+      "ok": true,
+      "detail": "{\"before\":\"Trubcia\",\"named\":{\"name\":\"测试文明\",\"fullName\":\"测试文明\"},\"undone\":{\"undone\":2},\"afterUndo\":\"Trubcia\",\"place\":\"测试地点\",\"zone\":{\"id\":12,\"type\":\"Noven\",\"cells\":353}}"
+    },
+    {
+      "name": "AI creates and paints an area layer",
+      "ok": true,
+      "detail": "{\"id\":12,\"type\":\"Noven\",\"cells\":353}"
+    },
+    {
+      "name": "save/load keeps places and custom zones",
+      "ok": true,
+      "detail": "{\"place\":true,\"zone\":true}"
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": []
+}

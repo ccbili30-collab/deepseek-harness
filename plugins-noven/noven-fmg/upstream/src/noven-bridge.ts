@@ -23,15 +23,185 @@ type MapSummary = {
   width: number;
   height: number;
   counts: { states: number; cultures: number; burgs: number; markers: number };
-  states: { id: number; name: string; form?: string; culture?: number; capital?: number; color?: string; x?: number; y?: number }[];
-  cultures: { id: number; name: string; type?: string; color?: string; x?: number; y?: number }[];
+  states: { id: number; name: string; area?: number; form?: string; culture?: number; capital?: number; color?: string; x?: number; y?: number }[];
+  cultures: { id: number; name: string; area?: number; type?: string; color?: string; x?: number; y?: number }[];
   burgs: { id: number; name: string; state?: number; culture?: number; population?: number; capital?: boolean; port?: number; x: number; y: number }[];
   markers: { id: number; name: string; type?: string; icon?: string; x: number; y: number }[];
 };
 
 /** Operations our own assistant may call. Add/remove/merge/regenerate are intentionally excluded for now. */
 const ALLOWED_OPERATION =
-  /^(States|Burgs|Cultures|Religions|Provinces|Markers|Labels|AddedLabels)\.(rename|recolor|setFullName|setForm|setType|setCulture|setDeity|setPopulation|setTreasury|setTaxes|setLocked|setGroup|setPort|setCapital|move|setHidden|setPinned|setExpansionism|setOrigins|setCode|setEmblemsShape|setCells)$/;
+  /^(States|Burgs|Cultures|Religions|Provinces|Markers|Labels|AddedLabels|Zones|Biomes)\.(rename|recolor|setFullName|setForm|setType|setCulture|setDeity|setPopulation|setTreasury|setTaxes|setLocked|setGroup|setPort|setCapital|move|setHidden|setPinned|setExpansionism|setOrigins|setCode|setEmblemsShape|setCells|place)$/;
+
+/** Creating a custom overlay is the only add the assistant may run. */
+const ALLOWED_ADD_OPERATION = /^Zones\.add$/;
+
+const NOVEN_OPERATION = /^Noven\./;
+
+function finiteNumber(value: unknown, name: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`${name} must be a finite number`);
+  return value;
+}
+
+function nonEmptyName(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.trim() === "") throw new Error(`${name} must be a non-empty string`);
+  return value.trim();
+}
+
+/** Normalized 0-1 map coordinates become map units, the unit every stored point uses. */
+function normalizedPoint(x: unknown, y: unknown): { x: number; y: number } {
+  const nx = finiteNumber(x, "x");
+  const ny = finiteNumber(y, "y");
+  if (nx < 0 || nx > 1 || ny < 0 || ny > 1) throw new Error("x and y must be normalized to 0-1");
+  return { x: nx * options.map.graph.width, y: ny * options.map.graph.height };
+}
+
+/** Overlays and geography hold land only; water is the height layer's job. */
+function landCellsInDisk(x: number, y: number, radius: number): number[] {
+  return cellsInDisk(x, y, radius).filter(cell => pack.cells.h[cell] >= 20);
+}
+
+function cellsInDisk(x: number, y: number, radius: number): number[] {
+  const cells = pack.cells;
+  const found: number[] = [];
+  for (const cell of cells.i) {
+    const [cx, cy] = cells.p[cell];
+    if (Math.hypot(cx - x, cy - y) <= radius) found.push(cell);
+  }
+  if (found.length === 0) {
+    let nearest = 0;
+    let best = Infinity;
+    for (const cell of cells.i) {
+      const [cx, cy] = cells.p[cell];
+      const distance = Math.hypot(cx - x, cy - y);
+      if (distance < best) {
+        best = distance;
+        nearest = cell;
+      }
+    }
+    found.push(nearest);
+  }
+  return found;
+}
+
+/** Turn the small naming/painting vocabulary into operations the proposal engine already knows. */
+function expandNovenOperations(operations: MapOperation[]): MapOperation[] {
+  const expanded: MapOperation[] = [];
+  for (const operation of operations) {
+    if (!NOVEN_OPERATION.test(operation.op)) {
+      expanded.push(operation);
+      continue;
+    }
+    const { args } = operation;
+    switch (operation.op) {
+      case "Noven.nameState": {
+        const id = Math.trunc(finiteNumber(args[0], "state id"));
+        const name = nonEmptyName(args[1], "name");
+        expanded.push({ op: "States.rename", args: [id, name] }, { op: "States.setFullName", args: [id, name] });
+        break;
+      }
+      case "Noven.nameCulture": {
+        expanded.push({ op: "Cultures.rename", args: [Math.trunc(finiteNumber(args[0], "culture id")), nonEmptyName(args[1], "name")] });
+        break;
+      }
+      case "Noven.fillState": {
+        const id = Math.trunc(finiteNumber(args[0], "state id"));
+        const point = normalizedPoint(args[1], args[2]);
+        const scale = Math.min(options.map.graph.width, options.map.graph.height);
+        const radius = finiteNumber(args[3], "radius") * scale;
+        if (radius <= 0) throw new Error("radius must be positive");
+        const cells = landCellsInDisk(point.x, point.y, radius).filter(cell => {
+          const owner = pack.cells.state[cell];
+          return owner === id || pack.states[owner]?.center !== cell;
+        });
+        if (cells.length === 0) throw new Error("No land cells in that area");
+        expanded.push({ op: "States.setCells", args: [id, cells] });
+        break;
+      }
+      case "Noven.fillCulture": {
+        const id = Math.trunc(finiteNumber(args[0], "culture id"));
+        const point = normalizedPoint(args[1], args[2]);
+        const scale = Math.min(options.map.graph.width, options.map.graph.height);
+        const radius = finiteNumber(args[3], "radius") * scale;
+        if (radius <= 0) throw new Error("radius must be positive");
+        const cells = landCellsInDisk(point.x, point.y, radius).filter(cell => {
+          const owner = pack.cells.culture[cell];
+          return owner === id || pack.cultures[owner]?.center !== cell;
+        });
+        if (cells.length === 0) throw new Error("No land cells in that area");
+        expanded.push({ op: "Cultures.setCells", args: [id, cells] });
+        break;
+      }
+      case "Noven.fillGeography": {
+        const wanted = args[0];
+        const biome = typeof wanted === "number"
+          ? pack.biomes[Math.trunc(finiteNumber(wanted, "biome id"))]
+          : typeof wanted === "string"
+            ? pack.biomes.find(item => item.i && !item.removed && item.name.toLowerCase() === wanted.trim().toLowerCase())
+            : undefined;
+        if (biome === undefined || !biome.i || biome.removed) {
+          throw new Error("Unknown land geography type; pass a biome id or its English name");
+        }
+        const point = normalizedPoint(args[1], args[2]);
+        const scale = Math.min(options.map.graph.width, options.map.graph.height);
+        const radius = finiteNumber(args[3], "radius") * scale;
+        if (radius <= 0) throw new Error("radius must be positive");
+        const cells = landCellsInDisk(point.x, point.y, radius);
+        if (cells.length === 0) throw new Error("No land cells in that area");
+        expanded.push({ op: "Biomes.setCells", args: [biome.i, cells] });
+        break;
+      }
+      case "Noven.addPlace": {
+        const name = nonEmptyName(args[0], "name");
+        const point = normalizedPoint(args[1], args[2]);
+        const group = typeof args[3] === "string" && args[3].trim() !== "" ? args[3].trim() : undefined;
+        expanded.push({ op: "AddedLabels.place", args: group === undefined ? [point.x, point.y, name] : [point.x, point.y, name, group] });
+        break;
+      }
+      case "Noven.renamePlace": {
+        expanded.push({ op: "AddedLabels.rename", args: [Math.trunc(finiteNumber(args[0], "label id")), nonEmptyName(args[1], "name")] });
+        break;
+      }
+      case "Noven.addArea": {
+        const name = nonEmptyName(args[0], "name");
+        const point = normalizedPoint(args[1], args[2]);
+        const scale = Math.min(options.map.graph.width, options.map.graph.height);
+        const radius = finiteNumber(args[3], "radius") * scale;
+        if (radius <= 0) throw new Error("radius must be positive");
+        expanded.push(
+          { op: "Zones.add", args: [name, "Noven", cellsInDisk(point.x, point.y, radius)] },
+          { op: "Zones.recolor", args: [{ result: 0 }, "#6a4c93"] }
+        );
+        break;
+      }
+      case "Noven.paintArea": {
+        const id = Math.trunc(finiteNumber(args[0], "zone id"));
+        const zone = pack.zones.find(item => item.i === id);
+        if (zone === undefined) throw new Error(`Zone ${id} does not exist`);
+        const point = normalizedPoint(args[1], args[2]);
+        const scale = Math.min(options.map.graph.width, options.map.graph.height);
+        const radius = finiteNumber(args[3], "radius") * scale;
+        if (radius <= 0) throw new Error("radius must be positive");
+        const mode = args[4] === "remove" ? "remove" : "add";
+        const cells = new Set(zone.cells);
+        for (const cell of cellsInDisk(point.x, point.y, radius)) {
+          if (mode === "remove") cells.delete(cell);
+          else cells.add(cell);
+        }
+        if (cells.size === 0) throw new Error("A zone must keep at least one cell");
+        expanded.push({ op: "Zones.setCells", args: [id, [...cells]] });
+        break;
+      }
+      case "Noven.renameLayer": {
+        expanded.push({ op: "Zones.rename", args: [Math.trunc(finiteNumber(args[0], "zone id")), nonEmptyName(args[1], "name")] });
+        break;
+      }
+      default:
+        throw new Error(`Unknown Noven operation: ${operation.op}`);
+    }
+  }
+  return expanded;
+}
 
 const appliedProposals: import("@/services/assistant/chats").Proposal[] = [];
 
@@ -152,6 +322,7 @@ export function installNovenBridge(): void {
     version: VERSION,
     load: async mapData => {
       await loadMapData(mapData);
+      window.novenBlank = false;
       document.getElementById("noven-blank-hint")?.remove();
       document.body.classList.remove("noven-blank", "noven-terrain");
     },
@@ -165,6 +336,7 @@ export function installNovenBridge(): void {
         ...(options.points === undefined ? {} : { points: options.points }),
         ...(options.empty === undefined ? {} : { empty: options.empty }),
       });
+      window.novenBlank = false;
       document.dispatchEvent(new CustomEvent("noven:map-generated"));
     },
     startBlank: async options => {
@@ -177,7 +349,8 @@ export function installNovenBridge(): void {
     },
     finalize: async () => {
       await HeightmapEditor.finalize();
-      if (!window.novenBlank) restoreBlankOptions();
+      window.novenBlank = false;
+      restoreBlankOptions();
     },
     generateHuman: async options => {
       await generateHuman({
@@ -190,8 +363,10 @@ export function installNovenBridge(): void {
       });
     },
     fit: () => {
-      resetZoom(0);
+      // The zoom floor follows the viewport; set the window before resetting
+      // the scale or a larger window keeps the previous map-sized view.
       fitMapToScreen();
+      resetZoom(0);
     },
     showTerrain: () => {
       Layers.set(["heightmap", "lakes", "rivers"]);
@@ -232,6 +407,7 @@ export function installNovenBridge(): void {
       const states = live(pack.states).map(state => ({
         id: state.i,
         name: state.name,
+        ...(state.area === undefined ? {} : { area: state.area }),
         ...(state.form === undefined ? {} : { form: state.form }),
         ...(state.culture === undefined ? {} : { culture: state.culture }),
         ...(state.capital === undefined ? {} : { capital: state.capital }),
@@ -241,6 +417,7 @@ export function installNovenBridge(): void {
       const cultures = live(pack.cultures).map(culture => ({
         id: culture.i,
         name: culture.name,
+        ...(culture.area === undefined ? {} : { area: culture.area }),
         ...(culture.type === undefined ? {} : { type: culture.type }),
         ...(culture.color === undefined ? {} : { color: culture.color }),
         ...point(culture.center),
@@ -279,15 +456,16 @@ export function installNovenBridge(): void {
       useUndoStorage(undoKey);
       if (!pack?.cells?.i?.length) throw new Error("No map is loaded");
       if (!Array.isArray(operations) || operations.length === 0) throw new Error("No operations to apply");
-      for (const operation of operations) {
+      const expanded = expandNovenOperations(operations);
+      for (const operation of expanded) {
         if (operation === null || typeof operation !== "object") throw new Error("Invalid operation");
-        if (typeof operation.op !== "string" || !ALLOWED_OPERATION.test(operation.op)) {
+        if (typeof operation.op !== "string" || (!ALLOWED_OPERATION.test(operation.op) && !ALLOWED_ADD_OPERATION.test(operation.op))) {
           throw new Error(`Operation not allowed: ${String(operation.op)}`);
         }
         if (!Array.isArray(operation.args)) throw new Error(`Arguments for ${operation.op} must be a list`);
       }
       const mapId = proposalMapId();
-      const proposal = Proposals.propose("AI edit", operations, appliedProposals.length + 1, mapId);
+      const proposal = Proposals.propose("AI edit", expanded, appliedProposals.length + 1, mapId);
       if (typeof proposal === "string") throw new Error(proposal);
       if (!Proposals.run("apply", proposal, mapId)) throw new Error("The map changed before the edit could be applied");
       appliedProposals.push(proposal);

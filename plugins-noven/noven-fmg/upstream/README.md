@@ -40,15 +40,36 @@ npx vite preview --host 127.0.0.1 --port 8101
 The embedded shell talks to its card through `postMessage`; the card-side host
 is `plugins-noven/noven-shell/src/client/fmg-map-host.tsx`.
 
+## Noven workspace
+
+The workspace is one document: the map, shell, dialogs and overlays share
+`index.html`. The world stage has three direct views — geography, civilization,
+culture — plus user-created overlays. Clicking the map opens one small card for
+the entity under the pointer; the card shows only map-derived facts (name,
+area, latitude, terrain, biome, covered civilizations) and accepts a new name.
+
+Generated maps leave state, culture, burg, river and lake names empty. A name is
+entered by the user in the card or by an AI operation; no suffix such as 国/朝/
+汗国 is appended. Geography names are added labels; custom area overlays are
+zones with `type: "Noven"`; custom point overlays are added-label groups. All
+three persist inside the `.map` payload.
+
+The bridge exposes the semantic AI operations `Noven.nameState`,
+`Noven.nameCulture`, `Noven.addPlace`, `Noven.renamePlace`, `Noven.addArea`,
+`Noven.paintArea` and `Noven.renameLayer`. They expand to the upstream
+`Proposals` operations, so AI edits keep the same preview/undo path.
+
 ## Known limits
 
 - Native editor tables keep their upstream layout; the shell styles the dialog
-  chrome, title and common headers, not every deep help string.
+  chrome, title and common headers, not every deep help string. The native
+  editors are not linked from the workspace's main path.
 - Map rendering style is upstream. The Noven palette covers the workspace and
   dialog chrome; it does not replace the cartographic style presets.
-- `地理` / `时间线` marker links still bind to the old custom markers, not FMG
-  burgs/markers.
-- AI instructions run in the card conversation; the map's AI panel only lists
+- Custom overlays support area and point geometry. Line overlays are not
+  implemented.
+- Culture names appear in the clicked card, not as map labels.
+- AI instructions run in the card conversation; the map's 改动记录 panel lists
   applied batches and undoes them.
 - The legacy `noven-host.html` pair remains in `public/` for the standalone
   service-worker precache; the card loads `index.html` directly.

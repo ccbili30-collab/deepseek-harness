@@ -49,6 +49,12 @@ body {
   background: #cfe2ee;
 }
 
+/* User-created overlays are solid regions over the geography, not upstream's
+   dense hatch patterns. */
+#zones path[data-type="Noven"] {
+  fill-opacity: 0.3;
+}
+
 /* Native dialogs are part of the same document now; give them one paper
    language instead of the upstream white/grey chrome. */
 .ui-widget-overlay {
@@ -467,6 +473,7 @@ body.noven-terrain #rivers path {
 body.nv-editor-open #nv-status,
 body.nv-editor-open #nv-actions,
 body.nv-editor-open #nv-panel,
+body.nv-editor-open #nv-card,
 body.nv-editor-open #nv-menu,
 body.nv-editor-open #nv-stagebar,
 body.nv-editor-open #nv-gen {
@@ -551,6 +558,209 @@ body.nv-editor-open #nv-gen {
   padding: 0;
   font-size: 17px;
   color: var(--nv-muted);
+}
+
+#nv-views {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  max-width: min(360px, calc(100vw - 72px));
+  padding: 3px;
+  border: 1px solid var(--nv-line);
+  border-radius: 10px;
+  background: rgba(251, 248, 240, 0.94);
+  box-shadow: 0 4px 16px rgba(35, 40, 34, 0.08);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+#nv-views::-webkit-scrollbar {
+  display: none;
+}
+
+#nv-views button {
+  height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nv-muted);
+  font: 10.5px/1 var(--nv-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#nv-views button:hover {
+  background: var(--nv-paper-2);
+  color: var(--nv-ink);
+}
+
+#nv-views button.active {
+  background: var(--nv-ink);
+  color: var(--nv-paper);
+  font-weight: 600;
+}
+
+#nv-views button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+#nv-views .nv-view-add {
+  width: 26px;
+  padding: 0;
+  color: var(--nv-faint);
+  font-size: 14px;
+}
+
+#nv-card {
+  position: absolute;
+  left: 16px;
+  bottom: 86px;
+  width: min(286px, calc(100vw - 32px));
+  padding: 13px 14px 11px;
+  border: 1px solid var(--nv-line);
+  border-radius: 14px;
+  background: var(--nv-paper);
+  box-shadow: 0 18px 50px rgba(35, 40, 34, 0.18);
+  pointer-events: auto;
+}
+
+#nv-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#nv-card-kind {
+  color: var(--nv-faint);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+}
+
+#nv-card-close {
+  width: 22px;
+  height: 22px;
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nv-faint);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#nv-card-close:hover {
+  background: var(--nv-paper-2);
+  color: var(--nv-ink);
+}
+
+#nv-card-name {
+  display: block;
+  margin-top: 2px;
+  color: var(--nv-ink);
+  font: 600 17px/1.3 var(--nv-serif);
+}
+
+#nv-card-facts {
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+.nv-card-fact {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  font-size: 10.5px;
+}
+
+.nv-card-fact span {
+  flex: 0 0 44px;
+  color: var(--nv-faint);
+}
+
+.nv-card-fact b {
+  color: var(--nv-ink);
+  font-weight: 500;
+}
+
+#nv-card-field {
+  display: block;
+  margin-top: 10px;
+  color: var(--nv-faint);
+  font-size: 9.5px;
+}
+
+#nv-card-field input {
+  width: 100%;
+  height: 30px;
+  margin-top: 3px;
+  padding: 0 9px;
+  border: 1px solid var(--nv-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--nv-ink);
+  font: 11.5px var(--nv-ui);
+  outline: none;
+}
+
+#nv-card-field input:focus {
+  border-color: var(--nv-faint);
+}
+
+#nv-card-field input:disabled {
+  background: var(--nv-paper-2);
+  color: var(--nv-faint);
+}
+
+#nv-card-hint {
+  margin: 6px 0 0;
+  color: var(--nv-faint);
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.nv-new-layer {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+}
+
+.nv-new-layer label {
+  display: grid;
+  gap: 5px;
+  color: var(--nv-faint);
+  font-size: 9.5px;
+}
+
+.nv-new-layer input,
+.nv-new-layer select {
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid var(--nv-line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--nv-ink);
+  font: 11.5px var(--nv-ui);
+}
+
+.nv-new-layer .nv-hint {
+  padding: 0;
+}
+
+.nv-new-layer .nv-primary {
+  height: 32px;
+  border: 0;
+  border-radius: 9px;
+  background: var(--nv-accent);
+  color: var(--nv-accent-ink);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 #nv-panel {
@@ -1447,6 +1657,16 @@ body.nv-options-open #options .tabcontent li {
     top: 9px;
   }
 
+  #nv-views {
+    max-width: calc(100vw - 70px);
+  }
+
+  #nv-card {
+    left: 8px;
+    bottom: 76px;
+    width: min(280px, calc(100vw - 16px));
+  }
+
   .ui-dialog:has(#brushesPanel) {
     left: 8px !important;
     bottom: 68px !important;
@@ -1467,4 +1687,1125 @@ body.nv-options-open #options .tabcontent li {
   .nv-gen-grid {
     grid-template-columns: 1fr;
   }
+}
+
+
+/* Generated Chinese names need a CJK-capable serif on the map labels. */
+#states text,
+#statesHalo text,
+#burgLabels text,
+#lakes text,
+#rivers text,
+#labels text,
+#markers text {
+  font-family: "Songti SC", "Noto Serif SC", "Source Han Serif SC", serif !important;
+}
+
+
+#nv-secondary {
+  height: 32px;
+  padding: 0 11px;
+  border: 1px solid var(--nv-line);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--nv-muted);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+#nv-secondary:hover {
+  background: var(--nv-paper-2);
+  color: var(--nv-ink);
+}
+
+/* Surface v4: one base with height/render views, one transparent overlay. */
+#nv-steps,
+#nv-brush-btn,
+#nv-secondary,
+#nv-primary {
+  display: none !important;
+}
+
+#nv-stagebar {
+  gap: 0;
+  padding: 8px 14px;
+}
+
+#nv-stage-info {
+  min-width: 0;
+}
+
+#nv-views {
+  gap: 7px;
+}
+
+.nv-view-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 7px;
+  border-right: 1px solid var(--nv-line-soft);
+}
+
+.nv-view-group:last-child {
+  padding-right: 0;
+  border-right: 0;
+}
+
+.nv-view-label {
+  padding: 0 3px;
+  color: var(--nv-faint);
+  font-size: 9px;
+}
+
+#nv-card {
+  right: 16px;
+  left: auto;
+  bottom: 72px;
+}
+
+#nv-brush {
+  position: absolute;
+  left: 16px;
+  bottom: 72px;
+  width: min(310px, calc(100vw - 32px));
+  padding: 10px 11px 9px;
+  border: 1px solid var(--nv-line);
+  border-radius: 14px;
+  background: var(--nv-paper);
+  box-shadow: 0 16px 44px rgba(35, 40, 34, 0.16);
+  pointer-events: auto;
+}
+
+#nv-brush-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.nv-brush-tab {
+  flex: 1;
+  height: 27px;
+  border: 1px solid var(--nv-line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nv-muted);
+  font: 10.5px/1 var(--nv-ui);
+  cursor: pointer;
+}
+
+.nv-brush-tab:hover {
+  background: var(--nv-paper-2);
+  color: var(--nv-ink);
+}
+
+.nv-brush-tab.active {
+  background: var(--nv-ink);
+  border-color: var(--nv-ink);
+  color: var(--nv-paper);
+  font-weight: 600;
+}
+
+#nv-brush-body {
+  display: grid;
+  gap: 7px;
+  margin-top: 8px;
+}
+
+.nv-targets {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nv-targets::-webkit-scrollbar {
+  display: none;
+}
+
+.nv-target {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+  max-width: 124px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid var(--nv-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--nv-muted);
+  font: 10px/1 var(--nv-ui);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.nv-target:hover {
+  border-color: var(--nv-faint);
+  color: var(--nv-ink);
+}
+
+.nv-target.active {
+  border-color: var(--nv-ink);
+  color: var(--nv-ink);
+  font-weight: 600;
+}
+
+.nv-target span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.nv-swatch {
+  width: 10px;
+  height: 10px;
+  flex: 0 0 10px;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+}
+
+.nv-target-add {
+  width: 26px;
+  justify-content: center;
+  padding: 0;
+  font-size: 14px;
+}
+
+.nv-brush-row {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.nv-mode {
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--nv-line);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--nv-muted);
+  font: 10.5px/1 var(--nv-ui);
+  cursor: pointer;
+}
+
+.nv-mode.active {
+  background: var(--nv-paper-3);
+  border-color: var(--nv-faint);
+  color: var(--nv-ink);
+  font-weight: 600;
+}
+
+.nv-brush-row input[type="color"] {
+  width: 28px;
+  height: 26px;
+  margin-left: auto;
+  padding: 1px;
+  border: 1px solid var(--nv-line);
+  border-radius: 7px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.nv-size {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--nv-faint);
+  font-size: 9.5px;
+}
+
+.nv-size input {
+  flex: 1;
+  accent-color: var(--nv-accent);
+}
+
+.nv-brush-action {
+  height: 30px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--nv-accent);
+  color: var(--nv-accent-ink);
+  font: 600 10.5px/1 var(--nv-ui);
+  cursor: pointer;
+}
+
+#nv-brush-body .nv-hint {
+  padding: 0;
+}
+
+/* The overlay is a transparent tint; the base picture stays visible. */
+#statesBody,
+#cults {
+  opacity: 1;
+}
+
+#statesHalo {
+  opacity: 0.22;
+}
+
+#stateBorders,
+#provinceBorders {
+  opacity: 0.85;
+}
+
+body.noven-blank #map,
+body.noven-blank #viewbox {
+  background: #cfe2ee !important;
+}
+
+body.noven-terrain #map,
+body.noven-terrain #viewbox {
+  background: #dfeef2 !important;
+}
+
+#noven-blank-hint {
+  display: none !important;
+}
+
+body[data-noven-brush="states"] #viewbox,
+body[data-noven-brush="cultures"] #viewbox {
+  cursor: crosshair;
+}
+
+@media (max-width: 760px) {
+  #nv-brush {
+    left: 8px;
+    bottom: 58px;
+    width: calc(100vw - 16px);
+  }
+
+  #nv-card {
+    top: 56px;
+    right: 8px;
+    bottom: auto;
+    left: 8px;
+    width: auto;
+  }
+}
+
+/* The native terrain brush sits beside the brush dock, never on top of it. */
+.ui-dialog:has(#brushesPanel) {
+  left: 356px !important;
+  top: auto !important;
+  bottom: 68px !important;
+}
+
+@media (max-width: 760px) {
+  .ui-dialog:has(#brushesPanel) {
+    left: 8px !important;
+    top: auto !important;
+    bottom: 180px !important;
+    width: 248px !important;
+    max-height: calc(100vh - 240px) !important;
+  }
+}
+
+/* The sea start is a flat sheet; the upstream ocean pattern reads as cracked paper. */
+body.noven-blank #oceanPattern,
+body.noven-blank #oceanWaves,
+body.noven-blank #oceanBands {
+  display: none !important;
+}
+
+body.noven-blank #oceanBase,
+body.noven-blank #oceanLayers rect {
+  fill: #cfe2ee !important;
+}
+
+/* The height editor's per-cell outline reads as cracked paper on a sea sheet. */
+body.noven-blank #heights polygon,
+body.noven-terrain #heights polygon {
+  stroke: none !important;
+}
+
+body[data-noven-brush="base"][data-noven-base="geo"] #viewbox {
+  cursor: crosshair;
+}
+
+/* CAD workspace: top view bar, left tool rail, right inspector, bottom command line. */
+#nv-status,
+#nv-card,
+#nv-brush {
+  display: none !important;
+}
+
+#nv-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 44px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--nv-line);
+  background: rgba(251, 248, 240, 0.97);
+  box-shadow: 0 4px 18px rgba(35, 40, 34, 0.06);
+  pointer-events: auto;
+}
+
+#nv-space {
+  min-width: 44px;
+  color: var(--nv-ink);
+  font: 600 12px/1 var(--nv-serif);
+}
+
+#nv-topbar #nv-views {
+  max-width: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
+}
+
+#nv-topbar .nv-view-group {
+  padding-right: 8px;
+  border-right: 1px solid var(--nv-line-soft);
+}
+
+#nv-topbar .nv-view-group button {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 6px;
+}
+
+#nv-topbar #nv-fit,
+#nv-topbar #nv-undo,
+#nv-topbar #nv-menu-btn {
+  height: 28px;
+  padding: 0 9px;
+  border: 1px solid var(--nv-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--nv-muted);
+  font: 10.5px/1 var(--nv-ui);
+  cursor: pointer;
+}
+
+#nv-topbar #nv-fit:hover,
+#nv-topbar #nv-undo:hover,
+#nv-topbar #nv-menu-btn:hover {
+  border-color: var(--nv-faint);
+  color: var(--nv-ink);
+}
+
+#nv-topbar #nv-menu-btn {
+  width: 30px;
+  padding: 0;
+  font-size: 16px;
+}
+
+#nv-zoomgroup {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+#nv-zoomgroup button {
+  width: 26px;
+  height: 28px;
+  border: 1px solid var(--nv-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--nv-muted);
+  font: 14px/1 var(--nv-ui);
+  cursor: pointer;
+}
+
+#nv-zoom-value {
+  min-width: 48px;
+  color: var(--nv-muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+#nv-save {
+  color: var(--nv-faint);
+  font-size: 10px;
+}
+
+#nv-tools {
+  position: absolute;
+  left: 10px;
+  top: 54px;
+  bottom: 66px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  width: 40px;
+  padding: 5px 3px;
+  border: 1px solid var(--nv-line);
+  border-radius: 12px;
+  background: rgba(251, 248, 240, 0.96);
+  box-shadow: 0 10px 30px rgba(35, 40, 34, 0.1);
+  overflow-y: auto;
+  scrollbar-width: none;
+}
+
+#nv-tools::-webkit-scrollbar {
+  display: none;
+}
+
+#nv-tools button {
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--nv-muted);
+  cursor: pointer;
+}
+
+#nv-tools button:hover {
+  background: var(--nv-paper-2);
+  color: var(--nv-ink);
+}
+
+#nv-tools button.active {
+  background: var(--nv-ink);
+  color: var(--nv-paper);
+}
+
+#nv-tools svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.5;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+#nv-tools i {
+  width: 22px;
+  height: 1px;
+  margin: 3px 0;
+  background: var(--nv-line-soft);
+}
+
+#nv-inspector {
+  position: absolute;
+  right: 10px;
+  top: 54px;
+  bottom: 66px;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  width: min(300px, calc(100vw - 70px));
+  padding: 10px 12px;
+  border: 1px solid var(--nv-line);
+  border-radius: 14px;
+  background: rgba(251, 248, 240, 0.97);
+  box-shadow: 0 16px 44px rgba(35, 40, 34, 0.14);
+  overflow-y: auto;
+  pointer-events: auto;
+}
+
+#nv-inspector-tool,
+#nv-inspector-selection {
+  display: grid;
+  gap: 8px;
+}
+
+#nv-inspector-selection {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--nv-line-soft);
+}
+
+.nv-inspector-head strong {
+  color: var(--nv-ink);
+  font: 600 14px/1.3 var(--nv-serif);
+}
+
+#nv-inspector .nv-hint {
+  padding: 0;
+}
+
+#nv-inspector .nv-targets.vertical {
+  flex-direction: column;
+  max-height: 190px;
+  overflow-y: auto;
+}
+
+#nv-inspector .nv-target {
+  width: 100%;
+  max-width: none;
+  height: 28px;
+  justify-content: flex-start;
+}
+
+#nv-inspector .nv-brush-row {
+  margin-top: 2px;
+}
+
+.nv-selection-facts {
+  display: grid;
+  gap: 4px;
+}
+
+.nv-selection-facts div {
+  display: flex;
+  gap: 10px;
+  font-size: 10.5px;
+}
+
+.nv-selection-facts span {
+  flex: 0 0 52px;
+  color: var(--nv-faint);
+}
+
+.nv-selection-facts b {
+  color: var(--nv-ink);
+  font-weight: 500;
+}
+
+.nv-name-input {
+  width: 100%;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--nv-line);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--nv-ink);
+  font: 11.5px var(--nv-ui);
+  outline: none;
+}
+
+.nv-name-input:focus {
+  border-color: var(--nv-faint);
+}
+
+#nv-stagebar {
+  left: 0;
+  right: 0;
+  bottom: 28px;
+  transform: none;
+  max-width: none;
+  height: 26px;
+  padding: 0 14px;
+  border: 0;
+  border-top: 1px solid var(--nv-line-soft);
+  border-radius: 0;
+  background: rgba(251, 248, 240, 0.97);
+  box-shadow: none;
+  justify-content: flex-start;
+}
+
+#nv-cmdbar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding: 0 14px;
+  border-top: 1px solid var(--nv-line-soft);
+  background: var(--nv-paper-2);
+  color: var(--nv-faint);
+  font: 10px var(--nv-ui);
+  pointer-events: auto;
+}
+
+#nv-cmdbar input {
+  flex: 1;
+  height: 22px;
+  border: 0;
+  background: transparent;
+  color: var(--nv-ink);
+  font: 11px var(--nv-ui);
+  outline: none;
+}
+
+#nv-cmdbar input::placeholder {
+  color: var(--nv-faint);
+}
+
+/* State and culture overlays get an actual contour. */
+#statesBody path,
+#cults path {
+  fill-opacity: 0.24;
+  stroke: rgba(43, 47, 40, 0.62);
+  stroke-width: 1.1;
+  vector-effect: non-scaling-stroke;
+}
+
+#statesBody path:hover,
+#cults path:hover {
+  stroke: var(--nv-accent);
+  stroke-width: 1.8;
+}
+
+#statesBody path.nv-selected,
+#cults path.nv-selected {
+  stroke: var(--nv-accent);
+  stroke-width: 2.4;
+}
+
+/* The terrain panel is the right inspector while the terrain tool is active. */
+.ui-dialog:has(#brushesPanel) {
+  left: auto !important;
+  right: 10px !important;
+  top: 54px !important;
+  bottom: 66px !important;
+  width: min(300px, calc(100vw - 70px)) !important;
+  max-height: none !important;
+  overflow-y: auto !important;
+}
+
+.ui-dialog:has(#brushesPanel) .ui-dialog-content {
+  padding: 10px 12px !important;
+}
+
+#brushesPanel {
+  width: 100% !important;
+}
+
+#brushesButtons {
+  display: grid !important;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+#brushesButtons button {
+  height: 34px;
+  border: 1px solid var(--nv-line) !important;
+  border-radius: 7px !important;
+  background: #fff !important;
+}
+
+#brushesButtons button.pressed {
+  border-color: var(--nv-faint) !important;
+  background: var(--nv-paper-3) !important;
+}
+
+#tooltip {
+  font-size: 12px !important;
+  line-height: 1.45 !important;
+  max-width: 290px !important;
+  text-align: left !important;
+}
+
+@media (max-width: 760px) {
+  #nv-topbar {
+    height: auto;
+    min-height: 44px;
+    flex-wrap: wrap;
+    padding: 5px 8px;
+  }
+
+  #nv-tools {
+    left: 6px;
+    top: 54px;
+    bottom: auto;
+    flex-direction: row;
+    width: auto;
+    right: 6px;
+    max-width: calc(100vw - 12px);
+    overflow-x: auto;
+  }
+
+  #nv-inspector,
+  .ui-dialog:has(#brushesPanel) {
+    left: 6px !important;
+    right: 6px !important;
+    top: auto !important;
+    bottom: 60px !important;
+    width: auto !important;
+    max-height: 42vh !important;
+  }
+
+  #nv-stagebar {
+    bottom: 28px;
+  }
+}
+
+/* The map SVG is a sibling of the shell root; keep all CAD chrome above it. */
+#nv-tools,
+#nv-inspector,
+#nv-stagebar,
+#nv-cmdbar {
+  z-index: 2000;
+}
+
+#nv-topbar {
+  z-index: 2100;
+}
+
+#nv-panel,
+#nv-menu {
+  z-index: 2200;
+}
+
+#nv-tools {
+  pointer-events: auto;
+}
+
+.nv-height-modes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px;
+}
+
+.nv-height-modes .nv-mode {
+  height: 30px;
+}
+
+body[data-noven-tool="terrain"] #viewbox {
+  cursor: crosshair;
+}
+
+/* Our height brush draws the heightmap layer; the native edit preview is unused. */
+#heights {
+  display: none !important;
+}
+
+/* The heightmap land base rect paints the whole sea teal; contours carry the land. */
+#landHeights > rect {
+  fill: transparent !important;
+}
+
+#heights {
+  display: block !important;
+}
+
+/* Inspector: content height, collapsible, draggable, closable. */
+#nv-inspector {
+  top: 54px;
+  right: 10px;
+  bottom: auto;
+  height: auto;
+  max-height: calc(100vh - 140px);
+  width: min(260px, calc(100vw - 120px));
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+#nv-inspector-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 9px 8px 11px;
+  border-bottom: 1px solid var(--nv-line-soft);
+  cursor: grab;
+  user-select: none;
+}
+
+#nv-inspector.dragging #nv-inspector-bar {
+  cursor: grabbing;
+}
+
+#nv-inspector-title {
+  flex: 1;
+  color: var(--nv-ink);
+  font: 600 13px/1.3 var(--nv-serif);
+}
+
+#nv-inspector-buttons {
+  display: flex;
+  gap: 2px;
+}
+
+#nv-inspector-buttons button {
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--nv-faint);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#nv-inspector-buttons button:hover {
+  background: var(--nv-paper-2);
+  color: var(--nv-ink);
+}
+
+#nv-inspector-body {
+  padding: 9px 11px 11px;
+  overflow: auto;
+  max-height: calc(100vh - 200px);
+}
+
+#nv-inspector.collapsed {
+  width: auto;
+  min-width: 116px;
+}
+
+#nv-inspector.collapsed #nv-inspector-body {
+  display: none;
+}
+
+#nv-inspector.collapsed #nv-inspector-bar {
+  border-bottom: 0;
+}
+
+#nv-inspector.collapsed #nv-inspector-buttons {
+  display: none;
+}
+
+#nv-inspector-open {
+  position: absolute;
+  right: 10px;
+  top: 54px;
+  z-index: 2000;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--nv-line);
+  border-radius: 8px;
+  background: var(--nv-paper);
+  color: var(--nv-ink);
+  font: 11px var(--nv-ui);
+  box-shadow: 0 8px 24px rgba(35, 40, 34, 0.12);
+  cursor: pointer;
+}
+
+.nv-height-modes {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.nv-height-modes .nv-mode {
+  height: 26px;
+  padding: 0 5px;
+  font-size: 10px;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  #nv-inspector:not(.collapsed) {
+    left: 6px;
+    right: 6px;
+    top: auto;
+    bottom: 60px;
+    width: auto;
+    max-height: 50vh;
+  }
+
+  #nv-inspector.collapsed {
+    left: auto;
+    right: 6px;
+    top: 54px;
+    bottom: auto;
+    width: auto;
+  }
+
+  #nv-inspector-open {
+    right: 8px;
+    top: 54px;
+  }
+}
+
+#nv-inspector.collapsed #nv-inspector-buttons {
+  display: flex;
+}
+
+@media (max-width: 760px) {
+  #nv-tools {
+    left: 6px;
+    right: auto;
+    top: 54px;
+    bottom: auto;
+    flex-direction: column;
+    width: 40px;
+    max-height: calc(100vh - 130px);
+    overflow-y: auto;
+  }
+
+  #nv-inspector,
+  #nv-inspector:not(.collapsed) {
+    left: auto;
+    right: 6px;
+    top: 54px;
+    bottom: auto;
+    width: min(260px, calc(100vw - 62px));
+    max-height: 60vh;
+  }
+
+  #nv-inspector.collapsed {
+    left: auto;
+    right: 6px;
+    top: 54px;
+    bottom: auto;
+    width: auto;
+  }
+
+  #nv-inspector-open {
+    right: 8px;
+    top: 54px;
+  }
+}
+
+@media (max-width: 760px) {
+  #nv-tools {
+    top: 96px !important;
+    left: 6px !important;
+    right: auto !important;
+    bottom: auto !important;
+    width: 40px !important;
+    max-height: calc(100vh - 170px) !important;
+  }
+
+  #nv-inspector,
+  #nv-inspector:not(.collapsed) {
+    left: auto !important;
+    right: 6px !important;
+    top: 96px !important;
+    bottom: auto !important;
+    width: min(260px, calc(100vw - 62px)) !important;
+    max-height: 60vh !important;
+  }
+
+  #nv-inspector.collapsed {
+    left: auto !important;
+    right: 6px !important;
+    top: 96px !important;
+    bottom: auto !important;
+    width: auto !important;
+  }
+
+  #nv-inspector-open {
+    top: 96px !important;
+    right: 8px !important;
+  }
+}
+
+#nv-inspector-open {
+  pointer-events: auto;
+}
+
+#nv-tools button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+#nv-topbar #nv-views button:disabled {
+  opacity: 0.38;
+  cursor: default;
+}
+
+#nv-stagebar {
+  height: auto;
+  min-height: 34px;
+  padding: 4px 14px;
+  white-space: normal;
+}
+
+#nv-stage-info {
+  gap: 0;
+}
+
+#nv-stage-counts {
+  display: block;
+  max-width: calc(100vw - 28px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 760px) {
+  #nv-stage-counts {
+    display: block !important;
+  }
+}
+
+/* 3D settings are upstream English chrome; the CAD view does not expose them. */
+#options3d,
+.ui-dialog:has(#options3d) {
+  display: none !important;
+}
+
+/* SVG chrome belongs to the 2D editor; the 3D canvas owns the view. */
+body[data-noven-view="3d"] #nv-height-layer,
+body[data-noven-view="3d"] #nv-map-frame,
+body[data-noven-view="3d"] #nv-brush-cursor,
+body[data-noven-view="globe"] #nv-height-layer,
+body[data-noven-view="globe"] #nv-map-frame,
+body[data-noven-view="globe"] #nv-brush-cursor {
+  display: none !important;
+}
+
+@media (max-width: 760px) {
+  .nv-view-label {
+    display: none;
+  }
+
+  #nv-views {
+    max-width: calc(100vw - 84px);
+    flex-wrap: nowrap;
+    overflow-x: auto;
+  }
+
+  #nv-topbar .nv-view-group {
+    padding-right: 4px;
+  }
+
+  #nv-topbar .nv-view-group button {
+    padding: 0 5px;
+    font-size: 10px;
+  }
+}
+
+/* White film is the unrendered/sculpt view; render is the sea view. */
+body[data-noven-base="height"] #map,
+body[data-noven-base="height"] #viewbox {
+  background: #f7f2e5 !important;
+}
+
+body[data-noven-base="height"] #ocean,
+body[data-noven-base="height"] #landmass,
+body[data-noven-base="height"] #coastline {
+  opacity: 0 !important;
+}
+
+body[data-noven-base="height"] #oceanHeights {
+  display: none !important;
+}
+
+body[data-noven-base="geo"] #map,
+body[data-noven-base="geo"] #viewbox {
+  background: #cfe2ee !important;
+}
+
+#nv-brush-cursor {
+  pointer-events: none;
+}
+
+/* The white-film view is rendered by Noven from grid heights; native height
+   shading is absent on some loaded maps and would draw a second terrain. */
+body[data-noven-base="height"] #terrs,
+body[data-noven-base="height"] #biomes,
+body[data-noven-base="height"] #lakes,
+body[data-noven-base="height"] #rivers,
+body[data-noven-base="height"] #routes,
+body[data-noven-base="height"] #burgIcons,
+body[data-noven-base="height"] #labels {
+  display: none !important;
+}
+
+/* Noven owns the map chrome; FMG's English hover line would sit under the
+   command bar and does not describe the active tool. */
+#tooltip {
+  display: none !important;
+}
+
+#nv-height-layer {
+  pointer-events: none;
 }

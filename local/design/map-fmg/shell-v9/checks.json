@@ -1,0 +1,42 @@
+{
+  "checks": [
+    {
+      "name": "blank terrain finalizes into a render view",
+      "ok": true,
+      "detail": "{\"stage\":\"terrain\",\"base\":\"geo\",\"blank\":false,\"height\":\"none\",\"biomes\":\"inline\",\"packH\":100,\"gridH\":100}"
+    },
+    {
+      "name": "height layer is hidden in render view",
+      "ok": true,
+      "detail": "none"
+    },
+    {
+      "name": "terrain remains editable after finalize",
+      "ok": true,
+      "detail": "{\"sea\":{\"cell\":2950,\"x\":613.3095092773438,\"y\":300.5860595703125},\"before\":0,\"after\":44}"
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": [],
+  "land": 925,
+  "state": {
+    "stage": "terrain",
+    "base": "geo",
+    "blank": false,
+    "height": "none",
+    "biomes": "inline",
+    "packH": 100,
+    "gridH": 100
+  },
+  "sea": {
+    "cell": 2950,
+    "x": 613.3095092773438,
+    "y": 300.5860595703125
+  },
+  "before": 0,
+  "after": 44
+}

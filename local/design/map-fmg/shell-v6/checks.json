@@ -1,0 +1,121 @@
+{
+  "checks": [
+    {
+      "name": "blank drag changed heights within 36 moves",
+      "ok": true,
+      "detail": "[{\"i\":0,\"max\":3,\"cursorFill\":\"rgba(196, 190, 117, 0.22)\",\"cursorR\":\"34\",\"t\":1169.5999999940395},{\"i\":6,\"max\":21,\"cursorFill\":\"rgba(196, 190, 117, 0.22)\",\"cursorR\":\"34\",\"t\":1370.2999999970198},{\"i\":12,\"max\":27,\"cursorFill\":\"rgba(196, 190, 117, 0.22)\",\"cursorR\":\"34\",\"t\":1569},{\"i\":18,\"max\":30,\"cursorFill\":\"rgba(196, 190, 117, 0.22)\",\"cursorR\":\"34\",\"t\":1769.3999999910593},{\"i\":24,\"max\":33,\"cursorFill\":\"rgba(196, 190, 117, 0.22)\",\"cursorR\":\"34\",\"t\":1969.3999999910593},{\"i\":30,\"max\":33,\"cursorFill\":\"rgba(196, 190, 117, 0.22)\",\"cursorR\":\"34\",\"t\":2169.3999999910593}]"
+    },
+    {
+      "name": "blank drag shows a filled brush circle",
+      "ok": true,
+      "detail": "rgba(196, 190, 117, 0.22)"
+    },
+    {
+      "name": "blank drag keeps 100% fit",
+      "ok": true,
+      "detail": "100%"
+    },
+    {
+      "name": "blank drag ends on height view",
+      "ok": true,
+      "detail": "height"
+    },
+    {
+      "name": "loaded map: drag on sea raises height",
+      "ok": true,
+      "detail": "{\"sea\":{\"cell\":2162,\"h\":0,\"x\":314.25482177734375,\"y\":241.32510375976562},\"beforeSea\":0,\"midSea\":36}"
+    },
+    {
+      "name": "loaded map: release syncs pack height",
+      "ok": true,
+      "detail": "{\"grid\":36,\"pack\":53,\"base\":\"height\",\"states\":20,\"long\":[460,154,184,125],\"view\":true}"
+    },
+    {
+      "name": "loaded map: painting switched base to height",
+      "ok": true,
+      "detail": "height"
+    },
+    {
+      "name": "loaded map: state names survive derivation",
+      "ok": true,
+      "detail": "20"
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": [],
+  "samples": [
+    {
+      "i": 0,
+      "max": 3,
+      "cursorFill": "rgba(196, 190, 117, 0.22)",
+      "cursorR": "34",
+      "t": 1169.5999999940395
+    },
+    {
+      "i": 6,
+      "max": 21,
+      "cursorFill": "rgba(196, 190, 117, 0.22)",
+      "cursorR": "34",
+      "t": 1370.2999999970198
+    },
+    {
+      "i": 12,
+      "max": 27,
+      "cursorFill": "rgba(196, 190, 117, 0.22)",
+      "cursorR": "34",
+      "t": 1569
+    },
+    {
+      "i": 18,
+      "max": 30,
+      "cursorFill": "rgba(196, 190, 117, 0.22)",
+      "cursorR": "34",
+      "t": 1769.3999999910593
+    },
+    {
+      "i": 24,
+      "max": 33,
+      "cursorFill": "rgba(196, 190, 117, 0.22)",
+      "cursorR": "34",
+      "t": 1969.3999999910593
+    },
+    {
+      "i": 30,
+      "max": 33,
+      "cursorFill": "rgba(196, 190, 117, 0.22)",
+      "cursorR": "34",
+      "t": 2169.3999999910593
+    }
+  ],
+  "blank": {
+    "max": 33,
+    "base": "height",
+    "zoom": "100%",
+    "stroke": "#2f5d45",
+    "fill": "rgba(196, 190, 117, 0.22)",
+    "long": []
+  },
+  "loaded": {
+    "grid": 36,
+    "pack": 53,
+    "base": "height",
+    "states": 20,
+    "long": [
+      460,
+      154,
+      184,
+      125
+    ],
+    "view": true
+  },
+  "sea": {
+    "cell": 2162,
+    "h": 0,
+    "x": 314.25482177734375,
+    "y": 241.32510375976562
+  }
+}
