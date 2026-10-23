@@ -405,11 +405,13 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
 
 /** 一个模块盒：标题（点击即改名）+ 正文（模块内富文本 / 预制模块渲染器）。
     子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
-function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, imageResources, saveBlock, saveMarkdown, send, onOpenModule, ask, seedComposer, readFile, onOpenFile, refTargets, siblings, refEdges, locked = false, fill = false, resolveProjectAsset, reportDiagnostics }: {
+function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, imageResources, saveBlock, saveMarkdown, send, onOpenModule, ask, seedComposer, readFile, onOpenFile, refTargets, siblings, refEdges, locked = false, readOnly = false, fill = false, resolveProjectAsset, reportDiagnostics }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   /** AI 正在写这个模块：内容只读，子模块入口仍可点。 */
   readonly locked?: boolean
+  /** Reading mode: render the module, hide child links, block its write controls. */
+  readonly readOnly?: boolean
   /** 宿主卡身份——html 模块的 NOVEN_FRAME.card 拿它。 */
   readonly card: { readonly id: string, readonly name: string, readonly kind: string | undefined }
   readonly imageUrl: (resourceId: string) => string
@@ -479,14 +481,17 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
     onOpenModule(target)
   }
   const bodyRef = useRef<HTMLDivElement | null>(null)
+  // Text modules stay interactive so markdown links work; widget modules are
+  // inert in reading mode because their write controls are not all separable.
+  const blockBody = locked || (readOnly && widget !== undefined && widget !== 'document')
   useEffect(() => {
     const body = bodyRef.current
     if (body === null) return
-    if (locked) body.setAttribute('inert', '')
+    if (blockBody) body.setAttribute('inert', '')
     else body.removeAttribute('inert')
-  }, [locked])
+  }, [blockBody])
   return (
-    <section className={`nv-modbox${widget === 'map' ? ' nv-modbox-map' : ''}${locked ? ' nv-ai-locked' : ''}`} data-ai-locked={locked ? '' : undefined} aria-busy={locked || undefined}>
+    <section className={`nv-modbox${widget === 'map' ? ' nv-modbox-map' : ''}${locked ? ' nv-ai-locked' : ''}${readOnly ? ' nv-readonly' : ''}`} data-ai-locked={locked ? '' : undefined} aria-busy={locked || undefined}>
       <div className="nv-modbox-body" ref={bodyRef}>
         {widget === 'ref' && (
           <RefModule module={module} t={t} addr={addr} loadCard={loadCard} op={op}
@@ -501,7 +506,7 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
             onCreateRelation: relationTarget === undefined ? () => { void send({ kind: 'add_module', name: '关系', preset: 'graph' }) } : undefined }} />}
         {widget === 'scene' && <SceneWidget module={module} t={t} send={send} imageUrl={imageUrl} />}
         {widget === 'relation' && <RelationWidget module={withDerivedRelation(module, refEdges)} t={t} send={send} imageUrl={imageUrl} />}
-        {widget === 'map' && <FmgMapHost module={module} t={t} send={send} addr={addr} cardId={card.id} />}
+        {widget === 'map' && <FmgMapHost module={module} t={t} send={send} addr={addr} cardId={card.id} readOnly={readOnly} />}
         {widget === 'collection' && <CollectionWidget module={module} t={t} send={send} imageUrl={imageUrl} refTargets={refTargets}
           siblings={siblings} ownerName={card.name} ownerId={card.id} cardKind={card.kind} onOpenModule={onOpenModule} places={mapPlaces} />}
         {widget !== undefined && widget !== 'document' && widget !== 'html'
@@ -513,16 +518,16 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
         {widget === 'html' && (
           <HtmlModule module={module} t={t} cardId={card.id} readFile={readFile} onOpenFile={onOpenFile}
             card={card} imageUrl={imageUrl} imageResources={imageResources} send={send} ask={ask} seedComposer={seedComposer}
-            onOpenCard={onOpenCard} onOpenModule={onOpenModule} fill={fill} resolveProjectAsset={resolveProjectAsset}
+            onOpenCard={onOpenCard} onOpenModule={onOpenModule} fill={fill} readOnly={readOnly} resolveProjectAsset={resolveProjectAsset}
             reportDiagnostics={reportDiagnostics}
             cardData={{ name: card.name, kind: card.kind, modules: siblings ?? [] }} />
         )}
         {(widget === undefined || widget === 'document') && (
-          <CardMarkdownEditor markdown={moduleMarkdown(module.blocks)} locked={locked}
+          <CardMarkdownEditor markdown={moduleMarkdown(module.blocks)} locked={locked || readOnly}
             onSave={(text: string) => { void saveMarkdown(module, text) }} />
         )}
       </div>
-      {module.children.length > 0 && (
+      {module.children.length > 0 && !readOnly && (
         <div className="nv-page-children">
           {module.children.map(child => (
             <button key={child.id} type="button" className="nv-page-childlink" onClick={() => onOpenModule(child.id)}>
@@ -631,7 +636,7 @@ function SurfaceGameBar({ t, manifest, status, paused, slots, slotsOpen, actions
 }
 
 /** HTML 小组件：live file 或 inline source 都进同一沙箱；主题/资源/卡数据桥由岛契约提供。 */
-function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, imageResources, send, ask, seedComposer, cardData, onOpenCard, onOpenModule, fill = false, resolveProjectAsset, reportDiagnostics }: {
+function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, imageResources, send, ask, seedComposer, cardData, onOpenCard, onOpenModule, fill = false, readOnly = false, resolveProjectAsset, reportDiagnostics }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   readonly cardId: string
@@ -648,6 +653,8 @@ function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, i
   readonly onOpenModule?: (moduleId: string) => void
   /** Page mode: the surface owns the canvas instead of a capped box in the reading flow. */
   readonly fill?: boolean
+  /** Reading mode: hide the editor file bar and the game chrome. */
+  readonly readOnly?: boolean
   /** Project-relative asset bytes (glb/texture/audio/json) resolved by the host. */
   readonly resolveProjectAsset?: (path: string, base?: string) => Promise<Blob | null>
   /** Console tail reporter for the AI's surface_diagnostics read-back. */
@@ -883,7 +890,7 @@ function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, i
   )
   return (
     <div className={`nv-htmlfile${fill ? ' nv-htmlfile-fill' : ''}`}>
-      {sourceBar}
+      {!readOnly && sourceBar}
       {path !== undefined && fileText === undefined && <div className="nv-htmlfile-empty">{t('canvas.files.loading')}</div>}
       {path !== undefined && fileText === null && <div className="nv-htmlfile-empty">{t('editor.file.missing')}</div>}
       {html === '' ? (
@@ -947,7 +954,7 @@ function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, i
                   else if (target.moduleId !== undefined) { setModuleLinkFocus({ cardId, targetModuleId: target.moduleId, sourceModuleId: module.id, sourceModuleName: module.name }); if (target.itemId !== undefined) setCollectionFocus({ cardId, moduleId: target.moduleId, itemId: target.itemId }); onOpenModule?.(target.moduleId) }
                 }
               }} />
-            {fill && manifest?.chrome !== 'none' && (
+            {!readOnly && fill && manifest?.chrome !== 'none' && (
               <SurfaceGameBar t={t} manifest={manifest} status={status} paused={paused} slots={slots} slotsOpen={slotsOpen}
                 actions={{ save, load, pause: togglePause, slots: () => setSlotsOpen(value => !value), saveSlot, loadSlot, capture, exportHtml, share }} />
             )}
@@ -1605,6 +1612,355 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
           onGenerateUserModule={generateUserModule} />
       )}
     </div>
+    </MarkdownDelegateProvider>
+  )
+}
+
+/** One frame in the preview's card stack. */
+interface CardPreviewFrame {
+  readonly cardId: string
+  readonly addr: CardAddr
+}
+
+/** One rendered module section in the reading layout. */
+interface CardPreviewSection {
+  readonly module: CardModuleDoc
+  readonly depth: number
+}
+
+/** Props of the read-only reading layer. */
+export interface CardPreviewProps {
+  readonly addr: CardAddr
+  readonly cardId: string
+  readonly t: ShellT
+  readonly loadCard: (addr: CardAddr, cardId: string) => Promise<CardState | undefined>
+  /** Back to the page that opened the preview, or the previous card in the stack. */
+  readonly onBack: () => void
+  /** Open the card's conversation in the IDE. */
+  readonly onEdit: (cardId: string, addr: CardAddr) => void
+  readonly onExport?: (cardId: string, addr: CardAddr, name: string) => void
+  readonly onDelete?: (cardId: string, addr: CardAddr, name: string) => void
+}
+
+const previewMotion = (): 'auto' | 'smooth' =>
+  typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'
+
+/** Strip markdown punctuation and collapse whitespace for the hero lead. */
+function previewPlain(markdown: string): string {
+  return markdown
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, ' ')
+    .replace(/\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/[*_#>`~\-|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+/** Count every module in a tree. */
+function previewModuleCount(modules: readonly CardModuleDoc[]): number {
+  let count = 0
+  for (const module of modules) {
+    count += 1
+    count += previewModuleCount(module.children)
+  }
+  return count
+}
+
+/** Recursively flatten top-level modules and their children into reading sections. */
+function previewSections(modules: readonly CardModuleDoc[]): CardPreviewSection[] {
+  const walk = (items: readonly CardModuleDoc[], depth: number): CardPreviewSection[] =>
+    items.flatMap(module => [
+      { module, depth },
+      ...walk(module.children, Math.min(depth + 1, 2)),
+    ])
+  return walk(modules, 0)
+}
+
+/**
+ * 卡预览 — the read-only reading layer. Unlike the canvas card page this renders
+ * every module as one continuous document, keeps the overview text in the hero,
+ * and routes child links/TOC entries to in-page anchors. Widget modules render
+ * through the same ModuleBox as the editor; their write controls are inert.
+ */
+export function CardPreview({ addr, cardId, t, loadCard, onBack, onEdit, onExport, onDelete }: CardPreviewProps) {
+  const [stack, setStack] = useState<readonly CardPreviewFrame[]>([{ cardId, addr }])
+  const [roleId, setRoleId] = useState<string | undefined>(undefined)
+  const [activeSection, setActiveSection] = useState<string | undefined>(undefined)
+  const [armed, setArmed] = useState(false)
+  const [refIndex, setRefIndex] = useState<{ readonly targets: readonly RefTarget[], readonly backlinks: Record<string, readonly RefBacklink[]>, readonly moduleBacklinks?: Record<string, readonly ModuleRefBacklink[]> } | undefined>(undefined)
+  const scrollRef = useRef<HTMLDivElement | null>(null)
+  const current = stack[stack.length - 1] ?? { cardId, addr }
+
+  // A new card from the gallery resets the stack; internal links only push.
+  useEffect(() => {
+    setStack([{ cardId, addr }])
+    setRoleId(undefined)
+    setActiveSection(undefined)
+    setArmed(false)
+  }, [cardId, addr.root, addr.sessionId])
+
+  const retained = useRetainedCard(current.addr, current.cardId, loadCard)
+  const state = retained.state
+  const doc: CardDocView | undefined = typeof state === 'object' && state !== null ? state.document : undefined
+
+  useEffect(() => {
+    const root = current.addr.root
+    if (root === undefined) return
+    void fetch(new URL(`api/noven-cards?refs=1&root=${encodeURIComponent(root)}`, document.baseURI).href)
+      .then(response => response.ok
+        ? response.json() as Promise<{ targets: readonly RefTarget[], backlinks: Record<string, readonly RefBacklink[]>, moduleBacklinks?: Record<string, readonly ModuleRefBacklink[]> }>
+        : Promise.reject(new Error(String(response.status))))
+      .then(setRefIndex)
+      .catch(() => { /* a missing index only removes reference affordances */ })
+  }, [current.addr.root])
+
+  const role = roleId === undefined || doc === undefined ? undefined : doc.characters.find(candidate => candidate.id === roleId)
+  const target = role ?? doc
+
+  const overview = target?.modules.find(isOverviewModule)
+  const proseOverview = overview !== undefined
+    && (overview.widget === undefined || overview.widget.type === 'document' || overview.widget.type === 'overview')
+    ? overview
+    : undefined
+  const firstText = target?.modules.find(module =>
+    module !== proseOverview
+    && (module.widget === undefined || module.widget.type === 'document')
+    && module.blocks.some(block => block.kind === 'text' && (block.text ?? '').trim() !== ''))
+  const intro = previewPlain(proseOverview !== undefined ? moduleMarkdown(proseOverview.blocks)
+    : firstText !== undefined ? moduleMarkdown(firstText.blocks) : '')
+  const sections = useMemo(() => {
+    if (target === undefined) return []
+    return target.modules.flatMap(module => module === proseOverview
+      ? previewSections(module.children)
+      : [{ module, depth: 0 }, ...previewSections(module.children).map(section => ({ ...section, depth: Math.min(section.depth + 1, 2) }))])
+  }, [target, proseOverview])
+
+  const refEdges = useMemo(() => {
+    const edges: { from: string, to: string, label: string }[] = []
+    const walk = (modules: readonly CardModuleDoc[]): void => {
+      for (const module of modules) {
+        if (module.widget?.type === 'collection') {
+          const data = coll(module.widget.data)
+          for (const item of data.items) {
+            const values = data.values[item.id]
+            if (values === undefined) continue
+            for (const field of data.fields) {
+              const value = values[field.id]
+              if (typeof value !== 'object' || value === null || !('name' in value) || typeof value.name !== 'string') continue
+              if (!('itemId' in value) || typeof value.itemId !== 'string') continue
+              edges.push({ from: item.name, to: value.name, label: field.name })
+            }
+          }
+        }
+        walk(module.children)
+      }
+    }
+    walk(target?.modules ?? [])
+    return edges
+  }, [target])
+
+  const imageUrl = useCallback((resourceId: string): string => {
+    if (typeof state !== 'object' || state === null || resourceId === '') return ''
+    const ref = state.resources.find(resource => resource.id === resourceId)?.ref
+    return ref === undefined ? '' : cardContentUrl(current.addr.root ?? '', state.dir, ref)
+  }, [current.addr.root, state])
+
+  const imageResources = typeof state === 'object' && state !== null
+    ? state.resources.filter(resource => resource.mediaType.startsWith('image/')).map(resource => ({ id: resource.id, mediaType: resource.mediaType }))
+    : []
+
+  const coverId = target?.coverResourceId ?? (typeof state === 'object' && state !== null ? state.coverResourceId : null)
+  const cover = coverId === null || coverId === undefined ? '' : imageUrl(coverId)
+
+  const pushCard = useCallback((linkedCardId: string): void => {
+    setRoleId(undefined)
+    setStack(frames => [...frames, {
+      cardId: linkedCardId,
+      addr: { sessionId: current.addr.sessionId, root: current.addr.root },
+    }])
+    setActiveSection(undefined)
+  }, [current.addr.root, current.addr.sessionId])
+
+  const openLink = useCallback((href: string): void => {
+    const url = new URL(href)
+    const parts = url.pathname.split('/').filter(part => part !== '').map(part => decodeURIComponent(part))
+    if (url.hostname !== 'card') return
+    const [linkedCard] = parts
+    if (linkedCard !== undefined) pushCard(linkedCard)
+  }, [pushCard])
+
+  const scrollToSection = useCallback((section: string): void => {
+    const scroller = scrollRef.current
+    if (scroller === null) return
+    const element = section === 'cast'
+      ? scroller.querySelector<HTMLElement>('[data-preview-section="cast"]')
+      : scroller.querySelector<HTMLElement>(`[data-preview-module="${section}"]`)
+    element?.scrollIntoView({ behavior: previewMotion(), block: 'start' })
+    setActiveSection(section)
+  }, [])
+
+  const goBack = (): void => {
+    if (roleId !== undefined) { setRoleId(undefined); setActiveSection(undefined); return }
+    if (stack.length > 1) { setStack(frames => frames.slice(0, -1)); setActiveSection(undefined); return }
+    onBack()
+  }
+
+  const readOnlyOp = async (): Promise<CardOpResult> => { throw new Error('read only preview') }
+  const saveOk = async (): Promise<EditorSaveResult> => 'ok'
+  const noSend: WidgetSend = async () => false
+  const noAsk = async (): Promise<void> => {}
+
+  useEffect(() => {
+    const scroller = scrollRef.current
+    if (scroller === null) return
+    const update = (): void => {
+      const rendered = Array.from(scroller.querySelectorAll<HTMLElement>('[data-preview-section]'))
+      if (rendered.length === 0) return
+      const line = scroller.getBoundingClientRect().top + 92
+      let currentSection = rendered[0]?.dataset.previewSection
+      for (const section of rendered) {
+        if (section.getBoundingClientRect().top <= line) currentSection = section.dataset.previewSection
+      }
+      if (currentSection !== undefined) setActiveSection(currentSection)
+    }
+    update()
+    scroller.addEventListener('scroll', update, { passive: true })
+    return () => scroller.removeEventListener('scroll', update)
+  }, [current.cardId, roleId, sections.length])
+
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 })
+    setActiveSection(undefined)
+  }, [current.cardId, roleId])
+
+  const bar = (
+    <div className="nv-cardpreview-bar">
+      <button type="button" className="nv-back" onClick={goBack} aria-label={t('me.preview.back')}>←</button>
+      <div className="nv-crumb">
+        {t('nav.me')}<span>/</span>{target === undefined ? '' : t(role !== undefined || (doc?.kind === 'CHARACTER') ? 'card.kind.character' : 'card.kind.world')}
+        <span>/</span><b>{target?.name ?? ''}</b>
+      </div>
+      <div className="nv-cardpreview-actions">
+        <button type="button" className="nv-btn-primary" onClick={() => { onEdit(current.cardId, current.addr) }}>{t('me.preview.edit')}</button>
+        <details className="nv-cardpreview-more" onToggle={event => { if (!(event.currentTarget as HTMLDetailsElement).open) setArmed(false) }}>
+          <summary aria-label={t('me.preview.more')}>⋯</summary>
+          <div className="nv-cardpreview-menu">
+            {onExport !== undefined && (
+              <button type="button" onClick={() => { onExport(current.cardId, current.addr, target?.name ?? '') }}>{t('me.preview.export')}</button>
+            )}
+            {onDelete !== undefined && (
+              <button type="button" data-armed={armed || undefined}
+                onClick={() => {
+                  if (!armed) { setArmed(true); return }
+                  onDelete(current.cardId, current.addr, target?.name ?? '')
+                }}>
+                {armed ? t('me.card.deleteConfirm') : t('me.preview.delete')}
+              </button>
+            )}
+          </div>
+        </details>
+      </div>
+    </div>
+  )
+
+  if (state === 'loading') {
+    return <div className="nv-cardpreview">{bar}<div className="nv-cardpreview-missing">{t('canvas.files.loading')}</div></div>
+  }
+  if (state === undefined || doc === undefined || target === undefined) {
+    return <div className="nv-cardpreview">{bar}<div className="nv-cardpreview-missing">{t('cardpage.missing')}</div></div>
+  }
+
+  const kindLabel = t(role !== undefined || doc.kind === 'CHARACTER' ? 'card.kind.character' : 'card.kind.world')
+  const characters = role === undefined ? doc.characters : []
+  const castArt = (character: Omit<CardDocView, 'characters'>): string => {
+    const resourceId = character.avatarResourceId ?? character.coverResourceId
+    return resourceId === null || resourceId === undefined ? '' : imageUrl(resourceId)
+  }
+
+  return (
+    <MarkdownDelegateProvider linkProtocols={NOVEN_LINK_PROTOCOLS} openLink={openLink}>
+      <div className="nv-cardpreview">
+        {bar}
+        <div className="nv-cardpreview-scroll" ref={scrollRef}>
+          <div className="nv-cardpreview-inner">
+            <header className={`nv-cardpreview-hero${cover === '' ? ' nv-cardpreview-hero--noart' : ''}`} data-kind={role !== undefined ? 'CHARACTER' : doc.kind}>
+              {cover !== '' && <img className="nv-cardpreview-cover" src={cover} alt="" />}
+              <span className="nv-cardpreview-shade" />
+              <div className="nv-cardpreview-copy">
+                {role !== undefined && (
+                  <button type="button" className="nv-cardpreview-up" onClick={() => { setRoleId(undefined); setActiveSection(undefined) }}>
+                    ‹ {doc.name}
+                  </button>
+                )}
+                <span className="nv-cardpreview-kind">{kindLabel}</span>
+                <h1>{target.name}</h1>
+                {intro !== '' && <p>{intro}</p>}
+                <span className="nv-cardpreview-meta">
+                  {fmt(t, 'me.card.meta', { modules: previewModuleCount(target.modules), revision: state.revision })}
+                </span>
+              </div>
+            </header>
+
+            {characters.length > 0 && (
+              <section className="nv-cardpreview-cast" data-preview-section="cast">
+                <h2>{t('me.preview.cast')}</h2>
+                <div className="nv-cardpreview-castrow">
+                  {characters.map(character => {
+                    const art = castArt(character)
+                    return (
+                      <button type="button" key={character.id} className="nv-cardpreview-castcard"
+                        onClick={() => { setRoleId(character.id); setActiveSection(undefined) }}>
+                        <span className="nv-cardpreview-castart"
+                          style={art === '' ? undefined : { backgroundImage: `url("${art}")` }}>
+                          {art === '' ? character.name.slice(0, 1) : ''}
+                        </span>
+                        <span className="nv-cardpreview-castcopy">
+                          <strong>{character.name}</strong>
+                          <small>{previewPlain(moduleMarkdown(character.modules.find(isOverviewModule)?.blocks ?? []))}</small>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </section>
+            )}
+
+            <div className="nv-cardpreview-layout">
+              <nav className="nv-cardpreview-toc" aria-label={t('me.preview.toc')}>
+                {characters.length > 0 && (
+                  <button type="button" className={activeSection === 'cast' ? 'is-on' : undefined}
+                    onClick={() => { scrollToSection('cast') }}>{t('me.preview.cast')}</button>
+                )}
+                {sections.map(section => (
+                  <button type="button" key={section.module.id}
+                    className={activeSection === section.module.id ? 'is-on' : undefined}
+                    style={{ paddingLeft: `${12 + section.depth * 10}px` }}
+                    onClick={() => { scrollToSection(section.module.id) }}>
+                    {section.module.name}
+                  </button>
+                ))}
+              </nav>
+              <div className="nv-cardpreview-content">
+                {sections.map(section => (
+                  <section key={section.module.id} data-preview-module={section.module.id}
+                    data-preview-section={section.module.id}
+                    className={`nv-cardpreview-section${section.depth === 0 ? '' : ' nv-cardpreview-section--nested'}`}>
+                    <h2>{section.module.name}</h2>
+                    <ModuleBox readOnly module={section.module} t={t}
+                      card={{ id: current.cardId, name: doc.name, kind: doc.kind }}
+                      addr={current.addr} loadCard={loadCard} op={readOnlyOp} onOpenCard={id => { pushCard(id) }}
+                      imageUrl={imageUrl} imageResources={imageResources}
+                      saveBlock={saveOk} saveMarkdown={saveOk} send={noSend}
+                      onOpenModule={id => { scrollToSection(id) }} ask={noAsk}
+                      readFile={undefined} onOpenFile={undefined}
+                      refTargets={refIndex?.targets} siblings={target.modules} refEdges={refEdges}
+                      resolveProjectAsset={undefined} reportDiagnostics={undefined} />
+                  </section>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
     </MarkdownDelegateProvider>
   )
 }

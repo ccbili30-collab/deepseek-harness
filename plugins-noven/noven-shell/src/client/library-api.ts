@@ -159,7 +159,7 @@ export function isMiscRoot(root: string | undefined): boolean {
   return root !== undefined && miscRoot !== undefined && root === miscRoot
 }
 
-export async function projectOp(op: { op: 'register' | 'unregister' | 'create' | 'rename'; root: string; title?: string; description?: string }): Promise<ProjectRow | undefined> {
+export async function projectOp(op: { op: 'register' | 'unregister' | 'create' | 'rename' | 'trash'; root: string; title?: string; description?: string }): Promise<ProjectRow | undefined> {
   const response = await fetch('/api/noven-projects', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

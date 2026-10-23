@@ -95,12 +95,14 @@ function mapDocumentOf(module: CardModuleDoc): string {
  * @param props - map module, shell translator, and the card command sender.
  * @returns a full-bleed iframe host with a legacy-data notice when needed.
  */
-export function FmgMapHost({ module, t, send, addr, cardId }: {
+export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: {
   readonly module: CardModuleDoc
   readonly t: ShellT
   readonly send: WidgetSend
   readonly addr: CardAddr
   readonly cardId: string
+  /** Reading mode: keep the map canvas, hide the editor chrome. */
+  readonly readOnly?: boolean
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const [ready, setReady] = useState(false)
@@ -364,6 +366,28 @@ export function FmgMapHost({ module, t, send, addr, cardId }: {
   useEffect(() => {
     frameRef.current?.contentWindow?.postMessage({ type: 'noven-map-fullscreen', expanded }, '*')
   }, [expanded])
+
+  // The vendored editor has no view-only flag. In the reading layer we keep
+  // the map canvas and hide the editor's own chrome inside the same-origin frame.
+  useEffect(() => {
+    if (!readOnly) return
+    const doc = frameRef.current?.contentDocument
+    if (doc === null || doc === undefined) return
+    const id = 'noven-map-readonly'
+    let style = doc.getElementById(id) as HTMLStyleElement | null
+    if (style === null) {
+      style = doc.createElement('style')
+      style.id = id
+      doc.head.appendChild(style)
+    }
+    style.textContent = `
+      #toolbar, #mainMenu, #controlPanel, #mapInfo, #mapLayers, #zoom, #status,
+      #sticked, #tooltip, .ui-dialog, #loading, #noven-topbar { display: none !important; }
+      #map { top: 0 !important; left: 0 !important; }
+      body { overflow: hidden !important; }
+    `
+    return () => { style?.remove() }
+  }, [readOnly, ready])
 
   return (
     <div className={`nv-fmg-host${expanded ? ' nv-fmg-host-full' : ''}`} data-ready={ready ? '' : undefined}

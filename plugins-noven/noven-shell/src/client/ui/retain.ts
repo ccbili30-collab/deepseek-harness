@@ -4,7 +4,7 @@
  * first, refreshes in the background, and swaps in only what changed.
  *
  * - {@link cardCache} / {@link useRetainedCard}: card states keyed by card
- *   address + id, shared by the canvas card page, CardStudio and CardEditor.
+ *   address + id, shared by the canvas card page and the reading preview.
  * - {@link useRetainedScroll}: scroll offsets keyed by an owner-chosen key
  *   (session × tab), restored when the scroller remounts.
  *

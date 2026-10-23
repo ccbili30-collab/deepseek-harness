@@ -23,7 +23,8 @@
     "node": ">=20"
   },
   "dependencies": {
-    "noven-ledger": "workspace:*"
+    "noven-ledger": "workspace:*",
+    "trash": "^9.0.0"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.4",

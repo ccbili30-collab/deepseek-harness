@@ -278,6 +278,37 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
   return new Response(JSON.stringify({ ok: true, binding: tidy ?? null }), { headers: JSON_HEADERS })
 }
 
+/** Cwd of one session, live or persisted; undefined when the session is gone. */
+async function sessionRoot(ctx: Context, sessionId: SessionId): Promise<string | undefined> {
+  const live = ctx.sessions.get(sessionId)?.header
+  const stored = live === undefined ? await ctx.get('sessionPersistence')?.stat(sessionId) : undefined
+  return (live ?? stored?.header)?.cwd
+}
+
+/**
+ * Reverse lookup for 我的's edit action: which conversations manage this card
+ * (or answer as it) inside the same library root. The client chooses the most
+ * recent candidate and falls back to the library's latest conversation.
+ */
+async function serveManagers(request: Request, ctx: Context): Promise<Response> {
+  const url = new URL(request.url)
+  const cardId = url.searchParams.get('card')
+  const root = url.searchParams.get('root')
+  if (cardId === null || cardId === '' || root === null || root === '') {
+    return new Response('missing card or root', { status: 400, headers: JSON_HEADERS })
+  }
+  const all = await new BindingStore(root).all()
+  const managers: { sessionId: SessionId; kind: 'managed' | 'identity' }[] = []
+  await Promise.all(Object.entries(all).map(async ([sessionId, binding]) => {
+    const managed = binding.managed?.cardId === cardId
+    const identity = binding.identityCardId === cardId
+    if (!managed && !identity) return
+    if (await sessionRoot(ctx, sessionId as SessionId) !== root) return
+    managers.push({ sessionId: sessionId as SessionId, kind: managed ? 'managed' : 'identity' })
+  }))
+  return new Response(JSON.stringify({ managers }), { headers: JSON_HEADERS })
+}
+
 /** Register the binding HTTP route against the connection's fetch registry. */
 export function registerBindingRoutes(ctx: Context): void {
   ctx.effect(() => ctx.connection.fetch.register({
@@ -286,4 +317,10 @@ export function registerBindingRoutes(ctx: Context): void {
     requestBody: 'buffered',
     fetch: request => serve(request, ctx),
   }), 'noven-cards: /api/noven-bindings')
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/noven-card-managers',
+    methods: ['GET', 'HEAD'],
+    requestBody: 'buffered',
+    fetch: request => serveManagers(request, ctx),
+  }), 'noven-cards: /api/noven-card-managers')
 }

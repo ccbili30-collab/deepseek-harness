@@ -41,15 +41,13 @@ import { openWorkspaceFolder } from './workspace-folder.ts'
 import { cardCache } from './ui/retain.ts'
 import { forgetColdWhere } from './ui/cold-store.ts'
 import { Create } from './pages/Create.tsx'
-import { Me } from './pages/Me.tsx'
+import { MeHome, type LibraryFocus } from './pages/MeHome.tsx'
+import { CardPreview } from './card-page.tsx'
 import { Messages } from './pages/Messages.tsx'
-import { CardStudio } from './pages/CardStudio.tsx'
-import { ProjectPage } from './pages/Library.tsx'
-import type { ProjectRef } from './pages/Library.tsx'
-import { fetchLibrary, isMiscRoot, libraryOp, miscProjectRoot, projectOp, projectsCatalog, setMiscProjectRoot } from './library-api.ts'
-import type { LibraryOp, LibraryPayload, ProjectAddr, ProjectRow } from './library-api.ts'
+import { isMiscRoot, libraryOp, miscProjectRoot, projectOp, projectsCatalog, setMiscProjectRoot } from './library-api.ts'
+import type { ProjectAddr, ProjectRow } from './library-api.ts'
 import { cardOp, exportCardPackage, fetchCard, fetchCardList, type CardCommand } from './card-api.ts'
-import type { CardAddr, CardOp } from './card-api.ts'
+import type { CardAddr } from './card-api.ts'
 import { bindingOp, fetchBinding } from './bindings-api.ts'
 import type { BindingOp, BindingState } from './bindings-api.ts'
 import { ContextTab } from './tabs/Context.tsx'
@@ -97,9 +95,8 @@ export const HOME_ID = 'noven-home' as MainPanelId
 export const CREATE_ID = 'noven-create' as MainPanelId
 export const MESSAGES_ID = 'noven-messages' as MainPanelId
 export const ME_ID = 'noven-me' as MainPanelId
-export const CARD_EDITOR_ID = 'noven-card-editor' as MainPanelId
+export const CARD_PREVIEW_ID = 'noven-card-preview' as MainPanelId
 export const WORKBENCH_ID = 'noven-workbench' as MainPanelId
-export const LIBRARY_PROJECT_ID = 'noven-library-project' as MainPanelId
 export const CONTEXT_TAB_ID = 'noven:context'
 export const LIBRARY_TAB_ID = 'noven:library'
 export const SIDECAR_TAB_ID = 'noven:sidecar'
@@ -112,24 +109,35 @@ const SETTINGS_DEF_ID = 'noven-shell.session-settings'
 const CANVAS_KIND = 'noven.canvas'
 const CANVAS_DEF_ID = 'noven-shell.canvas'
 
-/** Which card the editor is showing — shared between 我的 and the editor entry. */
+/** Which card the reading layer is showing. */
 interface CardRef { readonly cardId: string; readonly sessionId?: SessionId; readonly root: string }
-export type MeTab = 'worlds' | 'characters' | 'library' | 'works'
 
-type ShellState = { card: CardRef | null; project: ProjectRef | null; meTab: MeTab }
+/** The three parallel interfaces inside 我的. */
+export type MeView = 'exhibit' | 'library' | 'works'
+
+type ShellState = {
+  preview: CardRef | null
+  libraryFocus: LibraryFocus | null
+  meView: MeView
+}
 type ShellActions = {
-  openCard: (draft: ShellState, ref: CardRef | null) => void
-  openProject: (draft: ShellState, ref: ProjectRef | null) => void
-  setMeTab: (draft: ShellState, tab: MeTab) => void
+  openPreview: (draft: ShellState, ref: CardRef | null) => void
+  closePreview: (draft: ShellState) => void
+  focusLibrary: (draft: ShellState, root: string) => void
+  setMeView: (draft: ShellState, view: MeView) => void
 }
 
 function createShellStore() {
   return defineStore<ShellState, ShellActions>({
-    init: () => ({ card: null, project: null, meTab: 'worlds' }),
+    init: () => ({ preview: null, libraryFocus: null, meView: 'exhibit' }),
     actions: {
-      openCard: (d, ref) => { d.card = ref },
-      openProject: (d, ref) => { d.project = ref },
-      setMeTab: (d, tab) => { d.meTab = tab },
+      openPreview: (d, ref) => { d.preview = ref },
+      closePreview: (d) => { d.preview = null },
+      focusLibrary: (d, root) => {
+        d.libraryFocus = { root, token: Date.now() }
+        d.meView = 'library'
+      },
+      setMeView: (d, view) => { d.meView = view },
     },
   })
 }
@@ -178,35 +186,50 @@ export interface SettingsTabInjected {
 /** The face main-panel inject factories hand to their pages. */
 interface ShellFace {
   readonly openCard: (id: string, addr: CardAddr) => void
+  readonly openPreview: (id: string, addr: CardAddr) => void
   readonly openPanel: (id: MainPanelId) => void
 }
 
 /** Injected face for 我的: the real card catalog plus the shared navigation face. */
-export interface MePageInjected extends ShellFace {
+export interface MePageInjected {
   readonly hooks: {
     readonly cards: ObservableSnapshot<readonly CardRow[]>
     readonly projects: ObservableSnapshot<readonly ProjectRow[]>
+    /** False until the first catalog pass settles; the page keeps a quiet skeleton until then. */
+    readonly catalogReady: ObservableSnapshot<boolean>
   }
-  readonly openProject: (row: { readonly sessionId?: SessionId; readonly root: string; readonly title: string }) => void
+  readonly onOpenPreview: (cardId: string, addr: CardAddr) => void
+  readonly onEditCard: (cardId: string, addr: CardAddr) => void
+  /** Switch between the three parallel interfaces. */
+  readonly setMeView: (view: MeView) => void
   /** 新建文件夹 flow: pick a parent directory, create `title` inside, register + open a workspace. */
-  readonly createProject: (title: string) => Promise<void>
+  readonly createProject: (title: string) => Promise<string | undefined>
   /** 从 Finder 选择 flow: pick an existing directory, register it as a project + workspace. */
-  readonly pickProject: () => Promise<void>
-  /** 移出创作库: drop the registry pointer; the on-disk directory is untouched. */
+  readonly pickProject: () => Promise<string | undefined>
+  /** Remove the library from the sidebar, keeping the folder and archiving its conversations. */
   readonly removeProject: (root: string) => Promise<void>
+  /** Move the whole folder to the system Trash, then remove its workspace and archive its conversations. */
+  readonly deleteProject: (root: string) => Promise<void>
   /** 重命名: project.json.title + the matching Workspace title — one name everywhere. */
   readonly renameProject: (root: string, title: string) => Promise<void>
-  /** Create a durable card of the kind, then open it in the editor. */
-  readonly newCard: (kind: 'world' | 'character', name: string) => void
-  /** Import a card package file into the workspace, then open it in the editor. */
-  readonly importCard: (file: File) => void
-  /** Selected catalog tab — shared state so other pages can aim a tab. */
-  readonly setMeTab: (tab: MeTab) => void
+  /** Create a durable card of the kind in the library, then open it in the editor. */
+  readonly newCard: (kind: 'world' | 'character', name: string, workspaceId?: WorkspaceId) => void
+  /** Import a card package file into the library, then open it in the editor. */
+  readonly importCard: (file: File, workspaceId?: WorkspaceId) => void
   /** Tile-menu actions on catalog cards. */
   readonly exportCard: (addr: CardAddr, cardId: string, name: string) => Promise<void>
-  readonly deleteCard: (addr: CardAddr, cardId: string) => Promise<void>
+  readonly deleteCard: (addr: CardAddr, cardId: string, name: string) => Promise<void>
   /** Relocate a card to another project workspace (the whole card directory moves). */
   readonly moveCard: (addr: CardAddr, cardId: string, target: ProjectAddr) => Promise<void>
+}
+
+/** Injected face for the read-only card preview: load, navigate, edit, export and delete. */
+interface PreviewPageInjected {
+  readonly loadCard: (addr: CardAddr, cardId: string) => Promise<import('./card-api.ts').CardState | undefined>
+  readonly back: () => void
+  readonly edit: (cardId: string, addr: CardAddr) => void
+  readonly exportCard: (cardId: string, addr: CardAddr, name: string) => void
+  readonly deleteCard: (cardId: string, addr: CardAddr, name: string) => void
 }
 
 /** Injected face for 创作: blank-host ensure, conversation reveal, card creation, and the drafts catalog. */
@@ -225,39 +248,15 @@ export interface CreatePageInjected extends ShellFace {
   readonly startHandcraft: (workspaceId: WorkspaceId | undefined, source: HTMLElement) => Promise<boolean>
 }
 
-/** Injected face for the project page: the manifest observable plus mutation/read callbacks. */
-export interface ProjectPageInjected {
-  readonly hooks: {
-    readonly library: ObservableSnapshot<LibraryPayload | undefined>
-    readonly cards: ObservableSnapshot<readonly CardRow[]>
-  }
-  readonly op: (addr: ProjectAddr, op: LibraryOp, baseRevision?: number) => Promise<void>
-  readonly readText: (addr: ProjectAddr, path: string) => Promise<string>
-  readonly sessionTitle: (sessionId: SessionId) => string | undefined
-  readonly openCard: (id: string, addr: CardAddr) => void
-  readonly back: () => void
-}
-
-/** Injected face for the card editor: the `/api/noven-cards` state reader plus the shared op channel. */
-export interface EditorPageInjected {
-  readonly loadCard: (addr: CardAddr, cardId: string) => Promise<import('./card-api.ts').CardState | undefined>
-  readonly cardOp: (addr: CardAddr, op: CardOp) => Promise<import('./card-api.ts').CardOpResult>
-  readonly workspaceRoot: (addr: CardAddr) => string
-  /** Breadcrumb navigation: switch to 我的 on the tab matching the card kind. */
-  readonly back: (tab: 'worlds' | 'characters') => void
-}
-
 type PageProps = PropsRuntime<'main'> & PropsLocale<'novenShell'> & PropsRenderFactories
 type FacePageProps = PageProps & InjectFace<ShellFace>
-type EditorPageProps = PageProps & PropsStore<ReturnType<typeof createShellStore>>
 type TabBodyProps = PropsRuntime<'sidebar.right.pane.tab'> & PropsLocale<'novenShell'>
 type WorkspaceMenuItemProps = PropsRuntime<'sidebar.workspaces.workspace.menu.item'> & PropsLocale<'novenShell'>
 
-/** Injected share of the workspace-row ⋯ menu's 创作库 membership entry. */
+/** Injected share of the workspace-row ⋯ menu's 创作库 entry. */
 export interface WorkspaceLibraryInjected {
-  readonly hooks: { readonly projects: ObservableSnapshot<readonly ProjectRow[]> }
-  /** Register or unregister the workspace root; the row passes the direction it displayed. */
-  readonly setMembership: (root: string, registered: boolean) => Promise<void>
+  /** Reveal this folder's library section on 我的. */
+  readonly openLibrary: (root: string) => void
 }
 
 /** Host directory opener supplied to the workspace menu. */
@@ -279,22 +278,19 @@ function WorkspaceFolderItem({ path, useMenuOpenState, openFolder, t }: Workspac
   )
 }
 
-/** Workspace ⋯ menu row: 移入创作库 while the root is unregistered, 移出创作库 once it is. */
-function WorkspaceLibraryItem({ path, useMenuOpenState, useProjects, setMembership, t }: WorkspaceMenuItemProps & InjectFace<WorkspaceLibraryInjected>) {
+/** Workspace ⋯ menu row: reveal this folder's library section on 我的. */
+function WorkspaceLibraryItem({ path, useMenuOpenState, openLibrary, t }: WorkspaceMenuItemProps & InjectFace<WorkspaceLibraryInjected>) {
   const [, setMenuOpen] = useMenuOpenState()
-  const row = useProjects(rows => path !== undefined ? rows.find(r => r.root === path) : undefined)
-  const registered = row !== undefined
-  // 杂项项目：没有「移出创作库」；只在它意外失登（迁移前的状态）时允许补登。
-  if (path === undefined || (isMiscRoot(path) && registered)) return null
+  if (path === undefined || path.trim() === '') return null
   return (
     <MenuItemButton
       icon={glyph.book(16)}
       onSelect={() => {
         setMenuOpen(false)
-        setMembership(path, registered).catch((reason: unknown) => { console.warn('noven-shell: library membership failed:', reason) })
+        openLibrary(path)
       }}
     >
-      {t(registered ? 'lib.project.remove' : 'lib.project.add')}
+      {t('me.home.openLibrary')}
     </MenuItemButton>
   )
 }
@@ -412,16 +408,22 @@ export interface CardRow {
  * independent copies (drafts and revisions diverge). Refetches whenever the
  * session list or the project registry moves.
  */
-function cardCatalog(sessions: ClientContext['sessions'], projects: ObservableSnapshot<readonly ProjectRow[]>) {
+function cardCatalog(sessions: ClientContext['sessions'], projects: ObservableSnapshot<readonly ProjectRow[]>, workspaces?: IWorkspaces) {
   let snapshot: readonly CardRow[] = []
+  let ready = false
   const listeners = new Set<() => void>()
+  const readyListeners = new Set<() => void>()
   let started = false
   let generation = 0
   const compute = async () => {
     const gen = ++generation
     const state = sessions.list.getSnapshot()
+    const archived = new Set(workspaces?.list.getSnapshot().archivedSessionIds ?? [])
     const byRoot = new Map<string, SessionId | undefined>()
     for (const id of state.ids) {
+      // Archived conversations keep their cwd on disk but are no longer a
+      // library surface; a deleted library must not keep its cards alive here.
+      if (archived.has(id)) continue
       const cwd = state.byId[id]?.cwd
       if (cwd !== undefined && cwd.length > 0 && !byRoot.has(cwd)) byRoot.set(cwd, id)
     }
@@ -429,19 +431,28 @@ function cardCatalog(sessions: ClientContext['sessions'], projects: ObservableSn
       if (!byRoot.has(project.root)) byRoot.set(project.root, undefined)
     }
     const titleByRoot = new Map(projects.getSnapshot().map(p => [p.root, p.title] as const))
-    const rows: CardRow[] = []
-    for (const [root, sessionId] of byRoot) {
+    // Roots are independent stores; fetching them in parallel keeps 我的 from
+    // flashing an empty gallery while several libraries load in sequence.
+    const groups = await Promise.all([...byRoot].map(async ([root, sessionId]): Promise<CardRow[]> => {
       const projectTitle = titleByRoot.get(root) ?? root.split('/').pop() ?? root
-      for (const row of await fetchCardList({ root })) {
-        rows.push({ ...row, sessionId, workspaceRoot: root, projectTitle })
-      }
-    }
+      return (await fetchCardList({ root })).map(row => ({ ...row, sessionId, workspaceRoot: root, projectTitle }))
+    }))
     if (gen !== generation) return
-    snapshot = rows
+    snapshot = groups.flat()
+    ready = true
     for (const listener of listeners) listener()
+    for (const listener of readyListeners) listener()
   }
   return {
     getSnapshot: () => snapshot,
+    ready: {
+      getSnapshot: () => ready,
+      subscribe: (listener: () => void) => {
+        readyListeners.add(listener)
+        if (!started) { started = true; void compute() }
+        return () => { readyListeners.delete(listener) }
+      },
+    },
     /** Card ops (create/import/delete) don't move the session list — refresh on demand. */
     refresh: () => { void compute() },
     subscribe: (listener: () => void) => {
@@ -449,7 +460,8 @@ function cardCatalog(sessions: ClientContext['sessions'], projects: ObservableSn
       if (!started) { started = true; void compute() }
       const a = sessions.list.subscribe(() => { void compute() })
       const b = projects.subscribe(() => { void compute() })
-      return () => { listeners.delete(listener); if (listeners.size === 0) { a(); b() } }
+      const c = workspaces?.list.subscribe(() => { void compute() })
+      return () => { listeners.delete(listener); if (listeners.size === 0) { a(); b(); c?.() } }
     },
   }
 }
@@ -865,35 +877,6 @@ function simTranscriptSource(sessions: ClientContext['sessions'], canvas: Canvas
   }
 }
 
-/** The manifest for the project the store currently names; refetches when the selection or the document moves. */
-function currentLibrary(store: { getSnapshot: () => ShellState; subscribe: (fn: () => void) => () => void }): ObservableSnapshot<LibraryPayload | undefined> & { readonly refresh: () => void } {
-  let snapshot: LibraryPayload | undefined
-  const listeners = new Set<() => void>()
-  let started = false
-  let generation = 0
-  const pull = async () => {
-    const gen = ++generation
-    const project = store.getSnapshot().project
-    const payload = project === null ? undefined : await fetchLibrary(project)
-    if (gen !== generation) return
-    snapshot = payload
-    for (const listener of listeners) listener()
-  }
-  return {
-    getSnapshot: () => snapshot,
-    refresh: () => { void pull() },
-    subscribe: (listener: () => void) => {
-      listeners.add(listener)
-      if (!started) {
-        started = true
-        store.subscribe(() => { void pull() })
-        void pull()
-      }
-      return () => { listeners.delete(listener) }
-    },
-  }
-}
-
 /**
  * Per-session card-context bindings, cached so the list sub-line, the header
  * chips, and the 本会话 tab share one fetch per session. `refresh` repulls;
@@ -1180,8 +1163,7 @@ export function apply(ctx: ClientContext): void {
   const instance = handle.create()
   const store: typeof handle = { ...handle, create: () => instance }
   const projects = projectsCatalog(ctx.sessions)
-  const cards = cardCatalog(ctx.sessions, projects)
-  const library = currentLibrary(instance)
+  const cards = cardCatalog(ctx.sessions, projects, ctx.workspaces)
   const bindings = bindingCache(ctx.sessions)
   const allBindings = bindingsCatalog(bindings, ctx.sessions)
   const sidecars = new Map<SessionId, ReturnType<typeof sidecarSource>>()
@@ -1201,31 +1183,20 @@ export function apply(ctx: ClientContext): void {
   const rootOf = (addr: CardAddr): string =>
     addr.root ?? (addr.sessionId !== undefined ? ctx.sessions.list.getSnapshot().byId[addr.sessionId]?.cwd ?? '' : '')
 
+  const openPanelImpl = (id: MainPanelId): void => {
+    capturePanelGhost()
+    try { ctx.layout.selectPanel(id) } catch { /* panel not registered */ }
+  }
   const face: ShellFace = {
     openCard: (id, addr) => {
-      instance.actions.openCard({ cardId: id, sessionId: addr.sessionId, root: rootOf(addr) })
       openCanvasCard(id, { sessionId: addr.sessionId, root: rootOf(addr) }, undefined, addr.sessionId)
     },
-    openPanel: (id) => {
-      capturePanelGhost()
-      const current = ctx.layout.panelInfo.getSnapshot().activePanelId
-      try {
-        ctx.layout.selectPanel(id)
-        panelTrail.push(current)
-        if (panelTrail.length > 8) panelTrail.shift()
-      } catch { /* panel not registered */ }
+    openPreview: (id, addr) => {
+      const root = rootOf(addr)
+      instance.actions.openPreview({ cardId: id, sessionId: addr.sessionId, root })
+      openPanelImpl(CARD_PREVIEW_ID)
     },
-  }
-  /** 面板轨迹：openPanel 入栈来路，页面「返回」弹栈还原（树→创作库即回画布）。 */
-  const panelTrail: (MainPanelId | null)[] = []
-  const backPanel = (): void => {
-    const target = panelTrail.pop() ?? ME_ID
-    capturePanelGhost()
-    try { ctx.layout.selectPanel(target) } catch { /* panel not registered */ }
-  }
-  const openProject = (row: { readonly sessionId?: SessionId; readonly root: string; readonly title: string }) => {
-    instance.actions.openProject({ sessionId: row.sessionId, root: row.root, title: row.title })
-    face.openPanel(LIBRARY_PROJECT_ID)
+    openPanel: openPanelImpl,
   }
 
   /** 选定工作区的根路径；未选或未登记时回退 undefined（走最近会话路径）。 */
@@ -1622,6 +1593,117 @@ export function apply(ctx: ClientContext): void {
           ? fmt(t, 'ui.receipt.failed', { name })
           : fmt(t, 'ui.receipt.failedReason', { name, reason: detail }) })
       })
+  }
+
+  /** Delete one catalog card with an undo receipt; used by 我的 cards and the preview. */
+  const deleteCatalogCard = async (addr: CardAddr, cardId: string, name: string): Promise<void> => {
+    await cardOp(addr, { op: 'delete', cardId })
+    cardCache.put(addr, cardId, undefined)
+    cards.refresh()
+    notifyUndo({
+      text: fmt(t, 'ui.receipt.cardDeleted', { name }),
+      undoLabel: t('ui.undo'),
+      undo: () => {
+        void cardOp(addr, { op: 'restore', cardId })
+          .then(() => { cards.refresh() })
+          .catch((reason: unknown) => { console.warn('noven-shell: card restore failed:', reason) })
+      },
+    })
+  }
+
+  /** Archive every conversation accounted to a workspace and drop its sidebar registration. */
+  const archiveWorkspace = async (root: string): Promise<void> => {
+    const workspacesSvc = ctx.get('workspaces') as IWorkspaces | undefined
+    const workspace = workspacesSvc?.list.getSnapshot().items.find(candidate => candidate.path === root)
+    if (workspacesSvc === undefined || workspace === undefined) return
+    for (const sessionId of workspace.sessionIds) {
+      await workspacesSvc.archiveSession(sessionId, { stopActivity: true }).catch((reason: unknown) => {
+        console.warn('noven-shell: archive library session failed:', reason)
+      })
+    }
+    await workspacesSvc.delete(workspace.workspaceId).catch((reason: unknown) => {
+      console.warn('noven-shell: delete library workspace failed:', reason)
+    })
+  }
+
+  /** 从侧栏移出: drop the workspace and archive its conversations; the folder stays. */
+  const removeLibraryFromSidebar = async (root: string): Promise<void> => {
+    if (isMiscRoot(root)) return
+    await archiveWorkspace(root)
+    await projectOp({ op: 'unregister', root }).catch(() => undefined)
+    forgetCachedTree(root)
+    forgetColdWhere('card', key => key.startsWith(`${root}::`))
+    cards.refresh()
+    projects.refresh()
+  }
+
+  /** 删除创作库: move the folder to the system Trash, then drop the workspace and archive its conversations. */
+  const trashLibrary = async (root: string): Promise<void> => {
+    if (isMiscRoot(root)) return
+    await projectOp({ op: 'trash', root })
+    await archiveWorkspace(root)
+    forgetCachedTree(root)
+    forgetColdWhere('card', key => key.startsWith(`${root}::`))
+    cards.refresh()
+    projects.refresh()
+  }
+
+  /**
+   * 编辑一张卡：管理/身份会话优先，其次这个库最近的真实会话，最后才新建一个。
+   * openSession 用 transition:'none' 直切，排布按 IDE 种子落地。
+   */
+  const editCardInSession = async (cardId: string, addr: CardAddr): Promise<void> => {
+    const root = rootOf(addr)
+    const sessions = ctx.sessions.list.getSnapshot()
+    const workspacesSvc = ctx.get('workspaces') as IWorkspaces | undefined
+    const archived = new Set(workspacesSvc?.list.getSnapshot().archivedSessionIds ?? [])
+    const current = ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined
+    const active = (id: SessionId): boolean => sessions.byId[id] !== undefined && !archived.has(id)
+    interface Manager { readonly sessionId: SessionId; readonly kind: 'managed' | 'identity' }
+    let managers: readonly Manager[] = []
+    try {
+      const response = await fetch(`/api/noven-card-managers?card=${encodeURIComponent(cardId)}&root=${encodeURIComponent(root)}`)
+      if (response.ok) {
+        const body = await response.json() as { managers?: readonly Manager[] }
+        managers = body.managers ?? []
+      }
+    } catch { /* the reverse lookup is optional; the workspace fallback still works */ }
+    const rank = (manager: Manager): number => sessions.byId[manager.sessionId]?.updatedAt ?? 0
+    const ordered = [...managers]
+      .filter(manager => active(manager.sessionId))
+      .sort((left, right) => left.kind === right.kind ? rank(right) - rank(left) : left.kind === 'managed' ? -1 : 1)
+    let target = current !== undefined && ordered.some(manager => manager.sessionId === current)
+      ? current
+      : ordered[0]?.sessionId
+    if (target === undefined) {
+      let best: { readonly id: SessionId; readonly at: number } | undefined
+      for (const id of sessions.ids) {
+        const row = sessions.byId[id]
+        if (row?.cwd !== root || row.blank === true || !active(id)) continue
+        if (best === undefined || row.updatedAt > best.at) best = { id, at: row.updatedAt }
+      }
+      if (best !== undefined) target = best.id
+    }
+    let created = false
+    if (target === undefined) {
+      target = await createSessionIn(root)
+      created = true
+    }
+    if (current !== target) {
+      ;(ctx.uiWorkspace.openSession as (id: SessionId, options?: { transition?: 'none' }) => void)(target, { transition: 'none' })
+      await new Promise<void>(resolve => { window.setTimeout(resolve, 250) })
+    }
+    applyArrangement(arrangementDeps(), target, 'ide')
+    ctx.layout.setSidebarCollapsed?.(true)
+    ctx.layout.setUnitSide?.('left')
+    setCanvasParked(target, false)
+    openCanvasCard(cardId, { sessionId: target, root }, undefined, target)
+    if (created) {
+      await bindingOp(target, { op: 'set-managed', cardId, permission: 'free' }).catch((reason: unknown) => {
+        console.warn('noven-shell: set managed card failed:', reason)
+      })
+      notifyUndo({ text: t('me.preview.createdSession') })
+    }
   }
 
   /** 拿一个能读写文件的会话：绑定会话优先，其次最近工作区会话，最后按当前项目现建并绑定。 */
@@ -2122,7 +2204,6 @@ export function apply(ctx: ClientContext): void {
           canvasInstance.actions.close(sessionId, `doc:${path}`)
           canvasInstance.actions.close(sessionId, `work:${path}`)
           treeSource.refresh()
-          library.refresh()
           notifyUndo({ text: fmt(t, result.ok ? 'ui.receipt.fileDeleted' : 'ui.receipt.fileGone', { name }) })
         })()
       },
@@ -2214,18 +2295,19 @@ export function apply(ctx: ClientContext): void {
           .catch((reason: unknown) => { console.warn('noven-shell: module create failed:', reason) })
       },
       openProject: () => {
-        const focus = focusSnapshot
-        if (focus === undefined) return
-        openProject({ sessionId: focus.sessionId, root: focus.root, title: focus.title ?? focus.root.split('/').filter(Boolean).pop() ?? focus.root })
+        const root = focusSnapshot?.root
+        if (root === undefined) return
+        instance.actions.focusLibrary(root)
+        face.openPanel(ME_ID)
       },
       renameWork: (workId, title) => {
         void libraryOp({ sessionId, root: focusSnapshot?.root }, { op: 'rename-work', workId, title })
-          .then(() => { treeSource.refresh(); library.refresh() })
+          .then(() => { treeSource.refresh() })
           .catch((reason: unknown) => { console.warn('noven-shell: work rename failed:', reason) })
       },
       dropWork: (workId, title) => {
         void libraryOp({ sessionId, root: focusSnapshot?.root }, { op: 'unregister', workId })
-          .then(() => { treeSource.refresh(); library.refresh(); notifyUndo({ text: fmt(t, 'ui.receipt.workDropped', { name: title }) }) })
+          .then(() => { treeSource.refresh(); notifyUndo({ text: fmt(t, 'ui.receipt.workDropped', { name: title }) }) })
           .catch((reason: unknown) => { console.warn('noven-shell: work unregister failed:', reason); notifyUndo({ text: fmt(t, 'ui.receipt.failed', { name: title }) }) })
       },
       /* 批量写必须串行：同父目录的 .noven.json 与 library.json 都是
@@ -2269,7 +2351,6 @@ export function apply(ctx: ClientContext): void {
             }
           }
           treeSource.refresh()
-          library.refresh()
           notifyUndo({
             text: failed.size === 0
               ? fmt(t, 'ui.receipt.selDeleted', { n: items.length })
@@ -2477,100 +2558,88 @@ export function apply(ctx: ClientContext): void {
     yield ctx.slots.register({ name: 'main', key: MESSAGES_ID, locale: NS },
       (p: PageProps) => <Messages t={p.t} />)
     yield ctx.slots.register({ name: 'main', key: ME_ID, locale: NS, store, inject: (): MePageInjected => ({
-      ...face,
-      hooks: { cards, projects },
-      openProject,
-      // 新增项目 = 注册表 + 工作区同时出现：注册表是创作库的根，Workspace
-      // 实体让侧栏立刻认出同一目录。两边任一已存在都是幂等的。
+      hooks: { cards, projects, catalogReady: cards.ready },
+      onOpenPreview: face.openPreview,
+      onEditCard: editCardInSession,
+      setMeView: view => { instance.actions.setMeView(view) },
+      // 新增项目 = 注册表 + 工作区同时出现：侧栏文件夹就是创作库的成员，注册表只留元数据。
       createProject: async (title) => {
         const parent = await ctx.uiWorkspace.pickDirectory()
-        if (parent === null) return
+        if (parent === null) return undefined
         const root = await ctx.uiWorkspace.createDirectory(parent, title)
         await projectOp({ op: 'create', root, title })
         await (ctx.get('workspaces') as IWorkspaces | undefined)?.create({ path: root }).catch(() => undefined)
         projects.refresh()
+        return root
       },
       pickProject: async () => {
         const root = await ctx.uiWorkspace.pickDirectory()
-        if (root === null) return
+        if (root === null) return undefined
         await projectOp({ op: 'create', root })
         await (ctx.get('workspaces') as IWorkspaces | undefined)?.create({ path: root }).catch(() => undefined)
         projects.refresh()
+        return root
       },
-      removeProject: async (root) => {
-        if (isMiscRoot(root)) return
-        await projectOp({ op: 'unregister', root })
-        // The project is gone: drop its persisted tree snapshot so a re-created
-        // folder with the same path never flashes the old world on reload.
-        forgetCachedTree(root)
-        // Cold card/transcript snapshots are keyed with the project root in
-        // their address — drop every entry belonging to the removed project.
-        forgetColdWhere('card', key => key.startsWith(`${root}::`))
-        projects.refresh()
-      },
+      removeProject: removeLibraryFromSidebar,
+      deleteProject: trashLibrary,
       // 项目名的权威是注册表 title：rename 写注册表（顺带刷纹身备份），再单向
       // 推到 Workspace 行；反向（侧栏改名 → 注册表）由下面的 workspaces.list 桥负责。
       renameProject: async (root, title) => {
         if (isMiscRoot(root)) return
-        await projectOp({ op: 'rename', root, title })
-        const ws = (ctx.get('workspaces') as IWorkspaces | undefined)?.list.getSnapshot().items.find(w => w.path === root)
-        if (ws !== undefined && ws.title !== title) {
-          await (ctx.get('workspaces') as IWorkspaces).rename(ws.workspaceId, title).catch(() => undefined)
+        const workspacesSvc = ctx.get('workspaces') as IWorkspaces | undefined
+        const ws = workspacesSvc?.list.getSnapshot().items.find(w => w.path === root)
+        if (workspacesSvc !== undefined && ws !== undefined && ws.title !== title) {
+          await workspacesSvc.rename(ws.workspaceId, title).catch((reason: unknown) => {
+            console.warn('noven-shell: rename library workspace failed:', reason)
+          })
         }
+        await projectOp({ op: 'rename', root, title }).catch((reason: unknown) => {
+          console.warn('noven-shell: rename project metadata failed:', reason)
+        })
         projects.refresh()
       },
       newCard,
       importCard,
-      setMeTab: tab => { instance.actions.setMeTab(tab) },
       exportCard: (addr, cardId, name) => exportCardPackage(addr, cardId, name),
-      deleteCard: (addr, cardId) => cardOp(addr, { op: 'delete', cardId })
-        .then(() => { cardCache.put(addr, cardId, undefined); cards.refresh() }),
+      deleteCard: deleteCatalogCard,
       moveCard: (addr, cardId, target) => cardOp(addr, { op: 'move', cardId, targetSession: target.sessionId, targetRoot: target.root })
         .then(() => { cards.refresh() }),
     }) }, (p: PageProps & PropsStore<ReturnType<typeof createShellStore>> & InjectFace<MePageInjected>) => (
-      <Me t={p.t} useCards={p.useCards} useProjects={p.useProjects} useStore={p.useStore}
-        onTab={p.setMeTab} onOpenCard={p.openCard}
-        onOpenPanel={p.openPanel} onOpenProject={p.openProject}
-        onCreateProject={p.createProject} onPickProject={p.pickProject} onRemoveProject={p.removeProject} onRenameProject={p.renameProject}
+      <MeHome t={p.t} useCards={p.useCards} useProjects={p.useProjects} useCatalogReady={p.useCatalogReady} useWorkspaces={p.useWorkspaces} useStore={p.useStore}
+        onOpenPreview={p.onOpenPreview} onEditCard={p.onEditCard} onSetView={p.setMeView}
+        onCreateProject={p.createProject} onPickProject={p.pickProject}
+        onRemoveProject={p.removeProject} onDeleteProject={p.deleteProject} onRenameProject={p.renameProject}
         onNewCard={p.newCard} onImportCard={p.importCard}
         onExportCard={p.exportCard} onDeleteCard={p.deleteCard} onMoveCard={p.moveCard} />
     ))
-    yield ctx.slots.register({ name: 'main', key: CARD_EDITOR_ID, locale: NS, store,
-      inject: (): EditorPageInjected => ({
+    yield ctx.slots.register({ name: 'main', key: CARD_PREVIEW_ID, locale: NS, store,
+      inject: (): PreviewPageInjected => ({
         loadCard: (addr, cardId) => fetchCard(addr, cardId),
-        cardOp: async (addr, op) => cardOp(addr, op),
-        workspaceRoot: (addr) => rootOf(addr),
-        back: tab => { instance.actions.setMeTab(tab); face.openPanel(ME_ID) },
-      }),
-    }, (p: EditorPageProps & InjectFace<EditorPageInjected>) => (
-      <CardStudio t={p.t} useStore={p.useStore} loadCard={p.loadCard} op={p.cardOp}
-        workspaceRoot={p.workspaceRoot} back={p.back} />
-    ))
-    yield ctx.slots.register({ name: 'main', key: LIBRARY_PROJECT_ID, locale: NS, store,
-      inject: (): ProjectPageInjected => ({
-        hooks: { library, cards },
-        op: async (addr, op, baseRevision) => {
-          await libraryOp(addr, { ...op, baseRevision })
-          library.refresh()
-          projects.refresh()
+        back: () => { instance.actions.closePreview(); face.openPanel(ME_ID) },
+        edit: (cardId, addr) => { void editCardInSession(cardId, addr) },
+        exportCard: (cardId, addr, name) => {
+          void exportCardPackage(addr, cardId, name).catch((reason: unknown) => {
+            console.warn('noven-shell: export card failed:', reason)
+          })
         },
-        readText: async (addr, path) => {
-          if (addr.sessionId !== undefined) {
-            const page = await ctx.remote.workspaceFiles.read(addr.sessionId, path, {}, new AbortController().signal).catch(() => undefined)
-            return page !== undefined && page.ok ? page.value.text : ''
-          }
-          const response = await fetch(`/api/file?path=${encodeURIComponent(`${addr.root ?? ''}/${path}`)}`).catch(() => undefined)
-          return response !== undefined && response.ok ? response.text() : ''
+        deleteCard: (cardId, addr, name) => {
+          instance.actions.closePreview()
+          face.openPanel(ME_ID)
+          void deleteCatalogCard(addr, cardId, name).catch((reason: unknown) => {
+            console.warn('noven-shell: preview card delete failed:', reason)
+          })
         },
-        sessionTitle: (sessionId) => ctx.sessions.list.getSnapshot().byId[sessionId]?.displayTitle,
-        openCard: face.openCard,
-        back: backPanel,
       }),
-    }, (p: PageProps & PropsStore<typeof handle> & InjectFace<ProjectPageInjected>) => (
-      <ProjectPage t={p.t} project={p.useStore(s => s.project) ?? undefined}
-        useLibrary={p.useLibrary} useCards={p.useCards} op={p.op} readText={p.readText}
-        sessionTitle={p.sessionTitle} onOpenCard={p.openCard} onBack={p.back} />
-    ))
+    }, (p: PageProps & PropsStore<ReturnType<typeof createShellStore>> & InjectFace<PreviewPageInjected>) => {
+      const preview = p.useStore(state => state.preview)
+      if (preview === null) return <div className="nv-canvas-missing">{p.t('cardpage.missing')}</div>
+      return (
+        <CardPreview key={`${preview.root}:${preview.sessionId ?? ''}:${preview.cardId}`}
+          addr={{ root: preview.root, sessionId: preview.sessionId }} cardId={preview.cardId} t={p.t}
+          loadCard={p.loadCard} onBack={p.back} onEdit={p.edit}
+          onExport={p.exportCard} onDelete={p.deleteCard} />
+      )
+    })
   })
 
   // Right-rail tab types register in two stages: the type definition into
@@ -2687,16 +2756,14 @@ export function apply(ctx: ClientContext): void {
       }),
     }),
   }, WorkspaceFolderItem)), 'noven-shell: workspace folder row')
-  // Workspace ⋯ menu membership row: 移入 writes project.json when absent and
-  // registers the root; 移出 lifts only the registry pointer — files and the
-  // Workspace itself stay untouched.
+  // Workspace ⋯ menu: reveal this folder's library section on 我的. Membership
+  // is the Workspace itself, so there is no separate register/unregister row.
   ctx.effect(() => ctx.slots.inject('sidebar.workspaces.workspace.menu.item', () => ctx.slots.register({
-    name: 'sidebar.workspaces.workspace.menu.item', id: 'library-membership', order: 100, locale: NS,
+    name: 'sidebar.workspaces.workspace.menu.item', id: 'open-library', order: 100, locale: NS,
     inject: (): WorkspaceLibraryInjected => ({
-      hooks: { projects },
-      setMembership: async (root, registered) => {
-        await projectOp({ op: registered ? 'unregister' : 'create', root })
-        projects.refresh()
+      openLibrary: (root) => {
+        instance.actions.focusLibrary(root)
+        face.openPanel(ME_ID)
       },
     }),
   }, WorkspaceLibraryItem)), 'noven-shell: workspace 创作库 row')

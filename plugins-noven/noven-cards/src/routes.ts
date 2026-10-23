@@ -304,7 +304,12 @@ async function cardRow(store: CardStore, cardId: string): Promise<Record<string,
   const candidates: { module: string; ref: string }[] = []
   const collect = (mods: readonly ContentModule[]): void => {
     for (const m of mods) {
-      for (const b of m.blocks) if (b.kind === 'text') candidates.push({ module: m.name, ref: b.content })
+      const widget = m.widget?.type
+      // Structured widgets keep their payload in the first text block (JSON,
+      // HTML source). Only prose modules feed the tile excerpt.
+      if (widget === undefined || widget === 'overview' || widget === 'document') {
+        for (const b of m.blocks) if (b.kind === 'text') candidates.push({ module: m.name, ref: b.content })
+      }
       collect(m.children)
     }
   }

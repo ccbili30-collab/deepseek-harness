@@ -8,7 +8,7 @@
  */
 import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
-import type { ShellT } from './Home.tsx'
+import { fmt, type ShellT } from './Home.tsx'
 import type { NovenShellLocaleKey } from '../locales.ts'
 import { asset } from '../data.ts'
 import { glyph } from '../icons.tsx'
@@ -21,6 +21,8 @@ interface Props {
   readonly onClose: () => void
   /** Prefilled name for the naming step, e.g. "新建世界 1". */
   readonly defaultName: string
+  /** Library title the card will be created in; omitted when no folder is selected. */
+  readonly target?: string
   /** Naming step finished — the caller creates the card and opens the editor. */
   readonly onCreate: (name: string) => void
   /** A package file was picked — the caller imports it and opens the editor. */
@@ -31,7 +33,7 @@ interface Props {
 const CHOOSE_MS = 420
 
 /** The floating chooser: two tilted cards — create or import. */
-export function CardPick({ t, kind, onClose, defaultName, onCreate, onImport }: Props) {
+export function CardPick({ t, kind, onClose, defaultName, target, onCreate, onImport }: Props) {
   const [chosen, setChosen] = useState<'new' | 'import' | null>(null)
   const [naming, setNaming] = useState(false)
   const [name, setName] = useState('')
@@ -136,6 +138,11 @@ export function CardPick({ t, kind, onClose, defaultName, onCreate, onImport }: 
         <span className="nv-pick-title-star" aria-hidden="true">{glyph.sparkle(15)}</span>
         {t(title)}
       </div>
+      {target !== undefined && target !== '' && (
+        <div className="nv-pick-target" onClick={e => e.stopPropagation()}>
+          {fmt(t, 'me.home.pickTarget', { title: target })}
+        </div>
+      )}
       <div className="nv-pick-stage">
         {card('new', 'pick-create.webp')}
         {card('import', 'pick-import.webp')}

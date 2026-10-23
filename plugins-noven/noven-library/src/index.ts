@@ -8,6 +8,7 @@
  */
 import { mkdir, readdir, stat } from 'node:fs/promises'
 import { join } from 'node:path'
+import trash from 'trash'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import type {} from '@deepseek-ai/dsh-session'
@@ -416,6 +417,18 @@ async function serveProjects(request: Request, ctx: Context): Promise<Response> 
       if (!(await dirExists(root))) return bad(`directory does not exist: ${root}`)
       await renameProject(root, title)
       return new Response(JSON.stringify({ ok: true, row: await projectRow(await registryRow(root) ?? { root }) }), { headers: JSON_HEADERS })
+    }
+    case 'trash': {
+      if (isMiscProjectRoot(root)) return bad('misc project cannot be deleted')
+      if (!(await dirExists(root))) return bad(`directory does not exist: ${root}`)
+      try {
+        await trash(root)
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error)
+        return new Response(`trash failed: ${detail}`, { status: 500, headers: JSON_HEADERS })
+      }
+      await unregisterProject(root).catch(() => undefined)
+      return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS })
     }
     case 'create': {
       const title = String(body.title ?? '').trim() || root.split('/').pop() || root
