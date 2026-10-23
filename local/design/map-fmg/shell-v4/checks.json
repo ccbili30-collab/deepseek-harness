@@ -1,0 +1,95 @@
+{
+  "checks": [
+    {
+      "name": "starts as a sea sheet",
+      "ok": true,
+      "detail": "{\"stage\":\"海面\",\"counts\":\"底层 · 高度图视图 · 预览\",\"heightActive\":true,\"primaryHidden\":true,\"stepsVisible\":false,\"mapBg\":\"rgb(207, 226, 238)\",\"brush\":\"底层\"}"
+    },
+    {
+      "name": "no stage bar and no finalize button",
+      "ok": true,
+      "detail": "{\"stage\":\"海面\",\"counts\":\"底层 · 高度图视图 · 预览\",\"heightActive\":true,\"primaryHidden\":true,\"stepsVisible\":false,\"mapBg\":\"rgb(207, 226, 238)\",\"brush\":\"底层\"}"
+    },
+    {
+      "name": "base brush active by default",
+      "ok": true,
+      "detail": "底层"
+    },
+    {
+      "name": "loaded map starts on the render view without overlays",
+      "ok": true,
+      "detail": "{\"base\":\"geo\",\"statesOn\":false,\"cultsOn\":false,\"heightDisabled\":false,\"brush\":\"底层\"}"
+    },
+    {
+      "name": "height view is independent of the overlay choice",
+      "ok": true,
+      "detail": "{\"base\":\"height\",\"heightOn\":true,\"biomesOn\":false,\"statesOn\":false,\"cultsOn\":false}"
+    },
+    {
+      "name": "state overlay is one transparent layer over the base",
+      "ok": true,
+      "detail": "{\"statesOn\":true,\"cultsOn\":false,\"base\":\"geo\",\"brush\":\"国家\",\"opacity\":\"0.34\"}"
+    },
+    {
+      "name": "state brush paints cells into the target",
+      "ok": true,
+      "detail": "{\"state\":1,\"target\":1,\"area\":15887}"
+    },
+    {
+      "name": "state brush erases cells",
+      "ok": true,
+      "detail": "{\"eraseCell\":45,\"erased\":0}"
+    },
+    {
+      "name": "culture replaces the state overlay",
+      "ok": true,
+      "detail": "{\"statesOn\":false,\"cultsOn\":true,\"brush\":\"文化\",\"base\":\"geo\"}"
+    },
+    {
+      "name": "culture brush paints cells into the target",
+      "ok": true,
+      "detail": "{\"culture\":1,\"target\":1}"
+    },
+    {
+      "name": "culture click opens a small card",
+      "ok": true,
+      "detail": "{\"name\":\"Slovan\",\"facts\":\"面积1,477,488 mi²覆盖国家Trubcia、Rylia、Hoven、Kolokia、Cherenia、Eganwen、Vologoki、Ceciania、Peboria\"}"
+    },
+    {
+      "name": "user names a culture without a suffix",
+      "ok": true,
+      "detail": "心灵之地"
+    },
+    {
+      "name": "new state is created unnamed",
+      "ok": true,
+      "detail": "{\"count\":21,\"id\":21,\"name\":\"\",\"full\":\"\",\"center\":44}"
+    },
+    {
+      "name": "AI fills a state region",
+      "ok": true,
+      "detail": "{\"stateCells\":33,\"cultureCells\":962,\"geography\":19,\"biome\":\"Hot desert\"}"
+    },
+    {
+      "name": "AI fills a culture region",
+      "ok": true,
+      "detail": "{\"stateCells\":33,\"cultureCells\":962,\"geography\":19,\"biome\":\"Hot desert\"}"
+    },
+    {
+      "name": "AI fills a geography type",
+      "ok": true,
+      "detail": "{\"stateCells\":33,\"cultureCells\":962,\"geography\":19,\"biome\":\"Hot desert\"}"
+    },
+    {
+      "name": "save/load keeps overlay edits and names",
+      "ok": true,
+      "detail": "{\"culture\":true,\"stateCells\":3141}"
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": []
+}

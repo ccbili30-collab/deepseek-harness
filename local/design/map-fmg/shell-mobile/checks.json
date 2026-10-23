@@ -1,0 +1,107 @@
+{
+  "checks": [
+    {
+      "name": "no horizontal page overflow at 419",
+      "ok": true,
+      "detail": "{\"inner\":419,\"scroll\":419}"
+    },
+    {
+      "name": "topbar stays within the viewport",
+      "ok": true,
+      "detail": "{\"x\":0,\"y\":0,\"w\":419,\"h\":75,\"display\":\"flex\"}"
+    },
+    {
+      "name": "inspector is a right-side compact sheet",
+      "ok": true,
+      "detail": "{\"x\":151,\"y\":96,\"w\":262,\"h\":207,\"display\":\"flex\"}"
+    },
+    {
+      "name": "type labels are hidden on the narrow topbar",
+      "ok": true,
+      "detail": "none"
+    },
+    {
+      "name": "inspector collapses to a small bar",
+      "ok": true,
+      "detail": "{\"w\":118,\"h\":40,\"collapsed\":true,\"open\":false}"
+    },
+    {
+      "name": "terrain still paints with the panel collapsed",
+      "ok": true,
+      "detail": "{\"sea\":{\"c\":1943,\"x\":183.2844696044922,\"y\":383.287109375},\"before\":0,\"after\":9}"
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": [],
+  "layout": {
+    "inner": 419,
+    "scroll": 419,
+    "top": {
+      "x": 0,
+      "y": 0,
+      "w": 419,
+      "h": 75,
+      "display": "flex"
+    },
+    "ins": {
+      "x": 151,
+      "y": 96,
+      "w": 262,
+      "h": 207,
+      "display": "flex"
+    },
+    "map": {
+      "x": 0,
+      "y": 0,
+      "w": 419,
+      "h": 900,
+      "display": "block"
+    },
+    "tools": {
+      "x": 6,
+      "y": 96,
+      "w": 48,
+      "h": 344,
+      "display": "flex"
+    },
+    "cmd": {
+      "x": 0,
+      "y": 871,
+      "w": 419,
+      "h": 29,
+      "display": "flex"
+    },
+    "collapse": {
+      "x": 357,
+      "y": 105,
+      "w": 22,
+      "h": 22,
+      "display": "grid"
+    },
+    "open": {
+      "x": 0,
+      "y": 0,
+      "w": 0,
+      "h": 0,
+      "display": "none"
+    },
+    "labelDisplay": "none"
+  },
+  "collapsed": {
+    "w": 118,
+    "h": 40,
+    "collapsed": true,
+    "open": false
+  },
+  "sea": {
+    "c": 1943,
+    "x": 183.2844696044922,
+    "y": 383.287109375
+  },
+  "before": 0,
+  "after": 9
+}

@@ -14,7 +14,7 @@ import type { ShellT } from './pages/Home.tsx'
 import type { WidgetSend } from './widgets.tsx'
 
 /** Same-origin FMG document; the shell is mounted inside it, so there is no second host page. */
-const EDITOR_URL = '/api/noven-map-editor/index.html?noven=blank&v=15'
+const EDITOR_URL = '/api/noven-map-editor/index.html?noven=blank&v=18'
 
 /** A real FMG document starts with its version, e.g. `1.154.2|...`. */
 const FMG_DOCUMENT = /^\d+\.\d+\.\d+\|/

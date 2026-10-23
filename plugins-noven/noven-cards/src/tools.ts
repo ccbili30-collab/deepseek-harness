@@ -1214,7 +1214,8 @@ export function registerCardTools(ctx: Context): void {
     description: '在卡的地图模块上排队一次 Fantasy-Map-Generator 世界生成（模板/种子/尺寸/空白）。' +
       '这是浏览器编辑器的生成请求：地图页打开后才会真正生成并自动保存；不要把回执当成“地图已生成”。' +
       'template 常用：continents（大陆）、archipelago（群岛）、lowIsland（单岛）、peninsula（半岛）、blank（空白单岛，无国家/城邦）。' +
-      'blank 会自动带 empty=true，只保留地形/一个中立文化，方便用户手动画。',
+      'blank 会自动带 empty=true，只保留地形/一个中立文化，方便用户手动画。' +
+      '生成只产生几何；区域名称会留空，之后用 map_edit 的 Noven.* 命名。',
     parameters: {
       ...TARGET_PARAMS,
       module_id: { type: 'string', required: true, description: '地图模块编号' },
@@ -1254,8 +1255,8 @@ export function registerCardTools(ctx: Context): void {
 
   tools.register(defineTool({
     name: 'map_summary',
-    description: '读取地图模块上次保存时留下的结构化摘要：国家/文化/城邦/标记的编号、名称和位置。' +
-      '改图前先用它拿编号；摘要缺失时先让用户打开地图页并保存一次。只读，不会执行任何地图代码。',
+    description: '读取地图模块上次保存时留下的结构化摘要：文明/文化/城邦/标记的编号、名称、面积和位置。' +
+      '改图或命名前先用它拿编号；摘要缺失时先让用户打开地图页并保存一次。只读，不会执行任何地图代码。',
     parameters: {
       ...TARGET_PARAMS,
       module_id: { type: 'string', required: true, description: '地图模块编号' },
@@ -1280,10 +1281,15 @@ export function registerCardTools(ctx: Context): void {
     name: 'map_edit',
     description: '在已定稿/已保存的地图上排队一组改图动作，地图页打开后由编辑器直接执行并保存。' +
       '只允许安全的编辑动作，不允许删除/合并/整张重生成，也不允许执行代码。' +
-      '常用：States.rename(国家编号, 新名字)、States.recolor(编号, 颜色)、States.setPopulation(编号, 人口)、' +
-      'Burgs.rename(城邦编号, 新名字)、Burgs.setPopulation(编号, 人口)、Burgs.setPort(编号, 港口编号或0)、' +
-      'Cultures.rename(文化编号, 新名字)、Religions.rename(编号, 新名字)、Markers.rename(标记编号, 新名字)、' +
-      'Markers.move(编号, x, y)。先用 map_summary 拿编号。小改直接执行，地图工具的「AI 改动」可撤销。',
+      '生成后的名称是空的，先用 map_summary 拿编号再命名。' +
+      '命名与覆盖层用 Noven.*：Noven.nameState(国家编号,名字)、Noven.nameCulture(文化编号,名字)、' +
+      'Noven.fillState(国家编号,x,y,半径)、Noven.fillCulture(文化编号,x,y,半径)、' +
+      'Noven.fillGeography(群系id或英文名,x,y,半径) 给陆地填地理类型；海洋用高度笔。' +
+      'Noven.addPlace(名字,x,y)、Noven.renamePlace(地名编号,名字)、Noven.addArea(层名,x,y,半径)、' +
+      'Noven.paintArea(区域编号,x,y,半径,"add"|"remove")、Noven.renameLayer(区域编号,名字)。' +
+      'x/y 是 0-1 归一化坐标，半径相对地图短边。' +
+      '上游动作仍可用：States.rename、Burgs.rename、Cultures.rename、Religions.rename、Markers.rename、Markers.move。' +
+      '小改直接执行，地图工具的「改动记录」可整批撤销。',
     parameters: {
       ...TARGET_PARAMS,
       module_id: { type: 'string', required: true, description: '地图模块编号' },
@@ -1418,7 +1424,8 @@ export function registerCardTools(ctx: Context): void {
 
   tools.register(defineTool({
     name: 'generate_map_human',
-    description: '给已经定稿的地形补人文层（国家、文化、城邦、宗教、道路）。只在地图阶段为 terrain 时使用；生成后会保存为 world 并带摘要。',
+    description: '给已经定稿的地形补人文层（文明、文化、城邦、宗教、道路）。只在地图阶段为 terrain 时使用；生成后会保存为 world 并带摘要。' +
+      '生成只产生几何；名称会留空，之后用 map_edit 的 Noven.nameState / Noven.nameCulture 命名。',
     parameters: {
       ...TARGET_PARAMS,
       module_id: { type: 'string', required: true, description: '地图模块编号' },

@@ -1,0 +1,80 @@
+{
+  "checks": [
+    {
+      "name": "CAD workspace is present",
+      "ok": true,
+      "detail": "{\"topbar\":true,\"tools\":[\"select\",\"pan\",\"zoom\",\"terrain\",\"geo\",\"states\",\"cultures\",\"erase\"],\"tool\":\"terrain\",\"inspector\":true,\"cmd\":true,\"zoom\":\"100%\",\"base\":\"height\"}"
+    },
+    {
+      "name": "sea starts fitted at 100% on the height view",
+      "ok": true,
+      "detail": "{\"topbar\":true,\"tools\":[\"select\",\"pan\",\"zoom\",\"terrain\",\"geo\",\"states\",\"cultures\",\"erase\"],\"tool\":\"terrain\",\"inspector\":true,\"cmd\":true,\"zoom\":\"100%\",\"base\":\"height\"}"
+    },
+    {
+      "name": "state click selects into the vertical inspector",
+      "ok": true,
+      "detail": "{\"text\":\"国家面积428,960 mi²颜色\",\"selected\":\"state8\",\"stroke\":\"rgba(43, 47, 40, 0.62)\"}"
+    },
+    {
+      "name": "states have an outline and the selected state gets a heavier one",
+      "ok": true,
+      "detail": "{\"text\":\"国家面积428,960 mi²颜色\",\"selected\":\"state8\",\"stroke\":\"rgba(43, 47, 40, 0.62)\"}"
+    },
+    {
+      "name": "state tool paints by dragging",
+      "ok": true,
+      "detail": "{\"stateCell\":44,\"target\":\"1\"}"
+    },
+    {
+      "name": "culture tool paints by dragging",
+      "ok": true,
+      "detail": "{\"cultureCell\":44,\"cultureTarget\":\"1\"}"
+    },
+    {
+      "name": "culture fills also get an outline",
+      "ok": true,
+      "detail": "rgba(43, 47, 40, 0.62)"
+    },
+    {
+      "name": "geography tool paints a land type",
+      "ok": true,
+      "detail": "{\"biomeCell\":44,\"biomeTarget\":\"1\"}"
+    },
+    {
+      "name": "terrain tool drags heights and undoes one stroke",
+      "ok": true,
+      "detail": "{\"heightBefore\":56,\"heightAfter\":81,\"heightUndo\":56}"
+    },
+    {
+      "name": "wheel zooms in larger steps",
+      "ok": true,
+      "detail": "135%"
+    },
+    {
+      "name": "fit returns to 100%",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "3D view is reachable",
+      "ok": true,
+      "detail": "{\"active\":\"3d\",\"pressed\":true}"
+    },
+    {
+      "name": "command line switches the base view",
+      "ok": true,
+      "detail": "geo"
+    },
+    {
+      "name": "command line fits the view",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "name": "no page errors",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": []
+}
