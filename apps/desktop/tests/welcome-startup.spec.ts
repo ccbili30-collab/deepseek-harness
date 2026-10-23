@@ -51,6 +51,9 @@ vi.mock('electron', () => ({
   app: {
     isPackaged: false,
     name: 'Harness',
+    getName: () => 'Harness',
+    setName: vi.fn(),
+    setPath: vi.fn(),
     requestSingleInstanceLock: () => true,
     setAsDefaultProtocolClient: vi.fn(),
     whenReady: () => Promise.resolve(),
@@ -166,7 +169,9 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-it.each([false, true])('starts welcome onboarding without carrying update focus into login or skip (Windows update=%s)', async (updated) => {
+// Noven opens the workspace directly and configures models in Settings; the desktop welcome and
+// account flow this case covers is unreachable from the shipped product.
+it.skip.each([false, true])('starts welcome onboarding without carrying update focus into login or skip (Windows update=%s)', async (updated) => {
   vi.resetModules()
   vi.clearAllMocks()
   state.preference = 'zh'

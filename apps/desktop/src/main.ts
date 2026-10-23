@@ -55,7 +55,7 @@ import { DesktopUpdateOverlays } from './update-overlay.ts'
 import { DesktopQuitConfirmation } from './quit-confirmation.ts'
 import { DesktopTray } from './tray.ts'
 import { DesktopBackgroundNotice } from './background-notice.ts'
-import { applyNovenIdentity, NOVEN_PROTOCOL, novenHostEnvironment, resolveNovenPaths } from './noven-channel.ts'
+import { applyNovenIdentity, NOVEN_PRODUCT_NAME, NOVEN_PROTOCOL, novenHostEnvironment, resolveNovenPaths } from './noven-channel.ts'
 
 let focusPrimaryWindow = (): void => {}
 let stopForRecovery = async (): Promise<void> => {}
@@ -211,6 +211,7 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
     minWidth: 520,
     minHeight: 600,
     show,
+    title: NOVEN_PRODUCT_NAME,
     ...(process.platform === 'win32' && primary ? {
       titleBarStyle: 'hidden' as const,
       titleBarOverlay: { height: WINDOWS_TITLEBAR_HEIGHT, color: chromeFallbackFill(),
@@ -240,6 +241,11 @@ function createWindow(preload: string, show = false, primary = false): BrowserWi
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (['http:', 'https:'].includes(new URL(url).protocol)) void shell.openExternal(url)
     return { action: 'deny' }
+  })
+  // The harness document still carries its own title; the window belongs to Noven.
+  window.on('page-title-updated', (event) => {
+    event.preventDefault()
+    window.setTitle(NOVEN_PRODUCT_NAME)
   })
   if (process.platform === 'darwin') {
     // macOS hides the traffic lights in fullscreen; the page drops its
