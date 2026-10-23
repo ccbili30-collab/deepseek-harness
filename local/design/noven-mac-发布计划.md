@@ -1,9 +1,9 @@
 # Noven Mac 发布计划
 
 日期：2026-10-23（首版发布 2026-10-24）
-状态：首版已发布；剩余项见 §6
+状态：首版已发布；2026-10-24 品牌占位冲突热修复已替换首版构建；剩余项见 §6
 工作区：`noven-web` / `noven-pc-test` / `noven正式版`
-发布：https://github.com/ccbili30-collab/noven-releases/releases/tag/20261023-03c11ee084
+发布：https://github.com/ccbili30-collab/noven-releases/releases/tag/20261023-df5f2042cc
 
 ## 0. 目标
 
@@ -132,7 +132,9 @@ noven正式版/                # 只放正式安装包
 - 产品面：`dsh-better-sidebar` 从 Web profile 和 Noven 种子 profile 移除；workbench 的 `betterSidebar` 改可选；sidechat opener/发送分支清理；设置默认隐藏内置插件/Agent 预设，设置标题连点 10 次解锁开发者模式；`设定管理员` 从 Agent 预设 roster 隐藏（内部 preset 仍可 resolve）；关于页显示 `Noven 0.1.0` + 构建号 + 内核 `0.1.7-rc.2`；跳过 DSH 账户/API-key 欢迎页；无自动更新/遥测。
 - 稳定性：终端画布页切页签保活（页面按页签常驻、只切显隐）；终端 xterm 保持在 `client.terminal.js` 异步 chunk；文件/产出/终端画布路由保持。
 - 打包：unsigned/ad-hoc 模式绕过签名、公证、更新 feed；Noven 默认种子 profile 打进 `Resources/noven-profile`，首次启动自动播种；Noven 图标/协议/appId；正式 DMG 与测试 app 从同一提交构建。
-- 发布：公开 `ccbili30-collab/noven-releases`，只发正式 DMG + SHA256 + LICENSE + THIRD_PARTY_NOTICES；tag `20261023-03c11ee084`；README 含介绍/安装/Gatekeeper/限制。私有源码 `ccbili30-collab/noven-pc` main `294751da74`。
+- 发布：公开 `ccbili30-collab/noven-releases`，只发正式 DMG + SHA256 + LICENSE + THIRD_PARTY_NOTICES；当前 tag `20261023-df5f2042cc`，README 含介绍/安装/Gatekeeper/限制。首版 `20261023-03c11ee084` 因打包版暴露 DSH 原生欢迎层已删除并替换。
+- 热修复（2026-10-24）：根因是 `ui-brand-official` 与 `noven-brand` 同时注册 `sidebar.brand.mark`，导致 Noven shell 启动中断、露出 DSH 原生界面。种子 profile/现有 profile 禁用官方品牌占位，`project-manager` 对 Noven profile 幂等写入 `ui-brand-official` 禁用补丁；窗口标题与 macOS 菜单/关于文案从 `DeepSeek Harness` 改为 `Noven`。修复版 DMG SHA256 `310590780de81287e7878251dc1a9e6a7c7661aa87423eec73e03bf3a9448027`，已用干净数据根实测首启为 Noven 工作台。
+- 私有源码：`ccbili30-collab/noven-pc` main 已推送到本次热修复提交。
 - 验证：root build、24 个聚焦测试文件 192 项全绿；终端 xterm 拆分测试通过；三实例端口/数据根实测；DMG 校验和、appId/协议/build ID/内核版本实测；未签名 `spctl` 拒绝（预期）。
 
 未完成 / 明确限制：
