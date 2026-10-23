@@ -10,7 +10,7 @@ import { useCallback, useMemo, useRef, useState, type PointerEvent as ReactPoint
 import type { CardDocView, CardModuleDoc } from './card-api.ts'
 import { CardMarkdownEditor } from './doc-editor.tsx'
 import { InlineRename } from './ui/interact.tsx'
-import { coll, collText, tl } from './widgets.tsx'
+import { coll, collText, rel, tl } from './widgets.tsx'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { isOverviewModule, moduleMarkdown } from './module-text.ts'
 
@@ -196,6 +196,15 @@ function hasText(module: CardModuleDoc): boolean {
 }
 
 function hasReadableContent(module: CardModuleDoc): boolean {
+  const widget = module.widget?.type
+  // Timeline/map/free surfaces are core pages even before their first item:
+  // the page itself is where the user starts filling them.
+  if (widget === 'timeline' || widget === 'map' || widget === 'html' || widget === 'scene') return true
+  if (widget === 'collection') return coll(module.widget?.data).items.length > 0
+  if (widget === 'relation') {
+    const data = rel(module.widget?.data)
+    return data.nodes.length > 0 || data.edges.length > 0
+  }
   return module.widget !== undefined || hasText(module) || module.children.some(hasReadableContent)
 }
 
