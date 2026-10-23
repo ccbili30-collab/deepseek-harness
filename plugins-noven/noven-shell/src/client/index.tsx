@@ -1907,7 +1907,13 @@ export function apply(ctx: ClientContext): void {
         if (ctx.sessions.list.getSnapshot().byId[sessionId]?.cwd !== misc) {
           const id = await createSessionIn(misc).catch(() => undefined)
           if (id === undefined) return
-          ctx.uiWorkspace.openSession(id)
+          // The create panel owns the nav transition. Opening the newly seeded
+          // misc session must only rebind the canvas, or it remounts the create
+          // surface and discards the card tab opened right after this call.
+          const seam = ctx.uiWorkspace as {
+            openSession?: (target: SessionId, options?: { panel?: 'preserve'; transition?: 'none' }) => void
+          }
+          seam.openSession?.(id, { panel: 'preserve', transition: 'none' })
           ensured = { sessionId: id, root: misc }
         } else {
           ensured = { sessionId, root: misc }
@@ -1956,7 +1962,13 @@ export function apply(ctx: ClientContext): void {
         op: 'create', kind: request.kind === 'world' ? 'WORLD' : 'CHARACTER', name: request.name, starter: request.starter,
       })
       treeSource.refresh()
-      if (created.cardId !== undefined) openCanvasCard(created.cardId, addr, created.focusModuleId, addr.sessionId)
+      if (created.cardId !== undefined) {
+        // The create path can seat a different misc Session first. Let that
+        // selection commit before opening the card, or the canvas still holds
+        // the previous owner and drops the new tab.
+        await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => { resolve() })))
+        openCanvasCard(created.cardId, addr, created.focusModuleId, addr.sessionId)
+      }
       if (created.interview === true) queueInterview(request)
     })().catch((reason: unknown) => { console.warn('noven-shell: create failed:', reason) })
   }
