@@ -4,10 +4,15 @@
  * 分层：
  *   <项目目录>/.noven/project.json   项目纹身（{version:2, id, title?, …} 备份字段）
  *   <项目目录>/卡/<卡名>/             卡本体——用户内容，Finder 可见
- *   ~/.noven/projects.json          注册表 v2：创作库指针 + 权威项目名 + id
- *   ~/.noven/ledger/<id>/           项目账本：library.json / sidecar / workbenches…
- *   ~/.noven/ledger/w-<hash>/       未登记目录的账本（按路径哈希，无主簿记）
- *   ~/.noven/bindings/<sid>.json    会话↔卡绑定——按会话归档，不随目录走
+ *   <NOVEN_HOME>/projects.json      注册表 v2：创作库指针 + 权威项目名 + id
+ *   <NOVEN_HOME>/ledger/<id>/       项目账本：library.json / sidecar / workbenches…
+ *   <NOVEN_HOME>/ledger/w-<hash>/   未登记目录的账本（按路径哈希，无主簿记）
+ *   <NOVEN_HOME>/bindings/<sid>.json 会话↔卡绑定——按会话归档，不随目录走
+ *
+ * `NOVEN_HOME` 未设置时默认 `~/.noven`；设置后账本、注册表、绑定全部改到该根，
+ * 用于 Web / Desktop 测试 / Desktop 正式三套数据完全隔离。默认/杂项项目根由
+ * `NOVEN_PROJECTS_ROOT` 显式指定；未指定时，设置了 `NOVEN_HOME` 就落在
+ * `<NOVEN_HOME>/projects`，否则沿用 `~/诺文`。
  *
  * 纹身只存身份；丢了可由注册表补写，注册表丢了由纹身重建。两层互为备份，
  * 但项目名永远以注册表为准——纹身里的 title 只是跨机器搬运时的种子。
@@ -19,8 +24,50 @@ import { mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 
-/** 应用私有根目录——AI 作业半径之外。 */
-export const APP_HOME = join(homedir(), '.noven')
+/**
+ * Resolve the application-private root.
+ * @param env - process environment; `NOVEN_HOME` overrides the default.
+ * @returns absolute ledger root.
+ */
+export function resolveAppHome(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.NOVEN_HOME?.trim()
+  return configured === undefined || configured === '' ? join(homedir(), '.noven') : resolve(configured)
+}
+
+/**
+ * Resolve the root that holds app-created projects (the misc project lives
+ * under it). Explicit `NOVEN_PROJECTS_ROOT` wins; a custom `NOVEN_HOME` keeps
+ * its projects inside that home; the default remains `~/诺文`.
+ * @param env - process environment.
+ * @param appHome - resolved ledger root for the same environment.
+ * @returns absolute projects root.
+ */
+export function resolveProjectsRoot(
+  env: NodeJS.ProcessEnv = process.env,
+  appHome: string = resolveAppHome(env),
+): string {
+  const configured = env.NOVEN_PROJECTS_ROOT?.trim()
+  if (configured !== undefined && configured !== '') return resolve(configured)
+  const homeOverride = env.NOVEN_HOME?.trim()
+  if (homeOverride !== undefined && homeOverride !== '') return join(appHome, 'projects')
+  return join(homedir(), '诺文')
+}
+
+/**
+ * Resolve the misc project root under the selected projects root.
+ * @param env - process environment.
+ * @param projectsRoot - resolved projects root for the same environment.
+ * @returns absolute misc project directory.
+ */
+export function resolveMiscProjectRoot(
+  env: NodeJS.ProcessEnv = process.env,
+  projectsRoot: string = resolveProjectsRoot(env),
+): string {
+  return join(projectsRoot, '杂项')
+}
+
+/** 应用私有根目录——AI 作业半径之外；`NOVEN_HOME` 可覆盖。 */
+export const APP_HOME = resolveAppHome()
 const REGISTRY_PATH = join(APP_HOME, 'projects.json')
 const MARKER = join('.noven', 'project.json')
 
@@ -71,7 +118,7 @@ export function mintProjectId(): string {
  * 固定根、固定 id、固定名——宿主每次启动幂等保证它存在；它不可被移出注册表，
  * 名字也不允许改，保证上游工作区与创作库始终用同一把钥匙找到它。
  */
-export const MISC_PROJECT_ROOT = join(homedir(), '诺文', '杂项')
+export const MISC_PROJECT_ROOT = resolveMiscProjectRoot()
 export const MISC_PROJECT_ID = 'proj-misc'
 export const MISC_PROJECT_TITLE = '杂项'
 

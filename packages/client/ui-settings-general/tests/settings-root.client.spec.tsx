@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { useEffect, useState } from 'react'
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { createSettingsShellStore } from '../src/client/shell-store.ts'
+import { createSettingsDeveloperMode } from '../src/client/settings-developer-mode.ts'
 import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -97,8 +98,10 @@ function mount({
   }
   const unusedHook = (() => { throw new Error('unused by SettingsRoot') }) as never
   const shell = createSettingsShellStore().create()
+  const settingsDeveloperMode = createSettingsDeveloperMode()
   const props: SettingsRootComponentProps = {
     useStore: bindSnapshotSelector(shell), actions: shell.actions,
+    settingsDeveloperMode,
     useShortcuts: select => select(shortcuts),
     useSessions: select => select(sessions),
     useSessionStatus,
@@ -158,7 +161,10 @@ function mount({
     act(() => { sessions.byId[activeId] = { ...session, blank: next } })
     view.rerender(<SettingsRoot {...props} />)
   }
-  return { view, renderSlot, bump, listeners, reconnect, setConnectionState, setDesktopUpdate, setShortcuts, setOnboardingActive }
+  return {
+    view, renderSlot, bump, listeners, reconnect, settingsDeveloperMode,
+    setConnectionState, setDesktopUpdate, setShortcuts, setOnboardingActive,
+  }
 }
 
 function openPanel() {
@@ -270,6 +276,18 @@ describe('SettingsRoot trigger', () => {
   it('keeps the reconnect indicator out of the collapsed rail', () => {
     mount({ wide: false, connectionState: 'disconnected' })
     expect(screen.queryByRole('button', { name: 'Disconnected, reconnect now' })).toBeNull()
+  })
+})
+
+describe('Settings developer mode', () => {
+  it('unlocks after ten rapid clicks on the settings title', () => {
+    const f = mount()
+    openPanel()
+    const title = screen.getByText('Settings Title')
+    for (let click = 0; click < 9; click += 1) fireEvent.click(title)
+    expect(f.settingsDeveloperMode.getSnapshot()).toBe(false)
+    fireEvent.click(title)
+    expect(f.settingsDeveloperMode.getSnapshot()).toBe(true)
   })
 })
 

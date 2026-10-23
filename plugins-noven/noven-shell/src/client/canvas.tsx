@@ -512,6 +512,7 @@ export interface CanvasPageView {
   readonly component: ComponentType<{
     readonly sessionId: string
     readonly pageKey: string
+    readonly active: boolean
     readonly close: () => void
     readonly openPage: (kind: string) => void
   }>
@@ -1845,10 +1846,12 @@ function FilesTab({ t, sessionId, useDirs, refreshDir, openDoc }: {
 }
 
 /** 单页签的渲染体：哪个叶的活动页是它，就由哪片叶渲——同 key 可以在两片叶各渲一份（双视口）。 */
-function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardFile, resolveProjectAsset, importRef, project, tree }: {
+function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardFile, resolveProjectAsset, importRef, project, tree, active = true }: {
   readonly tab: CanvasTab
   readonly t: ShellT
   readonly session: SessionId
+  /** Whether this tab is the shown one in its leaf; host pages use it for visibility only. */
+  readonly active?: boolean
   readonly useStore: CanvasProps['useStore']
   readonly actions: CanvasProps['actions']
   readonly props: CanvasProps
@@ -1964,7 +1967,8 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
         const Page = definition.component
         return (
           <div className="nv-canvas-page">
-            <Page sessionId={session} pageKey={tab.pageKey ?? tab.key} close={closeTab} openPage={props.openPage} />
+            <Page sessionId={session} pageKey={tab.pageKey ?? tab.key} active={active}
+              close={closeTab} openPage={props.openPage} />
           </div>
         )
       })()}
@@ -2113,7 +2117,14 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
           onClick={toggleCanvasFullscreen}>{glyph.expand(13)}</button>
       </div>}
       <div className="nv-canvas-body">
-        {activeTab !== undefined && (
+        {strip.filter(row => row.kind === 'page').map(row => (
+          <div key={row.key} className="nv-canvas-page-slot" hidden={row.key !== activeTab?.key}>
+            <TabBody tab={row} t={t} session={session} useStore={props.useStore} actions={actions}
+              props={props} openDoc={openDoc} readCardFile={readCardFile} resolveProjectAsset={resolveProjectAsset}
+              importRef={importRef} project={project} tree={tree} active={row.key === activeTab?.key} />
+          </div>
+        ))}
+        {activeTab !== undefined && activeTab.kind !== 'page' && (
           <TabBody tab={activeTab} t={t} session={session} useStore={props.useStore} actions={actions}
             props={props} openDoc={openDoc} readCardFile={readCardFile} resolveProjectAsset={resolveProjectAsset}
             importRef={importRef} project={project} tree={tree} />

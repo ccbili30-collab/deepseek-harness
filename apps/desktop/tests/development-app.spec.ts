@@ -12,12 +12,14 @@ it.skipIf(process.platform === 'win32')('passes literal workspace paths and cold
   const bundle = join(root, "Harness ' $(false).app")
   const binary = join(bundle, 'Contents', 'MacOS', 'Electron')
   mkdirSync(join(bundle, 'Contents', 'MacOS'), { recursive: true })
-  writeFileSync(binary, '#!/bin/sh\nprintf "%s\\n" "$DSH_HOME" "$DSH_DESKTOP_DEV_APP" "$DSH_DESKTOP_OPEN_DEVTOOLS" "$@"\n', { mode: 0o755 })
+  writeFileSync(binary, '#!/bin/sh\nprintf "%s\\n" "$DSH_HOME" "$NOVEN_CHANNEL" "$NOVEN_HOME" "$NOVEN_PROJECTS_ROOT" "$DSH_DESKTOP_DEV_APP" "$DSH_DESKTOP_OPEN_DEVTOOLS" "$@"\n', { mode: 0o755 })
   const launcher = join(root, 'launcher')
   const home = join(root, "home ' $(false)")
+  const novenHome = join(root, 'noven-home')
+  const projectsRoot = join(root, 'projects')
   writeFileSync(launcher, developmentLauncher({ electron: binary, appRoot: root, directory: root,
-    home, userData: join(root, 'browser data'), mainPort: 9229, rendererPort: 9222, hostPort: 9230, openDevtools: '0' }, bundle))
+    home, novenHome, projectsRoot, userData: join(root, 'browser data'), mainPort: 9229, rendererPort: 9222, hostPort: 9230, openDevtools: '0' }, bundle))
   const result = execFileSync('/bin/sh', [launcher, '--test-launch-argument'], { encoding: 'utf8' })
-  expect(result.trimEnd().split('\n')).toEqual([home, '1', '0', '--inspect=127.0.0.1:9229',
+  expect(result.trimEnd().split('\n')).toEqual([home, 'test', novenHome, projectsRoot, '1', '0', '--inspect=127.0.0.1:9229',
     '--remote-debugging-port=9222', `--user-data-dir=${join(root, 'browser data')}`, root, '--test-launch-argument'])
 })

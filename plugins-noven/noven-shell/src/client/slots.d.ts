@@ -135,10 +135,21 @@ declare module '@deepseek-ai/cordis' {
         readonly component: import('react').ComponentType<{
           readonly sessionId: string
           readonly pageKey: string
+          readonly active: boolean
           readonly close: () => void
           readonly openPage: (kind: string) => void
         }>
       } | undefined
+      subscribe(listener: () => void): () => void
+    }
+    /** Persisted settings developer unlock; absent on older published builds. */
+    settingsDeveloperMode?: {
+      getSnapshot(): boolean
+      subscribe(listener: () => void): () => void
+    }
+    /** Hidden settings-section policy consumed by the settings shell. */
+    settingsSectionPolicy?: {
+      getHidden(): ReadonlySet<string>
       subscribe(listener: () => void): () => void
     }
   }

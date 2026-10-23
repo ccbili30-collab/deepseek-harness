@@ -37,6 +37,9 @@ import { DeveloperToolsRow, type DeveloperToolsRowInjected } from './DeveloperTo
 import { SettingsDocumentAction } from './SettingsDocumentAction.tsx'
 import type { SettingsDocumentActionInjected } from './SettingsDocumentAction.tsx'
 import { SettingsDocumentStore } from './settings-document-store.ts'
+import {
+  createSettingsDeveloperMode, type SettingsDeveloperMode, type SettingsSectionPolicy,
+} from './settings-developer-mode.ts'
 import { en, zh, type SettingsKey } from './locales.ts'
 
 export type {
@@ -48,7 +51,18 @@ export type {
 export type { SettingsDocumentActionInjected, SettingsDocumentActionProps } from './SettingsDocumentAction.tsx'
 export type { SettingsDocumentState } from './settings-document-store.ts'
 export { SettingsDocumentStore } from './settings-document-store.ts'
+export type { SettingsDeveloperMode, SettingsSectionPolicy } from './settings-developer-mode.ts'
+export { createSettingsDeveloperMode, DEVELOPER_MODE_STORAGE_KEY } from './settings-developer-mode.ts'
 export type { SettingsKey } from './locales.ts'
+
+declare module '@deepseek-ai/cordis' {
+  interface Context {
+    /** Persisted developer unlock for internal settings sections. */
+    settingsDeveloperMode: SettingsDeveloperMode
+    /** A host product's hidden-section policy; absent keeps every section. */
+    settingsSectionPolicy?: SettingsSectionPolicy
+  }
+}
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface LocaleNamespaceMap {
@@ -85,6 +99,10 @@ export function apply(ctx: ClientContext): void {
     name: 'settings.general.item', id: 'current-version', order: 100, locale: NS,
   }, CurrentVersionRow))
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'ui-settings-general: dictionaries')
+  let developerStorage: Storage | undefined
+  try { developerStorage = globalThis.localStorage } catch { /* storage-less runtime: page-local unlock */ }
+  const developerMode = createSettingsDeveloperMode(developerStorage)
+  ctx.reflect.provide('settingsDeveloperMode', developerMode)
   const connection = ctx.get('connection') as ConnectionHandle
   const carrier = (globalThis as typeof globalThis & { dshDesktop?: { protocolVersion: number; updates?: DesktopUpdateBridge } }).dshDesktop
   const desktopUpdate = new DesktopUpdateSource(carrier?.protocolVersion === 1 ? carrier.updates : undefined)
@@ -116,12 +134,14 @@ export function apply(ctx: ClientContext): void {
   // key includes the locale revision and subscribers ride both sources.
   let rowsVersion = -1
   let rowsRevision = -1
+  let rowsHidden: ReadonlySet<string> | undefined
   let rows: readonly SettingsSectionRow[] = []
   let onboardingVersion = -1
   let onboardingSteps: readonly SettingsOnboardingStep[] = []
   const shellInjected = (): SettingsRootInjected => ({
     openDesktopUpdate: () => { desktopUpdate.open() },
     reconnect: () => { connection.reconnect() },
+    settingsDeveloperMode: developerMode,
     hooks: {
       shortcuts: ctx.shortcuts.catalog,
       desktopUpdate: desktopUpdate.store,
@@ -130,10 +150,15 @@ export function apply(ctx: ClientContext): void {
         getSnapshot: () => {
           const version = ctx.slots.getVersion('settings.section')
           const revision = ctx.locale.getSnapshot().revision
-          if (version !== rowsVersion || revision !== rowsRevision) {
+          const policy = ctx.get('settingsSectionPolicy')
+          const hidden = policy?.getHidden()
+          if (version !== rowsVersion || revision !== rowsRevision || hidden !== rowsHidden) {
             rowsVersion = version
             rowsRevision = revision
+            rowsHidden = hidden
             rows = ctx.slots.entries('settings.section')
+              // A host policy may hide product-internal sections; absent means all.
+              .filter(e => hidden === undefined || !hidden.has(e.options.id ?? ''))
               .map(e => ({
                 /* v8 ignore next -- list-slot registration requires id (SlotCore rejects an entry without one) */
                 id: e.options.id ?? '',
@@ -147,9 +172,11 @@ export function apply(ctx: ClientContext): void {
         subscribe: (listener) => {
           const offLedger = ctx.slots.subscribe('settings.section', listener)
           const offLocale = ctx.locale.subscribe(listener)
+          const offPolicy = ctx.get('settingsSectionPolicy')?.subscribe(listener)
           return () => {
             offLedger()
             offLocale()
+            offPolicy?.()
           }
         },
       },

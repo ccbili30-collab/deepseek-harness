@@ -10,6 +10,8 @@ export interface DevelopmentAppOptions {
   readonly appRoot: string
   readonly directory: string
   readonly home: string
+  readonly novenHome: string
+  readonly projectsRoot: string
   readonly userData: string
   readonly mainPort: number
   readonly rendererPort: number
@@ -62,6 +64,9 @@ export function prepareDevelopmentApp(options: DevelopmentAppOptions): string {
 export function developmentLauncher(options: DevelopmentAppOptions, bundle: string): string {
   const environment = {
     DSH_HOME: options.home,
+    NOVEN_CHANNEL: 'test',
+    NOVEN_HOME: options.novenHome,
+    NOVEN_PROJECTS_ROOT: options.projectsRoot,
     DSH_DESKTOP_DEV_APP: '1',
     DSH_DESKTOP_HOST_INSPECT_PORT: String(options.hostPort),
     DSH_DESKTOP_OPEN_DEVTOOLS: options.openDevtools,

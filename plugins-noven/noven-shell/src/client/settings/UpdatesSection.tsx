@@ -6,10 +6,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { isNewerVersion, manifestUrl, normalizeManifest, type UpdateChannel, type UpdateManifest } from '../update-check.ts'
+import { NOVEN_BUILD_ID, NOVEN_KERNEL_VERSION, NOVEN_VERSION } from './build-info.ts'
 
 const CHANNEL_KEY = 'noven.update.channel'
 const BASE_KEY = 'noven.update.manifestBase'
-const REPOSITORY = 'https://github.com/ccbili30-collab/noven-pc/releases'
+const REPOSITORY = 'https://github.com/ccbili30-collab/noven-releases/releases'
 
 type Status = 'idle' | 'checking' | 'current' | 'available' | 'unconfigured' | 'error'
 
@@ -21,23 +22,13 @@ function writeStored(key: string, value: string): void {
   try { localStorage.setItem(key, value) } catch { /* private mode: the choice simply does not persist */ }
 }
 
-function runningVersion(): string {
-  try {
-    return typeof process !== 'undefined' && typeof process.env?.DSH_CLIENT_VERSION === 'string'
-      ? process.env.DSH_CLIENT_VERSION
-      : 'dev'
-  } catch {
-    return 'dev'
-  }
-}
-
 /**
  * Render the About & updates page.
  * @param props - slot runtime and localized copy.
  * @returns the settings section.
  */
 export function UpdatesSection({ t }: PropsRuntime<'settings.section'> & PropsLocale<'novenShell'>) {
-  const current = runningVersion()
+  const current = NOVEN_BUILD_ID
   const [channel, setChannel] = useState<UpdateChannel>(() => readStored(CHANNEL_KEY) === 'beta' ? 'beta' : 'stable')
   const [base, setBase] = useState(() => readStored(BASE_KEY))
   const [draftBase, setDraftBase] = useState(() => readStored(BASE_KEY))
@@ -70,8 +61,7 @@ export function UpdatesSection({ t }: PropsRuntime<'settings.section'> & PropsLo
       if (next === undefined) throw new Error(t('updates.invalid'))
       setManifest(next)
       setLastChecked(new Date())
-      const running = current === 'dev' ? '0.0.0-dev' : current
-      setStatus(isNewerVersion(next.version, running) ? 'available' : 'current')
+      setStatus(isNewerVersion(next.version, NOVEN_VERSION) ? 'available' : 'current')
     } catch (reason: unknown) {
       setError(reason instanceof Error && reason.name === 'AbortError' ? t('updates.timeout') : t('updates.error'))
       setStatus('error')
@@ -90,8 +80,16 @@ export function UpdatesSection({ t }: PropsRuntime<'settings.section'> & PropsLo
 
       <section className="nv-upd-card">
         <div className="nv-upd-row">
-          <span className="nv-upd-label">{t('updates.current')}</span>
-          <span className="nv-upd-value">{current}</span>
+          <span className="nv-upd-label">{t('updates.product')}</span>
+          <span className="nv-upd-value">Noven {NOVEN_VERSION}</span>
+        </div>
+        <div className="nv-upd-row">
+          <span className="nv-upd-label">{t('updates.build')}</span>
+          <span className="nv-upd-value">{NOVEN_BUILD_ID}</span>
+        </div>
+        <div className="nv-upd-row">
+          <span className="nv-upd-label">{t('updates.kernel')}</span>
+          <span className="nv-upd-value">DSH {NOVEN_KERNEL_VERSION}</span>
         </div>
         <div className="nv-upd-field">
           <span className="nv-upd-label">{t('updates.channel')}</span>

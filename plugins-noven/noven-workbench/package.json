@@ -61,7 +61,6 @@
     },
     "client": {
       "inject": [
-        "dsh-better-sidebar",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-chat",
         "@deepseek-ai/dsh-client-ui-conversation",

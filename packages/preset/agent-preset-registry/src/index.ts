@@ -151,7 +151,8 @@ export class AgentPresetRegistry extends TypertRemoteService {
    * @returns Display metadata and loading diagnostics.
    */
   async list(): Promise<AgentPreset[]> {
-    const rows = await Promise.all([...this.definitions.values()].map(async (record) => {
+    const visible = [...this.definitions.values()].filter(record => record.config.hidden !== true)
+    const rows = await Promise.all(visible.map(async (record) => {
       const broken = await this.diagnostic(record)
       return {
         id: record.config.id,

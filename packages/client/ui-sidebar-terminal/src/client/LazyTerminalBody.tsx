@@ -1,8 +1,7 @@
 /** Load xterm only after a terminal body is mounted. */
-import { lazy, Suspense, type ReactNode } from 'react'
+import { Suspense, type ReactNode } from 'react'
 import type { TerminalBodyProps } from './terminal.tsx'
-
-const LoadedTerminalBody = lazy(async () => ({ default: (await import('./terminal.tsx')).TerminalBody }))
+import { LoadedTerminalBody } from './terminal-lazy.ts'
 
 /**
  * Suspend while the package-local terminal chunk arrives.

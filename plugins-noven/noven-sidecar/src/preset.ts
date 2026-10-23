@@ -29,15 +29,21 @@ const PERSONA = `你是这个创作项目的设定管理员。你的长期职责
 - 新记的设定先以草稿落库，由作者确认后才算数。
 - 谈库里有什么之前先用实体工具查——不凭印象回答库的内容。`
 
+/** Registration shape with the `hidden` flag newer registries understand. */
+type PresetRegistration = Parameters<Context['agentPresets']['register']>[0] & { readonly hidden?: boolean }
+
 /** 向 preset 注册表声明管理员 preset；返回的卸载器挂进插件 dispose。 */
 export function registerSidecarPreset(ctx: Context): void {
   ctx.effect(() => {
     let unregister: (() => Promise<void>) | undefined
-    void ctx.agentPresets.register({
+    const definition: PresetRegistration = {
       id: SIDECAR_PRESET_ID,
       name: '设定管理员',
       description: '常驻侧边的设定整理会话：跟随主对话增量维护实体库，可直接交谈。',
       order: 90,
+      // Internal preset: the sidecar resolves it by id, but it never appears
+      // in the user-facing preset roster.
+      hidden: true,
       plugins: [
         {
           name: '@deepseek-ai/dsh-persona',
@@ -45,7 +51,8 @@ export function registerSidecarPreset(ctx: Context): void {
         },
         { name: ENTITIES_ENTRY },
       ],
-    }).then(dispose => { unregister = dispose })
+    }
+    void ctx.agentPresets.register(definition).then(dispose => { unregister = dispose })
     return () => { void unregister?.() }
   }, 'noven-sidecar: preset')
 }

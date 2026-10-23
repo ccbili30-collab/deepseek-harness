@@ -16,7 +16,8 @@
     "lib"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json"
+    "build": "tsc -p tsconfig.json",
+    "test": "tsc -p tsconfig.json && node --test tests/home.mjs"
   },
   "engines": {
     "node": ">=20"

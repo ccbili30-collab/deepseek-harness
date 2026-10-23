@@ -29,6 +29,7 @@ tmp/
 .DS_Store
 .idea
 mise.toml
+.data/
 dist-exe/
 /dist/
 apps/desktop/.desktop-build/

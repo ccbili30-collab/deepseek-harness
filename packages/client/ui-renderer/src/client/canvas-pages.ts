@@ -7,6 +7,8 @@ export interface CanvasPageProps {
   readonly sessionId: string
   /** Stable identity of this page occurrence (survives a reload). */
   readonly pageKey: string
+  /** Whether this page's tab is the one shown in its leaf; inactive pages stay mounted. */
+  readonly active: boolean
   /** Close this page's canvas tab. */
   readonly close: () => void
   /** Open another page of the named kind beside this one. */

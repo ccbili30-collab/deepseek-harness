@@ -1472,7 +1472,10 @@ button.nv-tree-switch[data-canvas-on] { background: var(--nv-accent); }
 }
 .nv-canvas-plus { border: 0; background: none; padding: 4px 8px; font-size: 15px; color: var(--nv-secondary-text); cursor: pointer; }
 .nv-canvas-plus:hover { color: var(--nv-accent-deep); }
-.nv-canvas-body { flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+.nv-canvas-body { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
+/* Host 页面按页签常驻：切页签只切显隐，关页签才卸载（终端等长连接不会被切走杀掉）。 */
+.nv-canvas-page-slot { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; }
+.nv-canvas-page-slot[hidden] { display: none; }
 /* 分屏布局树：叶 = 页签组（strip+body 充满格），节点 = 分割 + 可拖缝条。 */
 .nv-leaf { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; min-width: 0; }
 .nv-split { display: flex; flex: 1; min-height: 0; min-width: 0; }

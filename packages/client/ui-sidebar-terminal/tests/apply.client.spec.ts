@@ -74,6 +74,12 @@ async function mountPlugin() {
   } as never)
   const theme = { preference: 'light' as const, fontSize: 14, active: { id: 'light', colorScheme: 'light' as const, tokens: {} }, themes: [], revision: 0 }
   ctx.provide('theme', { getTheme: () => theme } as never)
+  ctx.provide('canvasPages', {
+    register: vi.fn(() => () => {}),
+    get: () => undefined,
+    list: () => [],
+    subscribe: () => () => {},
+  } as never)
   const fiber = await ctx.plugin({ inject, apply })
   return {
     tabs, entries, dictionaries, terminals, model, occurrence, openTabIn, tabsIn, openTabs, theme,

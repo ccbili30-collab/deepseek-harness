@@ -44,6 +44,8 @@ type PanelProps = {
   activeId: string | undefined
   onSelect: (id: string) => void
   onClose: () => void
+  /** Hidden developer-mode gesture attached to the nav title. */
+  onTitleClick: () => void
 }
 
 /**
@@ -51,7 +53,7 @@ type PanelProps = {
  * header button, a mask click, and document-level Escape (mounted only while
  * open, so the listener lifetime is the panel's).
  */
-function SettingsPanel({ rows, renderSlot, activeId, onSelect, onClose }: PanelProps) {
+function SettingsPanel({ rows, renderSlot, activeId, onSelect, onClose, onTitleClick }: PanelProps) {
   // Entries can unmount underneath the requested id, so the render-time
   // projection falls back to the first row when the id is gone.
   const active = rows.find(r => r.id === activeId)?.id ?? rows[0]?.id
@@ -70,7 +72,8 @@ function SettingsPanel({ rows, renderSlot, activeId, onSelect, onClose }: PanelP
       <div ref={panel} tabIndex={-1} data-shortcut-modal="settings" className={css.panel} role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <nav className={css.nav}>
           <div className={css.navTitle} id={titleId} tabIndex={-1}
-            data-modal-autofocus={active === undefined ? '' : undefined}>{renderSlot('settings.header', {})}</div>
+            data-modal-autofocus={active === undefined ? '' : undefined}
+            onClick={onTitleClick}>{renderSlot('settings.header', {})}</div>
           <div className={css.navList}>
             {rows.map(row => (
               <button
@@ -112,7 +115,7 @@ function SettingsPanel({ rows, renderSlot, activeId, onSelect, onClose }: PanelP
 export function SettingsRoot(props: SettingsRootComponentProps) {
   const {
     wide, reconnect, useConnectionState, useSections, useOnboardingSteps, useSessions, renderSlot, t,
-    useDesktopUpdate, openDesktopUpdate, useStore, actions, useShortcuts,
+    useDesktopUpdate, openDesktopUpdate, useStore, actions, useShortcuts, settingsDeveloperMode,
   } = props
   const { open, activeId } = useStore(state => state)
   const shortcut = useShortcuts(rows => rows.find(row => row.id === 'settings.open'))
@@ -122,6 +125,19 @@ export function SettingsRoot(props: SettingsRootComponentProps) {
   const [showRecovery, setShowRecovery] = useState(false)
   const [holdConnecting, setHoldConnecting] = useState(false)
   const connectingShownAt = useRef<number | undefined>(undefined)
+  // Hidden developer unlock: ten rapid clicks on the panel title. No visible
+  // affordance on purpose; the persisted flag lives in localStorage.
+  const titleClicks = useRef({ count: 0, last: 0 })
+  const unlockDeveloperMode = (): void => {
+    const now = Date.now()
+    const clicks = titleClicks.current
+    if (now - clicks.last > 2_000) clicks.count = 0
+    clicks.count += 1
+    clicks.last = now
+    if (clicks.count < 10) return
+    clicks.count = 0
+    settingsDeveloperMode.enable()
+  }
 
   // The ledger tick keeps the nav rows fresh: registrants re-register with
   // freshly localized text on locale change, and the trigger/header/close
@@ -250,6 +266,7 @@ export function SettingsRoot(props: SettingsRootComponentProps) {
           activeId={activeId}
           onSelect={actions.select}
           onClose={close}
+          onTitleClick={unlockDeveloperMode}
         />
       )}
       {/* Dialog chrome and `#root` inert ownership live inside each step's

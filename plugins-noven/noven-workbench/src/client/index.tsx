@@ -37,7 +37,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import type { FileViewerDescriptor, TabComponentProps } from 'dsh-better-sidebar/client/service'
+import type { FileViewerDescriptor, TabComponentProps, TabDescriptor } from 'dsh-better-sidebar/client/service'
 import type {} from 'dsh-better-sidebar'
 import { bookGlyph } from './book-glyph.tsx'
 import { CreationStage } from './CreationStage.tsx'
@@ -69,7 +69,13 @@ export const NOVEN_FILE_KIND = 'noven.file'
 const TERMINAL_OFF_MARKER = 'noven.sidebar.terminal-off.v1'
 
 /** Required browser services: the sidebar registry, the main seat, the Remote carrier, layout chrome, and copy. */
-export const inject = ['betterSidebar', 'slots', 'locale', 'layout', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiSession', 'remote', 'remote.workspaceFiles']
+export const inject = ['slots', 'locale', 'layout', 'sidebarRight', 'sidebarRightTabs', 'uiConversation', 'uiSession', 'remote', 'remote.workspaceFiles']
+
+/** The external side-card surface when the profile still mounts it. */
+interface BetterSidebarFace {
+  registerTab?(descriptor: TabDescriptor): () => void
+  registerFileViewer?(descriptor: FileViewerDescriptor): () => void
+}
 
 /**
  * Client plugin body: register the dictionaries, the sidebar view, the
@@ -80,6 +86,10 @@ export function apply(ctx: ClientContext): void {
   injectGalleryStyles()
   const t = ctx.locale.bind(NS)
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'noven-workbench: dictionaries')
+  // The side-card surface is external and optional: a Noven build without it
+  // keeps the main panel, stage, and file type; only these two contributions
+  // disappear.
+  const betterSidebar = ctx.get('betterSidebar') as BetterSidebarFace | undefined
 
   const api = createWorkbenchApi(ctx.remote)
 
@@ -174,7 +184,7 @@ export function apply(ctx: ClientContext): void {
     inject: () => ({ api, openDocument }),
   }, MainCreationStage))
 
-  ctx.effect(() => ctx.betterSidebar.registerTab({
+  ctx.effect(() => betterSidebar?.registerTab?.({
     id: STUDIO_TAB_ID,
     title: () => t('studio.title'),
     icon: size => bookGlyph(size),
@@ -187,7 +197,7 @@ export function apply(ctx: ClientContext): void {
       sessionId: tabProps.scope.sessionId as SessionId | undefined,
       cwd: tabProps.scope.cwd,
     }),
-  }), 'noven-workbench: studio fallback tab')
+  }) ?? (() => {}), 'noven-workbench: studio fallback tab')
 
   // Presented artifacts land as framed blocks on the turn tail — the
   // conversation's own rendering host, fed from the persisted result meta.
@@ -200,14 +210,14 @@ export function apply(ctx: ClientContext): void {
     }),
   }, PresentTail))
 
-  ctx.effect(() => ctx.betterSidebar.registerFileViewer({
+  ctx.effect(() => betterSidebar?.registerFileViewer?.({
     id: NOVEN_IMAGE_VIEWER_ID,
     title: () => t('viewer.title'),
     exts: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'avif'],
     priority: 10,
     fetchStrategy: 'mediaUrl',
     component: props => NovenImageViewer({ ...props, api, t }),
-  } satisfies FileViewerDescriptor), 'noven-workbench: image viewer')
+  } satisfies FileViewerDescriptor) ?? (() => {}), 'noven-workbench: image viewer')
 
   // The workbench stays reachable through the rail's tab picker; noven-shell
   // owns which tab a fresh session surface opens with.

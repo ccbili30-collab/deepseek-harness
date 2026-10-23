@@ -1,6 +1,7 @@
 /** Desktop profile initialization and native recovery. */
 
 import {
+  cpSync,
   existsSync,
   fsyncSync,
   lstatSync,
@@ -84,6 +85,15 @@ export class DesktopProjectManager {
     await this.withLock(() => {
       // Validation only: an unreadable or mismatched runtime descriptor stops preparation before the Host starts.
       readDesktopRuntime(this.runtime.dsh)
+      // A Noven package ships its default profile beside the runtime; seed a
+      // fresh profile from it instead of creating the generic web template.
+      if (!existsSync(join(this.paths.profile, 'package.json'))) {
+        const seed = join(process.resourcesPath, 'noven-profile')
+        if (existsSync(seed)) {
+          cpSync(seed, this.paths.profile, { recursive: true, force: true })
+          return
+        }
+      }
       migrateProfileSettings(this.paths.profile)
       createPluginProfile(this.paths.profile)
       removeLinkProjections(this.paths.profile)

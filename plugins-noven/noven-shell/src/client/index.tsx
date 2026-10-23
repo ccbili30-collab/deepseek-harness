@@ -756,8 +756,8 @@ function simSessionsSource(sessions: ClientContext['sessions'], workspaces: IWor
  */
 /**
  * conv 页温层：每条侧会话一份折叠态。ensure 绑定事件源（首绑才 retain +
- * 订阅，重复调用只刷新 channel）；send 按通道路由——sidechat 侧线必须走
- * 它自己的 prompt 路由（首条携带边界注入），其余 fork 会话走 session.prompt。
+ * 订阅，重复调用只刷新 channel）；发送统一走 fork 会话的 session.prompt，
+ * 外部 sidechat 路由随 better-sidebar 移除，不再有第二条发送通道。
  */
 function convsSource(sessions: ClientContext['sessions']) {
   interface Bound {
@@ -804,18 +804,6 @@ function convsSource(sessions: ClientContext['sessions']) {
     const fail = (message: string): void => {
       if (b !== undefined) { b.error = message; publish() }
       else console.warn(`noven-shell: conv send failed: ${message}`)
-    }
-    if (b?.channel === 'sidechat') {
-      void fetch('/sidebar/api/sidechat.prompt', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ childId: id, text }),
-      })
-        .then(async res => {
-          const parsed = await res.json().catch(() => null) as { ok?: boolean } | null
-          if (!res.ok || parsed?.ok !== true) fail(`send failed (${res.status})`)
-        })
-        .catch((error: unknown) => fail(error instanceof Error ? error.message : 'send failed'))
-      return
     }
     void sessions.using(sessions.subagentAddress(id) ?? id, { source: 'novenShell' }, async reference => {
       const result = await reference.binding.session.prompt([{ type: 'text', text }], 'queue')
@@ -1125,6 +1113,16 @@ export function apply(ctx: ClientContext): void {
   const t = ctx.locale.bind(NS)
   /** Host-registered canvas page kinds (terminal today; tasks/browser can join later). */
   const canvasPages = ctx.canvasPages
+  // Product-internal settings sections stay out of the nav until the persisted
+  // developer unlock (ten clicks on the settings title). Side cards are gone
+  // with better-sidebar; these two are the remaining host-internal pages.
+  const developerOnlySections: ReadonlySet<string> = new Set(['plugins', 'agent-presets'])
+  const noHiddenSections: ReadonlySet<string> = new Set()
+  const developerMode = ctx.get('settingsDeveloperMode')
+  ctx.reflect.provide('settingsSectionPolicy', {
+    getHidden: () => developerMode?.getSnapshot() === true ? noHiddenSections : developerOnlySections,
+    subscribe: (listener: () => void) => developerMode?.subscribe(listener) ?? (() => {}),
+  } satisfies NonNullable<ClientContext['settingsSectionPolicy']>)
 
   // Noven palette over the shipped tokens (light drives the product; dark
   // keeps the same accents on dark surfaces).
@@ -1577,31 +1575,11 @@ export function apply(ctx: ClientContext): void {
     raiseCanvas()
   }
 
-  /** 侧边对话：fork 侧线开 conv 页签——侧会话是画布公民，不进抽屉页。 */
-  const openSideConversation = (sessionId: SessionId): void => {
-    void fetch('/sidebar/api/sidechat.start', {
-      method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, question: '' }),
-    })
-      .then(async res => {
-        const parsed = await res.json().catch(() => null) as { ok?: boolean; value?: { childId: string } } | null
-        const childId = parsed?.value?.childId
-        if (!res.ok || parsed?.ok !== true || childId === undefined) throw new Error(`sidechat.start failed (${res.status})`)
-        canvasInstance.actions.open({
-          key: `conv:${childId}`, kind: 'conv', title: t('conv.side'),
-          owner: sessionId, convId: SessionId(childId), convChannel: 'sidechat',
-        })
-        raiseCanvas()
-      })
-      .catch((reason: unknown) => { console.warn('noven-shell: sidechat start failed:', reason) })
-  }
-
   /**
    * 功能入口的唯一路由：对象页进画布页签，只有伴随视图（本会话/设定/会话设置）
    * 留在右栏。工具菜单与会话 ⋯ 菜单都走这里，避免两处语义分叉。
    */
   const openFeatureTabFor = (sessionId: SessionId, kind: string): void => {
-    if (kind === 'sidechat') { openSideConversation(sessionId); return }
     const title = ctx.sidebarRightTabs.guide().find(box => box.kind === kind)?.title() ?? kind
     if (kind === 'files') {
       canvasInstance.actions.open({ key: 'files', kind: 'files', title, owner: sessionId })
