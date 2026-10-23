@@ -1577,6 +1577,46 @@ export function apply(ctx: ClientContext): void {
     raiseCanvas()
   }
 
+  /** 侧边对话：fork 侧线开 conv 页签——侧会话是画布公民，不进抽屉页。 */
+  const openSideConversation = (sessionId: SessionId): void => {
+    void fetch('/sidebar/api/sidechat.start', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sessionId, question: '' }),
+    })
+      .then(async res => {
+        const parsed = await res.json().catch(() => null) as { ok?: boolean; value?: { childId: string } } | null
+        const childId = parsed?.value?.childId
+        if (!res.ok || parsed?.ok !== true || childId === undefined) throw new Error(`sidechat.start failed (${res.status})`)
+        canvasInstance.actions.open({
+          key: `conv:${childId}`, kind: 'conv', title: t('conv.side'),
+          owner: sessionId, convId: SessionId(childId), convChannel: 'sidechat',
+        })
+        raiseCanvas()
+      })
+      .catch((reason: unknown) => { console.warn('noven-shell: sidechat start failed:', reason) })
+  }
+
+  /**
+   * 功能入口的唯一路由：对象页进画布页签，只有伴随视图（本会话/设定/会话设置）
+   * 留在右栏。工具菜单与会话 ⋯ 菜单都走这里，避免两处语义分叉。
+   */
+  const openFeatureTabFor = (sessionId: SessionId, kind: string): void => {
+    if (kind === 'sidechat') { openSideConversation(sessionId); return }
+    const title = ctx.sidebarRightTabs.guide().find(box => box.kind === kind)?.title() ?? kind
+    if (kind === 'files') {
+      canvasInstance.actions.open({ key: 'files', kind: 'files', title, owner: sessionId })
+      raiseCanvas()
+      return
+    }
+    if (kind === 'noven:library') {
+      canvasInstance.actions.open({ key: 'library', kind: 'library', title, owner: sessionId })
+      raiseCanvas()
+      return
+    }
+    if (canvasPages?.get(kind) !== undefined) { openCanvasPage(sessionId, kind); return }
+    ctx.sidebarRight.openTab(kind)
+  }
+
   /**
    * 卡页打开统一走画布标签；标签标题等内容树轮询回写。`moduleId` 带模块行深链。
    * 归属：`owner` 是这条标签所在的会话现场；卡片地址只存项目根——会话会
@@ -2161,24 +2201,6 @@ export function apply(ctx: ClientContext): void {
         getSnapshot: () => canvasInstance.getSnapshot().floats?.[sessionId]?.some(f => f.key.startsWith('conv:')) === true,
         subscribe: listener => canvasInstance.subscribe(listener),
       }
-      /** 侧边对话：fork 侧线开 conv 页签——侧会话是画布公民，不进抽屉页。 */
-      const openSideConv = (): void => {
-        void fetch('/sidebar/api/sidechat.start', {
-          method: 'POST', headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ sessionId, question: '' }),
-        })
-          .then(async res => {
-            const parsed = await res.json().catch(() => null) as { ok?: boolean; value?: { childId: string } } | null
-            const childId = parsed?.value?.childId
-            if (!res.ok || parsed?.ok !== true || childId === undefined) throw new Error(`sidechat.start failed (${res.status})`)
-            canvasInstance.actions.open({
-              key: `conv:${childId}`, kind: 'conv', title: t('conv.side'),
-              owner: sessionId, convId: SessionId(childId), convChannel: 'sidechat',
-            })
-            raiseCanvas()
-          })
-          .catch((reason: unknown) => { console.warn('noven-shell: sidechat start failed:', reason) })
-      }
       const ensureDockFn = dockApi?.ensureDock
       return {
       sessionId,
@@ -2208,22 +2230,7 @@ export function apply(ctx: ClientContext): void {
           .catch((reason: unknown) => { console.warn('noven-shell: rmdir failed:', reason); notifyUndo({ text: fmt(t, 'ui.receipt.failed', { name }) }) })
       },
       /** 工具菜单功能行 → 画布页签；只有伴随视图留在右栏。 */
-      openFeatureTab: kind => {
-        if (kind === 'sidechat') { openSideConv(); return }
-        const title = ctx.sidebarRightTabs.guide().find(box => box.kind === kind)?.title() ?? kind
-        if (kind === 'files') {
-          canvasInstance.actions.open({ key: 'files', kind: 'files', title, owner: sessionId })
-          raiseCanvas()
-          return
-        }
-        if (kind === 'noven:library') {
-          canvasInstance.actions.open({ key: 'library', kind: 'library', title, owner: sessionId })
-          raiseCanvas()
-          return
-        }
-        if (canvasPages?.get(kind) !== undefined) { openCanvasPage(sessionId, kind); return }
-        ctx.sidebarRight.openTab(kind)
-      },
+      openFeatureTab: kind => { openFeatureTabFor(sessionId, kind) },
       /** 挂窗 = conv 页的浮窗形态：开着（浮着或钉成页签）再点收起。 */
       toggleDock: ensureDockFn === undefined ? undefined : () => {
           void ensureDockFn(sessionId)
@@ -2904,17 +2911,18 @@ export function apply(ctx: ClientContext): void {
   }, (p: PropsRuntime<'conversation.session.header.actions'> & InjectFace<HeaderChipsInjected> & PropsLocale<'novenShell'>) => <HeaderChips {...p} />))
 
   // 会话 ⋯ 菜单尾段：功能入口随右栏 guide 注册表走——哪个插件登记了功能页签，
-  // 这里就出对应行，藏掉的功能区从这里仍可达。
+  // 这里就出对应行，藏掉的功能区从这里仍可达。开页与工具菜单共用同一路由，
+  // 否则同一行会因入口不同而一边进画布、一边进右栏。
   ctx.slots.inject('conversation.session.header.more.item', () => ctx.slots.register({
     name: 'conversation.session.header.more.item', id: 'noven-features', order: 100, locale: NS,
-    inject: (): FeatureMenuInjected => ({
+    inject: (sessionId: SessionId): FeatureMenuInjected => ({
       hooks: {
         guide: {
           getSnapshot: () => ctx.sidebarRightTabs.guide(),
           subscribe: (listener: () => void) => ctx.sidebarRightTabs.subscribe(listener),
         },
       },
-      openTab: kind => { ctx.sidebarRight.openTab(kind) },
+      openTab: kind => { openFeatureTabFor(sessionId, kind) },
     }),
   }, (p: FeatureMenuProps) => <FeatureMenuItems {...p} />))
 
