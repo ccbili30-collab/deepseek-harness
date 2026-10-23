@@ -1,8 +1,9 @@
 # Noven Mac 发布计划
 
-日期：2026-10-23
-状态：已确认，待执行
-工作区：当前 `noven-pc`；Phase 0 改名后为 `noven-web`
+日期：2026-10-23（首版发布 2026-10-24）
+状态：首版已发布；剩余项见 §6
+工作区：`noven-web` / `noven-pc-test` / `noven正式版`
+发布：https://github.com/ccbili30-collab/noven-releases/releases/tag/20261023-03c11ee084
 
 ## 0. 目标
 
@@ -125,9 +126,23 @@ noven正式版/                # 只放正式安装包
 
 ## 6. 当前状态
 
-已完成：私有 `noven-pc` 仓库与干净历史；设置「关于与更新」；启动 P0（项目注册表快路径、去轮询、缓存统计、焦点/树冷缓存）；host 级画布页注册表；终端画布页；文件/产出/终端入口统一；三条线合并保留。
+已完成（首版 2026-10-24）：
 
-待做：Phase 0–4 全部。
+- 工作区：`noven-web`（源码+`.data`）、`noven-pc-test`（worktree+`.data`+`Noven Test.app`）、`noven正式版`（只放发布物）。Web 3083、正式 19387 / `Noven` / `com.noven.pc` / `noven://`、测试 19388 / `Noven Test` / `com.noven.pc.test` / `noven-test://` 三实例可同时运行，会话/账本/凭据/userData 分根。
+- 产品面：`dsh-better-sidebar` 从 Web profile 和 Noven 种子 profile 移除；workbench 的 `betterSidebar` 改可选；sidechat opener/发送分支清理；设置默认隐藏内置插件/Agent 预设，设置标题连点 10 次解锁开发者模式；`设定管理员` 从 Agent 预设 roster 隐藏（内部 preset 仍可 resolve）；关于页显示 `Noven 0.1.0` + 构建号 + 内核 `0.1.7-rc.2`；跳过 DSH 账户/API-key 欢迎页；无自动更新/遥测。
+- 稳定性：终端画布页切页签保活（页面按页签常驻、只切显隐）；终端 xterm 保持在 `client.terminal.js` 异步 chunk；文件/产出/终端画布路由保持。
+- 打包：unsigned/ad-hoc 模式绕过签名、公证、更新 feed；Noven 默认种子 profile 打进 `Resources/noven-profile`，首次启动自动播种；Noven 图标/协议/appId；正式 DMG 与测试 app 从同一提交构建。
+- 发布：公开 `ccbili30-collab/noven-releases`，只发正式 DMG + SHA256 + LICENSE + THIRD_PARTY_NOTICES；tag `20261023-03c11ee084`；README 含介绍/安装/Gatekeeper/限制。私有源码 `ccbili30-collab/noven-pc` main `294751da74`。
+- 验证：root build、24 个聚焦测试文件 192 项全绿；终端 xterm 拆分测试通过；三实例端口/数据根实测；DMG 校验和、appId/协议/build ID/内核版本实测；未签名 `spctl` 拒绝（预期）。
+
+未完成 / 明确限制：
+
+- 启动 P1 的暖启动 ≤500ms 仍未达成（Web 树/输入约 1.8s）；打包版启动未做精确计时。
+- Gatekeeper 只提供手动放行说明，未做公证；企业管控 Mac 可能拦截。
+- Office 的 LibreOffice 原生引擎在本 unsigned 构建中缺失，Office 转换可能不可用。
+- 正式 DMG 未在“干净 macOS 用户账号”上完整走建项目/写卡/文稿/卸载重装；Web 侧创作链路此前已验证，打包版做了启动/数据根/插件加载验证。
+- 设置内容审计（除隐藏两项外）未做。
+- 测试工作区的 app 由 `noven-web` 构建，测试 worktree 用于代码/数据隔离，尚未独立构建。
 
 ## 7. Goal 启动词
 
