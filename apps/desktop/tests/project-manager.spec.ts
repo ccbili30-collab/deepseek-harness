@@ -87,6 +87,25 @@ describe('desktop external plugin profile', () => {
     expect(readFileSync(manifest, 'utf8')).toBe('{broken')
   })
 
+  it('keeps the official brand disabled for a Noven profile, once', async () => {
+    const { manager } = setup()
+    await manager.applyRelease()
+    seedPlugin(manager)
+    const manifestPath = join(manager.paths.profile, 'package.json')
+    const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as {
+      dsh: { profile: { bundles: string[] } }
+    }
+    manifest.dsh.profile.bundles.push('noven-brand')
+    writeFileSync(manifestPath, JSON.stringify(manifest))
+    await manager.applyRelease()
+    const patchPath = join(manager.paths.profile, 'cordis.patch.yml')
+    const patch = readFileSync(patchPath, 'utf8')
+    expect(patch.match(/- id: ui-brand-official/gu)).toHaveLength(1)
+    expect(patch).toMatch(/- id: ui-brand-official\n  disabled: true/u)
+    await manager.applyRelease()
+    expect(readFileSync(patchPath, 'utf8')).toBe(patch)
+  })
+
   it('disables every third-party bundle without reading a broken plugin patch declaration', async () => {
     const { manager } = setup()
     await manager.applyRelease()

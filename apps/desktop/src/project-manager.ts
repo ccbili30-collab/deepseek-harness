@@ -49,6 +49,29 @@ function workspaceFile(overrides: Readonly<Record<string, string>> = {}): string
   return `packages:\n  - .\n\n${overrideSection}${WORKSPACE_SETTINGS}allowBuilds:\n  node-pty: true\n  koffi: true\n  fs-ext: true\n  ${JSON.stringify(coreBuildKey)}: true\n  '@google/genai': false\n  protobufjs: false\n  node-addon-require-builtin: false\n`
 }
 
+/**
+ * Keep Noven's brand occupant the only registrant of `sidebar.brand.mark`.
+ * Older Noven profiles predate this override; the official DSH brand plugin
+ * would otherwise collide and abort the rest of the client boot.
+ * @param projectDir - initialized Desktop profile.
+ */
+function ensureNovenProfile(projectDir: string): void {
+  let bundles: readonly string[] = []
+  try {
+    const manifest = JSON.parse(readFileSync(join(projectDir, 'package.json'), 'utf8')) as {
+      dsh?: { profile?: { bundles?: readonly string[] } }
+    }
+    bundles = manifest.dsh?.profile?.bundles ?? []
+  } catch {
+    return
+  }
+  if (!bundles.includes('noven-brand')) return
+  const patchPath = join(projectDir, 'cordis.patch.yml')
+  const patch = existsSync(patchPath) ? readFileSync(patchPath, 'utf8') : ''
+  if (/^\s*-\s*id:\s*ui-brand-official\s*$/mu.test(patch)) return
+  writeFileSync(patchPath, `${patch.trimEnd()}\n\n# Noven: the official brand mark would collide with noven-brand.\n- id: ui-brand-official\n  disabled: true\n`)
+}
+
 function migrateProfileSettings(projectDir: string): void {
   const path = join(projectDir, 'pnpm-workspace.yaml')
   if (!existsSync(path)) return
@@ -88,15 +111,20 @@ export class DesktopProjectManager {
       // A Noven package ships its default profile beside the runtime; seed a
       // fresh profile from it instead of creating the generic web template.
       if (!existsSync(join(this.paths.profile, 'package.json'))) {
-        const seed = join(process.resourcesPath, 'noven-profile')
-        if (existsSync(seed)) {
+        const resourcesPath = process.resourcesPath
+        const seed = typeof resourcesPath === 'string' && resourcesPath !== ''
+          ? join(resourcesPath, 'noven-profile')
+          : undefined
+        if (seed !== undefined && existsSync(seed)) {
           cpSync(seed, this.paths.profile, { recursive: true, force: true })
+          ensureNovenProfile(this.paths.profile)
           return
         }
       }
       migrateProfileSettings(this.paths.profile)
       createPluginProfile(this.paths.profile)
       removeLinkProjections(this.paths.profile)
+      ensureNovenProfile(this.paths.profile)
     })
   }
 
