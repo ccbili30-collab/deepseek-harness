@@ -147,7 +147,7 @@ export function createSurface(): SurfaceState {
     minted: counter.used(),
     floatView: undefined,
     canvasParked: false,
-    canvasSide: 'right',
+    canvasSide: 'left',
     zoneOrder: ['top', 'features'],
   }
 }

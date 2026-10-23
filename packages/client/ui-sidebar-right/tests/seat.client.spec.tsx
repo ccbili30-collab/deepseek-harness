@@ -352,23 +352,23 @@ describe('RightbarSeat presentation', () => {
   it('keeps the canvas claim across a retained surface hiding and return without any report', async () => {
     const h = await mountSeat()
     h.open('kept.txt')
-    expect(h.controller.canvasClaims.claim(SESSION)).toBe('right')
+    expect(h.controller.canvasClaims.claim(SESSION)).toBe('left')
     // Parking releases the region while the floats survive; any open lifts it.
     act(() => { h.actions.setCanvasParked(SESSION, true) })
     expect(h.controller.canvasClaims.claim(SESSION)).toBeNull()
     act(() => { h.actions.setCanvasParked(SESSION, false) })
-    expect(h.controller.canvasClaims.claim(SESSION)).toBe('right')
+    expect(h.controller.canvasClaims.claim(SESSION)).toBe('left')
     // A global panel hides the seat. The claim is surface state, not a report,
     // so it survives the hide and the return (the page-back regression) — the
     // frame re-derives the canvas track from it the moment the panel is shown.
     act(() => { h.runtime.panelInfo.set({ activePanelId: 'other-panel' as MainPanelId }) })
-    expect(h.controller.canvasClaims.claim(SESSION)).toBe('right')
+    expect(h.controller.canvasClaims.claim(SESSION)).toBe('left')
     act(() => { h.runtime.panelInfo.set({ activePanelId: null }) })
-    expect(h.controller.canvasClaims.claim(SESSION)).toBe('right')
+    expect(h.controller.canvasClaims.claim(SESSION)).toBe('left')
     expect(h.view.container.querySelector('[data-sidebar-right-canvas-host]')).not.toBeNull()
     // The member-sort swap commits through the surface's own side field.
-    act(() => { h.actions.setCanvasSide(SESSION, 'left') })
-    expect(h.controller.canvasClaims.claim(SESSION)).toBe('left')
+    act(() => { h.actions.setCanvasSide(SESSION, 'right') })
+    expect(h.controller.canvasClaims.claim(SESSION)).toBe('right')
     expect(h.controller.canvasClaims.claim(OTHER)).toBeNull()
     expect(h.controller.canvasClaims.claim(null)).toBeNull()
   })

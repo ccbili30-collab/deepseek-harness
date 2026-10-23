@@ -65,9 +65,13 @@ export interface CardDocView {
   readonly id: string
   readonly kind: string
   readonly name: string
+  /** Card-level tags shown on the home; absent on older cards. */
+  readonly tags?: readonly string[]
   readonly modules: readonly CardModuleDoc[]
   readonly avatarResourceId: string | null
   readonly coverResourceId: string | null
+  /** World logo shown on the card home. */
+  readonly logoResourceId: string | null
   /** Card-level reading layout: PAGED renders top-level modules as horizontal pages, CONTINUOUS stacks them. */
   readonly readingLayout: string
   /** World-internal character documents, each editable via targetId. */

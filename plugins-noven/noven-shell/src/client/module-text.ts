@@ -14,5 +14,5 @@ export function moduleMarkdown(blocks: readonly CardBlockView[]): string {
 
 /** 「总览」模块的判定：起手模块带 widget.type='overview'；旧卡退化为约定名。 */
 export function isOverviewModule(module: CardModuleDoc): boolean {
-  return module.widget?.type === 'overview' || module.name === '设定总览'
+  return module.widget?.type === 'overview' || module.name === '设定总览' || module.name === '概述'
 }

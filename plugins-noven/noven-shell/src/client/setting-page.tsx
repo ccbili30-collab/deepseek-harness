@@ -43,6 +43,11 @@ export interface SettingPageProps {
   readonly aiEditing: boolean
   readonly renaming: boolean
   readonly onRename: (next: string | undefined) => void
+  /** Card-level basics edited from the display page (absent on older hosts). */
+  readonly onAddRole?: (name: string) => void
+  readonly onSetImage?: (purpose: 'avatar' | 'cover' | 'logo', base64: string, mediaType: string) => Promise<boolean>
+  readonly onClearImage?: (purpose: 'avatar' | 'cover' | 'logo') => void
+  readonly onSaveTags?: (tags: readonly string[]) => void
 }
 
 const noop = (): void => undefined
@@ -261,8 +266,12 @@ function CharacterCard({ character, t, imageUrl, onOpen }: {
  * Render the card's display page. Tabs are generated from the card: home,
  * one tab per readable top-level module, and the world's internal characters.
  */
-export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModule, onAddModule, onOpenRole, onBackRole, isRole, menu, draft, aiEditing, renaming, onRename }: SettingPageProps) {
+export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModule, onAddModule, onOpenRole, onAddRole, onBackRole, isRole, menu, draft, aiEditing, renaming, onRename, onSetImage, onClearImage, onSaveTags }: SettingPageProps) {
   const [activeId, setActiveId] = useState('home')
+  const [tagDraft, setTagDraft] = useState<string | undefined>(undefined)
+  const [roleDraft, setRoleDraft] = useState<string | undefined>(undefined)
+  const [imageSlot, setImageSlot] = useState<'avatar' | 'cover' | 'logo' | undefined>(undefined)
+  const fileRef = useRef<HTMLInputElement>(null)
   const swipe = useRef<{ readonly x: number, readonly y: number } | null>(null)
 
   const overviewModule = target.modules.find(isOverviewModule)
@@ -304,6 +313,10 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
   const logo = face !== '' ? face : cover
   const tags = useMemo(() => {
     const found = new Set<string>()
+    for (const tag of target.tags ?? []) {
+      const value = tag.trim()
+      if (value !== '') found.add(value)
+    }
     const walk = (modules: readonly CardModuleDoc[]): void => {
       for (const module of modules) {
         for (const tag of module.tags) {
@@ -315,12 +328,29 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
     }
     walk(target.modules)
     return [...found].slice(0, 10)
-  }, [target.modules])
+  }, [target.modules, target.tags])
 
   const go = useCallback((delta: number) => {
     const next = tabs[activeIndex + delta]
     if (next !== undefined) setActiveId(next.id)
   }, [activeIndex, tabs])
+
+  const pickImage = (slot: 'avatar' | 'cover' | 'logo'): void => {
+    setImageSlot(slot)
+    fileRef.current?.click()
+  }
+  const commitTag = (): void => {
+    const value = (tagDraft ?? '').trim()
+    setTagDraft(undefined)
+    if (value === '' || tags.includes(value)) return
+    onSaveTags?.([...tags, value])
+  }
+  const commitRole = (): void => {
+    const name = (roleDraft ?? '').trim()
+    setRoleDraft(undefined)
+    if (name === '') return
+    onAddRole?.(name)
+  }
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>): void => {
     if (event.pointerType === 'mouse' && event.button !== 0) return
@@ -355,6 +385,11 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
             </button>
           )}
           <div className="nv-set-topright">
+            {onSetImage !== undefined && (
+              <button type="button" className="nv-set-imgact" onClick={() => pickImage('cover')}>
+                {target.kind === 'WORLD' ? t('card.home.cover') : t('card.home.background')}
+              </button>
+            )}
             {aiEditing && <span className="nv-set-pill">{t('ai.editing')}</span>}
             {draft && <span className="nv-set-pill">{t('me.draft')}</span>}
             {menu}
@@ -373,9 +408,11 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
 
         <div className="nv-set-lowercontent">
           <div className="nv-set-identity">
-            <div className="nv-set-logo">
+            <button type="button" className="nv-set-logo"
+              aria-label={target.kind === 'WORLD' ? t('card.home.logo') : t('card.home.avatar')}
+              onClick={() => pickImage(target.kind === 'WORLD' ? 'logo' : 'avatar')}>
               {logo === '' ? <span>{target.name.slice(0, 1)}</span> : <img src={logo} alt="" />}
-            </div>
+            </button>
             <div className="nv-set-id">
               <span className="nv-set-kind">{kindLabel}</span>
               {renaming
@@ -385,9 +422,28 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
             </div>
           </div>
 
-          {tags.length > 0 && (
+          {(tags.length > 0 || onSaveTags !== undefined) && (
             <div className="nv-set-tags">
-              {tags.map(tag => <span key={tag} className="nv-set-tag">{tag.startsWith('#') ? tag : `#${tag}`}</span>)}
+              {tags.map(tag => (
+                <span key={tag} className="nv-set-tag">
+                  {tag.startsWith('#') ? tag : `#${tag}`}
+                  {onSaveTags !== undefined && (
+                    <button type="button" aria-label={t('card.home.tagRemove')}
+                      onClick={() => onSaveTags(tags.filter(candidate => candidate !== tag))}>×</button>
+                  )}
+                </span>
+              ))}
+              {tagDraft === undefined
+                ? onSaveTags !== undefined && (
+                  <button type="button" className="nv-set-tagadd" onClick={() => setTagDraft('')}>＋ {t('card.home.tagAdd')}</button>
+                )
+                : <input className="nv-set-taginput" autoFocus value={tagDraft} aria-label={t('card.home.tagAdd')}
+                    onChange={event => setTagDraft(event.target.value)}
+                    onBlur={commitTag}
+                    onKeyDown={event => {
+                      if (event.key === 'Enter') { event.preventDefault(); commitTag() }
+                      if (event.key === 'Escape') setTagDraft(undefined)
+                    }} />}
             </div>
           )}
 
@@ -461,7 +517,22 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
                   <div className="nv-set-tabhead">
                     <h2>{t('setting.characters')}</h2>
                     <span className="nv-set-count">{doc.characters.length}</span>
+                    {onAddRole !== undefined && (
+                      <button type="button" className="nv-set-edit" onClick={() => setRoleDraft('')}>
+                        ＋ {t('card.home.roleAdd')}
+                      </button>
+                    )}
                   </div>
+                  {roleDraft !== undefined && (
+                    <input className="nv-set-roleinput" autoFocus value={roleDraft} placeholder={t('card.home.roleName')}
+                      aria-label={t('card.home.roleName')}
+                      onChange={event => setRoleDraft(event.target.value)}
+                      onBlur={commitRole}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') { event.preventDefault(); commitRole() }
+                        if (event.key === 'Escape') setRoleDraft(undefined)
+                      }} />
+                  )}
                   <div className="nv-set-chars">
                     {doc.characters.map(character => (
                       <CharacterCard key={character.id} character={character} t={t} imageUrl={imageUrl}
@@ -474,6 +545,21 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
           </div>
         </div>
       </div>
+      <input ref={fileRef} type="file" accept="image/*" hidden aria-hidden="true"
+        onChange={event => {
+          const file = event.target.files?.[0]
+          event.target.value = ''
+          if (file === undefined || imageSlot === undefined || onSetImage === undefined) return
+          const purpose = imageSlot
+          const reader = new FileReader()
+          reader.onload = () => {
+            const data = typeof reader.result === 'string' ? reader.result : ''
+            const comma = data.indexOf(',')
+            if (comma < 0) return
+            void onSetImage(purpose, data.slice(comma + 1), file.type === '' ? 'image/png' : file.type)
+          }
+          reader.readAsDataURL(file)
+        }} />
     </div>
   )
 }

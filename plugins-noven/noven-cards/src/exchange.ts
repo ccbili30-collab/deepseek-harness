@@ -196,7 +196,7 @@ function labelFor(card: ContentDocument, ref: string): string {
 /** 严格解析卡结构：字段不完整或出现未支持字段直接报错（不静默丢弃）。 */
 function parseCardStrict(raw: unknown, path: string): ContentDocument {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`${path} 不是对象`)
-  const allowed = new Set(['id', 'kind', 'name', 'modules', 'resources', 'internalCharacters', 'characters', 'extensions', 'appearance'])
+  const allowed = new Set(['id', 'kind', 'name', 'tags', 'modules', 'resources', 'internalCharacters', 'characters', 'extensions', 'appearance'])
   for (const key of Object.keys(raw as Record<string, unknown>)) {
     if (!allowed.has(key)) throw new Error(`${path}.${key} 是未支持字段（不能静默丢弃）`)
   }
@@ -205,10 +205,14 @@ function parseCardStrict(raw: unknown, path: string): ContentDocument {
   if (kind !== 'WORLD' && kind !== 'CHARACTER') throw new Error(`${path}.kind 必须是 WORLD 或 CHARACTER`)
   if (typeof source.id !== 'string' || source.id.length === 0) throw new Error(`${path}.id 不能为空`)
   if (typeof source.name !== 'string') throw new Error(`${path}.name 不能为空`)
+  if (source.tags !== undefined && (!Array.isArray(source.tags) || source.tags.some(tag => typeof tag !== 'string'))) {
+    throw new Error(`${path}.tags 必须是字符串数组`)
+  }
   const card: ContentDocument = {
     id: source.id,
     kind,
     name: source.name,
+    ...(source.tags === undefined ? {} : { tags: source.tags as string[] }),
     modules: parseModulesStrict(source.modules ?? [], `${path}.modules`),
     resources: (Array.isArray(source.resources) ? source.resources : []).map((entry, index) => {
       if (entry === null || typeof entry !== 'object') throw new Error(`${path}.resources[${String(index)}] 不是对象`)
@@ -238,13 +242,14 @@ function parseCardStrict(raw: unknown, path: string): ContentDocument {
       if (appearance === null || typeof appearance !== 'object') throw new Error(`${path}.appearance 不是对象`)
       const value = appearance as Record<string, unknown>
       for (const key of Object.keys(value)) {
-        if (!['avatar', 'cover', 'avatarResourceId', 'coverResourceId', 'readingLayout'].includes(key)) throw new Error(`${path}.appearance.${key} 是未支持字段`)
+        if (!['avatar', 'cover', 'logo', 'avatarResourceId', 'coverResourceId', 'logoResourceId', 'readingLayout'].includes(key)) throw new Error(`${path}.appearance.${key} 是未支持字段`)
       }
       const readingLayout = value.readingLayout ?? 'PAGED'
       if (readingLayout !== 'PAGED' && readingLayout !== 'CONTINUOUS') throw new Error(`${path}.appearance.readingLayout 无效`)
       return {
         ...(typeof value.avatarResourceId === 'string' ? { avatarResourceId: value.avatarResourceId } : typeof value.avatar === 'string' ? { avatarResourceId: value.avatar } : {}),
         ...(typeof value.coverResourceId === 'string' ? { coverResourceId: value.coverResourceId } : typeof value.cover === 'string' ? { coverResourceId: value.cover } : {}),
+        ...(typeof value.logoResourceId === 'string' ? { logoResourceId: value.logoResourceId } : typeof value.logo === 'string' ? { logoResourceId: value.logo } : {}),
         readingLayout,
       }
     })(),
@@ -415,6 +420,7 @@ function remapAllIds(card: ContentDocument, freshCardId: string, refMap: Map<str
       readingLayout: card.appearance.readingLayout,
       ...(card.appearance.avatarResourceId !== undefined ? { avatarResourceId: idMap.get(card.appearance.avatarResourceId) ?? card.appearance.avatarResourceId } : {}),
       ...(card.appearance.coverResourceId !== undefined ? { coverResourceId: idMap.get(card.appearance.coverResourceId) ?? card.appearance.coverResourceId } : {}),
+      ...(card.appearance.logoResourceId !== undefined ? { logoResourceId: idMap.get(card.appearance.logoResourceId) ?? card.appearance.logoResourceId } : {}),
     },
     internalCharacters: card.internalCharacters.map((character, index) => remapAllIds(character, fresh(`${card.id}:c${String(index)}`), refMap)),
   }
@@ -452,6 +458,7 @@ export async function importForeignFile(store: CardStore, bytes: Uint8Array, fil
       id: cardId,
       kind: 'CHARACTER',
       name,
+      tags: [],
       modules: [],
       resources: [],
       internalCharacters: [],

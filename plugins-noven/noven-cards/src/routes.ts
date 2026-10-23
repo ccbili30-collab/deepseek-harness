@@ -173,17 +173,20 @@ interface HydratedDocument {
   readonly id: string
   readonly kind: string
   readonly name: string
+  readonly tags: readonly string[]
   readonly modules: readonly HydratedModule[]
   readonly avatarResourceId: string | null
   readonly coverResourceId: string | null
+  readonly logoResourceId: string | null
   readonly readingLayout: string
 }
 
 /** Appearance fields one hydrated document carries; internal characters keep their own. */
-function appearanceOf(document: ContentDocument): Pick<HydratedDocument, 'avatarResourceId' | 'coverResourceId' | 'readingLayout'> {
+function appearanceOf(document: ContentDocument): Pick<HydratedDocument, 'avatarResourceId' | 'coverResourceId' | 'logoResourceId' | 'readingLayout'> {
   return {
     avatarResourceId: document.appearance.avatarResourceId ?? null,
     coverResourceId: document.appearance.coverResourceId ?? null,
+    logoResourceId: document.appearance.logoResourceId ?? null,
     readingLayout: document.appearance.readingLayout,
   }
 }
@@ -194,10 +197,11 @@ async function hydrateDocument(store: CardStore, cardId: string, document: Conte
     id: document.id,
     kind: document.kind,
     name: document.name,
+    tags: [...(document.tags ?? [])],
     modules: await hydrateModules(store, cardId, document.modules),
     ...appearanceOf(document),
     characters: await Promise.all(document.internalCharacters.map(async c => ({
-      id: c.id, kind: c.kind, name: c.name, modules: await hydrateModules(store, cardId, c.modules), ...appearanceOf(c),
+      id: c.id, kind: c.kind, name: c.name, tags: [...(c.tags ?? [])], modules: await hydrateModules(store, cardId, c.modules), ...appearanceOf(c),
     }))),
   }
 }
@@ -344,7 +348,7 @@ async function cardList(store: CardStore): Promise<Record<string, unknown>[]> {
 const APPLY_COMMANDS = new Set([
   'add_module', 'add_module_ref', 'add_module_custom', 'rename_module', 'rename_card', 'write_text', 'write_markdown', 'write_caption',
   'move_module', 'place_module', 'copy_module', 'merge_child', 'set_module_layout', 'set_reading_layout', 'move_block',
-  'remove_module', 'remove_block', 'module_options', 'appearance', 'insert_owned_image',
+  'remove_module', 'remove_block', 'module_options', 'appearance', 'set_card_image', 'set_card_tags', 'insert_owned_image',
   'replace_block_image', 'remove_resource', 'place_character', 'add_character', 'remove_character',
   'set_widget_data',
   'timeline_set_calendar', 'timeline_set_window', 'timeline_switch_view', 'timeline_add_event', 'timeline_update_event', 'timeline_move_event', 'timeline_remove_event',
@@ -438,6 +442,14 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
     case 'insert_owned_image': return needs(['moduleId', 'resourceId'])
     case 'place_character': case 'remove_character': return needs(['characterId'])
     case 'appearance': return 'resourceId' in command ? undefined : 'missing resourceId'
+    case 'set_card_image': {
+      const invalid = needs(['imageBase64', 'mediaType', 'purpose'])
+      if (invalid !== undefined) return invalid
+      if (!['avatar', 'cover', 'logo'].includes(String(command.purpose))) return 'invalid purpose'
+      return String(command.mediaType).startsWith('image/') ? undefined : 'invalid mediaType'
+    }
+    case 'set_card_tags':
+      return Array.isArray(command.tags) && command.tags.every(tag => typeof tag === 'string') ? undefined : 'invalid tags'
     case 'remove_resource': return needs(['resourceId'])
     case 'set_reading_layout': return needs(['layout'])
     case 'module_options': return needs(['moduleId'])

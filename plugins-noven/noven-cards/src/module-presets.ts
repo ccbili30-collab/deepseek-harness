@@ -342,35 +342,9 @@ export const MODULE_PRESETS: Readonly<Record<string, ModulePresetSpec>> = {
       { name: '一句话', type: 'text' }, { name: '性格关键词', type: 'chips' }, { name: '档案', type: 'longtext' },
     ],
   },
-  worldProfile: {
-    widget: 'collection', view: 'profile', emptyItem: true, presentation: COLLECTION_CONTRACTS.worldProfile,
-    fields: [
-      { name: '名称', type: 'text' }, { name: '封面', type: 'image' }, { name: '世界类型', type: 'text' },
-      { name: '尺度', type: 'text' }, { name: '规则', type: 'text' }, { name: '历法', type: 'text' },
-      { name: '关键词', type: 'chips' }, { name: '一句话', type: 'text' }, { name: '档案', type: 'longtext' },
-    ],
-  },
   graph: {
     widget: 'collection', view: 'graph', presentation: COLLECTION_CONTRACTS.relations,
     fields: [{ name: '从', type: 'text' }, { name: '到', type: 'text' }, { name: '关系', type: 'text' }, { name: '说明', type: 'longtext' }],
-  },
-  culture: {
-    widget: 'collection', view: 'cards', cardAspect: 'landscape', presentation: COLLECTION_CONTRACTS.culture,
-    fields: [{ name: '名称', type: 'text' }, { name: '场景', type: 'image' }, { name: '类别', type: 'text' }, { name: '场合', type: 'text' }, { name: '日历', type: 'date' }, { name: '说明', type: 'longtext' }],
-  },
-  rules: {
-    sample: '## 规则\n\n### 第一条\n写一条这个世界不能破的规则。',
-  },
-  history: { widget: 'timeline', unit: '年' },
-  abilities: {
-    widget: 'collection', view: 'list', presentation: COLLECTION_CONTRACTS.abilities,
-    fields: [{ name: '名称', type: 'text' }, { name: '类型', type: 'text' }, { name: '效果', type: 'longtext' },
-      { name: '详细说明', type: 'longtext' }, { name: '代价', type: 'text' }],
-  },
-  equipment: {
-    widget: 'collection', view: 'cards', cardAspect: 'square', presentation: COLLECTION_CONTRACTS.equipment,
-    fields: [{ name: '名称', type: 'text' }, { name: '图片', type: 'image' }, { name: '类型', type: 'text' },
-      { name: '效果', type: 'longtext' }, { name: '归属', type: 'text' }, { name: '详细说明', type: 'longtext' }],
   },
   surface: {
     widget: 'html',
@@ -471,44 +445,6 @@ export const MODULE_PRESETS: Readonly<Record<string, ModulePresetSpec>> = {
   },
   timeline: { widget: 'timeline', unit: '年' },
   map: { widget: 'map' },
-  diary: { widget: 'timeline', unit: '岁', timelineView: 'diary' },
-  gallery: {
-    widget: 'collection', view: 'cards', cardAspect: 'portrait', presentation: COLLECTION_CONTRACTS.gallery,
-    fields: [{ name: '名称', type: 'text' }, { name: '图片', type: 'image' }, { name: '说明', type: 'longtext' }],
-  },
-  forms: {
-    widget: 'collection', view: 'cards', cardAspect: 'portrait', presentation: COLLECTION_CONTRACTS.multiForm,
-    form: { labels: { primary: 'i18n:coll.primary', add: 'i18n:coll.gallery.add' } },
-    fields: [
-      { name: '名称', type: 'text' }, { name: '图片', type: 'image' }, { name: '说明', type: 'longtext' },
-      { name: '身份', type: 'text' }, { name: '年龄', type: 'number' }, { name: '阵营', type: 'text' }, { name: '出身', type: 'text' },
-    ],
-  },
-  quotes: {
-    widget: 'collection', view: 'cards', presentation: COLLECTION_CONTRACTS.quotes,
-    fields: [{ name: '语录', type: 'text' }, { name: '场景', type: 'text' }, { name: '情绪', type: 'text' }, { name: '对象', type: 'text' }],
-  },
-  factions: {
-    widget: 'collection', view: 'cards', cardAspect: 'square', presentation: COLLECTION_CONTRACTS.factions,
-    fields: [
-      { name: '名称', type: 'text' }, { name: '徽记', type: 'image' }, { name: '立场', type: 'chips' },
-      { name: '实力', type: 'number' }, { name: '驻地', type: 'place' }, { name: '首领', type: 'text' },
-      { name: '说明', type: 'longtext' },
-    ],
-  },
-  places: {
-    widget: 'collection', view: 'cards', cardAspect: 'landscape', presentation: COLLECTION_CONTRACTS.geography,
-    fields: [
-      { name: '名称', type: 'text' }, { name: '场景', type: 'image' }, { name: '地貌', type: 'text' },
-      { name: '气候', type: 'text' }, { name: '主要势力', type: 'place' }, { name: '地图标记', type: 'text' },
-      { name: '说明', type: 'longtext' },
-    ],
-  },
-  races: {
-    widget: 'collection', view: 'cards', cardAspect: 'portrait', presentation: COLLECTION_CONTRACTS.races,
-    fields: [{ name: '名称', type: 'text' }, { name: '形象', type: 'image' }, { name: '特征', type: 'longtext' },
-      { name: '分布', type: 'place' }, { name: '寿命', type: 'text' }],
-  },
   collection: {
     widget: 'collection', view: 'list', presentation: COLLECTION_CONTRACTS.collection,
     fields: [{ name: '名称', type: 'text' }, { name: '说明', type: 'longtext' }],

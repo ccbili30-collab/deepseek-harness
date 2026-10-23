@@ -95,6 +95,8 @@ export interface CardResource { id: string, content: ContentRef, mediaType: stri
 export interface CardAppearance {
   avatarResourceId?: string
   coverResourceId?: string
+  /** World logo on the card home; absent means the name stands alone. */
+  logoResourceId?: string
   readingLayout: 'PAGED' | 'CONTINUOUS'
 }
 
@@ -103,6 +105,8 @@ export interface ContentDocument {
   id: string
   kind: CardKind
   name: string
+  /** Card-level tags for the home; older cards simply have none. */
+  tags?: readonly string[]
   modules: ContentModule[]
   resources: CardResource[]
   /** 世界内角色（递归完整卡）；角色卡不得再嵌。 */
@@ -119,7 +123,7 @@ export function mintId(): string {
 /** 一张空卡（新建世界/角色的起点文档）。 */
 export function emptyCardDocument(kind: CardKind, name: string): ContentDocument {
   return {
-    id: `card-${randomUUID()}`, kind, name, modules: [], resources: [], internalCharacters: [], extensions: {},
+    id: `card-${randomUUID()}`, kind, name, tags: [], modules: [], resources: [], internalCharacters: [], extensions: {},
     appearance: { readingLayout: 'PAGED' },
   }
 }
@@ -150,8 +154,8 @@ export function validateCard(document: ContentDocument): string[] {
     identify(card.id, '卡片')
     if (card.kind === 'CHARACTER' && card.internalCharacters.length > 0) errors.push('角色不能容纳内部角色')
     const localResources = new Set(card.resources.map(resource => resource.id))
-    for (const id of [card.appearance.avatarResourceId, card.appearance.coverResourceId]) {
-      if (id !== undefined && !localResources.has(id)) errors.push('头像和封面必须引用本卡资源')
+    for (const id of [card.appearance.avatarResourceId, card.appearance.coverResourceId, card.appearance.logoResourceId]) {
+      if (id !== undefined && !localResources.has(id)) errors.push('头像、封面和标记必须引用本卡资源')
     }
     for (const resource of card.resources) {
       identify(resource.id, '资源')

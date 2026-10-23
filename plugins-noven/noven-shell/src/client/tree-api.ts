@@ -16,6 +16,8 @@ export interface TreeModuleRow {
   readonly children: readonly TreeModuleRow[]
   /** 注入去向；'STANDBY' = 已归档（待命，不进上下文）。 */
   readonly routing?: string
+  /** 已停发的领域模块且仍为空：界面不列，数据不动。 */
+  readonly empty?: boolean
 }
 
 /** 树里的一张卡：封面是 payload ref。

@@ -1,0 +1,5 @@
+模块: 长明京圣城
+渲染器: ANGLE (Apple, ANGLE Metal Renderer: Apple M4, Unspecified Version)
+录制方式: 确定性逐帧（虚拟时钟 performance.now/rAF 受控），每 1/60s 步进实时渲染帧，ffmpeg libvpx-vp9 合成 60fps
+时长: 7.4s × 60fps = 444 帧
+ffmpeg: Stream #0:0: Video: vp9 (Profile 0), yuv420p(tv, progressive), 3360x1890, SAR 1:1 DAR 16:9, 60 fps, 60 tbr, 1k tbn

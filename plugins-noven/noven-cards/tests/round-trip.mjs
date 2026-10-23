@@ -77,6 +77,8 @@ try {
   const characterId = edit1.createdModuleIds[0]
   const committed1 = await store.commit('card-a', edit1.draft.version)
   check(characterId !== undefined && committed1.revision === 2, `世界内角色（${String(characterId)}）`)
+  const seeded = committed1.document.internalCharacters[0]
+  check(seeded?.modules.map(module => module.name).join('/') === '基本信息/关系/行动轨迹', '新角色起手三件：基本信息/关系/行动轨迹')
   const png1x1 = makePng()
   const edit2 = await applyEdit(store, 'card-a', 'card-a', { kind: 'adopt_image', bytes: png1x1, mediaType: 'image/png', moduleId: null }, 'AI')
   const committed2 = await store.commit('card-a', edit2.draft.version)
@@ -84,6 +86,23 @@ try {
   const edit3 = await applyEdit(store, 'card-a', 'card-a', { kind: 'appearance', resourceId, cover: true }, 'AI')
   const committed3 = await store.commit('card-a', edit3.draft.version)
   check(committed3.revision === 4, `图片资源 + 封面（r${String(committed3.revision)}）`)
+  const pngBase64 = Buffer.from(png1x1).toString('base64')
+  const edit4 = await applyEdit(store, 'card-a', 'card-a', { kind: 'set_card_image', imageBase64: pngBase64, mediaType: 'image/png', purpose: 'logo' }, 'AI')
+  await store.commit('card-a', edit4.draft.version)
+  const afterLogo = (await store.open('card-a')).document
+  check(afterLogo.appearance.logoResourceId !== undefined && afterLogo.resources.length === 2, 'LOGO 上传成新资源并绑定')
+  const logoResourceId = afterLogo.appearance.logoResourceId
+  const edit5 = await applyEdit(store, 'card-a', 'card-a', { kind: 'set_card_tags', tags: [' 蒸汽朋克 ', '蒸汽朋克', '悬疑', ''] }, 'AI')
+  await store.commit('card-a', edit5.draft.version)
+  const afterTags = (await store.open('card-a')).document
+  check(JSON.stringify(afterTags.tags) === JSON.stringify(['蒸汽朋克', '悬疑']), '卡标签去空去重')
+  const edit6 = await applyEdit(store, 'card-a', 'card-a', { kind: 'appearance', resourceId: null, cover: false, logo: true }, 'AI')
+  await store.commit('card-a', edit6.draft.version)
+  check((await store.open('card-a')).document.appearance.logoResourceId === undefined, '清除 LOGO 用途不删素材')
+  const edit7 = await applyEdit(store, 'card-a', 'card-a', { kind: 'appearance', resourceId: logoResourceId, cover: false, logo: true }, 'AI')
+  await store.commit('card-a', edit7.draft.version)
+  check((await store.open('card-a')).document.appearance.logoResourceId === logoResourceId, 'LOGO 用途可重新挂回')
+  check(JSON.stringify((await store.open('card-a')).document.tags) === JSON.stringify(['蒸汽朋克', '悬疑']), '卡标签与 LOGO 一起进入往返')
 
   // 4. 重复编号被校验拒绝
   const broken = JSON.parse(JSON.stringify(saved.document))
@@ -100,7 +119,11 @@ try {
   const exported2 = await exportCard(store, imported.cardId, zipPath2)
   const structure1 = stripIds(JSON.parse(new TextDecoder().decode(readZipEntry(zipPath, 'structure.json'))).card)
   const structure2 = stripIds(JSON.parse(new TextDecoder().decode(readZipEntry(zipPath2, 'structure.json'))).card)
-  check(JSON.stringify(structure1) === JSON.stringify(structure2), '往返结构逐项一致（编号除外）')
+  /** 键序不属于交换格式语义：按 key 排序后逐项对账。 */
+  const canonical = value => JSON.stringify(value, (_key, node) => node !== null && typeof node === 'object' && !Array.isArray(node)
+    ? Object.fromEntries(Object.entries(node).sort(([a], [b]) => a.localeCompare(b)))
+    : node)
+  check(canonical(structure1) === canonical(structure2), '往返结构逐项一致（编号除外）')
   const sha1 = Object.values(exported.sha256).sort()
   const sha2 = Object.values(exported2.sha256).sort()
   check(JSON.stringify(sha1) === JSON.stringify(sha2), `载荷 SHA-256 对账（${String(sha1.length)} 条）`)
@@ -287,7 +310,7 @@ function stripIds(node) {
   if (node === null || typeof node !== 'object') return node
   const out = {}
   for (const [key, value] of Object.entries(node)) {
-    if (['id', 'content', 'caption', 'resourceId', 'avatarResourceId', 'coverResourceId', 'characterIds', 'characters'].includes(key)) {
+    if (['id', 'content', 'caption', 'resourceId', 'avatarResourceId', 'coverResourceId', 'logoResourceId', 'characterIds', 'characters'].includes(key)) {
       out[key] = Array.isArray(value) ? value.map(() => '*') : value === undefined ? undefined : '*'
       continue
     }

@@ -181,13 +181,28 @@ export function projectsCatalog(sessions: ClientContext['sessions']): Observable
   let started = false
   let inFlight = false
   let queued = false
+  let statsInFlight: Promise<void> | undefined
+  let statsScheduled = false
+  // Rows now carry counts/covers, so compare the whole row, not just identity.
   const sameRows = (a: readonly ProjectRow[], b: readonly ProjectRow[]): boolean =>
-    a.length === b.length && a.every((row, i) => row.root === b[i]?.root && row.title === b[i]?.title
-      && row.sessionId === b[i]?.sessionId && row.missing === b[i]?.missing && row.updatedAt === b[i]?.updatedAt)
+    a.length === b.length && JSON.stringify(a) === JSON.stringify(b)
   const publish = (rows: readonly ProjectRow[]): void => {
     if (sameRows(rows, snapshot)) return
     snapshot = rows
     for (const listener of listeners) listener()
+  }
+  /** Bind rows to the cheapest live Session for root-addressed APIs and sort them. */
+  const publishProjects = (projects: readonly (Omit<ProjectRow, 'sessionId'> & { sessionId?: SessionId })[], miscRoot?: string): void => {
+    setMiscProjectRoot(miscRoot)
+    const state = sessions.list.getSnapshot()
+    const byRoot = new Map<string, SessionId>()
+    for (const id of state.ids) {
+      const cwd = state.byId[id]?.cwd
+      if (cwd !== undefined && !byRoot.has(cwd)) byRoot.set(cwd, id)
+    }
+    const rows = projects.map(project => ({ ...project, sessionId: byRoot.get(project.root) }))
+    rows.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
+    publish(rows)
   }
   // 单飞 + 尾随：会话通知是风暴源（活动会话每次状态跳动都触发），在飞的
   // 请求被丢弃会让快照永远停在旧数据——必须让最后一次取回的结果落地。
@@ -197,45 +212,60 @@ export function projectsCatalog(sessions: ClientContext['sessions']): Observable
     try {
       for (;;) {
         queued = false
+        // Registry-only read: no library/inbox/card scan on the startup path.
         const response = await fetch('/api/noven-projects').catch(() => undefined)
         if (response === undefined || !response.ok) return
         const { projects, miscRoot: hostMiscRoot } = await response.json() as { projects: readonly (Omit<ProjectRow, 'sessionId'> & { sessionId?: SessionId })[]; miscRoot?: string }
-        setMiscProjectRoot(hostMiscRoot)
-        // A session bound to the root makes API calls cheap; rows without one go by root.
-        const state = sessions.list.getSnapshot()
-        const byRoot = new Map<string, SessionId>()
-        for (const id of state.ids) {
-          const cwd = state.byId[id]?.cwd
-          if (cwd !== undefined && !byRoot.has(cwd)) byRoot.set(cwd, id)
+        publishProjects(projects, hostMiscRoot)
+        if (!queued) {
+          // Live counts/covers arrive after the first paint, never before it.
+          if (!statsScheduled) {
+            statsScheduled = true
+            window.setTimeout(() => { void refreshStats() }, 1_200)
+          }
+          return
         }
-        const rows = projects.map(p => ({ ...p, sessionId: byRoot.get(p.root) }))
-        rows.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''))
-        publish(rows)
-        if (!queued) return
       }
     } finally {
       inFlight = false
     }
   }
+  /** Slow path: live library/card stats for the 创作库 grid. */
+  const refreshStats = (): Promise<void> => {
+    if (statsInFlight !== undefined) return statsInFlight
+    statsInFlight = (async () => {
+      const response = await fetch('/api/noven-projects?stats=1').catch(() => undefined)
+      if (response === undefined || !response.ok) return
+      const { projects, miscRoot: hostMiscRoot } = await response.json() as { projects: readonly (Omit<ProjectRow, 'sessionId'> & { sessionId?: SessionId })[]; miscRoot?: string }
+      publishProjects(projects, hostMiscRoot)
+    })().finally(() => { statsInFlight = undefined })
+    return statsInFlight
+  }
   // 注册表在服务端也会被改写（autoClaim 重新认领、别的窗口注销），
-  // 会话通知覆盖不到这些——按树的节奏轮询兜底，全体订阅者共享一条。
+  // 会话通知覆盖不到这些——低频轮询只读注册表，统计另走慢路径。
   let timer: ReturnType<typeof setInterval> | undefined
+  let sessionTimer: ReturnType<typeof setTimeout> | undefined
   let disposeSessions: (() => void) | undefined
   return {
     getSnapshot: () => snapshot,
-    refresh: () => { void compute() },
+    refresh: () => { void compute(); void refreshStats() },
     subscribe: (listener: () => void) => {
       listeners.add(listener)
       if (!started) { started = true; void compute() }
       if (timer === undefined) {
-        timer = setInterval(() => { void compute() }, 2000)
-        disposeSessions = sessions.list.subscribe(() => { void compute() })
+        timer = setInterval(() => { void compute() }, 15_000)
+        disposeSessions = sessions.list.subscribe(() => {
+          if (sessionTimer !== undefined) clearTimeout(sessionTimer)
+          sessionTimer = setTimeout(() => { sessionTimer = undefined; void compute() }, 500)
+        })
       }
       return () => {
         listeners.delete(listener)
         if (listeners.size === 0) {
           clearInterval(timer)
           timer = undefined
+          if (sessionTimer !== undefined) clearTimeout(sessionTimer)
+          sessionTimer = undefined
           disposeSessions?.()
           disposeSessions = undefined
         }

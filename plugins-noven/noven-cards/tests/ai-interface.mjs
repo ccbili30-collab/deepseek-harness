@@ -31,7 +31,8 @@ try {
   check(modulePresets.status === 'read'
     && modulePresets.presets.some(p => p.id === 'profile' && p.widget === 'collection' && p.fields?.some(f => f.name === '姓名')),
   'list_module_presets 带字段/视图')
-  check(modulePresets.presets.some(p => p.id === 'diary' && p.widget === 'timeline' && p.timeline_view === 'diary'), 'list_module_presets 暴露日记时间线')
+  check(modulePresets.presets.some(p => p.id === 'timeline' && p.widget === 'timeline' && p.unit === '年'), 'list_module_presets 暴露时间线')
+  check(modulePresets.presets.some(p => p.id === 'diary') === false, 'list_module_presets 不再暴露日记等域预设')
 
   const created = await call('create_card_from_preset', { template: 'character', name: '接口角色' })
   check(created.status === 'saved' && created.card_kind === 'CHARACTER', 'create_card_from_preset 落标准角色卡')
@@ -40,16 +41,13 @@ try {
 
   const read = await call('read_card', { root_id: cardId, target_id: cardId })
   const modules = read.card.modules
-  const profile = modules.find(module => module.name === '角色档案')
-  const multi = modules.find(module => module.name === '多形态')
+  const profile = modules.find(module => module.name === '基本信息')
   const diary = modules.find(module => module.name === '行动轨迹')
   const relation = modules.find(module => module.name === '关系')
-  check(profile !== undefined && multi !== undefined && diary !== undefined && relation !== undefined, '模板卡带角色档案/多形态/行动轨迹/关系')
+  check(profile !== undefined && diary !== undefined && relation !== undefined, '模板卡带基本信息/行动轨迹/关系')
 
-  const multiData = await call('collection_describe', { root_id: cardId, target_id: cardId, module_id: multi.id })
-  check(multiData.source?.moduleName === '角色档案', 'collection_describe 读出多形态 source')
-  check(multiData.presentation?.contract === 'multiForm', 'collection_describe 读出多形态呈现契约')
-  check(multiData.fields.some(field => field.name === '身份'), 'collection_describe 读出覆写字段')
+  const profileData = await call('collection_describe', { root_id: cardId, target_id: cardId, module_id: profile.id })
+  check(profileData.presentation?.contract === 'profile', 'collection_describe 读出基本信息呈现契约')
 
   const diaryData = await call('timeline_describe', { root_id: cardId, target_id: cardId, module_id: diary.id })
   check(diaryData.view === 'diary' && diaryData.calendar?.unit === '岁', 'timeline_describe 读出纵向日记')
@@ -69,13 +67,13 @@ try {
   check(Array.isArray(relationData.nodes) && relationData.nodes.length === 2 && Array.isArray(relationData.edges), 'relation_describe 读出节点/连线')
 
   const history = await call('add_module_preset', {
-    root_id: cardId, target_id: cardId, name: '世界年表', preset: 'history',
+    root_id: cardId, target_id: cardId, name: '世界年表', preset: 'timeline',
   })
   check(history.status === 'saved' && history.created_module_ids.length === 1, 'add_module_preset 用内置预设落模块')
   const historyData = await call('timeline_describe', {
     root_id: cardId, target_id: cardId, module_id: history.created_module_ids[0],
   })
-  check(historyData.view !== 'diary' && historyData.calendar?.unit === '年', 'add_module_preset 的 history 是横向年表')
+  check(historyData.view !== 'diary' && historyData.calendar?.unit === '年', 'add_module_preset 的 timeline 是横向年表')
 
   const definition = {
     name: '导航名册', shape: 'collection', view: 'cards',

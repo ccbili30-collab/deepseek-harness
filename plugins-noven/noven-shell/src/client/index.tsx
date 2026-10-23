@@ -54,6 +54,7 @@ import { ContextTab } from './tabs/Context.tsx'
 import { LibraryTab } from './tabs/Library.tsx'
 import { SidecarTab, type SidecarMessage, type SidecarState } from './tabs/Sidecar.tsx'
 import { SettingsTab } from './tabs/Settings.tsx'
+import { UpdatesSection } from './settings/UpdatesSection.tsx'
 import { fetchSidecar, sidecarOp, type SidecarOp } from './sidecar-api.ts'
 import type { SessionEventLikeEntry, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { HeroBrandMarkOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -1122,19 +1123,6 @@ export function apply(ctx: ClientContext): void {
   ctx.effect(() => installPanelGhost(), 'noven-shell: panel ghost')
   ctx.effect(() => ctx.locale.register(NS, { zh, en }), 'noven-shell: dictionaries')
   const t = ctx.locale.bind(NS)
-  // 杂项项目是永久兜底（设计理念 §15）：Host 的目录与注册表由服务端自举，
-  // 这里只取它报告的根去补登记上游工作区。浏览器没有 HOME，不能本地拼路径。
-  void (async () => {
-    try {
-      const response = await fetch('/api/noven-projects')
-      if (!response.ok) return
-      const payload = await response.json() as { projects: readonly { root: string; misc?: boolean }[]; miscRoot?: string }
-      setMiscProjectRoot(payload.miscRoot)
-      const misc = payload.projects.find(row => row.misc === true)?.root
-      if (misc === undefined) return
-      await (ctx.get('workspaces') as IWorkspaces | undefined)?.create({ path: misc }).catch(() => undefined)
-    } catch { /* a lost misc bootstrap never blocks the app */ }
-  })()
 
   // Noven palette over the shipped tokens (light drives the product; dark
   // keeps the same accents on dark surfaces).
@@ -1163,6 +1151,20 @@ export function apply(ctx: ClientContext): void {
   const instance = handle.create()
   const store: typeof handle = { ...handle, create: () => instance }
   const projects = projectsCatalog(ctx.sessions)
+  // 杂项项目是永久兜底（设计理念 §15）：注册表自举后只补登记一次上游工作区，
+  // 复用同一份项目快照，不再另发一次请求。浏览器没有 HOME，不能本地拼路径。
+  ctx.effect(() => {
+    let created = false
+    const ensure = (): void => {
+      if (created) return
+      const root = miscProjectRoot()
+      if (root === undefined) return
+      created = true
+      void (ctx.get('workspaces') as IWorkspaces | undefined)?.create({ path: root }).catch(() => undefined)
+    }
+    ensure()
+    return projects.subscribe(ensure)
+  }, 'noven-shell: misc workspace')
   const cards = cardCatalog(ctx.sessions, projects, ctx.workspaces)
   const bindings = bindingCache(ctx.sessions)
   const allBindings = bindingsCatalog(bindings, ctx.sessions)
@@ -1450,14 +1452,47 @@ export function apply(ctx: ClientContext): void {
   }
 
   /** 当前项目坐标：跟随绑定会话的 cwd，标题取创作库登记名。 */
-  let focusSnapshot: ProjectFocus | undefined
+  const FOCUS_KEY = 'noven.focus.v1'
+  /** Last project/session shown by this browser; restores the tree before network data. */
+  const readCachedFocus = (): ProjectFocus | undefined => {
+    try {
+      const parsed = JSON.parse(localStorage.getItem(FOCUS_KEY) ?? 'null') as Partial<ProjectFocus> | null
+      if (parsed === null || typeof parsed.root !== 'string' || parsed.root === '') return undefined
+      return {
+        root: parsed.root,
+        sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId as SessionId : undefined,
+        title: typeof parsed.title === 'string' ? parsed.title : undefined,
+      }
+    } catch {
+      return undefined
+    }
+  }
+  const writeCachedFocus = (focus: ProjectFocus | undefined): void => {
+    try {
+      if (focus === undefined) localStorage.removeItem(FOCUS_KEY)
+      else localStorage.setItem(FOCUS_KEY, JSON.stringify(focus))
+    } catch { /* private mode: the tree simply waits for the first response */ }
+  }
+  let focusSnapshot: ProjectFocus | undefined = readCachedFocus()
+  let currentKeySeen = false
   const focusListeners = new Set<() => void>()
   const computeFocus = (): void => {
+    const sessionState = ctx.sessions.list.getSnapshot()
     const key = ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined
-    const cwd = key === undefined ? undefined : ctx.sessions.list.getSnapshot().byId[key]?.cwd
+    if (key !== undefined) currentKeySeen = true
+    const row = key === undefined ? undefined : sessionState.byId[key]
+    const cwd = row?.cwd
+    const projectRows = projects.getSnapshot()
+    // Keep the restored focus until the app has produced a current session at
+    // least once, and until that session's row/project row can actually judge
+    // it. Clearing on the first empty snapshot would flash an empty drawer and
+    // discard the cached tree the snapshot exists for.
+    if (focusSnapshot !== undefined && !currentKeySeen) return
+    if (focusSnapshot !== undefined && key !== undefined && row === undefined) return
+    if (focusSnapshot !== undefined && key !== undefined && cwd !== undefined && projectRows.length === 0) return
     // 项目 = 注册表里的根，不是随便一个 cwd：会话落在没登记的目录上就没有
     // 工作台——树清空、画布只留起点、写入口关闭（C6）。
-    const project = cwd === undefined ? undefined : projects.getSnapshot().find(row => row.root === cwd)
+    const project = cwd === undefined ? undefined : projectRows.find(candidate => candidate.root === cwd)
     const next: ProjectFocus | undefined = project === undefined || key === undefined ? undefined : {
       root: project.root,
       sessionId: key,
@@ -1467,13 +1502,13 @@ export function apply(ctx: ClientContext): void {
     // publish(undefined) 清成「新建」空态，下一拍又回来，肉眼就是导航抽搐。
     // 会话行消失或 cwd 真换到别的根时照常落空（C6）。
     if (next === undefined && focusSnapshot !== undefined && key !== undefined && key === focusSnapshot.sessionId) {
-      const row = ctx.sessions.list.getSnapshot().byId[key]
       if (row !== undefined && (row.cwd === undefined || row.cwd === focusSnapshot.root)) return
     }
     const same = next === undefined ? focusSnapshot === undefined
       : focusSnapshot !== undefined && next.root === focusSnapshot.root && next.sessionId === focusSnapshot.sessionId && next.title === focusSnapshot.title
     if (same) return
     focusSnapshot = next
+    writeCachedFocus(next)
     for (const listener of focusListeners) listener()
   }
   const projectFocus: ObservableSnapshot<ProjectFocus | undefined> = {
@@ -2158,9 +2193,20 @@ export function apply(ctx: ClientContext): void {
           })
           .catch((reason: unknown) => { console.warn('noven-shell: rmdir failed:', reason); notifyUndo({ text: fmt(t, 'ui.receipt.failed', { name }) }) })
       },
-      /** 工具菜单功能行 → 右栏页签；侧边对话收编成画布 conv 页签（不进抽屉）。 */
+      /** 工具菜单功能行 → 画布页签；只有伴随视图留在右栏。 */
       openFeatureTab: kind => {
         if (kind === 'sidechat') { openSideConv(); return }
+        const title = ctx.sidebarRightTabs.guide().find(box => box.kind === kind)?.title() ?? kind
+        if (kind === 'files') {
+          canvasInstance.actions.open({ key: 'files', kind: 'files', title, owner: sessionId })
+          raiseCanvas()
+          return
+        }
+        if (kind === 'noven:library') {
+          canvasInstance.actions.open({ key: 'library', kind: 'library', title, owner: sessionId })
+          raiseCanvas()
+          return
+        }
         ctx.sidebarRight.openTab(kind)
       },
       /** 挂窗 = conv 页的浮窗形态：开着（浮着或钉成页签）再点收起。 */
@@ -2378,9 +2424,11 @@ export function apply(ctx: ClientContext): void {
     store: canvasStore,
     inject: (sessionId): CanvasInjected => ({
       session: sessionId,
+      openCard: cardId => { openCanvasCard(cardId, currentCardAddr(), undefined, sessionId) },
       hooks: {
         project: projectFocus,
         tree: treeSource,
+        outputs: sessionOutputs(ctx.sessions, sessionId),
         edits: aiEditsSource(ctx.sessions, sessionId),
         transcript: transcriptSource(ctx.sessions, sessionId),
         sims: simSessionsSource(ctx.sessions, ctx.workspaces, canvasInstance, sessionId),
@@ -2747,6 +2795,10 @@ export function apply(ctx: ClientContext): void {
       useSidecar={p.useSidecar} run={p.run}
       useDocs={p.useDocs} ensureDoc={p.ensureDoc} saveDoc={p.saveDoc} />
   ))), 'noven-shell: 会话设置 body')
+  ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section', id: 'noven-updates', order: 100, locale: NS,
+    label: () => t('updates.nav'),
+  }, UpdatesSection)), 'noven-shell: about & updates')
   ctx.effect(() => ctx.slots.inject('sidebar.workspaces.workspace.menu.item', () => ctx.slots.register({
     name: 'sidebar.workspaces.workspace.menu.item', id: 'open-folder', order: 50, locale: NS,
     inject: (): WorkspaceFolderInjected => ({

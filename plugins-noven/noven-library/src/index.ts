@@ -285,6 +285,7 @@ async function serveLibrary(request: Request, ctx: Context): Promise<Response> {
   const session = new URL(request.url).searchParams.get('session') ?? ''
   const result = await applyOp(resolved.root, op, body, session.length > 0 ? { type: 'session', sessionId: session } : { type: 'manual' })
   if (result instanceof Response) return result
+  invalidateProjectStats(resolved.root)
   return new Response(JSON.stringify({ ok: true, revision: result.libraryRevision }), { headers: JSON_HEADERS })
 }
 
@@ -340,6 +341,61 @@ async function projectRow(entry: { root: string; title?: string; id?: string }):
 }
 
 /**
+ * Live rows are expensive (library, inbox, per-card stats). Cache them for a
+ * short window so the workspace list can stay on the fast registry path; the
+ * stats view asks for them explicitly and stale entries are recomputed there.
+ */
+const STATS_TTL_MS = 30_000
+interface CachedProjectRow { readonly at: number, readonly row: Record<string, unknown> }
+const projectStats = new Map<string, CachedProjectRow>()
+let statsRefresh: Promise<void> | undefined
+
+/** Forget one project's live row after a registry/library mutation. */
+function invalidateProjectStats(root: string): void {
+  projectStats.delete(normalizeRoot(root))
+}
+
+/** Registry-only row: no library, inbox, or card scans. Cached stats fill in when present. */
+function basicProjectRow(entry: { root: string, title?: string, id?: string, addedAt?: string }): Record<string, unknown> {
+  const cached = projectStats.get(normalizeRoot(entry.root))?.row
+  return {
+    root: entry.root,
+    ...(entry.id === undefined ? {} : { id: entry.id }),
+    title: entry.title ?? (typeof cached?.title === 'string' ? cached.title : undefined) ?? entry.root.split('/').pop() ?? entry.root,
+    works: 0,
+    cards: 0,
+    pending: 0,
+    kindCounts: {},
+    covers: [],
+    hasMarker: false,
+    ...(cached ?? {}),
+    ...(typeof cached?.updatedAt === 'string' ? {} : entry.addedAt === undefined ? {} : { updatedAt: entry.addedAt }),
+  }
+}
+
+/** Refresh live rows for the requested registry, joining one in-flight pass. */
+async function refreshProjectStats(entries: readonly { root: string, title?: string, id?: string }[], force = false): Promise<void> {
+  if (statsRefresh !== undefined) return statsRefresh
+  statsRefresh = Promise.all(entries.map(async entry => {
+    const key = normalizeRoot(entry.root)
+    const cached = projectStats.get(key)
+    if (!force && cached !== undefined && Date.now() - cached.at < STATS_TTL_MS) return
+    const row = await projectRow(entry).catch(() => undefined)
+    if (row !== undefined) projectStats.set(key, { at: Date.now(), row })
+  })).then(() => undefined).finally(() => { statsRefresh = undefined })
+  return statsRefresh
+}
+
+
+/** Read one project's live row, cache it, and return it for a mutation response. */
+async function freshProjectRow(root: string): Promise<Record<string, unknown>> {
+  const entry = await registryRow(root) ?? { root }
+  const row = await projectRow(entry)
+  projectStats.set(normalizeRoot(root), { at: Date.now(), row })
+  return row
+}
+
+/**
  * Fold session workspaces that already carry markers into the registry, and
  * heal rows whose folder moved: a tattooed id appearing at a new path re-points
  * its row instead of claiming a second project. Excluded ids stay out until a
@@ -378,16 +434,23 @@ async function autoClaim(ctx: Context): Promise<void> {
 /** Serve the global 创作库 registry: GET lists resolved rows, POST registers/unregisters/creates. */
 async function serveProjects(request: Request, ctx: Context): Promise<Response> {
   if (request.method === 'GET' || request.method === 'HEAD') {
-    await autoClaim(ctx)
+    const url = new URL(request.url)
+    const wantsStats = url.searchParams.get('stats') === '1'
     const registry = await loadRegistry()
     const idCounts = new Map<string, number>()
     for (const p of registry) {
       if (p.id !== undefined) idCounts.set(p.id, (idCounts.get(p.id) ?? 0) + 1)
     }
-    const rows = await Promise.all(registry.map(async p => ({
-      ...await projectRow(p),
+    if (wantsStats) {
+      // Live stats are a deliberate, off-critical-path read: claim newly seen
+      // Session workspaces first, then refresh stale rows behind one join.
+      await autoClaim(ctx).catch(() => { /* listing still serves cached rows */ })
+      await refreshProjectStats(registry, url.searchParams.get('force') === '1')
+    }
+    const rows = registry.map(p => ({
+      ...(wantsStats ? projectStats.get(normalizeRoot(p.root))?.row ?? basicProjectRow(p) : basicProjectRow(p)),
       ...(p.id !== undefined && (idCounts.get(p.id) ?? 0) > 1 ? { duplicate: true } : {}),
-    })))
+    }))
     return new Response(request.method === 'HEAD' ? null : JSON.stringify({ projects: rows, miscRoot: MISC_PROJECT_ROOT }), { headers: JSON_HEADERS })
   }
   let body: Record<string, unknown>
@@ -403,11 +466,12 @@ async function serveProjects(request: Request, ctx: Context): Promise<Response> 
     case 'register': {
       if (!(await dirExists(root))) return bad(`directory does not exist: ${root}`)
       await registerProject(root, typeof body.title === 'string' && body.title.trim().length > 0 ? { title: body.title.trim() } : {})
-      return new Response(JSON.stringify({ ok: true, row: await projectRow(await registryRow(root) ?? { root }) }), { headers: JSON_HEADERS })
+      return new Response(JSON.stringify({ ok: true, row: await freshProjectRow(root) }), { headers: JSON_HEADERS })
     }
     case 'unregister': {
       if (isMiscProjectRoot(root)) return bad('misc project cannot be removed')
       await unregisterProject(root)
+      invalidateProjectStats(root)
       return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS })
     }
     case 'rename': {
@@ -416,7 +480,8 @@ async function serveProjects(request: Request, ctx: Context): Promise<Response> 
       if (isMiscProjectRoot(root)) return bad('misc project cannot be renamed')
       if (!(await dirExists(root))) return bad(`directory does not exist: ${root}`)
       await renameProject(root, title)
-      return new Response(JSON.stringify({ ok: true, row: await projectRow(await registryRow(root) ?? { root }) }), { headers: JSON_HEADERS })
+      invalidateProjectStats(root)
+      return new Response(JSON.stringify({ ok: true, row: await freshProjectRow(root) }), { headers: JSON_HEADERS })
     }
     case 'trash': {
       if (isMiscProjectRoot(root)) return bad('misc project cannot be deleted')
@@ -428,6 +493,7 @@ async function serveProjects(request: Request, ctx: Context): Promise<Response> 
         return new Response(`trash failed: ${detail}`, { status: 500, headers: JSON_HEADERS })
       }
       await unregisterProject(root).catch(() => undefined)
+      invalidateProjectStats(root)
       return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS })
     }
     case 'create': {
@@ -440,7 +506,7 @@ async function serveProjects(request: Request, ctx: Context): Promise<Response> 
       if (marker !== undefined && typeof body.description === 'string') {
         await writeMarker(root, { ...marker, description: body.description })
       }
-      return new Response(JSON.stringify({ ok: true, row: await projectRow(await registryRow(root) ?? { root }) }), { headers: JSON_HEADERS })
+      return new Response(JSON.stringify({ ok: true, row: await freshProjectRow(root) }), { headers: JSON_HEADERS })
     }
     default:
       return bad(`unknown op: ${String(body.op ?? '')}`)
@@ -482,6 +548,14 @@ export function apply(ctx: Context): void {
     requestBody: 'buffered',
     fetch: request => serveProjects(request, ctx),
   }), 'noven-library: /api/noven-projects')
+
+  // Auto-claim is a background reconciliation, never part of a list request.
+  // One delayed pass covers sessions restored from disk; later passes ride the
+  // explicit stats read used by the library view.
+  ctx.effect(() => {
+    const timer = setTimeout(() => { void autoClaim(ctx).catch(() => { /* a lost claim never blocks the product */ }) }, 1_500)
+    return () => clearTimeout(timer)
+  }, 'noven-library: initial auto-claim')
 
   ctx.tools.register(defineTool({
     name: 'list_library',

@@ -442,10 +442,12 @@ export function AppFrame({
     setDragging(true)
   }, [])
   const onUnitDrag = useCallback((dx: number) => {
-    // Agent arrangement: the drawer sits between the conversation and the
-    // canvas. The outer line is the drawer's conversation-facing edge; moving
-    // it changes the drawer width from that side while the canvas-facing edge
-    // stays put, so the conversation yields and the canvas keeps its width.
+    // When the canvas is parked to the drawer's right in the agent
+    // arrangement, the drawer sits between conversation and canvas. The outer
+    // line is then the drawer's conversation-facing edge; moving it changes the
+    // drawer width from that side while the canvas-facing edge stays put, so
+    // the conversation yields and the canvas keeps its width. With the canvas
+    // parked left (the default), this line borders the canvas instead.
     if (!unitLeft && canvas === 'right') {
       const delta = -dx
       actions.setUnit(unitBase.current + delta)

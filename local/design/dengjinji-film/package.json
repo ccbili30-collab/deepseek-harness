@@ -1,0 +1,16 @@
+{
+  "name": "dengjinji-film-stage",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "《灯烬纪》宣传片 Web 合成舞台与 animatic（蓝本 §8 指定工程，零运行时依赖）",
+  "scripts": {
+    "serve": "node scripts/serve.mjs 8123",
+    "mix": "node scripts/mix-audio.mjs",
+    "render": "node scripts/render-animatic.mjs",
+    "render:smoke": "node scripts/render-animatic.mjs --smoke 12"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

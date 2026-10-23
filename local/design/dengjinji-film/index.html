@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>灯烬纪 · 宣传片时间轴舞台 (animatic)</title>
+  <style>
+    :root {
+      --warm-white: #F5E6C8;
+      --gold: #E8B15C;
+      --text: #F2EDE3;
+      --muted: #8A8378;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body { background: #000; height: 100%; overflow: hidden; }
+    body {
+      font-family: "Source Han Sans SC", "Noto Sans SC", "PingFang SC", "Hiragino Sans GB", "STHeiti Light", sans-serif;
+      color: var(--text);
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+    }
+    #stage-viewport { position: relative; display: flex; align-items: center; justify-content: center; }
+    #stage {
+      position: absolute; top: 50%; left: 50%;
+      margin-left: -1920px; margin-top: -1080px;
+      width: 3840px; height: 2160px; background: #000;
+      transform-origin: center center;
+    }
+    #hud {
+      position: fixed; bottom: 0; left: 0; right: 0;
+      display: flex; align-items: center; gap: 18px;
+      padding: 14px 28px; background: rgba(0,0,0,.72);
+      font-size: 14px; color: var(--muted); letter-spacing: .05em;
+      border-top: 1px solid rgba(242,237,227,.08);
+    }
+    #hud button {
+      background: transparent; color: var(--warm-white); border: 1px solid rgba(245,230,200,.35);
+      border-radius: 4px; padding: 6px 16px; cursor: pointer; font-size: 14px;
+    }
+    #hud button:hover { border-color: var(--gold); }
+    #scrub { flex: 1; accent-color: var(--gold); }
+    #timecode { font-variant-numeric: tabular-nums; min-width: 150px; }
+    #scene-label { min-width: 280px; color: rgba(242,237,227,.7); }
+  </style>
+</head>
+<body>
+  <div id="stage-viewport">
+    <div id="stage"></div>
+  </div>
+  <div id="hud">
+    <button id="play">▶</button>
+    <span id="timecode">00:00.0 / 02:50.0</span>
+    <input id="scrub" type="range" min="0" max="170" step="0.033" value="0" />
+    <span id="scene-label"></span>
+  </div>
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>

@@ -102,7 +102,7 @@ export function readSidebarLayoutRecord(scope: string): SidebarLayoutRecord | un
         // a parked one keeps its floats docked. The claim is pulled from the
         // surface, so nothing here waits on a report.
         canvasParked: parsed.canvasParked ?? false,
-        canvasSide: parsed.canvasSide ?? 'right',
+        canvasSide: parsed.canvasSide ?? 'left',
         zoneOrder: parsed.zoneOrder ?? ['top', 'features'],
       },
     }

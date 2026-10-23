@@ -219,9 +219,9 @@ describe('ui-sidebar-right apply', () => {
     // Opened content floats onto the canvas and claims its surface's side.
     instance.actions.setExpanded(SESSION, true)
     instance.actions.openContent(SESSION, { kind: 'text', contentId: 'dsh-resource://file/session/s/a.txt', title: 'a' }, () => {})
-    expect(layout.canvasClaims.claim(SESSION)).toBe('right')
-    instance.actions.setCanvasSide(SESSION, 'left')
     expect(layout.canvasClaims.claim(SESSION)).toBe('left')
+    instance.actions.setCanvasSide(SESSION, 'right')
+    expect(layout.canvasClaims.claim(SESSION)).toBe('right')
     // Parking frees the region while the floats stay mounted.
     instance.actions.setCanvasParked(SESSION, true)
     expect(layout.canvasClaims.claim(SESSION)).toBeNull()

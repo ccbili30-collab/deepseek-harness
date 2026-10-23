@@ -11,6 +11,7 @@ import { cardsDir, ledgerDir } from 'noven-ledger'
 import type { Context } from '@deepseek-ai/cordis'
 import type { ContentModule } from './model.ts'
 import { CardStore } from './store.ts'
+import { decodeCollection, decodeRelation, decodeTimeline } from './formats.ts'
 import { proposalChanges } from './proposals.ts'
 import { rootFor } from './routes.ts'
 
@@ -19,15 +20,45 @@ const JSON_HEADERS = {
   'Cache-Control': 'private, no-store',
 }
 
+/** 已停发的领域模块：老卡里仍为空时在树中隐去；有内容的不动。 */
+const RETIRED_MODULE_NAMES = new Set([
+  '世界档案', '地理', '势力', '种族', '文化', '规则', '关系',
+  '多形态', '语录', '能力', '装备', '图集',
+])
+
+/** 读载荷判断一个老模块是否已有用户内容。 */
+async function moduleHasContent(store: CardStore, cardId: string, module: ContentModule): Promise<boolean> {
+  const type = module.widget?.type
+  const block = type === 'collection' || type === 'timeline' || type === 'relation' || type === undefined
+    ? module.blocks.find(candidate => candidate.kind === 'text')
+    : undefined
+  if (block !== undefined && block.kind === 'text') {
+    const raw = new TextDecoder().decode(await store.readPayload(cardId, block.content))
+    if (type === 'collection') return decodeCollection(raw).items.length > 0
+    if (type === 'timeline') {
+      const data = decodeTimeline(raw)
+      return data.events.length > 0 || data.eras.length > 0
+    }
+    if (type === 'relation') {
+      const data = decodeRelation(raw)
+      return data.nodes.length > 0 || data.edges.length > 0
+    }
+    if (type === undefined && raw.trim() !== '') return true
+  }
+  if (type === 'map') return module.widget?.mapStage !== undefined || module.blocks.some(candidate => candidate.kind === 'image')
+  return module.blocks.some(candidate => candidate.kind === 'image')
+}
+
 /** 模块树的行：type 是 widget 渲染器名，普通文档模块为 'document'。 */
-function moduleRows(modules: readonly ContentModule[]): Record<string, unknown>[] {
-  return modules.map(module => ({
+async function moduleRows(store: CardStore, cardId: string, modules: readonly ContentModule[]): Promise<Record<string, unknown>[]> {
+  return Promise.all(modules.map(async module => ({
     id: module.id,
     name: module.name,
     type: module.widget?.type ?? 'document',
-    children: moduleRows(module.children),
+    children: await moduleRows(store, cardId, module.children),
     ...(module.routing !== undefined ? { routing: module.routing } : {}),
-  }))
+    ...(RETIRED_MODULE_NAMES.has(module.name) && !(await moduleHasContent(store, cardId, module)) ? { empty: true } : {}),
+  })))
 }
 
 interface ManifestWork { readonly id: string, readonly title?: string, readonly kind?: string, readonly archived?: boolean, readonly primary?: { readonly path?: string }, readonly updatedAt?: string }
@@ -340,7 +371,7 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
       dir,
       shelf: slash < 0 ? '' : dir.slice(0, slash),
       ...(await hiddenFor(root, `卡/${dir}`, viewCache) ? { hidden: true } : {}),
-      modules: moduleRows(doc.modules),
+      modules: await moduleRows(store, cardId, doc.modules),
       characters: doc.internalCharacters.map(character => ({ id: character.id, name: character.name })),
     }
   }))).filter((row): row is NonNullable<typeof row> => row !== undefined)

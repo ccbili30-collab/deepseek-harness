@@ -287,7 +287,7 @@ function ModuleRows({ modules, depth, cardId, currentKey, onOpen, t, ops }: {
 }) {
   return (
     <>
-      {modules.map(module => (
+      {modules.filter(module => module.empty !== true).map(module => (
         <div key={module.id}>
           <ModuleRow module={module} depth={depth} cardId={cardId} t={t} onOpen={onOpen} ops={ops}
             current={currentKey === `mod:${cardId}:${module.id}`} />
@@ -300,7 +300,7 @@ function ModuleRows({ modules, depth, cardId, currentKey, onOpen, t, ops }: {
 
 /** 树里模块子树展平（嵌入目标菜单用，只取标签）。 */
 function flatTreeModules(modules: readonly TreeModuleRow[]): readonly TreeModuleRow[] {
-  return modules.flatMap(module => [module, ...flatTreeModules(module.children)])
+  return modules.filter(module => module.empty !== true).flatMap(module => [module, ...flatTreeModules(module.children)])
 }
 
 /** 多选集的操作面：行菜单在多选时改走整组，而不是只动当前行。 */

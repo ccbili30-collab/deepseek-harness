@@ -80,7 +80,6 @@ function ModuleLibrary({ t, currentCardId, refTargets, userModules, onPick, onRe
   const tile = (id: string, preset: string, label: string, art?: string): ModTile => ({ id, preset, label, ...(art === undefined ? {} : { art }) })
   const doc = tile('doc', 'doc', t('modules.tile.doc'), 'doc')
   const collection = tile('collection', 'collection', t('modules.tile.collection'), 'collection')
-  const gallery = tile('gallery', 'gallery', t('modules.tile.gallery'), 'gallery')
   const timeline = tile('timeline', 'timeline', t('modules.tile.timeline'), 'timeline')
   const map = tile('map', 'map', t('modules.tile.map'), 'map')
   const relation = tile('relation', 'graph', t('modules.tile.relation'), 'relation')
@@ -88,22 +87,10 @@ function ModuleLibrary({ t, currentCardId, refTargets, userModules, onPick, onRe
   const free3d = tile('free3d', 'free3d', t('modules.tile.free3d'), 'free3d')
   const ai: ModTile = { id: 'ai', preset: '', label: t('modules.ai.tile'), art: 'ai', ai: true }
 
-  const places = tile('places', 'places', t('modules.tile.geography'), 'places')
-  const factions = tile('factions', 'factions', t('modules.tile.factions'), 'factions')
-  const races = tile('races', 'races', t('modules.tile.races'), 'races')
-  const culture = tile('culture', 'culture', t('modules.tile.culture'), 'culture')
-  const rules = tile('rules', 'rules', t('modules.tile.rules'), 'rules')
-
-  const diary = tile('diary', 'diary', t('modules.tile.diary'), 'diary')
-  const forms = tile('forms', 'forms', t('modules.tile.galleryForms'), 'forms')
-  const quotes = tile('quotes', 'quotes', t('modules.tile.quotes'), 'quotes')
-  const abilities = tile('abilities', 'abilities', t('modules.tile.abilities'), 'abilities')
-  const equipment = tile('equipment', 'equipment', t('modules.tile.equipment'), 'equipment')
-
-  const worldGroup: ModGroup = { id: 'world', label: t('modules.group.world'), tiles: [places, factions, races, culture, rules] }
-  const characterGroup: ModGroup = { id: 'character', label: t('modules.group.character'), tiles: [diary, forms, quotes, abilities, equipment] }
-  const commonGroup: ModGroup = { id: 'common', label: t('modules.group.common'), tiles: [doc, collection, gallery, timeline, map, relation, surface, free3d, ai] }
-  const groups: readonly ModGroup[] = [worldGroup, characterGroup, commonGroup]
+  // 只发通用形状。领域模板（势力/种族/语录/装备…）不再预置：
+  // 用户要就直接让 AI 用 surface/collection 现造，不替用户决定世界该有什么。
+  const commonGroup: ModGroup = { id: 'common', label: t('modules.group.common'), tiles: [doc, collection, timeline, map, relation, surface, free3d, ai] }
+  const groups: readonly ModGroup[] = [commonGroup]
   const refCards = (refTargets ?? []).filter(target => target.cardId !== currentCardId && (target.modules?.length ?? 0) > 0)
   const [refOpen, setRefOpen] = useState(false)
   const [templateGroup, setTemplateGroup] = useState<'surface' | 'free3d' | undefined>(undefined)
@@ -1333,6 +1320,33 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     }
   }, [addr, cardId, op, refresh, t, targetId, version])
 
+  /** 主页基础元素（封面/头像/LOGO/标签/加角色）共用的直发通道。 */
+  const homeCommand = useCallback(async (command: import('./card-api.ts').CardCommand): Promise<boolean> => {
+    try {
+      const result = await op(addr, { op: 'apply', cardId, targetId, version, command })
+      if (result.version !== undefined) setVersion(result.version)
+      void refresh()
+      return true
+    } catch (error: unknown) {
+      if (error instanceof CardConflict) { setNotice(t('editor.conflict')); void refresh() }
+      else setNotice(String(error instanceof Error ? error.message : error))
+      return false
+    }
+  }, [addr, cardId, op, refresh, t, targetId, version])
+
+  const setHomeImage = useCallback((purpose: 'avatar' | 'cover' | 'logo', base64: string, mediaType: string): Promise<boolean> =>
+    homeCommand({ kind: 'set_card_image', purpose, imageBase64: base64, mediaType }), [homeCommand])
+  const clearHomeImage = useCallback((purpose: 'avatar' | 'cover' | 'logo'): void => {
+    void homeCommand({ kind: 'appearance', resourceId: null, cover: purpose === 'cover', logo: purpose === 'logo' })
+  }, [homeCommand])
+  const saveHomeTags = useCallback((tags: readonly string[]): void => {
+    void homeCommand({ kind: 'set_card_tags', tags })
+  }, [homeCommand])
+  const addHomeRole = useCallback((name: string): void => {
+    setRolesOpen(true)
+    void homeCommand({ kind: 'add_character', name })
+  }, [homeCommand])
+
   /** 预制模块命令直发：apply → 记 version → 刷新。错误进 notice 条。 */
   const send = useCallback<WidgetSend>(async command => {
     try {
@@ -1540,6 +1554,10 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
             onEditModule={id => onOpenCard?.(cardId, id)}
             onAddModule={() => setLibrary(true)}
             onOpenRole={setRoleId}
+            onAddRole={addHomeRole}
+            onSetImage={setHomeImage}
+            onClearImage={clearHomeImage}
+            onSaveTags={saveHomeTags}
             onBackRole={() => setRoleId(undefined)}
             isRole={roleId !== undefined}
             menu={cardMenuControl}

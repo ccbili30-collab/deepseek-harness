@@ -10,6 +10,7 @@ import { createPortal } from 'react-dom'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import { defineStore } from '@deepseek-ai/dsh-client-store'
+import { LibraryTab } from './tabs/Library.tsx'
 import type { PropsLocale, PropsRuntime, PropsStore, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import { Menu, MarkdownText, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardAddr, CardOp, CardOpResult, CardState } from './card-api.ts'
@@ -51,7 +52,7 @@ const IMAGE_WORK_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg
 /** 画布上一个打开的对象：key 去重，kind 派发体组件，owner 归属会话（C9）。 */
 export interface CanvasTab {
   readonly key: string
-  readonly kind: 'start' | 'chat' | 'card' | 'doc' | 'files' | 'work' | 'conv' | 'manual'
+  readonly kind: 'start' | 'chat' | 'card' | 'doc' | 'files' | 'work' | 'conv' | 'manual' | 'library'
   readonly title: string
   /** 会话域归属——"开着什么"是每个会话自己的工作现场，跨会话不串。 */
   readonly owner: SessionId
@@ -493,14 +494,25 @@ export interface ImportPack {
   readonly report: ImportReport
 }
 
+/** One saved-card row shown by the canvas library page. */
+export interface CanvasOutputRow {
+  readonly rootId: string | undefined
+  readonly name: string
+  readonly kind: string | undefined
+}
+
 export interface CanvasInjected {
   /** 这片画布属于哪段会话：标签按它切片，文档读写也走这个会话的工作区。 */
   readonly session: SessionId
+  /** 打开一张卡：创作库页的行用。 */
+  readonly openCard: (cardId: string) => void
   readonly hooks: {
     /** 当前项目（绑定会话的 cwd + 创作库标题）；无项目时空态禁写。 */
     readonly project: ObservableSnapshot<ProjectFocus | undefined>
     /** 内容树快照——起点页据此决定空态。 */
     readonly tree: ObservableSnapshot<NovenTree | undefined>
+    /** 本会话的卡产出清单——画布「创作库」页与右栏共用同一份。 */
+    readonly outputs: ObservableSnapshot<readonly CanvasOutputRow[]>
     /** 本会话正在被 AI 写的卡/模块；画布、页签与卡页共用这一份快照。 */
     readonly edits: ObservableSnapshot<AiEditsSnapshot>
     /** 会话可见消息流——作品页「手机」档的戏台复刻屏拿它当转录。 */
@@ -1920,7 +1932,23 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
         <ConvTab convId={tab.convId} channel={tab.convChannel ?? 'direct'} t={t} props={props} />
       )}
       {tab.kind === 'manual' && <ManualTab tab={tab} t={t} />}
+      {tab.kind === 'library' && (
+        <LibraryCanvasTab t={t} useOutputs={props.useOutputs} openCard={props.openCard} />
+      )}
     </>
+  )
+}
+
+/** 画布里的创作库页：复用右栏的产出列表，行点击直接开卡页。 */
+function LibraryCanvasTab({ t, useOutputs, openCard }: {
+  readonly t: ShellT
+  readonly useOutputs: CanvasProps['useOutputs']
+  readonly openCard: (cardId: string) => void
+}) {
+  return (
+    <div className="nv-canvas-library">
+      <LibraryTab t={t} useOutputs={useOutputs} openCard={openCard} />
+    </div>
   )
 }
 

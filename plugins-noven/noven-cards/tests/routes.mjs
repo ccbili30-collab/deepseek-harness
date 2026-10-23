@@ -119,17 +119,32 @@ try {
   check((await post({ op: 'create', kind: 'WORLD', name: 'x', starter: 'template:fantasy' })).status === 400, '未知模板 → 400')
   const templated = await (await post({ op: 'create', kind: 'WORLD', name: '模板世界', starter: 'template:world' })).json()
   const templatedDoc = (await store.open(templated.cardId)).document
-  check(templated.ok === true && templatedDoc.modules.some(m => m.name === '世界档案'), 'template:world 落预制骨架')
+  check(templated.ok === true && templatedDoc.modules.some(m => m.name === '时间线' && m.widget?.type === 'timeline'), 'template:world 落预制骨架')
   check((await post({ op: 'create', kind: 'WORLD', name: 'x', starter: 'template:fantasy' })).status === 400, '未知模板拒绝')
   const presetCard = await (await post({ op: 'create', kind: 'WORLD', starter: 'template:world', name: '预设世界' })).json()
   check(presetCard.ok === true && typeof presetCard.cardId === 'string', '模板 starter 落卡')
   const presetPayload = await (await cardRoute.fetch(new Request(`http://t/api/noven-cards?root=${encodeURIComponent(root)}&card=${presetCard.cardId}`))).json()
   const flattenModules = (modules) => modules.flatMap(m => [m, ...flattenModules(m.children ?? [])])
-  check(flattenModules(presetPayload.document.modules).some(m => m.name === '势力' && m.widget?.type === 'collection'), '预设世界带势力集合模块')
+  check(flattenModules(presetPayload.document.modules).some(m => m.name === '地图' && m.widget?.type === 'map'), '预设世界带地图模块')
+  check(flattenModules(presetPayload.document.modules).length === 3, '预设世界只有概述、时间线、地图')
   check(presetPayload.resources.length === 0, '世界预设默认不带示例资源')
   const refs = await (await cardRoute.fetch(new Request(`http://t/api/noven-cards?root=${encodeURIComponent(root)}&refs=1`))).json()
   check(Array.isArray(refs.targets) && refs.targets.some(t => t.cardId === presetCard.cardId), '反查索引列出目标卡')
   check((refs.backlinks?.[presetCard.cardId]?.length ?? 0) === 0, `空白预设无同卡引用（${refs.backlinks?.[presetCard.cardId]?.length ?? 0}）`)
+  // 卡页基础元素：标签与 LOGO 走同一条 UI 命令通道，回执里直接可读。
+  const tagsApplied = await post({
+    op: 'apply', cardId: presetCard.cardId, targetId: presetCard.cardId,
+    command: { kind: 'set_card_tags', tags: ['奇幻', '群像'] },
+  })
+  check(tagsApplied.status === 200, `set_card_tags 通过 UI 命令路由（实际 ${String(tagsApplied.status)}）`)
+  const logoApplied = await post({
+    op: 'apply', cardId: presetCard.cardId, targetId: presetCard.cardId,
+    command: { kind: 'set_card_image', purpose: 'logo', mediaType: 'image/png', imageBase64: 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' },
+  })
+  check(logoApplied.status === 200, `set_card_image 通过 UI 命令路由（实际 ${String(logoApplied.status)}）`)
+  const homePayload = await (await cardRoute.fetch(new Request(`http://t/api/noven-cards?root=${encodeURIComponent(root)}&card=${presetCard.cardId}`))).json()
+  check(JSON.stringify(homePayload.document.tags) === JSON.stringify(['奇幻', '群像']), '卡标签落到回执')
+  check(typeof homePayload.document.logoResourceId === 'string' && homePayload.resources.length === 1, 'LOGO 资源与用途落到回执')
 
   // 5. 用户模块契约：presentation 随定义保存并在落卡时保留
   const savedModule = await (await post({ op: 'save_user_module', definition: {
@@ -152,6 +167,20 @@ try {
   check(typeof tree1.revision === 'string' && tree1.files.count >= 0, '树带修订号与文件计数')
   const same = await treeRoute.fetch(new Request(`http://t/api/noven-tree?root=${encodeURIComponent(root)}&since=${tree1.revision}`))
   check(same.status === 304, 'since=同 token → 304')
+  // 停发的领域模块：空的不进树，有内容照常列出。
+  const retired = await (await post({ op: 'apply', cardId: blankCard.cardId, command: {
+    kind: 'add_module_custom', name: '势力',
+    definition: { name: '势力', shape: 'collection', fields: [{ name: '名称', type: 'text' }] },
+  } })).json()
+  const treeRetired = await (await treeRoute.fetch(new Request(`http://t/api/noven-tree?root=${encodeURIComponent(root)}`))).json()
+  const retiredRow = () => flattenModules(treeRetired.cards.find(c => c.cardId === blankCard.cardId).modules).find(m => m.name === '势力')
+  check(retiredRow()?.empty === true, '停发领域模块为空时树里标记 empty')
+  await post({ op: 'apply', cardId: blankCard.cardId, command: {
+    kind: 'collection_add_item', moduleId: retired.createdModuleIds[0], item: { name: '甲' },
+  } })
+  const treeRetired2 = await (await treeRoute.fetch(new Request(`http://t/api/noven-tree?root=${encodeURIComponent(root)}`))).json()
+  const filled = flattenModules(treeRetired2.cards.find(c => c.cardId === blankCard.cardId).modules).find(m => m.name === '势力')
+  check(filled !== undefined && filled.empty !== true, '有内容的停发模块不被隐去')
   await proposeEdit(store, 'card-r', 'card-r', { kind: 'add_module', name: '幽灵模块' })
   const tree2 = await (await treeRoute.fetch(new Request(`http://t/api/noven-tree?root=${encodeURIComponent(root)}`))).json()
   check(tree2.revision !== tree1.revision && tree2.cards.find(c => c.cardId === 'card-r').pending === true, '提案挂起 → token 变 + pending 标记')
@@ -169,8 +198,13 @@ try {
   const characterCard = await (await post({ op: 'create', kind: 'CHARACTER', name: '守卫预设角色', starter: 'template:character' })).json()
   check(typeof characterCard.cardId === 'string', '预设角色卡创建（删除回归夹具）')
   const characterDoc = await (await cardRoute.fetch(new Request(`http://t/api/noven-cards?root=${encodeURIComponent(root)}&card=${characterCard.cardId}`))).json()
-  const sourceModule = characterDoc.document.modules.find(module => module.name === '角色档案')
-  check(sourceModule !== undefined, '预设角色卡带「角色档案」')
+  const sourceModule = characterDoc.document.modules.find(module => module.name === '基本信息')
+  check(sourceModule !== undefined, '预设角色卡带「基本信息」')
+  const sameCardRef = await post({
+    op: 'apply', cardId: characterCard.cardId, targetId: characterCard.cardId,
+    command: { kind: 'add_module_ref', name: '同卡引用', sourceCardId: characterCard.cardId, sourceModuleId: sourceModule.id },
+  })
+  check(sameCardRef.status === 200, `同卡引用模块建立（实际 ${String(sameCardRef.status)}）`)
   const removedModule = await post({
     op: 'apply', cardId: characterCard.cardId, targetId: characterCard.cardId,
     command: { kind: 'remove_module', moduleId: sourceModule.id },

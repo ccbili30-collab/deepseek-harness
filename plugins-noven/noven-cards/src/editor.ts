@@ -16,7 +16,7 @@ import { expandShape, bboxOf as geomBBox, padBBox, clipPolygonRect, clipPolyline
 import { resolvePngHeightmap } from './heightmap-png.ts'
 import { resolveNamebase } from './namebase.ts'
 import { generateWorld, resampleWorld, rasterizeDraft, guessDraftLevel, getGridDims, type HeightmapInput } from 'noven-fmg/world'
-import { collectionPreset, isModulePreset, MODULE_PRESETS, timelinePreset } from './module-presets.ts'
+import { collectionPreset, isModulePreset, MODULE_PRESETS, timelinePreset, type ModulePresetSpec } from './module-presets.ts'
 import { customCollection, customMap, customSurface, customTimeline, normalizeCustomModule } from './custom-modules.ts'
 import { decodeTimeline, encodeTimeline, decodeCollection, encodeCollection, decodeMap, encodeMap, decodeRelation, encodeRelation, decodeScene, encodeScene, decodeLayout, encodeLayout, calendarOf, mintId as mintPayloadId, decodeSurface, encodeSurface, isSurfaceState, normalizeSurfacePath, validateSurface, SURFACE_FILE_LIMIT, type CollectionFieldType, type CollectionValue, type CollectionView, type LayoutData, type MapData, type SceneData, type SurfaceData, type SurfaceManifest, type TimelineCalendar } from './formats.ts'
 
@@ -41,7 +41,11 @@ export type EditorCommand =
   | { kind: 'remove_module', moduleId: string }
   | { kind: 'remove_block', moduleId: string, blockId: string }
   | { kind: 'module_options', moduleId: string, tags: string[], use: ModuleUse | undefined, routing?: ModuleRouting | null, temporality?: ModuleTemporality | null }
-  | { kind: 'appearance', resourceId: string | null, cover: boolean }
+  | { kind: 'appearance', resourceId: string | null, cover: boolean, logo?: boolean }
+  /** Human UI upload: store the bytes as a fresh card resource and bind it to one appearance slot. */
+  | { kind: 'set_card_image', imageBase64: string, mediaType: string, purpose: 'avatar' | 'cover' | 'logo' }
+  /** Card-level tags shown on the card home; replaces the whole list. */
+  | { kind: 'set_card_tags', tags: readonly string[] }
   | { kind: 'insert_owned_image', moduleId: string, resourceId: string, afterBlockId?: string | null }
   | { kind: 'replace_block_image', moduleId: string, blockId: string, resourceId: string }
   | { kind: 'remove_resource', resourceId: string, removeUses: boolean }
@@ -238,6 +242,28 @@ async function transformDocument(
   const createdBlocks: string[] = []
   const textRef = async (text: string): Promise<string> => store.receivePayload(cardId, new TextEncoder().encode(text))
 
+  /** 按预设定义落一个模块（含字段/视图/载荷）；新角色卡的起手模块也走这里。 */
+  const presetModule = async (name: string, spec: ModulePresetSpec): Promise<ContentModule> => {
+    const created: ContentModule = {
+      id: mintId(), name, blocks: [], tags: [], children: [], layout: 'VERTICAL', characterIds: [],
+      ...(spec.widget !== undefined ? { widget: { type: spec.widget } } : {}),
+    }
+    if (spec.widget === 'collection') {
+      created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(collectionPreset(spec)) })
+    } else if (spec.widget === 'timeline') {
+      created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(timelinePreset(spec)) })
+    } else if (spec.widget === 'map') {
+      // FMG 编辑器在模块打开时自己生成空白地图，不写旧 MapData 载荷。
+    } else if (spec.widget === 'html' && spec.sample !== undefined) {
+      created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(spec.sample) })
+    } else if (spec.widget === 'scene') {
+      created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(encodeScene(spec.scene ?? { version: 1, objects: [], camera: { yaw: -18, pitch: 12, zoom: 1 } })) })
+    } else if (spec.sample !== undefined) {
+      created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(spec.sample) })
+    }
+    return created
+  }
+
   const module = (id: string): ContentModule => {
     const found = flattenModules(card.modules).find(candidate => candidate.id === id)
     if (found === undefined) throw new Error('目标模块不存在或不属于当前卡片')
@@ -337,24 +363,13 @@ async function transformDocument(
   let next = card
   switch (command.kind) {
     case 'add_module': {
-      const created: ContentModule = { id: mintId(), name: command.name, blocks: [], tags: [], children: [], layout: command.layout ?? 'VERTICAL', characterIds: [], ...(command.widget !== undefined ? { widget: { type: command.widget } } : {}) }
-      if (command.preset !== undefined) {
+      let created: ContentModule
+      if (command.preset === undefined) {
+        created = { id: mintId(), name: command.name, blocks: [], tags: [], children: [], layout: command.layout ?? 'VERTICAL', characterIds: [], ...(command.widget !== undefined ? { widget: { type: command.widget } } : {}) }
+      } else {
         if (!isModulePreset(command.preset)) throw new Error(`未知模块预设：${command.preset}`)
-        const spec = MODULE_PRESETS[command.preset]!
-        if (spec.widget !== undefined) created.widget = { type: spec.widget }
-        if (spec.widget === 'collection') {
-          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(collectionPreset(spec)) })
-        } else if (spec.widget === 'timeline') {
-          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(timelinePreset(spec)) })
-        } else if (spec.widget === 'map') {
-          // FMG 编辑器在模块打开时自己生成空白地图，不写旧 MapData 载荷。
-        } else if (spec.widget === 'html' && spec.sample !== undefined) {
-          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(spec.sample) })
-        } else if (spec.widget === 'scene') {
-          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(encodeScene(spec.scene ?? { version: 1, objects: [], camera: { yaw: -18, pitch: 12, zoom: 1 } })) })
-        } else if (spec.sample !== undefined) {
-          created.blocks.push({ kind: 'text', id: mintId(), content: await textRef(spec.sample) })
-        }
+        created = await presetModule(command.name, MODULE_PRESETS[command.preset]!)
+        created.layout = command.layout ?? 'VERTICAL'
       }
       next = put({ ...card, modules: insertModule(card.modules, command.parentId ?? null, created, null) })
       createdModules.push(created.id)
@@ -554,10 +569,30 @@ async function transformDocument(
       if (!valid) throw new Error('图片资源不属于目标卡或类型不符')
       next = put({
         ...card,
-        appearance: command.cover
-          ? { ...card.appearance, coverResourceId: command.resourceId ?? undefined }
-          : { ...card.appearance, avatarResourceId: command.resourceId ?? undefined },
+        appearance: command.logo === true
+          ? { ...card.appearance, logoResourceId: command.resourceId ?? undefined }
+          : command.cover
+            ? { ...card.appearance, coverResourceId: command.resourceId ?? undefined }
+            : { ...card.appearance, avatarResourceId: command.resourceId ?? undefined },
       })
+      break
+    }
+    case 'set_card_image': {
+      if (!command.mediaType.startsWith('image/')) throw new Error('只能设置图片')
+      const ref = await store.receivePayload(cardId, Uint8Array.from(Buffer.from(command.imageBase64, 'base64')))
+      const resourceId = mintId()
+      const resources = [...card.resources, { id: resourceId, content: ref, mediaType: command.mediaType }]
+      const appearance = command.purpose === 'logo'
+        ? { ...card.appearance, logoResourceId: resourceId }
+        : command.purpose === 'cover'
+          ? { ...card.appearance, coverResourceId: resourceId }
+          : { ...card.appearance, avatarResourceId: resourceId }
+      next = put({ ...card, resources, appearance })
+      break
+    }
+    case 'set_card_tags': {
+      const tags = command.tags.map(tag => tag.trim()).filter(tag => tag !== '')
+      next = put({ ...card, tags: [...new Set(tags)] })
       break
     }
     case 'insert_owned_image': {
@@ -585,13 +620,15 @@ async function transformDocument(
       const usedBy = flattenModules(card.modules).flatMap(module2 => module2.blocks.filter(block => block.kind === 'image' && block.resourceId === command.resourceId))
       const asAvatar = card.appearance.avatarResourceId === command.resourceId
       const asCover = card.appearance.coverResourceId === command.resourceId
-      if (!command.removeUses && (usedBy.length > 0 || asAvatar || asCover)) throw new Error('资源仍在使用；确认移除请传 remove_uses=true')
+      const asLogo = card.appearance.logoResourceId === command.resourceId
+      if (!command.removeUses && (usedBy.length > 0 || asAvatar || asCover || asLogo)) throw new Error('资源仍在使用；确认移除请传 remove_uses=true')
       let working = { ...card, resources: card.resources.filter(candidate => candidate.id !== command.resourceId) }
       for (const block of usedBy) {
         working = editBlocks(working, [{ kind: 'remove', blockId: block.id }])
       }
       if (asAvatar) working = { ...working, appearance: { ...working.appearance, avatarResourceId: undefined } }
       if (asCover) working = { ...working, appearance: { ...working.appearance, coverResourceId: undefined } }
+      if (asLogo) working = { ...working, appearance: { ...working.appearance, logoResourceId: undefined } }
       next = put(working)
       break
     }
@@ -729,11 +766,18 @@ async function transformDocument(
     }
     case 'add_character': {
       if (card.kind !== 'WORLD') throw new Error('只有世界卡能容纳内部角色')
+      // 新角色落核心三件：基本信息、关系、行动轨迹；其余模块让用户按需加。
+      const modules = [
+        await presetModule('基本信息', MODULE_PRESETS.profile!),
+        await presetModule('关系', MODULE_PRESETS.graph!),
+        await presetModule('行动轨迹', { widget: 'timeline', unit: '岁', timelineView: 'diary' }),
+      ]
       const character: ContentDocument = {
-        id: mintId(), kind: 'CHARACTER', name: command.name, modules: [], resources: [], internalCharacters: [], extensions: {},
+        id: mintId(), kind: 'CHARACTER', name: command.name, tags: [], modules, resources: [], internalCharacters: [], extensions: {},
         appearance: { readingLayout: 'PAGED' },
       }
       createdModules.push(character.id)
+      for (const module of modules) createdModules.push(module.id)
       next = put({ ...card, internalCharacters: [...card.internalCharacters, character] })
       break
     }
@@ -1231,6 +1275,7 @@ function cloneWithFreshIds(source: ContentDocument): ContentDocument {
       readingLayout: source.appearance.readingLayout,
       avatarResourceId: source.appearance.avatarResourceId !== undefined ? fresh(source.appearance.avatarResourceId) : undefined,
       coverResourceId: source.appearance.coverResourceId !== undefined ? fresh(source.appearance.coverResourceId) : undefined,
+      logoResourceId: source.appearance.logoResourceId !== undefined ? fresh(source.appearance.logoResourceId) : undefined,
     },
     internalCharacters: [],
   }

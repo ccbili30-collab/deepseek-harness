@@ -2,15 +2,11 @@
   "id": "character",
   "kind": "CHARACTER",
   "title": "角色卡",
-  "summary": "一张空白角色卡：档案、关系、经历、形态、语录、能力、装备与图集模块已就位，等待填写。",
+  "summary": "一张空白角色卡：基本信息、关系、行动轨迹。其余按需让 AI 现造。",
   "defaultName": "未命名角色",
   "modules": [
     {
-      "name": "设定总览",
-      "widget": "overview"
-    },
-    {
-      "name": "角色档案",
+      "name": "基本信息",
       "widget": "collection",
       "view": "profile",
       "fields": [
@@ -82,153 +78,6 @@
         "unit": "岁",
         "view": "diary"
       }
-    },
-    {
-      "name": "多形态",
-      "widget": "collection",
-      "view": "cards",
-      "fields": [
-        {
-          "name": "名称",
-          "type": "text"
-        },
-        {
-          "name": "形象",
-          "type": "image"
-        },
-        {
-          "name": "说明",
-          "type": "longtext"
-        },
-        {
-          "name": "身份",
-          "type": "text"
-        },
-        {
-          "name": "年龄",
-          "type": "number"
-        },
-        {
-          "name": "阵营",
-          "type": "text"
-        },
-        {
-          "name": "出身",
-          "type": "text"
-        }
-      ],
-      "form": {
-        "labels": {
-          "primary": "i18n:coll.primary",
-          "add": "i18n:coll.gallery.add"
-        }
-      },
-      "source": {
-        "moduleName": "角色档案",
-        "label": "i18n:coll.profile.kicker"
-      }
-    },
-    {
-      "name": "语录",
-      "widget": "collection",
-      "view": "cards",
-      "fields": [
-        {
-          "name": "语录",
-          "type": "text"
-        },
-        {
-          "name": "场景",
-          "type": "text"
-        },
-        {
-          "name": "情绪",
-          "type": "text"
-        },
-        {
-          "name": "对象",
-          "type": "text"
-        }
-      ]
-    },
-    {
-      "name": "能力",
-      "widget": "collection",
-      "view": "list",
-      "fields": [
-        {
-          "name": "名称",
-          "type": "text"
-        },
-        {
-          "name": "类型",
-          "type": "text"
-        },
-        {
-          "name": "效果",
-          "type": "longtext"
-        },
-        {
-          "name": "详细说明",
-          "type": "longtext"
-        },
-        {
-          "name": "代价",
-          "type": "text"
-        }
-      ]
-    },
-    {
-      "name": "装备",
-      "widget": "collection",
-      "view": "cards",
-      "cardAspect": "square",
-      "fields": [
-        {
-          "name": "名称",
-          "type": "text"
-        },
-        {
-          "name": "图片",
-          "type": "image"
-        },
-        {
-          "name": "类型",
-          "type": "text"
-        },
-        {
-          "name": "效果",
-          "type": "longtext"
-        },
-        {
-          "name": "归属",
-          "type": "text"
-        },
-        {
-          "name": "详细说明",
-          "type": "longtext"
-        }
-      ]
-    },
-    {
-      "name": "图集",
-      "widget": "collection",
-      "view": "cards",
-      "cardAspect": "portrait",
-      "fields": [
-        {
-          "name": "图片",
-          "type": "image"
-        },
-        {
-          "name": "标题",
-          "type": "text"
-        },
-        {
-          "name": "说明",
-          "type": "longtext"
-        }
-      ]
     }
   ]
 }

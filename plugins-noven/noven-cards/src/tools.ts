@@ -406,7 +406,7 @@ export function registerCardTools(ctx: Context): void {
 
   tools.register(defineTool({
     name: 'list_module_presets',
-    description: '列出模块库的内置模块预设（规则/语录/势力/种族/文化/能力/装备/图鉴/时间线/地图/自由界面 surface/自由 3D free3d，以及 surface.dashboard、surface.gallery、free3d.editor、free3d.viewer 模板），含 id、widget、字段、默认视图和呈现契约。先用它选 preset，再用 add_module_preset 落模块；可交互界面与 3D 优先走自由模块，不要手写同样的字段表。',
+    description: '列出模块库的内置通用形状（文档 doc / 集合 collection / 基本信息 profile / 关系 graph / 时间线 timeline / 地图 map / 自由界面 surface / 自由 3D free3d，以及 surface.dashboard、surface.gallery、free3d.editor、free3d.viewer 模板），含 id、widget、字段、默认视图和呈现契约。先用它选 preset，再用 add_module_preset 落模块。领域模块（势力/种族/语录/装备等）不再预置：用 add_module_custom 声明定义，或用 surface 现写界面；可交互界面与 3D 优先走自由模块。',
     parameters: {},
     output: { schema: RESULT_SCHEMA, render },
     async execute() {
@@ -798,7 +798,7 @@ export function registerCardTools(ctx: Context): void {
     args => ({ kind: 'add_module', name: String(args.name), parentId: optionalId(args.parent_id), layout: layoutOf(args.layout) ?? 'VERTICAL', ...(args.widget !== undefined ? { widget: String(args.widget) } : {}) }))
 
   registerEditTool(tools, 'add_module_preset',
-    '按模块库内置预设新建模块（规则/语录/势力/种族/文化/能力/装备/图鉴/时间线/地图/自由界面 surface/自由 3D free3d 等）。preset 用 list_module_presets 的 id；name 是落卡后的模块名。预设会带字段、默认视图、呈现契约和样例，不要再用 collection_add_field 重造。可交互界面与 3D 优先走 surface/free3d，不要写 .html 文件。',
+    '按模块库内置预设新建模块（文档 doc / 集合 collection / 基本信息 profile / 关系 graph / 时间线 timeline / 地图 map / 自由界面 surface / 自由 3D free3d）。preset 用 list_module_presets 的 id；name 是落卡后的模块名。预设会带字段、默认视图、呈现契约和样例，不要再用 collection_add_field 重造。领域模块（势力/种族/语录/装备等）不再预置：用 add_module_custom 声明定义，或用 surface 现写界面。可交互界面与 3D 优先走 surface/free3d，不要写 .html 文件。',
     {
       name: { type: 'string', required: true, description: '模块名称' },
       preset: { type: 'string', required: true, description: '模块预设 id（先 list_module_presets）' },
@@ -1449,18 +1449,25 @@ export function registerCardTools(ctx: Context): void {
 
 
   // ---------- 图片 ----------
-  registerEditTool(tools, 'set_card_image', '将目标卡已持有的图片设为封面或头像。不会上传、生成或删除图片。',
-    { resource_id: { type: 'string', required: true, description: '当前目标卡图片资源编号' }, purpose: { type: 'string', required: true, description: 'cover 封面 / avatar 头像' } },
+  registerEditTool(tools, 'set_card_image', '将目标卡已持有的图片设为封面、头像或世界标记（LOGO）。不会上传、生成或删除图片。',
+    { resource_id: { type: 'string', required: true, description: '当前目标卡图片资源编号' }, purpose: { type: 'string', required: true, description: 'cover 封面/全屏背景 / avatar 头像 / logo 世界标记' } },
     args => {
-      if (args.purpose !== 'cover' && args.purpose !== 'avatar') throw new Error('purpose 必须是 cover 或 avatar')
-      return { kind: 'appearance', resourceId: String(args.resource_id), cover: args.purpose === 'cover' }
+      if (args.purpose !== 'cover' && args.purpose !== 'avatar' && args.purpose !== 'logo') throw new Error('purpose 必须是 cover、avatar 或 logo')
+      return { kind: 'appearance', resourceId: String(args.resource_id), cover: args.purpose === 'cover', logo: args.purpose === 'logo' }
     })
 
-  registerEditTool(tools, 'clear_card_image', '清除头像或封面用途，不删除素材。',
-    { purpose: { type: 'string', required: true, description: 'avatar 或 cover' } },
+  registerEditTool(tools, 'set_card_tags', '整体替换目标卡的标签（卡页主页展示）。用于给世界或角色挂题材、基调、类型等短标签。',
+    { tags: { type: 'json', required: true, description: '字符串数组，例如 ["蒸汽朋克","悬疑"]；传空数组清空' } },
     args => {
-      if (args.purpose !== 'cover' && args.purpose !== 'avatar') throw new Error('purpose 必须是 cover 或 avatar')
-      return { kind: 'appearance', resourceId: null, cover: args.purpose === 'cover' }
+      const tags = Array.isArray(args.tags) ? args.tags.map(tag => String(tag)) : []
+      return { kind: 'set_card_tags', tags }
+    })
+
+  registerEditTool(tools, 'clear_card_image', '清除头像、封面或世界标记用途，不删除素材。',
+    { purpose: { type: 'string', required: true, description: 'avatar / cover / logo' } },
+    args => {
+      if (args.purpose !== 'cover' && args.purpose !== 'avatar' && args.purpose !== 'logo') throw new Error('purpose 必须是 cover、avatar 或 logo')
+      return { kind: 'appearance', resourceId: null, cover: args.purpose === 'cover', logo: args.purpose === 'logo' }
     })
 
   registerEditTool(tools, 'insert_owned_image', '把本卡已有图片插入目标模块，生成新的图片展示块，复用资源不复制文件。保存后结果里带新块编号。',
