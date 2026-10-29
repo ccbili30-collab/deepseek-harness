@@ -303,7 +303,7 @@ function bench(options: BenchOptions = {}) {
     setSidebar: vi.fn(), toggleSidebar: vi.fn(), setSidebarCollapsed: vi.fn(), setViewportWidth: vi.fn(),
     setRightbar: vi.fn(), settleRightbar: vi.fn(),
     setUnit: vi.fn(), openRightbar: vi.fn(), closeRightbar: vi.fn(),
-    setUnitSide: vi.fn(), enterSession: vi.fn(),
+    setUnitSide: vi.fn(), setCenterCollapsed: vi.fn(), setAuxiliaryCollapsed: vi.fn(), enterSession: vi.fn(),
     seedSessionGeometry: vi.fn(), seedUnitShare: vi.fn(), setCanvasFullscreen: vi.fn(),
   }, () => true, createSnapshotStore({ activePanelId: null }), createSnapshotStore({
     sidebarCollapsed: false, narrowExpanded: false, unitSide: 'right', rightbarCollapsed: false, byId: {}, active: null,
@@ -438,6 +438,27 @@ describe('UiWorkspaceService', () => {
     expect(b.selectPanel).toHaveBeenCalledWith(null)
     expect(b.sessions.retain).toHaveBeenCalledWith(sid('target'), { source: 'mainView' })
     expect(b.sessions.refreshProjections).not.toHaveBeenCalled()
+  })
+
+  it('publishes temporary Session navigation and dismisses it on every explicit open path', async () => {
+    const b = bench()
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(false)
+    b.uiWorkspace.showSessionBrowser()
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(true)
+    b.uiWorkspace.hideSessionBrowser()
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(false)
+
+    b.uiWorkspace.showSessionBrowser()
+    b.uiWorkspace.openSession(sid('target'))
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(false)
+
+    b.uiWorkspace.showSessionBrowser()
+    b.uiWorkspace.startSession()
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(false)
+
+    b.uiWorkspace.showSessionBrowser()
+    await b.uiWorkspace.openWorkspace(wid('missing')).catch(() => undefined)
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(false)
   })
 
   it('retains the target without dismissing the active panel when the panel is preserved', () => {

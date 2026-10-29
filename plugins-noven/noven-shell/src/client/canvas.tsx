@@ -13,6 +13,7 @@ import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import { defineStore } from '@deepseek-ai/dsh-client-store'
 import { LibraryTab } from './tabs/Library.tsx'
 import type { PropsLocale, PropsRuntime, PropsStore, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SidebarRightGuideBox } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { Menu, MarkdownText, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardAddr, CardOp, CardOpResult, CardState } from './card-api.ts'
 import type { ImportReport } from './tree-api.ts'
@@ -530,7 +531,11 @@ export interface CanvasInjected {
   }
   /** Open one registered page kind as a new canvas tab. */
   readonly openPage: (kind: string) => void
+  /** Open a feature through the same route used by the tree and Conversation tools. */
+  readonly openFeatureTab: (kind: string) => void
   readonly hooks: {
+    /** Registered feature guides available from the canvas tools menu. */
+    readonly featureTabs: ObservableSnapshot<readonly SidebarRightGuideBox[]>
     /** 当前项目（绑定会话的 cwd + 创作库标题）；无项目时空态禁写。 */
     readonly project: ObservableSnapshot<ProjectFocus | undefined>
     /** 内容树快照——起点页据此决定空态。 */
@@ -591,8 +596,6 @@ export interface CanvasInjected {
   readonly listDir: (sessionId: SessionId, path: string) => Promise<readonly { name: string; type: string }[]>
   /** 让画布里的模块把一句话排进本会话对话队列（如地图的「直接生成底图」）。 */
   readonly ask: (text: string) => Promise<void>
-  /** Reapply the official IDE panel arrangement without creating content. */
-  readonly applyLayoutSeed: () => void
   /** 新建面板提交：宿主决定落到哪条路由。 */
   readonly submitCreate: (request: CreateRequest) => void
   /** 导入卡包文件（隐藏 input 的 onChange 直达）：analyze 后单卡直通、包/文件进对话框。 */
@@ -2053,6 +2056,9 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
 }) {
   const studioOn = props.useStore(s => project !== undefined && s.studioOn?.[project.root] === true)
   const aiEdits = useAiEdits()
+  const featureTabs = props.useFeatureTabs(value => value)
+  const [switchOpen, setSwitchOpen] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const strip = useMemo(() => {
     // chat 页签就是 Studio 面：组关着时整条不出（持久叶里残留的 'chat' 一并滤掉）。
     const keys = [...(leaf.tabs.includes('start') ? [] : ['start']),
@@ -2110,8 +2116,34 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
           </div>
           )
         })}
+        {<Menu portal open={switchOpen} side="bottom" align="start" selection="check" selectedId={active}
+          onClose={() => setSwitchOpen(false)}
+          onSelect={id => { setSwitchOpen(false); actions.select(session, id) }}
+          items={strip.map(row => ({ id: row.key, label: tabTitle(row, t) }))}
+          anchor={(
+            <button type="button" className="nv-canvas-menubutton" aria-label={t('canvas.tab.switch')}
+              data-noven-canvas-switch onClick={() => setSwitchOpen(value => !value)}>
+              {glyph.caret(11)}
+            </button>
+          )} />}
         <button type="button" className="nv-canvas-plus" aria-label={t('canvas.tab.new')}
           onClick={() => actions.open(startTab(session), leaf.id)}>+</button>
+        {<Menu portal open={toolsOpen} side="bottom" align="end" selection="fill"
+          onClose={() => setToolsOpen(false)}
+          onSelect={id => { setToolsOpen(false); props.openFeatureTab(id) }}
+          items={featureTabs.length === 0
+            ? [{ id: 'empty', label: t('canvas.tools.empty'), disabled: true }]
+            : featureTabs.map(box => ({
+              id: box.kind,
+              label: box.title(),
+              icon: box.icon === undefined ? undefined : <box.icon size={13} />,
+            }))}
+          anchor={(
+            <button type="button" className="nv-canvas-menubutton" aria-label={t('canvas.tools')}
+              data-noven-canvas-tools onClick={() => setToolsOpen(value => !value)}>
+              {glyph.grid(13)}
+            </button>
+          )} />}
         <button type="button" className="nv-canvas-fullscreentoggle" data-active={canvasFullscreen || undefined}
           aria-label={t('canvas.fullscreen')} title={t('canvas.fullscreen')}
           onClick={toggleCanvasFullscreen}>{glyph.expand(13)}</button>
@@ -2463,7 +2495,7 @@ export function CanvasHost(props: CanvasProps) {
   useEffect(() => {
     if (!immersive && !canvasFullscreen) return
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape' || event.defaultPrevented) return
       const target = event.target
       if (target instanceof Element && target.closest('input, textarea, [contenteditable]')) return
       // A menu or dialog above the page owns Escape first.

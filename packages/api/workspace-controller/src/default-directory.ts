@@ -12,6 +12,16 @@ interface DocumentsDirectoryInternals {
   readonly run?: NativeCommandRunner
 }
 
+/** Validate one fully qualified directory without resolving it against cwd. */
+function validateAbsoluteDirectory(directory: string, platform: NodeJS.Platform, subject: string): string {
+  const paths = platform === 'win32' ? win32 : posix
+  const root = paths.parse(directory).root
+  if (!paths.isAbsolute(directory) || (platform === 'win32' && (root === '\\' || root === '/'))) {
+    throw new Error(`${subject} must be fully qualified: '${directory}'`)
+  }
+  return paths.normalize(directory)
+}
+
 /**
  * Validate a configured or OS-returned Documents path without resolving it against cwd.
  * @param directory - fully qualified directory spelling.
@@ -19,12 +29,17 @@ interface DocumentsDirectoryInternals {
  * @returns the normalized directory.
  */
 export function validateDocumentsDirectory(directory: string, platform: NodeJS.Platform = process.platform): string {
-  const paths = platform === 'win32' ? win32 : posix
-  const root = paths.parse(directory).root
-  if (!paths.isAbsolute(directory) || (platform === 'win32' && (root === '\\' || root === '/'))) {
-    throw new Error(`Documents directory must be fully qualified: '${directory}'`)
-  }
-  return paths.normalize(directory)
+  return validateAbsoluteDirectory(directory, platform, 'Documents directory')
+}
+
+/**
+ * Validate a complete first-use Workspace path supplied by a deployment.
+ * @param directory - fully qualified default Workspace directory.
+ * @param platform - Host platform.
+ * @returns the normalized directory.
+ */
+export function validateDefaultWorkspaceDirectory(directory: string, platform: NodeJS.Platform = process.platform): string {
+  return validateAbsoluteDirectory(directory, platform, 'Default Workspace directory')
 }
 
 /**

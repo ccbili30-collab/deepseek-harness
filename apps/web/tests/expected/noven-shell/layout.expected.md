@@ -1,0 +1,125 @@
+- banner:
+  - button "会话列表"
+  - navigation "会话层级": "NavScenario: first run bash to"
+  - button "项目 · {{workspace}}"
+  - button "更多操作"
+  - tablist:
+    - tab "对话" [selected]
+    - tab "执行记录"
+- navigation "轮次导航":
+  - button "跳转到第 1 轮"
+  - button "跳转到第 2 轮"
+- text: "NavScenario: first run bash to print exactly NAVIGATION_OK, then read nav-a.md and nav-b.md using two read calls in ONE assistant message, then reply with the single word FIRST_DONE and stop. {{clock}}"
+- button "复制"
+- button "修改这条消息":
+  - img
+- button "重新生成":
+  - img
+- status: 已完成工作
+- button "用时 {{duration}}"
+- paragraph: FIRST_DONE
+- button "复制"
+- button "好的回答"
+- button "有问题的回答"
+- button "重新生成":
+  - img
+- button "在新对话中分支"
+- text: "{{clock}} Reply in markdown with: a level-2 heading \"Navigation Summary\", a bulleted list of exactly two items, and a fenced code block containing echo WATERFALL. Then stop. {{clock}}"
+- button "复制"
+- button "修改这条消息":
+  - img
+- button "重新生成":
+  - img
+- status: 已完成工作
+- button "用时 {{duration}}"
+- heading "Navigation Summary" [level=2]
+- list:
+  - listitem: alpha nav
+  - listitem: beta nav
+- text: 代码块
+- button "自动换行" [pressed]
+- button "复制"
+- code: echo WATERFALL
+- button "复制"
+- button "好的回答"
+- button "有问题的回答"
+- button "重新生成":
+  - img
+- button "在新对话中分支"
+- text: {{clock}}
+- textbox "发消息或创建任务, / 调用指令, @ 文件或对话"
+- button "添加文件或调用指令"
+- button "访问模式，当前：工作区内修改": 工作区内修改
+- button "选择模型，当前 DeepSeek-V4-Flash": DeepSeek-V4-Flash
+- button "发送消息" [disabled]
+- button "打开右侧边栏"
+- button "展开画布"
+- button "档案":
+  - img
+- button "搜索":
+  - img
+- button "新建分组":
+  - img
+- button "新建卡":
+  - img
+- button "Studio":
+  - img
+- button "新增模块":
+  - img
+- button "导入已有文件":
+  - img
+- button "挂窗":
+  - img
+- navigation:
+  - button "本会话":
+    - img
+  - button "会话设置":
+    - img
+  - button "设定":
+    - img
+  - button "工作区文件"
+  - button "产出":
+    - img
+  - button "新建终端":
+    - img
+- tablist:
+  - tab "起点" [selected]
+  - button "切换页签":
+    - img
+  - button "新页签": +
+  - button "画布工具":
+    - img
+  - button "画布全屏":
+    - img
+- paragraph: 这里是你的案头：拿一张预设开工，或者从一页白纸开始。
+- paragraph: 还没有项目——现在建的东西会先放进杂项，之后可以移进项目。
+- heading "预设" [level=3]
+- button "世界卡 规则、地理、势力——一个世界一张卡":
+  - img
+  - text: 世界卡 规则、地理、势力——一个世界一张卡
+- button "角色卡 外貌、性格、背景、关系":
+  - img
+  - text: 角色卡 外貌、性格、背景、关系
+- button "说明书 第一次来？先看这篇":
+  - img
+  - text: 说明书 第一次来？先看这篇
+- heading "开始" [level=3]
+- button "文稿 从一页白纸开始":
+  - img
+  - text: 文稿 从一页白纸开始
+- button "空白世界 不带骨架，从零填":
+  - img
+  - text: 空白世界 不带骨架，从零填
+- button "空白角色 不带骨架，从零填":
+  - img
+  - text: 空白角色 不带骨架，从零填
+- button "时间线 年代与事件，按时间排":
+  - img
+  - text: 时间线 年代与事件，按时间排
+- button "地图 底图加标记的交互地图":
+  - img
+  - text: 地图 底图加标记的交互地图
+- button "集合 字段加条目的结构表":
+  - img
+  - text: 集合 字段加条目的结构表
+- paragraph: 案头还空着——先从上面挑一样开始。

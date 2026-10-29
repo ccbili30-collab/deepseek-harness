@@ -12,6 +12,29 @@ export interface CssRule {
   declarations: [property: string, value: string][]
 }
 
+/** Split only top-level selector commas; functional selectors keep their own arguments. */
+function selectorParts(selector: string): string[] {
+  const parts: string[] = []
+  let start = 0
+  let depth = 0
+  let quote: string | undefined
+  for (let index = 0; index < selector.length; index += 1) {
+    const char = selector[index]
+    if (quote !== undefined) {
+      if (char === quote && selector[index - 1] !== '\\') quote = undefined
+      continue
+    }
+    if (char === '"' || char === "'") { quote = char; continue }
+    if (char === '(' || char === '[') { depth += 1; continue }
+    if (char === ')' || char === ']') { depth = Math.max(0, depth - 1); continue }
+    if (char !== ',' || depth > 0) continue
+    parts.push(selector.slice(start, index).trim())
+    start = index + 1
+  }
+  parts.push(selector.slice(start).trim())
+  return parts
+}
+
 /** Root the package-wide stylesheet scans walk. */
 const PACKAGES_DIR = fileURLToPath(new URL('../../../', import.meta.url))
 
@@ -36,7 +59,7 @@ export function parseRules(css: string): CssRule[] {
         const colon = part.indexOf(':')
         return [part.slice(0, colon).trim(), part.slice(colon + 1).trim()]
       })
-    rules.push({ selectors: selector.split(',').map(part => part.trim()), declarations })
+    rules.push({ selectors: selectorParts(selector), declarations })
   }
   return rules
 }

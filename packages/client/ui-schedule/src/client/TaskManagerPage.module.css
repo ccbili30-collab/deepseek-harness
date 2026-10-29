@@ -59,7 +59,7 @@
 
 /* macOS hiddenInset titlebar: the Plugins page's head carries the frame's top
    clearance above its own 28px inset, so both pages keep the same 76px total. */
-:global([data-platform='darwin']) .pageHeading {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .pageHeading {
   padding-top: calc(28px + var(--dsh-frame-top-clearance, 0px));
 }
 

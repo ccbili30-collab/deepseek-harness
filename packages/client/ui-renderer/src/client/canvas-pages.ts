@@ -52,7 +52,9 @@ export interface CanvasPages {
   subscribe(listener: () => void): () => void
 }
 
-/** Create one host-owned page registry. */
+/** Create one host-owned page registry.
+ * @returns the empty page registry with registration and subscription actions.
+ */
 export function createCanvasPages(): CanvasPages {
   const entries = new Map<string, CanvasPageDefinition>()
   const listeners = new Set<() => void>()

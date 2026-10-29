@@ -96,6 +96,7 @@ export function apply(ctx: ClientContext): void {
     scope.slots.inject('shell.leading', () => scope.slots.register({
       name: 'shell.leading',
       locale: NS,
+      children: { 'shell.leading.action': { kind: 'list', scope: 'root' } },
       inject: injectProps,
     }, HeaderLeadingControls))
     syncPanels()

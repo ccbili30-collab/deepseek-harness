@@ -20,6 +20,7 @@ import { LayoutController } from './service.ts'
 import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
 import { en, zh } from './shortcut-locales.ts'
 import { ThemePresenter } from './theme-presenter.ts'
+import { createFrameFoldState } from './policy.ts'
 
 // Contract exports only (export-convergence rule: cross-package consumers
 // keep a symbol exported; test-only/package-internal symbols live off /src).
@@ -29,6 +30,7 @@ import { ThemePresenter } from './theme-presenter.ts'
 export { LayoutController } from './service.ts'
 export type { ILayout, LiveSessionGeometry, MainPanelId, PanelInfo, CanvasClaimSource, CanvasClaims } from './service.ts'
 export type { CanvasSide, UnitSide } from './arrangement.ts'
+export type { FrameFoldState, FrameLayoutPolicy, FrameLayoutPrimary } from './policy.ts'
 export type { SessionGeometry, SessionGeometryRecord } from './stores.ts'
 
 /** Selector hook over root-scoped panel selection. */
@@ -50,6 +52,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface GlobalStandardProps {
     /** Subscribe to the selected main panel independently of parent renders. */
     usePanelInfo: UsePanelInfo
+    /** Product-owned presentation; null keeps the legacy Session geometry. */
+    useFrameLayoutPolicy?: SnapshotSelectorHook<import('./policy.ts').FrameLayoutPolicy | null>
+    /** Global auxiliary-view folds, independent of Session navigation. */
+    useFrameFoldState?: SnapshotSelectorHook<import('./policy.ts').FrameFoldState>
   }
 
   interface SlotMap {
@@ -189,7 +195,10 @@ export function apply(ctx: ClientContext): void {
       ctx.slots.entries('main').some(entry => entry.options.key === id)
     const layout = new LayoutController(instance.actions, hasMainPanel, panelInfo, sessionGeometry,
       (from, to) => navGeometryDiffers(instance.getSnapshot(), from, to))
-    const disposePanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo: layout.panelInfo } })
+    const frameFoldState = createFrameFoldState(instance)
+    const disposePanelInfo = ctx.slots.provideRoot({
+      hooks: { panelInfo: layout.panelInfo, frameFoldState, frameLayoutPolicy: layout.frameLayoutPolicy },
+    })
     const disposeService = ctx.reflect.provide('layout', layout)
     const disposeRegistration = ctx.slots.register({
       name: 'root',
@@ -204,7 +213,10 @@ export function apply(ctx: ClientContext): void {
       store,
       // The frame pulls the canvas claim from the seam the occupant provides;
       // pass the read face down so AppFrame stays free of service imports.
-      inject: () => ({ canvasClaims: layout.canvasClaims }),
+      inject: () => ({
+        canvasClaims: layout.canvasClaims,
+        provideFrameTransition: (runner: Parameters<LayoutController['provideFrameTransition']>[0]) => layout.provideFrameTransition(runner),
+      }),
     }, AppFrame)
     const disposeShortcut = ctx.shortcuts.register({
       id: 'sidebar.left.toggle' as ShortcutCommandId, label: () => t('toggle'), aliases: ['sidebar', 'toggle left sidebar'],

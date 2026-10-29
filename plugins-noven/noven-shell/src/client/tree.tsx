@@ -10,8 +10,10 @@ import { Menu, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
+import { SessionNavigationButton, type SessionNavigationInjected } from './session-navigation.tsx'
 import type { ProjectRow } from './library-api.ts'
 import type { NovenTree, TreeCardRow, TreeModuleRow, TreeSectionRow, TreeWorkRow } from './tree-api.ts'
+import type { NovenMode } from './arrangement.ts'
 import type { ProjectFocus, SimRow } from './canvas.tsx'
 import type { CreateKind } from './creation.tsx'
 import type { SidebarRightGuideBox } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
@@ -37,9 +39,13 @@ export interface TreeInjected {
     readonly activeTab: ObservableSnapshot<string | undefined>
     /** 本会话画布开态（有页且未停靠）——底排按钮据此换标签。 */
     readonly canvas: ObservableSnapshot<boolean>
+    /** Read-only product mode; the tree never decides or changes it. */
+    readonly mode: ObservableSnapshot<NovenMode>
     /** 右栏功能页签清单（guide 注册表）——工具菜单的功能行按它枚举。 */
     readonly featureTabs: ObservableSnapshot<readonly SidebarRightGuideBox[]>
   }
+  /** Shared Session-list navigation shown beside the project title. */
+  readonly sessionNavigation: SessionNavigationInjected
   /** 树挂在哪个会话的抽屉里——折叠/视图这类「怎么看」按它分域（契约 C9）。 */
   readonly sessionId: SessionId
   /** Studio 组行：把该会话挂进模拟器并切到画布手机屏。 */
@@ -859,7 +865,8 @@ function Group({ title, count, children, onAdd, addTitle, onDelete, deleteTitle,
   )
 }
 
-type TreeProps = PropsRuntime<'sidebar.right.pane.top'> & PropsLocale<'novenShell'> & InjectFace<TreeInjected>
+type TreeProps = { readonly rail: boolean } & PropsLocale<'novenShell'> & InjectFace<TreeInjected>
+type LeftTreeProps = PropsRuntime<'sidebar.workspaces.content'> & PropsLocale<'novenShell'> & InjectFace<TreeInjected>
 
 /**
  * 内容树组件：读树源 + 项目源，行点击全部经注入面回到画布。
@@ -872,11 +879,21 @@ let focusSearchPending = false
 /** 轨上直点的画布抬起参数：保持轨态，不展开列。 */
 const RAIL = { expandColumn: false } as const
 
+/**
+ * Render the same content tree in the left navigation's current-Session seat.
+ * @param props - Sidebar width controls plus the shared content-tree injection.
+ * @returns Expanded or rail content navigation.
+ */
+export function LeftContentTree({ wide, expandSidebar, ...props }: LeftTreeProps) {
+  return <ContentTree {...props} rail={!wide} expandDrawer={expandSidebar} />
+}
+
 export function ContentTree(props: TreeProps) {
   const { t, useTree, useProject } = props
   const tree = useTree(v => v)
   const project = useProject(v => v)
   const currentKey = props.useActiveTab(v => v)
+  const mode = props.useMode(v => v)
   const [query, setQuery] = useState('')
   const [menuOpen, setMenuOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
@@ -1016,7 +1033,6 @@ export function ContentTree(props: TreeProps) {
       writeGroupPrefsTo(undefined, treeSession, readGroupPrefs(root, treeSession, lastTreeSession))
     }
     lastTreeSession = treeSession
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在会话切换时落继承记录。
   }, [treeSession])
   const writeGroupPrefs = (next: GroupPrefs): void => {
     setPrefs(next)
@@ -1234,6 +1250,7 @@ export function ContentTree(props: TreeProps) {
           <span className="nv-tree-projectname">{title}</span>
           <span className="nv-tree-caret">›</span>
         </button>
+        <SessionNavigationButton t={t} {...props.sessionNavigation} />
         <button type="button" className={`nv-tree-eye${viewFile ? ' nv-tree-eye-on' : ''}`}
           title={t(viewFile ? 'tree.view.entity' : 'tree.view.files')}
           onClick={() => writeGroupPrefs({ ...prefs, view: viewFile ? 'entity' : 'file' })}>
@@ -1266,19 +1283,20 @@ export function ContentTree(props: TreeProps) {
           {query === '' && <kbd className="nv-tree-kbd" aria-hidden="true">⌘K</kbd>}
         </div>
       </div>
-      {/* 画布是一个固定位置的开关：开着/关着都在这，只换状态，不换入口。 */}
-      <div className="nv-tree-canvasrow">
-        <span className="nv-tree-canvaslabel">
-          <span className="nv-tree-toolicon">{glyph.floatWin(13)}</span>
-          {t('tree.canvas.label')}
-        </span>
-        <button type="button" role="switch" aria-checked={canvasOpen}
-          aria-label={t('tree.canvas.toggle')}
-          className="nv-tree-switch" data-canvas-on={canvasOpen || undefined}
-          onClick={props.toggleCanvas}>
-          <span className="nv-tree-switch-thumb" aria-hidden="true" />
-        </button>
-      </div>
+      {mode === 'agent' && (
+        <div className="nv-tree-canvasrow">
+          <span className="nv-tree-canvaslabel">
+            <span className="nv-tree-toolicon">{glyph.floatWin(13)}</span>
+            {t('tree.canvas.label')}
+          </span>
+          <button type="button" role="switch" aria-checked={canvasOpen}
+            aria-label={t('tree.canvas.toggle')}
+            className="nv-tree-switch" data-canvas-on={canvasOpen || undefined}
+            onClick={props.toggleCanvas}>
+            <span className="nv-tree-switch-thumb" aria-hidden="true" />
+          </button>
+        </div>
+      )}
       <div className="nv-tree-scroll">
         {noProject && (
           // 空抽屉只说一件事：这里能新建。文案与案头同一口径——"没有项目"

@@ -616,6 +616,20 @@ describe('first-use Remote', () => {
     expect(await controller.initializeDefault(signal)).toEqual(result)
   })
 
+  it('uses a deployment-owned complete default directory without changing its name', async () => {
+    const isolated = realpathSync.native(mkdtempSync(join(tmpdir(), 'dsh-default-workspace-')))
+    tempDirs.push(isolated)
+    const { controller, ctx } = await harness({
+      controllerConfig: { defaultWorkspaceDirectory: join(isolated, '杂项') },
+    })
+    const result = await controller.initializeDefault(new AbortController().signal)
+
+    expect(result!.workspace.path).toBe(join(isolated, '杂项'))
+    expect(result!.workspace.title).toBe('杂项')
+    expect(existsSync(result!.workspace.path)).toBe(true)
+    expect(ctx.sessions.list()).toEqual([])
+  })
+
   it('skips ineligible first use and propagates preparation failures', async () => {
     const { controller, ctx, root } = await harness()
     await ctx.workspaceRegistry.create(root)

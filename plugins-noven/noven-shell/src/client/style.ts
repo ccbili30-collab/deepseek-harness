@@ -51,6 +51,10 @@ const CSS = `
   --nv-ease-in: cubic-bezier(0.5, 0, 0.75, 0.4);
   --nv-ease-spring: cubic-bezier(0.18, 0.85, 0.3, 1.1);
 
+  /* 产品模式使用 scene 档；共享 ui-layout 在未覆盖时仍走 DSH 默认。 */
+  --dsh-frame-mode-duration: var(--nv-dur-scene);
+  --dsh-frame-mode-easing: var(--nv-ease-out);
+
 }
 
 /* 品牌重映射：上游 DSH 蓝的 alias 层 → 诺文薄荷绿。上游组件（工作区
@@ -282,7 +286,7 @@ html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: norm
 /* Creation ritual: one quiet thought field, then two explicit working paths.
    The page centers its column inside the center column (the session page's
    reference frame), so the hero→session morph never slides sideways. */
-.nv-create-page { overflow: hidden; box-sizing: border-box;
+.nv-create-page { overflow: hidden; box-sizing: border-box; display: flex; flex-direction: column;
   /* The page's own View Transition name lives here, not on one scene: every
      transition the page takes part in — entering, leaving for any Session,
      morphing into the conversation, dissolving into the IDE — captures it as
@@ -293,7 +297,10 @@ html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: norm
      white), fading out before the path cards so the fold stays clean. */
   background:
   radial-gradient(circle at 50% 30%, rgba(52,211,153,.12), transparent 42%), var(--nv-surface); }
-.nv-create-ritual { width: min(920px, calc(100% - 64px)); height: 100%; margin: 0 auto; padding: 0;
+.nv-create-topbar { position: relative; z-index: 2; display: flex; align-items: center; flex: none;
+  box-sizing: border-box; min-height: calc(40px + var(--dsh-frame-top-clearance, 0px));
+  padding: calc(5px + var(--dsh-frame-top-clearance, 0px)) 12px 5px; }
+.nv-create-ritual { width: min(920px, calc(100% - 64px)); flex: 1; min-height: 0; margin: 0 auto; padding: 0;
   box-sizing: border-box; display: flex; flex-direction: column; align-items: stretch; gap: 12px; overflow-y: auto; scrollbar-width: none; }
 /* The stack is the anchor, not any element in it: the leading spacer parks
    the column's center at 46% of the page (above center — the fold lands past
@@ -946,6 +953,21 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
 .nv-foot-name { font-size: 13px; font-weight: 500; color: var(--nv-primary-text); }
 .nv-foot-gear { flex: none; }
 .nv-foot-rail { display: block; margin: 4px auto; border: 0; background: transparent; padding: 3px; cursor: pointer; border-radius: 50%; }
+.nv-mode-switch { display: flex; align-items: center; justify-content: center; gap: 7px; width: calc(100% - 8px); min-height: 34px; margin: 4px; padding: 6px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--nv-secondary-text); cursor: pointer; font-size: 13px;
+  transition: color var(--nv-dur-micro) var(--nv-ease-out), background var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-mode-switch:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-mode-switch[aria-pressed="true"] { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-mode-switch-icon { display: inline-flex; align-items: center; justify-content: center; flex: none;
+  transition: transform var(--nv-dur-ui) var(--nv-ease-out); }
+.nv-mode-switch[aria-pressed="true"] .nv-mode-switch-icon { transform: translateX(2px); }
+.nv-mode-switch-label { font-weight: 500; }
+.nv-mode-switch-rail { width: 36px; height: 36px; margin: 4px auto; padding: 0; }
+.nv-leading-mode { display: inline-flex; align-items: center; }
+.nv-leading-mode .nv-mode-switch { width: 28px; height: 28px; margin: 0; border-radius: 50%; }
+.nv-session-nav-button { display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 28px; height: 28px; padding: 0; border: 0; border-radius: 8px; background: transparent;
+  color: var(--nv-secondary-text); cursor: pointer; transition: color var(--nv-dur-micro) var(--nv-ease-out), background var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-session-nav-button:hover, .nv-session-nav-button[data-active] { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 
 /* 会话页：工具行 / 保存回执 / 斜杠胶囊 */
 .nv-toolrow { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 10px; border-radius: 999px; background: var(--nv-surface); border: 0.5px solid var(--nv-divider); font-size: 12px; color: var(--nv-secondary-text); }
@@ -1225,12 +1247,9 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
 }
 .nv-pick-namer-cancel:hover { color: rgba(255, 255, 255, 0.8); }
 
-/* The top zone is the drawer's whole body — the host hairline under it would
-   draw a stray edge over the empty column, drop it. With the features zone
-   hidden the product tree also owns the column's full height (host caps it
-   at 50% for the old two-zone split), so the foot bar can pin to the bottom. */
-[data-zone='top']:not(:empty) { border-bottom: none; }
-[data-zone='top'] { flex: 1; max-height: none; }
+/* 内容树占满工具列表之外的剩余高度；功能入口恢复为真实的下方导航区。 */
+[data-zone='top'] { flex: 1; min-height: 0; max-height: none; }
+[data-zone='features'] { flex: none; max-height: 42%; }
 
 /* ---------- 新工作台外壳：左列内容树 / 中列画布标签页 / 右列对话 ---------- */
 
@@ -1253,11 +1272,8 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
    变换后的盒仍计入外层 scrollHeight，整页被顶出 225px 纵向滚动条——
    隐藏态直接 display:none（代价仅是开面板时少一次滑入动画）。 */
 [data-dsh-bottom-panel][class*='bottomPanelHidden'] { display: none; }
-/* 会话头压成与其他两列相同的 40px 单行——上游它是三态高度（空会话 40、
-   有标题 50、有视图 tabs 76），三态不齐正是顶线参差的来源。视图切换行
-   在 01 里没有对应物，先隐藏。 */
-[data-slot='conversation.header'] > header { height: 40px; min-height: 0; padding: 5px 28px 5px 20px; }
-[data-slot='conversation.header'] [data-conversation-tabs] { display: none; }
+/* 对话顶栏保留上游的三态高度：空会话、标题与视图切换各有真实内容，
+   不再把导航能力压没来凑三列顶线。 */
 
 /* 左列内容树 */
 .nv-tree { display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--nv-primary-text); }
@@ -1424,7 +1440,12 @@ button.nv-tree-switch[data-canvas-on] { background: var(--nv-accent); }
 .nv-canvas-tab:hover { color: var(--nv-primary-text); background: var(--nv-accent-soft); }
 /* 选中页签：绿字（统一规则）+ 底缘一字宽的圆头短绿线，无底色。 */
 .nv-canvas-tab-on::after { content: ''; position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
-  width: 1em; height: 2px; border-radius: 999px; background: var(--nv-select); }
+  width: 1em; height: 2px; border-radius: 999px; background: var(--nv-select);
+  animation: nv-tab-underline var(--nv-dur-ui) var(--nv-ease-out); }
+@keyframes nv-tab-underline {
+  from { opacity: .35; transform: translateX(-50%) scaleX(.4); }
+  to { opacity: 1; transform: translateX(-50%) scaleX(1); }
+}
 .nv-canvas-tabtitle { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 /* × 钮悬停/选中才现身，但一直占位——出现不收版。 */
 .nv-canvas-tabx { border: 0; background: none; padding: 0 2px; font-size: 13px; color: var(--nv-secondary-text); cursor: pointer; border-radius: 4px; opacity: 0; }
@@ -1466,12 +1487,18 @@ button.nv-tree-switch[data-canvas-on] { background: var(--nv-accent); }
   box-shadow: inset 0 0 0 1px rgba(14, 159, 110, .12); pointer-events: none; }
 @keyframes nv-ai-flow { from { background-position: 0% 50%; } to { background-position: 200% 50%; } }
 @media (prefers-reduced-motion: reduce) {
-  .nv-ai-pill, .nv-ai-pill::before, .nv-ai-tag, .nv-canvas-tab-ai,
+  .nv-ai-pill, .nv-ai-pill::before, .nv-ai-tag, .nv-canvas-tab-ai, .nv-canvas-tab-on::after,
   .nv-canvas[data-ai-editing]::after, .nv-cardpage-ai::before, .nv-cardpage-ai .nv-pagehead,
   .nv-ov-tile-ai::after, .nv-ai-locked::before { animation: none; }
+  .nv-mode-switch, .nv-mode-switch-icon, .nv-session-nav-button, .nv-canvas-menubutton { transition: none; }
 }
 .nv-canvas-plus { border: 0; background: none; padding: 4px 8px; font-size: 15px; color: var(--nv-secondary-text); cursor: pointer; }
 .nv-canvas-plus:hover { color: var(--nv-accent-deep); }
+.nv-canvas-menubutton { display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 24px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent;
+  color: var(--nv-secondary-text); cursor: pointer; transition: color var(--nv-dur-micro) var(--nv-ease-out), background var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-canvas-menubutton:hover { color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
+[data-noven-canvas-switch] svg { transform: rotate(90deg); }
 .nv-canvas-body { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 /* Host 页面按页签常驻：切页签只切显隐，关页签才卸载（终端等长连接不会被切走杀掉）。 */
 .nv-canvas-page-slot { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; }
@@ -2198,10 +2225,6 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   padding: 8px 20px; font-size: 13px; cursor: pointer; }
 .nv-create-ok:disabled { opacity: 0.45; cursor: not-allowed; }
 
-/* 抽屉不再展示功能台 zone（设计稿 01：底部只有「新建」；那几个功能图标是
-   图生图噪声）。条目仍注册着，隐藏纯视觉、可回退；上游类名带 CSS-module
-   哈希前缀，按后缀子串匹配。 */
-[data-zone='features'] { display: none; }
 
 /* ---------- 预制模块（时间线/关系图/地图） ---------- */
 .nv-wg { position: relative; border: 1px solid var(--nv-divider); border-radius: 12px;
@@ -4478,11 +4501,19 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
 .nv-upd-base button { border: 1px solid var(--nv-accent); border-radius: 8px; padding: 0 12px; background: var(--nv-surface);
   color: var(--nv-accent-deep); font: inherit; font-size: 12.5px; cursor: pointer; }
 
+/* Noven 的第三个标题栏控件：仅在真实 macOS 折叠隐藏侧栏时计入总安全区。 */
+:root:is([data-platform='darwin'], [data-chrome-platform='darwin'])[data-noven-shell] [data-sidebar-collapsed] { --dsh-frame-leading-clearance: 196px; }
+:root[data-platform='darwin'][data-fullscreen][data-noven-shell] [data-sidebar-collapsed] { --dsh-frame-leading-clearance: 120px; }
+
 `
 
 /** Inject the Noven stylesheet once per document. */
 export function injectNovenStyles(): void {
   if (typeof document === 'undefined') return
+  if (document.documentElement.dataset.platform === undefined) {
+    document.documentElement.dataset.chromePlatform = 'darwin'
+  }
+  document.documentElement.dataset.novenShell = 'true'
   const el = document.getElementById('noven-shell-css') ?? document.head.appendChild(
     Object.assign(document.createElement('style'), { id: 'noven-shell-css' }),
   )

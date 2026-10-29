@@ -51,6 +51,8 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * package's 'sidebar' entry; each action receives only the column state.
      */
     'sidebar.footer.action': { kind: 'list'; scope: 'root'; owner: SidebarFooterActionOwnerProps }
+    /** Extra controls in the macOS hidden-sidebar window-chrome recovery seat. */
+    'shell.leading.action': { kind: 'list'; scope: 'root'; owner: Record<never, never> }
   }
 }
 

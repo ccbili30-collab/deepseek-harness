@@ -33,6 +33,10 @@ This package is a Web-shell build input. Its static ESM retains third-party impo
 
 Compose feature UI from these atoms whenever the web client needs a standard control or an agent-output renderer. They render through React only and take `--dsw-*` design tokens from the theme, so they fit any plugin without importing the theme or the slot system.
 
+### Platform presentation
+
+`isDarwinDesktop()` is true only for the real Electron `data-platform='darwin'` marker; native bridges, keyboard runtime, and window-drag behavior use it. `isDarwinChrome()` also accepts the product-owned `data-chrome-platform='darwin'` presentation marker, so a Web mirror can share ordinary-window geometry without changing those native facts. The mirror never creates `data-fullscreen` or an Electron bridge.
+
 <a id="component-catalog"></a>
 ### Component catalog
 

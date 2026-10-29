@@ -23,6 +23,8 @@ interface SavedRecord {
   sidebar?: number | undefined
   rightbar?: number | null | undefined
   unit?: number | null | undefined
+  centerCollapsed?: boolean | undefined
+  auxiliaryCollapsed?: boolean | undefined
   bySession?: Record<string, SavedGeometry> | undefined
 }
 
@@ -39,6 +41,8 @@ export interface PersistedLayout {
   sidebar: number
   rightbar: number | null
   unit: number | null
+  centerCollapsed: boolean
+  auxiliaryCollapsed: boolean
   byId: Record<string, SessionGeometryRecord>
 }
 
@@ -67,7 +71,11 @@ function toRecord(value: unknown): SavedRecord | undefined {
       } satisfies SavedGeometry]] as [string, SavedGeometry][]
     }))
     : undefined
-  return { sidebar: number('sidebar'), rightbar: nullable('rightbar'), unit: nullable('unit'), bySession }
+  return {
+    sidebar: number('sidebar'), rightbar: nullable('rightbar'), unit: nullable('unit'),
+    centerCollapsed: raw['centerCollapsed'] === true ? true : undefined,
+    auxiliaryCollapsed: raw['auxiliaryCollapsed'] === false ? false : undefined, bySession,
+  }
 }
 
 /**
@@ -91,6 +99,8 @@ export function readLayoutInfo(): PersistedLayout | undefined {
       sidebar: saved.sidebar === 0 || saved.sidebar === undefined ? SIDEBAR_DEFAULT : saved.sidebar,
       rightbar: saved.rightbar ?? null,
       unit: saved.unit ?? null,
+      centerCollapsed: saved.centerCollapsed ?? false,
+      auxiliaryCollapsed: saved.auxiliaryCollapsed ?? true,
       byId: Object.fromEntries(Object.entries(saved.bySession ?? {}).map(([id, record]) => [id, {
         sidebarCollapsed: record.sidebarCollapsed ?? false,
         narrowExpanded: record.narrowExpanded ?? false,
@@ -118,6 +128,8 @@ export function writeLayoutInfo(info: LayoutInfo, byId: Record<string, SessionGe
       sidebar: info.sidebar,
       rightbar: info.rightbar,
       unit: info.unit,
+      centerCollapsed: info.centerCollapsed,
+      auxiliaryCollapsed: info.auxiliaryCollapsed,
       bySession: Object.fromEntries(kept.map(([id, record]) => [id, {
         sidebarCollapsed: record.sidebarCollapsed,
         narrowExpanded: record.narrowExpanded,

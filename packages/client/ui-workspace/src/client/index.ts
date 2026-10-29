@@ -5,7 +5,9 @@
  * (`conversation.hero.workspace` — both hero forms). Both read real Host
  * Workspaces through the global useWorkspaces hook, and each declares its
  * own `single` directory-flow child hole for the composed picker package's
- * client half. WorkspaceBrowser additionally declares the two Session row
+ * client half. WorkspaceBrowser also declares `sidebar.workspaces.content`,
+ * a strict-Session seat whose occupant replaces the Session browser while the
+ * original browser remains the empty-seat fallback. It additionally declares the two Session row
  * action lists, and this apply registers the shipped actions — pin, rename,
  * fork, archive, and the archived-only permanent deletion — into them the
  * way any client plugin would, each with its own behavior, plus the rename
@@ -197,17 +199,16 @@ export function apply(ctx: Context): void {
     })
   }
   const requestSessionRename = shortcutControls.rename
-  const unarchiveSession = (sessionId: SessionId): void => {
+  const unarchiveSession = (sessionId: SessionId): Promise<void> => {
     const targets = selectionTargets(sessionId, id => archivedSet.getSnapshot().has(id))
     if (targets.length === 1 && targets[0] === sessionId) {
-      uiWorkspace.unarchiveSession(sessionId).catch((reason: unknown) => {
+      return uiWorkspace.unarchiveSession(sessionId).catch((reason: unknown) => {
         console.warn('session unarchive rejected:', reason)
       })
-      return
     }
     let succeeded = 0
     const failed: SessionId[] = []
-    void (async () => {
+    return (async () => {
       for (const id of targets) {
         try {
           await uiWorkspace.unarchiveSession(id)
@@ -259,7 +260,7 @@ export function apply(ctx: Context): void {
         archiveRequest.set({ sessionId, displayTitle, activity })
       })
     },
-    unarchiveSession,
+    unarchiveSession: (sessionId) => { void unarchiveSession(sessionId) },
   })
   installWorkspaceShortcuts(ctx, uiWorkspace, shortcutControls, archiveInjected().archiveSession)
   const archiveConfirmInjected = (): SessionArchiveConfirmInjected => ({
@@ -322,7 +323,7 @@ export function apply(ctx: Context): void {
   const rowToastInjected = (): RowToastInjected => ({
     hooks: { toast: rowToast },
     dismissToast: () => { rowToast.set(null) },
-    undoArchive: unarchiveSession,
+    undoArchive: (sessionId) => { void unarchiveSession(sessionId) },
     showArchived: () => { viewInstance.actions.setArchivedFilter('show') },
   })
   const browserInjected = (): WorkspaceBrowserInjected => ({
@@ -330,6 +331,7 @@ export function apply(ctx: Context): void {
     // the current Session Workspace before the recent-Workspace fallback.
     startSession: (workspaceId) => { uiWorkspace.startSession(workspaceId) },
     open: openSession,
+    dismissSessionBrowser: () => { uiWorkspace.hideSessionBrowser() },
     searchSessions,
     searchResultLimit: sessions.searchResultLimit,
     requestSessionRename,
@@ -339,7 +341,7 @@ export function apply(ctx: Context): void {
     insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
       await workspaces.insertBefore(workspaceId, beforeWorkspaceId)
     },
-    unarchiveSession: async (sessionId) => { unarchiveSession(sessionId) },
+    unarchiveSession,
     requestDeleteSessions,
     notifyArchiveResult: (operation, succeeded, failed) => {
       notify({ kind: 'archiveResult', operation, succeeded, failed })
@@ -351,7 +353,13 @@ export function apply(ctx: Context): void {
     closeAddWorkspace: shortcutControls.closeAdd,
     setDirectoryBusy: shortcutControls.directoryBusy,
     dismissForkError: shortcutControls.dismissForkError,
-    hooks: { directoryFlow: browserFlowSource, hostInfo, workspaceShortcuts: shortcutControls.state, shortcuts: ctx.shortcuts.catalog },
+    hooks: {
+      directoryFlow: browserFlowSource,
+      hostInfo,
+      workspaceShortcuts: shortcutControls.state,
+      shortcuts: ctx.shortcuts.catalog,
+      sessionBrowser: uiWorkspace.sessionBrowser,
+    },
   })
   const pickerInjected = (): WorkspacePickerInjected => ({
     createWorkspace: input => workspaces.create(input),
@@ -363,6 +371,7 @@ export function apply(ctx: Context): void {
     {
       name: 'sidebar.workspaces',
       children: {
+        'sidebar.workspaces.content': { kind: 'single', scope: 'session' },
         'sidebar.workspaces.directoryFlow': { kind: 'single', scope: 'root' },
         // Every row entry reads the menu's open state through a hook bound
         // from the row's render occurrence (the owner passes the state pair

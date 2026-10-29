@@ -134,6 +134,19 @@ it('detects the client OS and separates Web from the preload marker', () => {
   }
 })
 
+it('keeps the Web keyboard runtime when the macOS presentation mirror is enabled', () => {
+  const html = document.documentElement
+  const previous = html.dataset.chromePlatform
+  try {
+    html.dataset.chromePlatform = 'darwin'
+    expect(detectEnvironment(document, { platform: 'MacIntel' } as Navigator)).toEqual({ runtime: 'web', platform: 'macos' })
+    expect(html.dataset.platform).toBeUndefined()
+  } finally {
+    if (previous === undefined) delete html.dataset.chromePlatform
+    else html.dataset.chromePlatform = previous
+  }
+})
+
 it('passes browser navigation/editing and local consumption; disposes the listener', () => {
   const { input, run } = mount()
   for (const key of ['N', 'P', 'O', 'R', 'W', 'C', 'V', 'Z']) expect(press(input, { code: `Key${key}` }).defaultPrevented).toBe(false)

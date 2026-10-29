@@ -3,10 +3,12 @@
 import type { GlobalStandardProps, RenderOpts } from '@deepseek-ai/dsh-client-ui-slots'
 import { bindSnapshotSelector } from '@deepseek-ai/dsh-client-test-runtime'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { useEffect } from 'react'
 import { act, cleanup, render } from '@testing-library/react'
 import { AppFrame } from '../src/client/AppFrame.tsx'
 import type { AppFrameProps } from '../src/client/AppFrame.tsx'
-import type { MainPanelId, RightbarOwnerProps, SidebarOwnerProps } from '../src/client/index.ts'
+import type { FrameLayoutPolicy, MainPanelId, RightbarOwnerProps, SidebarOwnerProps } from '../src/client/index.ts'
+import type { FrameTransition } from '../src/client/service.ts'
 import { createLayoutStore } from '../src/client/stores.ts'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -75,12 +77,28 @@ function resize(width: number): void {
   })
 }
 
-function mountFrame(windowWidth = frameWidth) {
+function mountFrame(windowWidth = frameWidth, initialPolicy?: FrameLayoutPolicy) {
   vi.stubGlobal('innerWidth', windowWidth)
   const instance = createLayoutStore().create()
+  let policy = initialPolicy ?? null
+  const policyListeners = new Set<() => void>()
+  const policySource = {
+    getSnapshot: () => policy,
+    subscribe: (listener: () => void) => { policyListeners.add(listener); return () => { policyListeners.delete(listener) } },
+  }
+  const setPolicy = (next: FrameLayoutPolicy): void => {
+    policy = next
+    for (const listener of policyListeners) listener()
+  }
+  const mounts = { main: 0, rightbar: 0 }
+  const Probe = ({ name, entryKey }: { name: 'main' | 'rightbar'; entryKey: RenderOpts['entryKey'] }) => {
+    useEffect(() => { mounts[name] += 1 }, [name])
+    return <div data-testid={`${name}-content`} data-entry-key={entryKey} />
+  }
   const slotCalls: { key: string; props: object; options: RenderOpts | undefined }[] = []
   const renderSlot: AppFrameProps['renderSlot'] = (key, owner, options) => {
     slotCalls.push({ key, props: owner, options })
+    if (key === 'main' || key === 'rightbar') return <Probe name={key} entryKey={options?.entryKey} />
     return <div data-testid={`${key}-content`} data-entry-key={options?.entryKey} />
   }
   const useSessions: AppFrameProps['useSessions'] = sel => sel({
@@ -104,6 +122,11 @@ function mountFrame(windowWidth = frameWidth) {
     getSnapshot: () => instance.getSnapshot().panelInfo,
     subscribe: listener => instance.subscribe(listener),
   })
+  let frameTransition: FrameTransition | undefined
+  const transitionFrame: FrameTransition = (commit) => {
+    if (frameTransition === undefined) { commit(); return }
+    frameTransition(commit)
+  }
   const element = () => (
     <AppFrame
       useStore={useStore}
@@ -111,18 +134,23 @@ function mountFrame(windowWidth = frameWidth) {
       renderSlot={renderSlot}
       useSessions={useSessions}
       usePanelInfo={usePanelInfo}
+      useFrameLayoutPolicy={bindSnapshotSelector(policySource)}
       useSessionStatus={useSessionStatus}
       useSessionRetainInfo={() => undefined}
       useResource={useResource}
       useWorkspaces={sel => sel(workspaceState)}
       t={key => key === 'brand.localBuild' ? 'DSH Local Build' : key}
       canvasClaims={canvasClaims}
+      provideFrameTransition={(runner) => {
+        frameTransition = runner
+        return () => { if (frameTransition === runner) frameTransition = undefined }
+      }}
     />
   )
   const utils = render(element())
   const frame = utils.container.firstElementChild as HTMLElement
   return {
-    ...utils, instance, frame, slotCalls,
+    ...utils, instance, frame, slotCalls, mounts, setPolicy, transitionFrame,
     rerenderFrame: () => { utils.rerender(element()) },
     rightOwner: () => slotCalls.findLast(c => c.key === 'rightbar')!.props as RightbarOwnerProps,
     sidebarOwner: () => slotCalls.findLast(c => c.key === 'sidebar')!.props as SidebarOwnerProps,
@@ -207,6 +235,9 @@ afterEach(() => {
     cleanup()
   } finally {
     delete document.documentElement.dataset.platform
+    delete document.documentElement.dataset.chromePlatform
+    delete document.documentElement.dataset.createScene
+    delete document.documentElement.dataset.panelHandoff
     for (const restore of restoreProperties.splice(0).reverse()) restore()
     document.title = originalTitle
     vi.restoreAllMocks()
@@ -304,7 +335,24 @@ describe('AppFrame', () => {
     // The frame declares no window drag of its own: every chrome row owns its
     // run (ui-sidebar, ui-dockkit, ui-conversation, ui-plugin-manager).
     expect(frame.querySelector('[data-shell-leading-band]')).toBeNull()
+    expect(frame.querySelector('[data-chrome-mirror-lights]')).toBeNull()
     expect(queryByTestId('shell.leading-content')).toBeNull()
+    act(() => { instance.actions.toggleSidebar() })
+    expect(tracks(frame)).toEqual([0, 0])
+    expect(sidebarOwner()).toEqual({ collapsed: true, width: 0 })
+    expect(frame.querySelector('[data-shell-leading]')).not.toBeNull()
+    expect(queryByTestId('shell.leading-content')).toBeTruthy()
+    act(() => { instance.actions.toggleSidebar() })
+    expect(queryByTestId('shell.leading-content')).toBeNull()
+  })
+
+  it('mirrors macOS window geometry without changing the native platform fact', () => {
+    document.documentElement.dataset.chromePlatform = 'darwin'
+    const { frame, instance, sidebarOwner, queryByTestId } = mountFrame()
+    expect(document.documentElement.dataset.platform).toBeUndefined()
+    expect(document.documentElement.dataset.fullscreen).toBeUndefined()
+    expect(frame.querySelector('[data-chrome-mirror-lights]')).not.toBeNull()
+
     act(() => { instance.actions.toggleSidebar() })
     expect(tracks(frame)).toEqual([0, 0])
     expect(sidebarOwner()).toEqual({ collapsed: true, width: 0 })
@@ -334,6 +382,216 @@ describe('AppFrame', () => {
       expect(selectedSession).toBe(sessionId)
       expect(document.title).toBe(panelId === null ? 'Session title — DSH Local Build' : 'DSH Local Build')
     }
+  })
+})
+
+describe('AppFrame product layout policy', () => {
+  it('switches primary regions without remounting or reading Session arrangement', () => {
+    const b = mountFrame(1920, { primary: 'main', canvasSide: 'left' })
+    const { instance, frame, mounts, setPolicy, getByTestId } = b
+    const work = workEl(frame)
+    act(() => {
+      instance.actions.openRightbar(true, false, false)
+      instance.actions.setUnit(777)
+      instance.actions.setAuxiliaryCollapsed(false)
+      instance.actions.setUnitSide('left')
+      setClaim('left')
+    })
+    const main = getByTestId('main-content')
+    const rightbar = getByTestId('rightbar-content')
+    expect(mounts).toEqual({ main: 1, rightbar: 1 })
+    expect(work.dataset.unitSide).toBe('right')
+
+    act(() => { setPolicy({ primary: 'rightbar', canvasSide: 'right' }) })
+    expect(work.dataset.unitSide).toBe('left')
+    expect(getByTestId('main-content')).toBe(main)
+    expect(getByTestId('rightbar-content')).toBe(rightbar)
+    expect(mounts).toEqual({ main: 1, rightbar: 1 })
+    expect(instance.getSnapshot().layoutInfo.unit).toBe(777)
+
+    act(() => { setPolicy({ primary: 'main', canvasSide: 'left' }) })
+    expect(work.dataset.unitSide).toBe('right')
+    expect(getByTestId('main-content')).toBe(main)
+    expect(getByTestId('rightbar-content')).toBe(rightbar)
+    expect(mounts).toEqual({ main: 1, rightbar: 1 })
+  })
+
+  it('animates explicit mirror transitions and redirects an in-flight swap without remounting', async () => {
+    const b = mountFrame(1920, { primary: 'main', canvasSide: 'right' })
+    const { instance, frame, mounts, setPolicy, transitionFrame, getByTestId } = b
+    act(() => {
+      instance.actions.openRightbar(true, false, false)
+      instance.actions.setAuxiliaryCollapsed(false)
+      setClaim('right')
+    })
+    // oxlint-disable-next-line typescript/unbound-method -- Each region invokes the captured native method with its own element as `this`.
+    const originalRect = Element.prototype.getBoundingClientRect
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (this: Element) {
+      if (this instanceof HTMLElement && (this.hasAttribute('data-center-col') || this.hasAttribute('data-rightbar-col'))) {
+        const base = Number(this.style.order) === 1 ? 0 : 600
+        const transform = /translateX\((-?[\d.]+)px\)/.exec(this.style.transform)
+        const dx = transform === null ? 0 : Number(transform[1])
+        return new DOMRect(base + dx, 0, 600, 800)
+      }
+      return originalRect.call(this)
+    })
+    type StubAnimation = Animation & { advance: (fraction: number) => void; cancelled: boolean }
+    class StubAnimationPlayer extends EventTarget implements StubAnimation {
+      currentTime: CSSNumberish | null = null
+      effect: AnimationEffect | null = null
+      id = ''
+      oncancel: Animation['oncancel'] = null
+      onfinish: Animation['onfinish'] = null
+      onremove: Animation['onremove'] = null
+      overallProgress: number | null = null
+      pending = false
+      playState: AnimationPlayState = 'running'
+      playbackRate = 1
+      ready: Promise<Animation>
+      replaceState: AnimationReplaceState = 'active'
+      startTime: CSSNumberish | null = null
+      timeline: AnimationTimeline | null = null
+      finished: Promise<Animation>
+      cancelled = false
+      private settle!: (value: Animation) => void
+
+      constructor(private readonly element: HTMLElement, private readonly firstDx: number, private readonly lastTransform: string) {
+        super()
+        const deferred = Promise.withResolvers<Animation>()
+        this.finished = deferred.promise
+        this.settle = deferred.resolve
+        this.ready = Promise.resolve(this)
+      }
+
+      cancel(): void {
+        this.cancelled = true
+        this.playState = 'idle'
+        this.element.style.transform = ''
+        this.settle(this)
+      }
+
+      finish(): void {
+        this.playState = 'finished'
+        this.element.style.transform = this.lastTransform
+        this.settle(this)
+      }
+
+      advance(fraction: number): void {
+        this.element.style.transform = `translateX(${this.firstDx * (1 - fraction)}px)`
+      }
+
+      commitStyles = vi.fn()
+      pause = vi.fn()
+      persist = vi.fn()
+      play = vi.fn()
+      reverse = vi.fn()
+      updatePlaybackRate = vi.fn()
+    }
+    const animations: StubAnimationPlayer[] = []
+    replaceProperty(Element.prototype, 'animate', function (this: Element, keyframes, _options) {
+      const frames = Array.isArray(keyframes) ? keyframes : [keyframes]
+      const firstTransform = typeof frames[0]?.transform === 'string' ? frames[0].transform : ''
+      const lastFrame = frames.at(-1)
+      const lastTransform = typeof lastFrame?.transform === 'string' ? lastFrame.transform : ''
+      const firstDx = Number(/translateX\((-?[\d.]+)px\)/.exec(firstTransform)?.[1] ?? 0)
+      const element = this as HTMLElement
+      element.style.transform = firstTransform
+      const animation = new StubAnimationPlayer(element, firstDx, lastTransform)
+      animations.push(animation)
+      return animation
+    })
+    const center = frame.querySelector<HTMLElement>('[data-center-col]')!
+    const rightbar = frame.querySelector<HTMLElement>('[data-rightbar-col]')!
+    const main = getByTestId('main-content')
+    const right = getByTestId('rightbar-content')
+
+    act(() => { transitionFrame(() => { setPolicy({ primary: 'rightbar', canvasSide: 'right' }) }) })
+    expect(animations).toHaveLength(2)
+    expect(center.style.transform).toBe('translateX(-600px)')
+    expect(rightbar.style.transform).toBe('translateX(600px)')
+    expect(workEl(frame).dataset.modeScene).toBe('swap')
+    expect(workEl(frame).dataset.animating).toBeUndefined()
+
+    animations[0]!.advance(0.5)
+    animations[1]!.advance(0.5)
+    act(() => { transitionFrame(() => { setPolicy({ primary: 'main', canvasSide: 'right' }) }) })
+    expect(animations).toHaveLength(4)
+    expect(animations[0]!.cancelled).toBe(true)
+    expect(animations[1]!.cancelled).toBe(true)
+    expect(center.style.transform).toBe('translateX(300px)')
+    expect(rightbar.style.transform).toBe('translateX(-300px)')
+
+    for (const animation of animations.slice(-2)) animation.finish()
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+    expect(workEl(frame).hasAttribute('data-mode-scene')).toBe(false)
+    expect(center.style.willChange).toBe('')
+    expect(rightbar.style.willChange).toBe('')
+    expect(getByTestId('main-content')).toBe(main)
+    expect(getByTestId('rightbar-content')).toBe(right)
+    expect(mounts).toEqual({ main: 1, rightbar: 1 })
+  })
+
+  it('commits reduced-motion and existing creation scenes without starting another animation', () => {
+    const animate = vi.fn()
+    replaceProperty(Element.prototype, 'animate', animate)
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
+    const reduced = mountFrame(1920, { primary: 'main', canvasSide: 'right' })
+    act(() => { reduced.transitionFrame(() => { reduced.setPolicy({ primary: 'rightbar', canvasSide: 'right' }) }) })
+    expect(workEl(reduced.frame).dataset.unitSide).toBe('left')
+    expect(animate).not.toHaveBeenCalled()
+
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() })))
+    document.documentElement.dataset.createScene = 'handcraft'
+    const scene = mountFrame(1920, { primary: 'main', canvasSide: 'right' })
+    act(() => { scene.transitionFrame(() => { scene.setPolicy({ primary: 'rightbar', canvasSide: 'right' }) }) })
+    expect(workEl(scene.frame).dataset.unitSide).toBe('left')
+    expect(animate).not.toHaveBeenCalled()
+  })
+
+  it('folds Conversation into a retained rail and restores it without remounting', () => {
+    const b = mountFrame(1920, { primary: 'rightbar', canvasSide: 'right' })
+    const { instance, frame, mounts, getByTestId, getByRole } = b
+    act(() => { instance.actions.openRightbar(true, false, false); setClaim('right') })
+    const main = getByTestId('main-content')
+    act(() => { getByRole('button', { name: 'collapse' }).click() })
+    expect(workEl(frame).style.gridTemplateColumns).toBe('minmax(0px, 1fr) minmax(0px, 56px)')
+    expect(getByTestId('main-content').parentElement?.getAttribute('aria-hidden')).toBe('true')
+    expect(getByTestId('main-content').parentElement?.inert).toBe(true)
+    expect(mounts).toEqual({ main: 1, rightbar: 1 })
+
+    act(() => { getByRole('button', { name: 'expand' }).click() })
+    expect(getByTestId('main-content')).toBe(main)
+    expect(getByTestId('main-content').parentElement?.getAttribute('aria-hidden')).toBeNull()
+    expect(getByTestId('main-content').parentElement?.inert).toBe(false)
+    expect(mounts).toEqual({ main: 1, rightbar: 1 })
+  })
+
+  it('never folds a global panel with the Conversation', () => {
+    const b = mountFrame(1920, { primary: 'rightbar', canvasSide: 'right' })
+    const { instance, frame, getByTestId, queryByRole } = b
+    act(() => { instance.actions.setCenterCollapsed(true); instance.actions.selectPanel('settings' as MainPanelId) })
+    expect(getByTestId('main-content').getAttribute('data-entry-key')).toBe('settings')
+    expect(getByTestId('main-content').parentElement?.hidden).toBe(false)
+    expect(workEl(frame).style.gridTemplateColumns).not.toBe('minmax(0px, 1fr) minmax(0px, 56px)')
+    expect(queryByRole('button', { name: 'collapse' })).toBeNull()
+  })
+
+  it('keeps content claims from reopening a folded auxiliary Canvas or resetting widths', () => {
+    const b = mountFrame(1920, { primary: 'main', canvasSide: 'left' })
+    const { instance, frame, mounts } = b
+    act(() => { instance.actions.openRightbar(true, false, false); instance.actions.setUnit(733); setClaim('left') })
+    const folded = workEl(frame).style.gridTemplateColumns
+    expect(folded).toContain('minmax(0px, 320px)')
+    act(() => { setClaim('right') })
+    expect(workEl(frame).style.gridTemplateColumns).toBe(folded)
+    expect(instance.getSnapshot().layoutInfo.unit).toBe(733)
+
+    act(() => { instance.actions.setAuxiliaryCollapsed(false) })
+    expect(workEl(frame).style.gridTemplateColumns).not.toBe(folded)
+    expect(mounts).toEqual({ main: 1, rightbar: 1 })
+    act(() => { instance.actions.setAuxiliaryCollapsed(true) })
+    expect(workEl(frame).style.gridTemplateColumns).toBe(folded)
+    expect(instance.getSnapshot().layoutInfo.unit).toBe(733)
   })
 })
 

@@ -87,6 +87,18 @@ it('retires only unselected Views without retained bodies and rejects released r
   expect(views.source.getSnapshot()).toEqual([])
 })
 
+it('does not report a pending opening cancelled by View disposal', async () => {
+  const r = await runtime()
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+  const view = new SidebarSessionView(A, r.sessions, vi.fn(), vi.fn())
+  owners.push(view)
+
+  view.dispose()
+
+  await expect(view.reference.ready).rejects.toThrow(`Session reference "${A}" is released`)
+  expect(error).not.toHaveBeenCalled()
+})
+
 it('reports opening failure and releases Views even when committed roots are still present', async () => {
   const r = await runtime()
   const reference = r.sessions.retain(A, { source: 'sidebarView' })

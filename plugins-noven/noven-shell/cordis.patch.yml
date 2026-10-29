@@ -3,7 +3,7 @@
     - id: noven-shell
       name: 'noven-shell'
 
-# The Noven conversation is a single transcript; the trajectory debug view stays
-# available upstream but is out of this product profile.
+# Chat and the execution record share the Conversation header; the execution
+# record remains a real view in the Noven product profile.
 - id: ui-trajectory
-  disabled: true
+  disabled: false

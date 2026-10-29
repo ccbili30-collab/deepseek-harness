@@ -128,6 +128,10 @@ type LayoutInfo = {
   rightbarInstant: boolean
   /** Live structural unit side of the visible session (geometry.active). */
   unitSide: UnitSide
+  /** Global Conversation fold used only when a product policy makes Canvas primary. */
+  centerCollapsed: boolean
+  /** Global Canvas fold used only when a product policy makes Conversation primary. */
+  auxiliaryCollapsed: boolean
 }
 
 /** Live structural fields of layoutInfo that mirror the active session's record. */
@@ -174,6 +178,8 @@ type LayoutActions = {
   toggleSidebar: (draft: LayoutState) => void
   setSidebarCollapsed: (draft: LayoutState, collapsed: boolean) => void
   setUnitSide: (draft: LayoutState, side: UnitSide) => void
+  setCenterCollapsed: (draft: LayoutState, collapsed: boolean) => void
+  setAuxiliaryCollapsed: (draft: LayoutState, collapsed: boolean) => void
   enterSession: (draft: LayoutState, sessionId: string) => void
   seedSessionGeometry: (draft: LayoutState, sessionId: string, patch: Partial<SessionGeometry>) => void
   seedUnitShare: (draft: LayoutState, share: number) => void
@@ -215,6 +221,8 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         rightbarFullscreen: false,
         rightbarInstant: false,
         unitSide: DEFAULT_GEOMETRY.unitSide,
+        centerCollapsed: false,
+        auxiliaryCollapsed: true,
         sidebarCollapsed: DEFAULT_GEOMETRY.sidebarCollapsed,
       },
       geometry: { active: null, byId: {} },
@@ -246,6 +254,14 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
       },
       setUnitSide: (d, side: UnitSide) => {
         structural(d, { unitSide: side })
+      },
+      setCenterCollapsed: (d, collapsed: boolean) => {
+        d.layoutInfo.rightbarInstant = false
+        d.layoutInfo.centerCollapsed = collapsed
+      },
+      setAuxiliaryCollapsed: (d, collapsed: boolean) => {
+        d.layoutInfo.rightbarInstant = false
+        d.layoutInfo.auxiliaryCollapsed = collapsed
       },
       // Entry-path seeding: stamp a named structure onto one session's record
       // before or after it becomes visible. A session that is already live
@@ -350,16 +366,27 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         const latest = Object.values(saved.byId).reduce<SessionGeometryRecord | undefined>(
           (newest, record) => newest === undefined || record.updatedAt > newest.updatedAt ? record : newest, undefined)
         instance.store.set({ ...fresh,
-          layoutInfo: latest === undefined ? { ...fresh.layoutInfo, sidebar: saved.sidebar, rightbar: saved.rightbar, unit: saved.unit } : {
-            ...fresh.layoutInfo,
-            sidebar: saved.sidebar,
-            rightbar: saved.rightbar,
-            unit: saved.unit,
-            sidebarCollapsed: latest.sidebarCollapsed,
-            narrowExpanded: latest.narrowExpanded,
-            unitSide: latest.unitSide,
-            rightbarCollapsed: latest.rightbarCollapsed,
-          },
+          layoutInfo: latest === undefined
+            ? {
+              ...fresh.layoutInfo,
+              sidebar: saved.sidebar,
+              rightbar: saved.rightbar,
+              unit: saved.unit,
+              centerCollapsed: saved.centerCollapsed,
+              auxiliaryCollapsed: saved.auxiliaryCollapsed,
+            }
+            : {
+              ...fresh.layoutInfo,
+              sidebar: saved.sidebar,
+              rightbar: saved.rightbar,
+              unit: saved.unit,
+              centerCollapsed: saved.centerCollapsed,
+              auxiliaryCollapsed: saved.auxiliaryCollapsed,
+              sidebarCollapsed: latest.sidebarCollapsed,
+              narrowExpanded: latest.narrowExpanded,
+              unitSide: latest.unitSide,
+              rightbarCollapsed: latest.rightbarCollapsed,
+            },
           geometry: { ...fresh.geometry, byId: saved.byId },
         })
       }

@@ -33,6 +33,10 @@ kind: "package-library"
 
 只要 Web 客户端需要标准控件或 agent 输出渲染器，就用这些原子组件拼装功能 UI。它们只经 React 渲染，并从主题取得 `--dsw-*` 设计 token，因此无需导入主题或 slot 系统即可适配任意插件。
 
+### 平台呈现
+
+`isDarwinDesktop()` 只认真实 Electron 的 `data-platform='darwin'` 标记；原生桥、快捷键 runtime 和窗口拖拽行为都使用它。`isDarwinChrome()` 还接受产品持有的 `data-chrome-platform='darwin'` 呈现标记，使 Web 镜像可以共享普通窗口几何，而不改变这些原生事实。镜像不会创建 `data-fullscreen` 或 Electron bridge。
+
 <a id="component-catalog"></a>
 ### 组件目录
 

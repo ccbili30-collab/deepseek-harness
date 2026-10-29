@@ -16,6 +16,7 @@ import type {
 } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RowToast } from './contract/slots.ts'
 import { handOffPanel, rowDirection, turnPage, type PageTurnWeight } from './page-turn.ts'
 import { pinOrderAccounts, pinOrderSource } from './pin-order.ts'
@@ -53,6 +54,12 @@ export interface ConnectWorkspaceOptions {
 
 /** Workspace archive and directory operations consumed by Client UI domains. */
 export interface UiWorkspace {
+  /** Whether the full Session browser temporarily replaces product content navigation. */
+  readonly sessionBrowser: HostObservable<boolean>
+  /** Show the full Session browser without changing the selected Session or product mode. */
+  showSessionBrowser(): void
+  /** Return from the temporary Session browser to product content navigation. */
+  hideSessionBrowser(): void
   /**
    * Select a Session and show its Conversation as one UI navigation action.
    * A blank Session is seated as a host and routed to the registered
@@ -181,6 +188,11 @@ export class DirectoryBrowseError extends Error {
 class UiWorkspaceService extends Service implements UiWorkspace {
   private readonly connecting = new Map<string, Promise<SessionId>>()
   private readonly lifetime = new AbortController()
+  private readonly sessionBrowserState = createSnapshotStore(false)
+  readonly sessionBrowser: HostObservable<boolean> = {
+    getSnapshot: () => this.sessionBrowserState.getSnapshot(),
+    subscribe: listener => this.sessionBrowserState.subscribe(listener),
+  }
   private readonly selection = createSnapshotStore<MainSelection>(
     {}, { persist: { name: 'dsh.sessions.current' } },
   )
@@ -214,6 +226,14 @@ class UiWorkspaceService extends Service implements UiWorkspace {
         reference?.release()
       }
     }, 'ui-workspace: Workspace navigation policy')
+  }
+
+  showSessionBrowser(): void {
+    this.sessionBrowserState.set(true)
+  }
+
+  hideSessionBrowser(): void {
+    this.sessionBrowserState.set(false)
   }
 
   async connectWorkspace(workspaceId: WorkspaceId, options: ConnectWorkspaceOptions = {}): Promise<SessionId> {
@@ -280,6 +300,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   }
 
   openSession(target: SessionTarget, options?: OpenSessionOptions): void {
+    this.hideSessionBrowser()
     const panel = options?.panel === 'preserve' ? 'preserve' : 'reveal'
     const current = this.mainReference?.sessionId
     const targetId = typeof target === 'string' ? target : target.childSessionId
@@ -328,6 +349,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   }
 
   async openWorkspace(workspaceId: WorkspaceId, beforeOpen?: (sessionId: SessionId) => void): Promise<void> {
+    this.hideSessionBrowser()
     const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal])
     let sessionId: SessionId
     try {
@@ -367,6 +389,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   }
 
   startSession(workspaceId?: WorkspaceId): void {
+    this.hideSessionBrowser()
     if (this.newSessionSurface !== undefined) {
       if (workspaceId === undefined) {
         this.newSessionSurface()

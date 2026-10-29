@@ -338,7 +338,7 @@
 
 /* macOS desktop: the sidebar is translucent over window vibrancy, so the
    opaque fill gradient would paint a solid smear instead of a fade. */
-:global([data-platform='darwin']) .fade {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .fade {
   display: none;
 }
 

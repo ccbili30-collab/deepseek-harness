@@ -12,6 +12,29 @@
   background: var(--dsw-alias-bg-base);
 }
 
+/* Web's macOS mirror keeps the window-chrome landmarks without pretending to
+   own native close/minimize/fullscreen actions. Real Desktop draws no copies. */
+.mirrorLights {
+  position: absolute;
+  z-index: 40;
+  top: 20px;
+  left: 20px;
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.mirrorLights span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: #ff5f57;
+}
+
+.mirrorLights span:nth-child(2) { background: #febc2e; }
+.mirrorLights span:nth-child(3) { background: #28c840; }
+
 /* The navigation track animates only for the user's own sidebar toggle; the
    work layer's 1fr share then concedes on the same curve. Work-layer geometry
    changes (drawer/canvas) do not animate this outer template at all. */
@@ -29,6 +52,20 @@
   grid-template-rows: 100%;
   min-width: 0;
   overflow: hidden;
+  --dsh-frame-mode-duration: var(--ds-transition-duration-slow);
+  --dsh-frame-mode-easing: var(--ds-ease-in-out);
+}
+
+/* Explicit product-mode scenes own the moving columns; ordinary track easing
+   and stationary handles never fight the live FLIP or its fade fallback. */
+.work[data-mode-scene] {
+  transition: none;
+  background: var(--dsw-alias-bg-base);
+}
+
+.work[data-mode-scene] .handle {
+  transition: none;
+  opacity: 0;
 }
 
 .work[data-animating] {
@@ -101,10 +138,66 @@
 }
 
 .centerCol {
+  position: relative;
   min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.centerContent {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out), visibility 0s;
+}
+
+/* Folding disables interaction immediately, but the retained picture fades
+   with the track instead of disappearing before the column starts shrinking. */
+.centerCol[data-center-collapsed] .centerContent {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out), visibility 0s var(--ds-transition-duration-slow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .centerContent,
+  .centerCol[data-center-collapsed] .centerContent {
+    transition: none;
+  }
+}
+
+.centerFold {
+  position: absolute;
+  z-index: 12;
+  top: 50%;
+  right: 0;
+  width: 18px;
+  height: 44px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+}
+
+.centerFold:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.centerCol[data-center-collapsed] .centerFold {
+  right: 0;
+  width: 100%;
+  border-right: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 0;
 }
 
 /* macOS desktop: the frame goes transparent so window vibrancy reaches the
@@ -112,7 +205,7 @@
    base background itself to stay opaque. The sidebar/centre separator moves
    to the opaque centre: on the translucent sidebar the alpha border mixes
    with the wallpaper and reads as a dark seam. */
-:global([data-platform='darwin']) .frame {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .frame {
   background: transparent;
 }
 
@@ -123,11 +216,11 @@
    content clears the strip, and overlay primitives keep it as their top
    viewport margin. Declared on the root element rather than the frame so
    overlays portalled to document.body inherit it too. */
-:global(html[data-platform='darwin']) {
+:global(html:is([data-platform='darwin'], [data-chrome-platform='darwin'])) {
   --dsh-frame-top-clearance: 48px;
 }
 
-:global([data-platform='darwin']) .sidebarCol {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .sidebarCol {
   /* A blue wash over the top of the translucent tint, gone by a third of the
      column; a faint blue-grey-violet rises through the bottom third; and a
      faint blue cast is mixed into the tint itself. Every layer stays
@@ -146,7 +239,7 @@
 
 /* Dark drops the blue cast (the light-mode wash reads purple over dark fills)
    and thins the fill so more wallpaper shows; the washes stay. */
-:global([data-platform='darwin']) :global([data-ds-dark-theme]) .sidebarCol {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) :global([data-ds-dark-theme]) .sidebarCol {
   background:
     linear-gradient(
       to bottom,
@@ -163,13 +256,13 @@
    them with a 90%-opaque fill of the same token in both themes (the dark
    selector repeats so this outranks its thinner fill). */
 @media (prefers-reduced-transparency: reduce) {
-  :global([data-platform='darwin']) .sidebarCol,
-  :global([data-platform='darwin']) :global([data-ds-dark-theme]) .sidebarCol {
+  :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .sidebarCol,
+  :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) :global([data-ds-dark-theme]) .sidebarCol {
     background: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 90%, transparent);
   }
 }
 
-:global([data-platform='darwin']) .centerCol {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .centerCol {
   background: var(--dsw-alias-bg-base);
   border-left: 0.5px solid var(--dsw-alias-border-l3);
 }
@@ -179,13 +272,13 @@
    eases in layout and the transform on the compositor, so frames where they
    diverge would otherwise show vibrancy glass between the centre's right edge
    and the incoming panel. The occupant's opaque panel covers this at rest. */
-:global([data-platform='darwin']) .rightbarCol {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .rightbarCol {
   background: var(--dsw-alias-bg-base);
 }
 
 /* The darwin closed sidebar has no rail: the centre reaches the window edge,
    where a separator would draw a seam against nothing. */
-:global([data-platform='darwin']) [data-sidebar-collapsed] .centerCol {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) [data-sidebar-collapsed] .centerCol {
   border-left: none;
 }
 
@@ -195,7 +288,7 @@
    the frame's left edge — traffic lights to x 68, controls at x 88
    (28 + 8 + 28), then 8px of air. Main panels whose content reaches the
    top-left corner pad by this. */
-:global([data-platform='darwin']) .frame[data-sidebar-collapsed] {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .frame[data-sidebar-collapsed] {
   --dsh-frame-leading-clearance: 160px;
 }
 

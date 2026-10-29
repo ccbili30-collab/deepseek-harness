@@ -11,10 +11,14 @@
 import type { BoundActions, HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { Branded } from '@deepseek-ai/dsh-brand'
 import type { CanvasSide, UnitSide } from './arrangement.ts'
+import type { FrameLayoutPolicy } from './policy.ts'
 import type { SessionGeometry, SessionGeometryRecord, createLayoutStore } from './stores.ts'
 
 /** Identity shared by a sidebar panel entry and its main-slot occupant. */
 export type MainPanelId = Branded<'MainPanelId'>
+
+/** One atomic product-layout commit coordinated by the mounted frame. */
+export type FrameTransition = (commit: () => void) => void
 
 /** Root-scoped navigation state exposed to panel-aware components. */
 export interface PanelInfo {
@@ -43,9 +47,10 @@ export interface CanvasClaimSource {
   /**
    * Which side of the drawer the session's open canvas composes on.
    * @param sessionId - the session whose surface is asked about.
+   * @param includeParked - true to report a folded Canvas that still has content.
    * @returns the side, or null while the session has no open canvas.
    */
-  claim(sessionId: string | null): CanvasSide | null
+  claim(sessionId: string | null, includeParked?: boolean): CanvasSide | null
   /** Notify that claims may have changed; listeners re-read `claim`. */
   subscribe(listener: () => void): () => void
 }
@@ -55,7 +60,7 @@ export interface CanvasClaims {
   /** Attach (or replace) the claim source; returns the detach disposer. */
   provide(source: CanvasClaimSource): () => void
   /** The session's current claim, or null with no source attached or no claim. */
-  claim(sessionId: string | null): CanvasSide | null
+  claim(sessionId: string | null, includeParked?: boolean): CanvasSide | null
   /** Subscribe to claim changes. */
   subscribe(listener: () => void): () => void
 }
@@ -66,6 +71,14 @@ export interface ILayout {
   readonly panelInfo: HostObservable<PanelInfo>
   /** Live structural geometry of the visible session (nav fold and unit side). */
   readonly sessionGeometry: HostObservable<LiveSessionGeometry>
+  /** Optional product presentation; null executes the legacy Session geometry. */
+  readonly frameLayoutPolicy: HostObservable<FrameLayoutPolicy | null>
+  /**
+   * Replace the read-only product presentation provider; disposal restores legacy geometry.
+   * @param source - Product presentation to mirror.
+   * @returns Disposer for this provider.
+   */
+  provideFrameLayoutPolicy(source: HostObservable<FrameLayoutPolicy>): () => void
   /**
    * The unit column's canvas claims. The right column's occupant provides the
    * source; the frame derives the canvas track by pulling the current
@@ -112,6 +125,17 @@ export interface ILayout {
    */
   setUnitSide(side: UnitSide): void
   /**
+   * Fold or restore Conversation while a product policy makes Canvas primary.
+   * This is global view state and does not alter the product mode.
+   * @param collapsed - true for the retained narrow rail, false for the full Conversation.
+   */
+  setCenterCollapsed(collapsed: boolean): void
+  /**
+   * Fold or restore the auxiliary Canvas without changing content or product mode.
+   * @param collapsed - true to keep only the folded entry, false to show Canvas.
+   */
+  setAuxiliaryCollapsed(collapsed: boolean): void
+  /**
    * Stamp a structural seed onto one session's geometry record — the entry-path
    * write for named arrangements. A session that is already visible takes the
    * patch on screen; one that is not keeps its geometry until it loads.
@@ -140,13 +164,38 @@ export interface ILayout {
    * @param on - true to cover the frame, false to restore the recorded layout.
    */
   setCanvasFullscreen(on: boolean): void
+  /**
+   * Commit an explicit product-layout transition through the mounted frame.
+   * @param commit - Synchronous state changes to coordinate.
+   */
+  transitionFrame(commit: () => void): void
+  /**
+   * Attach the mounted frame's transition runner.
+   * @param runner - Measurement, commit, and animation coordinator.
+   * @returns an effect-scoped unregister callback.
+   */
+  provideFrameTransition(runner: FrameTransition): () => void
 }
 
 /** Cross-plugin panel-action face (ctx.layout). */
 export class LayoutController implements ILayout {
   private navigation = new AbortController()
   private claimSource: CanvasClaimSource | undefined
+  private policySource: HostObservable<FrameLayoutPolicy> | undefined
+  private policyStop: (() => void) | undefined
+  private policy: FrameLayoutPolicy | null = null
+  private frameTransition: FrameTransition | undefined
   private readonly claimListeners = new Set<() => void>()
+  private readonly policyListeners = new Set<() => void>()
+
+  /** Always-present policy source; a product may replace its provider, never its hook identity. */
+  readonly frameLayoutPolicy: HostObservable<FrameLayoutPolicy | null> = {
+    getSnapshot: () => this.policy,
+    subscribe: (listener) => {
+      this.policyListeners.add(listener)
+      return () => { this.policyListeners.delete(listener) }
+    },
+  }
 
   /**
    * @param panels - actions of the instance shared with the root entry.
@@ -163,6 +212,18 @@ export class LayoutController implements ILayout {
     private readonly navDiffers: (from: string, to: string) => boolean,
   ) {}
 
+  /** Run through the mounted frame when present; otherwise preserve the plain synchronous commit. */
+  transitionFrame(commit: () => void): void {
+    if (this.frameTransition === undefined) { commit(); return }
+    this.frameTransition(commit)
+  }
+
+  /** Attach one frame runner; a stale disposer cannot clear its replacement. */
+  provideFrameTransition(runner: FrameTransition): () => void {
+    this.frameTransition = runner
+    return () => { if (this.frameTransition === runner) this.frameTransition = undefined }
+  }
+
   /** The unit column's canvas-claim seam; relays the attached source's changes. */
   readonly canvasClaims: CanvasClaims = {
     provide: (source: CanvasClaimSource): (() => void) => {
@@ -178,11 +239,37 @@ export class LayoutController implements ILayout {
         }
       }
     },
-    claim: (sessionId: string | null): CanvasSide | null => this.claimSource?.claim(sessionId) ?? null,
+    claim: (sessionId: string | null, includeParked = false): CanvasSide | null =>
+      this.claimSource?.claim(sessionId, includeParked) ?? null,
     subscribe: (listener: () => void): (() => void) => {
       this.claimListeners.add(listener)
       return () => { this.claimListeners.delete(listener) }
     },
+  }
+
+  /**
+   * Attach a product policy without creating a second writable mode in the frame.
+   * @param source - Read-only product presentation to mirror.
+   * @returns Disposer that restores the legacy geometry when the provider leaves.
+   */
+  provideFrameLayoutPolicy(source: HostObservable<FrameLayoutPolicy>): () => void {
+    const relay = (): void => {
+      this.policy = source.getSnapshot()
+      for (const listener of this.policyListeners) listener()
+    }
+    this.policyStop?.()
+    this.policySource = source
+    const unsubscribe = source.subscribe(relay)
+    this.policyStop = unsubscribe
+    relay()
+    return () => {
+      unsubscribe()
+      if (this.policySource !== source) return
+      this.policySource = undefined
+      this.policyStop = undefined
+      this.policy = null
+      for (const listener of this.policyListeners) listener()
+    }
   }
 
   /** Select a global panel or return to the Conversation. */
@@ -204,6 +291,7 @@ export class LayoutController implements ILayout {
   /** Invalidate pending navigations when the layout owner is unloaded. */
   dispose(): void {
     this.navigation.abort()
+    this.frameTransition = undefined
   }
 
   /** Toggle the sidebar panel (closed ⟷ contract default width). */
@@ -229,6 +317,16 @@ export class LayoutController implements ILayout {
   /** Move the unit to the named side of the conversation; stamps the visible session. */
   setUnitSide(side: UnitSide): void {
     this.panels.setUnitSide(side)
+  }
+
+  /** Fold or restore Conversation without changing the product mode. */
+  setCenterCollapsed(collapsed: boolean): void {
+    this.panels.setCenterCollapsed(collapsed)
+  }
+
+  /** Fold or restore the auxiliary Canvas without changing content or product mode. */
+  setAuxiliaryCollapsed(collapsed: boolean): void {
+    this.panels.setAuxiliaryCollapsed(collapsed)
   }
 
   /** Stamp a structural seed onto one session's record; visible sessions take it live. */

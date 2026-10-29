@@ -9,3 +9,12 @@
 export function isDarwinDesktop(): boolean {
   return document.documentElement.dataset.platform === 'darwin'
 }
+
+/**
+ * Whether to use the macOS window presentation, including an explicit Web mirror.
+ * Native bridges and keyboard runtime must use `isDarwinDesktop()` instead.
+ * @returns true for real macOS Desktop or `data-chrome-platform="darwin"`.
+ */
+export function isDarwinChrome(): boolean {
+  return isDarwinDesktop() || document.documentElement.dataset.chromePlatform === 'darwin'
+}

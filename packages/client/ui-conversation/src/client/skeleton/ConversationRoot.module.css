@@ -39,11 +39,11 @@
 }
 
 /* Only the macOS titlebar needs reserved drag space before a Session exists. */
-:global(html:not([data-platform='darwin'])) .headerSessionless {
+:global(html:not([data-platform='darwin']):not([data-chrome-platform='darwin'])) .headerSessionless {
   padding-top: 0;
 }
 
-:global(html:not([data-platform='darwin'])) .headerSessionless .titleRow {
+:global(html:not([data-platform='darwin']):not([data-chrome-platform='darwin'])) .headerSessionless .titleRow {
   min-height: 0;
 }
 

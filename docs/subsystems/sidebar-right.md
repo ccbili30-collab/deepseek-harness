@@ -75,12 +75,15 @@ export function apply(ctx: Context): void {
 
 Two opens are the navigation controller, and every way into the column calls one of them: `openResource(address, options?)` for a `dsh-resource://` address — the conversation's file links, a tool row's line reference, a file tree's rows — and `openTab(kind, options?)` for a page — the strip's add control, a guide entry box, or an HTTP(S) link in Assistant Markdown. Both run four steps as one history entry — claim (the registry ranks the resource's types, or the named `kind`'s implementation in force answers); focus a tab already showing the same `(kind, address)`; otherwise seat a new tab; expand the column — and then record the navigation in the Tab domain ([service](../../packages/client/ui-sidebar-right/README.md#ctxsidebarright)). Content the user cannot see is not opened, so a collapsed column expands in the same step. `openResource` throws for an address outside `dsh-resource://` or one no type claims; `openTab` throws for a kind nothing registered: both are wiring mistakes, not user errors.
 
+`openTabIn(sessionId, kind, options?)` uses the same controller for an explicit adopted Session, including an off-screen retained canvas, and does nothing if no such surface exists. `provideTabRouter(router)` adds product policy before host placement: `true` means handled, `false` means use the host. Providers compose in registration order, the latest wins, and disposal restores the previous one; a router must not recursively open the same kind.
+
 | Option | Meaning |
 |---|---|
 | `paneId` | Land a new tab in this pane; default is the active docked pane (the first docked pane while a floating pane is active). |
 | `replaceTab` | Take this tab's pane and strip slot, closing it in the same step; a floating tab lends no place, so the new tab lands as if unplaced. |
 | `revealIfOpened` | Default `true`: a tab already showing the same `(kind, address)` is focused and handed `params`. `false` opens another tab regardless. |
 | `expandColumn` | Default `true`: the column expands for opened content. `false` lands the page on the canvas beside the still-collapsed column — the icon rail's picks use it. |
+| `preserveCanvasParked` | Default `false`: opening content lifts legacy parking. `true` keeps the current Canvas fold while content opens. |
 | `preferNewPane` | Prefer a new docked pane under the normal pane budget and room rule; fall back to the target pane when it cannot split. Ignored with `replaceTab`. |
 | `kind` (`openResource` only) | Name the opening type instead of ranking claims; its implementation in force opens the address, and its `canOpen` still applies. |
 | `params` | Navigation parameters for the body, delivered as `navigation.params`. `openResource` types them by resource type through the merge-extensible `SidebarRightResourceParamsMap` (the text preview declares `{ line?: number }`); `openTab<K>` types them by kind through `SidebarRightTabParamsMap`, `undefined` for a kind that declares none; a body reads `SidebarRightNavigationParams`, the union of both. Values are JSON-shaped by convention and not validated at run time. |
