@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -39,6 +39,7 @@ function setup(): { root: string; manager: DesktopProjectManager } {
   return { root, manager: new DesktopProjectManager(resolveDesktopPaths(join(root, '.dsh')), { dsh }) }
 }
 afterEach(() => {
+  vi.unstubAllGlobals()
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true })
 })
 
@@ -267,6 +268,85 @@ describe('desktop external plugin profile', () => {
     await expect(next.applyRelease()).resolves.toBeUndefined()
     await next.disableAllPlugins()
     expect(plugins(next)).toEqual([{ name: 'plugin', version: '1.0.0', enabled: false }])
+  })
+})
+
+function seedNovenRuntime(root: string): { resources: string; profile: string } {
+  const resources = join(root, 'resources')
+  const profile = join(resources, 'noven-profile')
+  mkdirSync(join(profile, 'node_modules', 'noven-brand', 'lib'), { recursive: true })
+  mkdirSync(join(profile, 'node_modules', 'trash'), { recursive: true })
+  writeFileSync(join(profile, 'package.json'), JSON.stringify({
+    name: 'noven-desktop-profile', version: '1.0.0',
+    dependencies: { 'noven-brand': '1.0.0', trash: '1.0.0' },
+    dsh: { profile: { bundles: ['noven-brand'] } },
+  }))
+  writeFileSync(join(profile, 'cordis.yml'), '[]\n')
+  writeFileSync(join(profile, 'cordis.patch.yml'), '- id: noven-image\n  config:\n    model: current\n')
+  writeFileSync(join(profile, 'pnpm-workspace.yaml'), 'packages:\n  - .\n')
+  writeFileSync(join(profile, 'node_modules', 'noven-brand', 'package.json'), JSON.stringify({ name: 'noven-brand', version: '1.0.0' }))
+  writeFileSync(join(profile, 'node_modules', 'noven-brand', 'lib', 'index.js'), 'current\n')
+  writeFileSync(join(profile, 'node_modules', 'trash', 'package.json'), JSON.stringify({ name: 'trash', version: '1.0.0' }))
+  return { resources, profile }
+}
+
+describe('Noven immutable runtime profile', () => {
+  it('links app packages on first launch instead of copying executable code', async () => {
+    const { root, manager } = setup()
+    const { resources, profile: seed } = seedNovenRuntime(root)
+    vi.stubGlobal('process', { ...process, resourcesPath: resources })
+
+    await manager.applyRelease()
+
+    const link = join(manager.paths.profile, 'node_modules', 'noven-brand')
+    expect(lstatSync(link).isSymbolicLink()).toBe(true)
+    expect(realpathSync(link)).toBe(realpathSync(join(seed, 'node_modules', 'noven-brand')))
+    expect(readFileSync(join(link, 'lib', 'index.js'), 'utf8')).toBe('current\n')
+    expect(lstatSync(join(manager.paths.profile, 'node_modules', 'trash')).isSymbolicLink()).toBe(true)
+  })
+
+  it('replaces legacy real packages while preserving user plugins, patches, and extra dependencies', async () => {
+    const { root, manager } = setup()
+    await manager.applyRelease()
+    seedPlugin(manager)
+    const legacy = join(manager.paths.profile, 'node_modules', 'noven-brand')
+    mkdirSync(join(legacy, 'lib'), { recursive: true })
+    writeFileSync(join(legacy, 'package.json'), JSON.stringify({ name: 'noven-brand', version: '0.0.1' }))
+    writeFileSync(join(legacy, 'lib', 'old.js'), 'old\n')
+    const patch = join(manager.paths.profile, 'cordis.patch.yml')
+    writeFileSync(patch, '- id: user-setting\n  config:\n    preserve: true\n')
+    const { resources } = seedNovenRuntime(root)
+    vi.stubGlobal('process', { ...process, resourcesPath: resources })
+
+    await manager.applyRelease()
+
+    expect(lstatSync(legacy).isSymbolicLink()).toBe(true)
+    expect(existsSync(join(legacy, 'lib', 'old.js'))).toBe(false)
+    expect(lstatSync(join(manager.paths.profile, 'node_modules', 'plugin')).isDirectory()).toBe(true)
+    expect(readFileSync(patch, 'utf8').startsWith('- id: user-setting\n  config:\n    preserve: true\n')).toBe(true)
+    expect(readFileSync(patch, 'utf8')).toContain('- id: ui-brand-official\n  disabled: true')
+    const manifest = JSON.parse(readFileSync(join(manager.paths.profile, 'package.json'), 'utf8')) as {
+      dependencies: Record<string, string>
+      dsh: { profile: { bundles: string[] } }
+    }
+    expect(manifest.dependencies).toMatchObject({ 'noven-brand': '1.0.0', plugin: '1.0.0', trash: '1.0.0' })
+    expect(manifest.dsh.profile.bundles).toEqual(['noven-brand', '@deepseek-ai/dsh-base', '@deepseek-ai/dsh-web-app', 'plugin'])
+  })
+
+  it('refuses to delete a real directory whose package identity does not match', async () => {
+    const { root, manager } = setup()
+    await manager.applyRelease()
+    const legacy = join(manager.paths.profile, 'node_modules', 'noven-brand')
+    mkdirSync(legacy, { recursive: true })
+    writeFileSync(join(legacy, 'package.json'), JSON.stringify({ name: 'user-owned-package' }))
+    writeFileSync(join(legacy, 'keep.txt'), 'preserve\n')
+    const { resources } = seedNovenRuntime(root)
+    vi.stubGlobal('process', { ...process, resourcesPath: resources })
+
+    await expect(manager.applyRelease()).rejects.toThrow('refusing to replace')
+
+    expect(lstatSync(legacy).isDirectory()).toBe(true)
+    expect(readFileSync(join(legacy, 'keep.txt'), 'utf8')).toBe('preserve\n')
   })
 })
 

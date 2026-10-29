@@ -1,6 +1,7 @@
 import { join, sep } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import {
+  NOVEN_PROFILE_RESOURCE,
   desktopTargetBuildPaths,
   desktopTargetPlatform,
   developmentRuntimeDirectory,
@@ -18,12 +19,15 @@ describe('desktop build paths', () => {
       'unsignedArtifacts',
       'runtime',
       'packageSet',
+      'novenProfile',
+      'novenProfileTest',
       'dsh',
       'dshPnpm',
       'electron',
       'packedDsh',
       'packedVendor',
       'packedLandlock',
+      'packedNoven',
     ] as const
 
     for (const key of mutableKeys) {
@@ -32,6 +36,7 @@ describe('desktop build paths', () => {
     expect(arm64.artifacts).toContain(join('targets', 'mac-arm64', 'artifacts'))
     expect(x64.dsh).toContain(join('targets', 'mac-x64', 'dsh'))
     expect(windows.runtime).toContain(join('targets', 'win-x64', 'runtime'))
+    expect(NOVEN_PROFILE_RESOURCE).toBe('noven-profile')
   })
 
   it('shares only the immutable upstream download cache', () => {

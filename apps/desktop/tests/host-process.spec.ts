@@ -160,6 +160,7 @@ describe('desktop host process', () => {
     await fetch(new URL('/crash', url))
     await expect.poll(() => failure.mock.calls.length).toBe(1)
     expect(failure).toHaveBeenCalledWith(new Error('dsh desktop host exited with 7: plugin crashed'))
+    expect(host.hostDiagnostic).toBe('plugin crashed')
   })
 
   it('retains only recent diagnostics from a noisy child', async () => {

@@ -50,16 +50,16 @@ function portableDataRoot(): string | undefined {
 }
 
 /**
- * Resolve every root for this launch. Explicit `DSH_HOME`, `NOVEN_HOME`, and
- * `NOVEN_PROJECTS_ROOT` always win, so the development launcher keeps owning
- * its disposable tree.
+ * Resolve every root for this launch. `NOVEN_DATA_ROOT` isolates the complete
+ * channel tree; explicit `DSH_HOME`, `NOVEN_HOME`, and `NOVEN_PROJECTS_ROOT`
+ * then override their individual roots, so test launchers own disposable data.
  * @returns the channel and its absolute data roots.
  */
 export function resolveNovenPaths(): NovenPaths {
   const channel = resolveNovenChannel()
-  const dataRoot = channel === 'test'
+  const dataRoot = process.env.NOVEN_DATA_ROOT?.trim() || (channel === 'test'
     ? portableDataRoot() ?? join(app.getPath('appData'), 'Noven Test')
-    : join(app.getPath('appData'), 'Noven')
+    : join(app.getPath('appData'), 'Noven'))
   const harnessHome = process.env.DSH_HOME?.trim() || join(dataRoot, 'harness')
   const libraryHome = process.env.NOVEN_HOME?.trim() || join(dataRoot, 'library')
   const projectsRoot = process.env.NOVEN_PROJECTS_ROOT?.trim() || join(dataRoot, 'projects')
@@ -95,16 +95,19 @@ export function applyNovenIdentity(paths: NovenPaths): void {
  * environment.
  * @param paths - roots resolved for this launch.
  * @param environment - the shell environment to extend.
- * @returns a copy carrying the three Noven roots.
+ * @param runtimeProfile - optional app-owned Noven profile that supplies code and default patches.
+ * @returns a copy carrying the three Noven roots and optional runtime profile.
  */
 export function novenHostEnvironment(
   paths: NovenPaths,
   environment: NodeJS.ProcessEnv = process.env,
+  runtimeProfile?: string,
 ): NodeJS.ProcessEnv {
   return {
     ...environment,
     DSH_HOME: paths.harnessHome,
     NOVEN_HOME: paths.libraryHome,
     NOVEN_PROJECTS_ROOT: paths.projectsRoot,
+    ...(runtimeProfile === undefined ? {} : { NOVEN_RUNTIME_PROFILE: runtimeProfile }),
   }
 }

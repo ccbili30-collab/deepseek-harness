@@ -1,5 +1,8 @@
 import type { DesktopAutoUpdateTarget } from './desktop-auto-update-environment.mjs'
 
+/** Resource name shared by the app shell, profile migrations, and packaged smoke. */
+export declare const NOVEN_PROFILE_RESOURCE: 'noven-profile'
+
 /** Mutable target directories plus the shared immutable download cache. */
 export interface DesktopTargetBuildPaths {
   readonly root: string
@@ -7,12 +10,15 @@ export interface DesktopTargetBuildPaths {
   readonly unsignedArtifacts: string
   readonly runtime: string
   readonly packageSet: string
+  readonly novenProfile: string
+  readonly novenProfileTest: string
   readonly dsh: string
   readonly dshPnpm: string
   readonly electron: string
   readonly packedDsh: string
   readonly packedVendor: string
   readonly packedLandlock: string
+  readonly packedNoven: string
   readonly downloads: string
 }
 
