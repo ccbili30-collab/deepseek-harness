@@ -7,6 +7,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-agent-preset-registry'
 import { EXPLORE_PERSONA, EXPLORE_SUFFIX } from './persona.ts'
+import { COURSE_PROMPT_SECTION } from './course-prompt.ts'
 
 /** 预设 id；注册表默认值与门共用。 */
 export const EXPLORE_PRESET_ID = 'explore'
@@ -23,7 +24,7 @@ export function registerExplorePreset(ctx: Context): void {
       plugins: [
         {
           name: '@deepseek-ai/dsh-persona',
-          config: { prefix: EXPLORE_PERSONA, suffix: EXPLORE_SUFFIX },
+          config: { prefix: `${EXPLORE_PERSONA}\n\n${COURSE_PROMPT_SECTION}`, suffix: EXPLORE_SUFFIX },
         },
         { name: '@deepseek-ai/dsh-tool-fs' },
         { name: '@deepseek-ai/dsh-tool-fs-search', config: { sampleOverCapGlobResults: false } },
