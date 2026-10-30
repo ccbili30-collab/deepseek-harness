@@ -1400,10 +1400,10 @@ export function apply(ctx: ClientContext): void {
     // filters reuse by preset, so a standard blank is left for other flows and
     // an explore blank is reused or created here.
     const sameRoot = root === undefined || current?.cwd === root
-    if (current?.blank === true && sameRoot && current.projectionValues?.agentPreset === 'explore') return
+    if (current?.blank === true && sameRoot && current.projectionValues?.agentPreset === 'create') return
     const sessionId = workspaceId !== undefined
-      ? await ctx.uiWorkspace.connectWorkspace(workspaceId, { agentPreset: 'explore' })
-      : await createSessionIn(recentSession()?.cwd, 'explore')
+      ? await ctx.uiWorkspace.connectWorkspace(workspaceId, { agentPreset: 'create' })
+      : await createSessionIn(recentSession()?.cwd, 'create')
     // preserve 保住面板：普通 reveal 会在 replaceMain 里 selectPanel(null)，
     // 之后的任何面板重激活都输给晚到的提交。发布版 openSession 类型未带
     // options 参数（ui-workspace 源码与产物已带 preserve），走局部窄化。
@@ -2012,9 +2012,9 @@ export function apply(ctx: ClientContext): void {
       }
       const current = Object.values(ctx.sessions.list.getSnapshot().byId)
         .find(row => (row.retainedBy.mainView ?? 0) > 0)
-      const host = current?.blank === true && current.projectionValues?.agentPreset === 'explore'
+      const host = current?.blank === true && current.projectionValues?.agentPreset === 'create'
         ? current.id
-        : seam.reusableBlank?.(undefined, { agentPreset: 'explore' })
+        : seam.reusableBlank?.(undefined, { agentPreset: 'create' })
       if (host !== undefined) seam.openSession?.(host, { panel: 'preserve', transition: 'none' })
       ctx.layout.selectPanel(CREATE_ID)
     }).finally(() => { openingCreateSurface = false })

@@ -98,7 +98,7 @@ export function Create({ t, sessionNavigation, useWorkspaces, useSessions, rende
     // to the harness cwd, and a blank outside every workspace leaves the
     // composer in its read-only "choose a workspace" state.
     if (workspacesState === 'loading') return
-    if ((hostBlank === true && hostPreset === 'explore') || hostEngaged || revealedRef.current || ensuringRef.current) return
+    if ((hostBlank === true && hostPreset === 'create') || hostEngaged || revealedRef.current || ensuringRef.current) return
     ensuringRef.current = true
     void ensureBlankHost(workspace?.workspaceId).catch((reason: unknown) => {
       console.warn('noven-shell: blank host ensure failed:', reason)
