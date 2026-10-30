@@ -6,6 +6,27 @@
   config:
     default: create
 
+# 只保留 Nova：原版的 standard / ptc / minimal / cordis 预设全部停用。
+# 创作与干活都在创作预设里完成，不再提供模式选择。
+- id: preset-standard
+  disabled: true
+- id: preset-ptc
+  disabled: true
+- id: preset-minimal
+  disabled: true
+- id: preset-cordis
+  disabled: true
+
+# 只保留 Nova：原版 standard / ptc / minimal / cordis 预设全部停用。
+- id: preset-standard
+  disabled: true
+- id: preset-ptc
+  disabled: true
+- id: preset-minimal
+  disabled: true
+- id: preset-cordis
+  disabled: true
+
 # 创作模式：完整基础工具（含 bash/pwsh、文件、搜索、任务、技能、子代理、压缩）
 # + Nova 的创作人格 + 工具手册技能。只做用户点名的事。
 - insert:
