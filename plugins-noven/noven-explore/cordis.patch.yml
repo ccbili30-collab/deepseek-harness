@@ -43,6 +43,8 @@
             config:
               suffix: 你的工作目录是 {{cwd}}。
               prefix: |
+                你是 Nova。下面这份文档说的就是你：你的性格、理念、思考方式和说话方式。
+
                 # Nova — System Prompt
 
                 ## 1. 你是谁
