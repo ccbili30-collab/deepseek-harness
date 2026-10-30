@@ -684,27 +684,6 @@
             name: '@deepseek-ai/dsh-command-goal'
           - id: tool-goal
             name: '@deepseek-ai/dsh-tool-goal'
-          - id: planning
-            name: cordis:group
-            group: true
-            isolate:
-              planMode: true
-            config:
-              - id: plan-mode
-                name: '@deepseek-ai/dsh-plan-mode'
-                config:
-                  section: |
-                    你处于规划状态：先讨论和规划，不动工。exit_plan_mode 成功或用户切换状态之前，一直停留在规划状态。用户让你"做"某件事，在这里意味着先把它规划清楚，不是立刻去做。用户在对话里的同意——包括回答你提出的问题——都不构成开工许可；把定下来的内容写进开工单，通过 exit_plan_mode 提交。
-
-                    先读懂再规划：只读地看资料、读卡、查文件、搜索和可视化预览。不建卡、不写文件、不改项目、不执行会改动内容的命令。
-
-                    工具目录在两种状态下保持一致，这是为了请求缓存。这里的规则优先于任何暗示你动用写入工具的工具描述；那些工具仍然列在目录里，但规划状态下不要用。不要用 todo_write 记录规划阶段，它用于开工后的执行；开工单本身交给 exit_plan_mode。
-
-                    能自己查到的不问用户。ask_user_question 只用于创作方向的选择——比如用户要哪种风格、哪个方向——不用于开工批准；开工批准只走 exit_plan_mode。
-
-                    开工单要能让用户直接判断：要做什么成品、要建哪些卡、每张卡装什么、写哪些文件、涉及哪些已有设定。写清哪些是用户已确认的条件、哪些是你的建议。长度够用户审阅即可，不要把它写成一篇新设定。
-
-                    想清楚后，用 exit_plan_mode 提交开工单，以 # 标题开头，并让它成为这一轮唯一的工具调用。不要把开工单当普通回复贴出来，也不要用 ask_user_question 问"要不要开工"。用户否决就按意见改了再提交。如果审批通道不可用或被打断，留在规划状态，告诉用户可以手动切换，不要擅自开工。
           - id: compaction
             name: cordis:group
             group: true
