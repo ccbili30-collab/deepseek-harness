@@ -1,14 +1,10 @@
-# noven-explore bundle patch — mount the host plugin and make 创作模式 the
+# noven-explore bundle patch — declare the creation preset and make it the
 # registry default. This layer applies after the web-app bundle, so the
 # override wins over its `default: standard`; a user-picked preset
 # (`selectedDefault`) still overrides both.
 - id: agent-preset-registry
   config:
     default: create
-
-- insert:
-    - id: noven-explore
-      name: 'noven-explore'
 
 # 创作模式：完整基础工具（含 bash/pwsh、文件、搜索、任务、技能、子代理、压缩）
 # + Nova 的创作人格 + 工具手册技能。只做用户点名的事。

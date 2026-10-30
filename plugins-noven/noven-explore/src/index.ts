@@ -1,15 +1,8 @@
 /**
- * noven-explore — 诺文的探索模式。注册一个默认预设（人格 + 选项工具 + 门），
- * 让创作会话默认先问后写；用户下令落笔后按授权执行。
+ * noven-explore — 诺文的创作预设。
+ *
+ * 运行时不注册插件：创作预设、Nova 人格与课程都在 cordis.patch.yml 里声明。
+ * 曾经的只读探索模式已取消，本包只作为创作预设的 bundle 存在。
  * @module noven-explore
  */
-import type { Context } from '@deepseek-ai/cordis'
-import type {} from '@deepseek-ai/dsh-agent-preset-registry'
-import { registerExplorePreset } from './preset.ts'
-
 export const name = 'noven-explore'
-export const inject = ['agentPresets']
-
-export function apply(ctx: Context): void {
-  registerExplorePreset(ctx)
-}
