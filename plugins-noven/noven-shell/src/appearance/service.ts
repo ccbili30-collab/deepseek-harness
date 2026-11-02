@@ -317,6 +317,25 @@ export async function setSharedAppearance(root: string, sessionId: string, choic
 }
 
 /**
+ * Set the workspace's unified background without replacing scope-specific overrides.
+ * @param root - Project workspace root.
+ * @param sessionId - Session whose returned view resolves.
+ * @param choice - Unified background to set, clear to built-in, or make transparent.
+ * @param expectedRevision - Optional optimistic revision.
+ * @returns The persisted resolved view with scope overrides preserved.
+ */
+export async function setUnifiedAppearance(root: string, sessionId: string, choice: BackgroundChoice, expectedRevision?: number): Promise<AppearanceView> {
+  const value = await background(root, choice)
+  return updateAppearance(root, expectedRevision, (document) => {
+    requireShared(document, value)
+    return {
+      ...document,
+      workspace: value === null ? without(document.workspace, 'unified') : { ...document.workspace, unified: value },
+    }
+  }, sessionId)
+}
+
+/**
  * Patch the one global visual state shared by every pane.
  * @param root - Project workspace root.
  * @param sessionId - Session whose returned view resolves.

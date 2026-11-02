@@ -11,7 +11,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { readAppearance, AppearanceConflictError, AppearanceStoreError } from './store.ts'
 import {
   AppearanceInvalidError, applyAppearancePreset, readAppearanceAsset, resetAppearance, saveAppearanceAsset, saveAppearancePreset, sessionAppearanceRoot,
-  setCanvasAppearance, setConversationAppearance, setSharedAppearance, setShellAppearance, setVisualAppearance,
+  setCanvasAppearance, setConversationAppearance, setSharedAppearance, setShellAppearance, setUnifiedAppearance, setVisualAppearance,
   type AvatarChoice, type BackgroundChoice, type SharedBackgroundChoice, type VisualAppearanceInput,
 } from './service.ts'
 
@@ -176,6 +176,10 @@ async function mutate(request: Request, ctx: Context): Promise<Response> {
     }
     case 'shell': {
       const view = await setShellAppearance(resolved.root, resolved.sessionId, background(raw['background']), expectedRevision)
+      return Response.json(view, { headers: JSON_HEADERS })
+    }
+    case 'unified': {
+      const view = await setUnifiedAppearance(resolved.root, resolved.sessionId, background(raw['background']), expectedRevision)
       return Response.json(view, { headers: JSON_HEADERS })
     }
     case 'preset_save': {

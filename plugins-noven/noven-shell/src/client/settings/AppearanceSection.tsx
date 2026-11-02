@@ -1,6 +1,6 @@
 /**
- * One-task appearance editor: preview, view, background, effects, and presets.
- * Scoped resources stay in the Host document; the editor shows one scope at a time.
+ * Unified-first appearance editor: one background for every following scope,
+ * with per-object overrides and effects behind the advanced controls.
  * @module noven-shell/client/settings/AppearanceSection
  */
 import { useEffect, useRef, useState } from 'react'
@@ -43,7 +43,8 @@ interface Draft {
 const FOCI: readonly AppearanceFocus[] = ['center', 'top', 'bottom', 'left', 'right']
 const FOCUS_POSITION: Record<AppearanceFocus, string> = { center: 'center', top: 'center top', bottom: 'center bottom', left: 'center left', right: 'center right' }
 
-function backgroundOf(view: AppearanceView, scope: Scope, target: Target): AppearanceBackground | undefined {
+function backgroundOf(view: AppearanceView, scope: Scope, target: Target, unified = false): AppearanceBackground | undefined {
+  if (unified) return view.workspace.unified
   if (scope === 'file') return view.file?.canvas
   if (scope === 'session') return view.session.conversation
   if (target === 'shell') return view.workspace.shell
@@ -58,8 +59,8 @@ function modeOf(background: AppearanceBackground | undefined): BackgroundMode {
   return 'custom'
 }
 
-function draftOf(view: AppearanceView, scope: Scope, target: Target): Draft {
-  const background = backgroundOf(view, scope, target)
+function draftOf(view: AppearanceView, scope: Scope, target: Target, unified = false): Draft {
+  const background = backgroundOf(view, scope, target, unified)
   const visual = view.visual ?? defaultAppearanceVisual()
   const avatar = scope === 'session' ? view.session.assistantAvatar : view.workspace.assistantAvatar
   return {
@@ -182,7 +183,7 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
   useEffect(() => { acceptedRevision.current = undefined }, [sessionId])
   const [scope, setScope] = useState<Scope>(sections === 'session' ? 'session' : 'workspace')
   const [target, setTarget] = useState<Target>('shell')
-  const [draft, setDraft] = useState<Draft>(() => view === undefined ? INITIAL_DRAFT : draftOf(view, scope, target))
+  const [draft, setDraft] = useState<Draft>(() => view === undefined ? INITIAL_DRAFT : draftOf(view, scope, target, sections === 'all'))
   const draftRef = useRef(draft)
   const updateDraft = (next: Draft): void => {
     draftRef.current = next
@@ -203,7 +204,7 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
     const selectionChanged = previousSelection.current !== selectionKey
     previousSelection.current = selectionKey
     if (!selectionChanged && (pending.current > 0 || (acceptedRevision.current !== undefined && view.revision < acceptedRevision.current))) return
-    updateDraft({ ...draftOf(view, scope, target), advanced: draftRef.current.advanced })
+    updateDraft({ ...draftOf(view, scope, target, sections === 'all' && !draftRef.current.advanced), advanced: draftRef.current.advanced })
   }, [view, scope, target, selectionKey, saving])
 
   if (view === undefined) return <div className="nv-appearance"><p className="nv-ap-note">{t('appearance.loading')}</p></div>
@@ -237,6 +238,7 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
   })
   const backgroundAction = (next: Draft): Record<string, unknown> => {
     const background = backgroundChoice(next)
+    if (sections === 'all' && !next.advanced) return { action: 'unified', background }
     if (scope === 'file') return { action: 'canvas', scope: 'file', filePath, background }
     if (scope === 'session') return { action: 'conversation', scope: 'session', background }
     if (target === 'shell') return { action: 'shell', background }
@@ -256,6 +258,11 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
   const selectScope = (next: Scope): void => {
     setScope(next)
     setTarget(next === 'workspace' ? 'shell' : next === 'file' ? 'canvas' : 'conversation')
+    setSelectedPreset(undefined)
+  }
+  const toggleAdvanced = (): void => {
+    const advanced = !draftRef.current.advanced
+    updateDraft({ ...draftOf(view, scope, target, sections === 'all' && !advanced), advanced })
     setSelectedPreset(undefined)
   }
   const selectBackground = (mode: BackgroundMode): void => {
@@ -291,9 +298,15 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
     action: 'conversation', scope: scope === 'session' ? 'session' : 'workspace', avatar: path === '' ? { kind: 'default' } : { kind: 'image', imagePath: path },
   })
   const restore = (): void => {
-    if (sections === 'all' && scope === 'workspace') {
+    if (sections === 'all' && !draftRef.current.advanced) {
       setSelectedPreset('default')
       void save({ action: 'reset' }, true)
+      return
+    }
+    if (scope === 'workspace') {
+      const next = { ...draftRef.current, mode: 'default' as const }
+      updateDraft(next)
+      void save(backgroundAction(next), true)
       return
     }
     if (scope === 'file') {
@@ -313,16 +326,17 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
     void save({ action: 'preset_apply', presetId }, true)
   }
   const presets = Object.entries(view.presets ?? {})
-  const scopeName = scope === 'workspace' ? t(`appearance.${target}`) : scope === 'file' ? filePath ?? t('appearance.noFile') : t('appearance.session')
+  const unified = sections === 'all' && !draft.advanced
+  const scopeName = unified ? t('appearance.unified') : scope === 'workspace' ? t(`appearance.${target}`) : scope === 'file' ? filePath ?? t('appearance.noFile') : t('appearance.session')
 
   return (
     <div className="nv-appearance" data-saving={saving || undefined}>
       <Row title={scopeName} description={saving ? t('appearance.saving') : t('appearance.autosave')} className="nv-ap-head" live>
-        <button type="button" className="nv-ap-quiet" onClick={restore}>{sections === 'all' && scope === 'workspace' ? t('appearance.restoreDefault') : t('appearance.default')}</button>
+        <button type="button" className="nv-ap-quiet" onClick={restore}>{unified ? t('appearance.restoreDefault') : t('appearance.followUnified')}</button>
       </Row>
       <div className="nv-ap-preview-row"><Preview sessionId={sessionId} draft={draft} revision={view.revision} sharedPath={view.workspace.shared?.path} t={t} /></div>
 
-      {sections === 'all' && (
+      {sections === 'all' && draft.advanced && (
         <Row title={t('appearance.applyTo')} description={t('appearance.applyTo.desc')}>
           <div className="nv-ap-scope-controls">
             <Select label={t('appearance.applyTo')} value={scope} onChange={value => { selectScope(value as Scope) }}>
@@ -345,10 +359,10 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
         </Select>
       </Row>
 
-      <Row title={t('appearance.background')} description={t('appearance.background.desc')}>
+      <Row title={unified ? t('appearance.unified') : t('appearance.background')} description={unified ? t('appearance.unified.desc') : t('appearance.background.desc')}>
         <div className="nv-ap-background-control">
-          <Select label={t('appearance.background')} value={draft.mode} onChange={value => { selectBackground(value as BackgroundMode) }}>
-            {(['default', 'shared', 'custom', 'off'] as const).map(item => <option key={item} value={item}>{item === 'default' ? t('appearance.defaultImage') : item === 'shared' ? t('appearance.sharedImage') : item === 'custom' ? t('appearance.customImage') : t('appearance.off')}</option>)}
+          <Select label={unified ? t('appearance.unified') : t('appearance.background')} value={draft.mode} onChange={value => { selectBackground(value as BackgroundMode) }}>
+            {(['default', 'shared', 'custom', 'off'] as const).map(item => <option key={item} value={item}>{item === 'default' ? (unified ? t('appearance.defaultImage') : t('appearance.followUnified')) : item === 'shared' ? t('appearance.sharedImage') : item === 'custom' ? t('appearance.customImage') : t('appearance.off')}</option>)}
           </Select>
           <button type="button" className="nv-ap-quiet" onClick={() => { upload.current?.click() }}>{t('appearance.changeImage')}</button>
           <input ref={upload} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; uploadImage(file) }} />
@@ -364,7 +378,7 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
 
       <div className="nv-ap-advanced-section">
         <Row title={t('appearance.advanced')} description={t('appearance.advanced.desc')}>
-          <button type="button" className="nv-ap-quiet" aria-expanded={draft.advanced} onClick={() => { updateDraft({ ...draftRef.current, advanced: !draftRef.current.advanced }) }}>{draft.advanced ? t('appearance.hideAdvanced') : t('appearance.advanced')}</button>
+          <button type="button" className="nv-ap-quiet" aria-expanded={draft.advanced} onClick={toggleAdvanced}>{draft.advanced ? t('appearance.hideAdvanced') : t('appearance.advanced')}</button>
         </Row>
         {draft.advanced && (
           <div className="nv-ap-advanced">
@@ -400,7 +414,7 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
         )}
       </div>
 
-      {sections === 'all' && scope === 'workspace' && (
+      {unified && (
         <div className="nv-ap-presets">
           <Row title={t('appearance.presets')} description={presets.length === 0 ? t('appearance.noPresets') : t('appearance.presets.desc')}>
             <button type="button" className="nv-ap-quiet" onClick={() => { void savePreset() }}>{t('appearance.savePreset')}</button>

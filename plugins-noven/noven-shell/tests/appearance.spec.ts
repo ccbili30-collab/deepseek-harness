@@ -20,7 +20,7 @@ const {
   readAppearance, updateAppearance, AppearanceConflictError, AppearanceStoreError,
 } = await import('../lib/appearance/store.js')
 const {
-  applyAppearancePreset, readAppearanceAsset, resetAppearance, saveAppearanceAsset, saveAppearancePreset, setCanvasAppearance, setConversationAppearance, setSharedAppearance, setShellAppearance, setVisualAppearance,
+  applyAppearancePreset, readAppearanceAsset, resetAppearance, saveAppearanceAsset, saveAppearancePreset, setCanvasAppearance, setConversationAppearance, setSharedAppearance, setShellAppearance, setUnifiedAppearance, setVisualAppearance,
 } = await import('../lib/appearance/service.js')
 const { createAppearanceTools } = await import('../lib/appearance/tools.js')
 
@@ -198,6 +198,32 @@ describe('appearance persistence', () => {
     }
   })
 
+  test('switches every following scope while preserving explicit overrides', async () => {
+    await setSharedAppearance(project, 'sess-a', { kind: 'image', imagePath: '图片/纸面.png' })
+    await setShellAppearance(project, 'sess-a', { kind: 'default' })
+    const unified = await setUnifiedAppearance(project, 'sess-a', { kind: 'shared', dim: 0.2 })
+    assert.deepEqual(unified.resolved.shell, { kind: 'asset', path: '图片/纸面.png', dim: 0.2 })
+    assert.deepEqual(unified.resolved.canvas, { kind: 'asset', path: '图片/纸面.png', dim: 0.2 })
+    assert.deepEqual(unified.resolved.conversation, { kind: 'asset', path: '图片/纸面.png', dim: 0.2 })
+    await assert.rejects(setSharedAppearance(project, 'sess-a', { kind: 'default' }), /still used/u)
+
+    await setCanvasAppearance(project, 'sess-a', { scope: 'workspace', background: { kind: 'transparent' } })
+    await setConversationAppearance(project, 'sess-a', { scope: 'session', background: { kind: 'transparent' } })
+    const changed = await setUnifiedAppearance(project, 'sess-a', { kind: 'transparent' })
+    assert.deepEqual(changed.resolved.shell, { kind: 'transparent' })
+    assert.deepEqual(changed.resolved.canvas, { kind: 'transparent' })
+    assert.deepEqual(changed.resolved.conversation, { kind: 'transparent' })
+    assert.deepEqual(changed.workspace.canvas, { kind: 'transparent' })
+
+    await setCanvasAppearance(project, 'sess-a', { scope: 'workspace', background: { kind: 'default' } })
+    await setConversationAppearance(project, 'sess-a', { scope: 'session', background: { kind: 'default' } })
+    const following = await readAppearance(project, 'sess-a')
+    assert.deepEqual(following.resolved.canvas, { kind: 'transparent' })
+    assert.deepEqual(following.resolved.conversation, { kind: 'transparent' })
+    await resetAppearance(project, 'sess-a')
+    await setSharedAppearance(project, 'sess-a', { kind: 'default' })
+  })
+
   test('stores one global visual state independently of background scopes', async () => {
     const before = await readAppearance(project, 'sess-a')
     const changed = await setVisualAppearance(project, 'sess-a', {
@@ -214,10 +240,9 @@ describe('appearance persistence', () => {
 
   test('switches between built-in defaults and complete workspace presets without deleting resources', async () => {
     await setSharedAppearance(project, 'sess-a', { kind: 'image', imagePath: '图片/纸面.png' })
-    await setShellAppearance(project, 'sess-a', { kind: 'shared' })
-    await setCanvasAppearance(project, 'sess-a', { scope: 'workspace', background: { kind: 'shared' } })
+    await setUnifiedAppearance(project, 'sess-a', { kind: 'shared' })
     await setConversationAppearance(project, 'sess-a', {
-      scope: 'workspace', background: { kind: 'shared' }, avatar: { kind: 'image', imagePath: '图片/纸面.png' },
+      scope: 'workspace', avatar: { kind: 'image', imagePath: '图片/纸面.png' },
     })
     await setVisualAppearance(project, 'sess-a', { view: 'dark', surface: 'frosted', foreground: 'system', backgroundVisibility: 0.8 })
     const saved = await saveAppearancePreset(project, 'sess-a', '月夜创作')

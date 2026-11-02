@@ -84,6 +84,8 @@ export interface AppearanceAvatar {
 /** One workspace-wide appearance layer. */
 export interface WorkspaceAppearance {
   readonly shared?: AppearanceSharedBackground
+  /** Unified default for scopes without their own background; absent means built-in mint and white. */
+  readonly unified?: AppearanceBackground
   readonly shell?: AppearanceBackground
   readonly canvas?: AppearanceBackground
   readonly conversation?: AppearanceBackground
@@ -222,15 +224,17 @@ function parseAvatar(value: unknown): AppearanceAvatar | undefined | null {
 }
 
 function parseWorkspace(value: unknown): WorkspaceAppearance | undefined {
-  if (!isRecord(value) || !onlyKeys(value, ['shared', 'shell', 'canvas', 'conversation', 'assistantAvatar'])) return undefined
+  if (!isRecord(value) || !onlyKeys(value, ['shared', 'unified', 'shell', 'canvas', 'conversation', 'assistantAvatar'])) return undefined
   const shared = parseShared(value['shared'])
+  const unified = parseBackground(value['unified'])
   const shell = parseBackground(value['shell'])
   const canvas = parseBackground(value['canvas'])
   const conversation = parseBackground(value['conversation'])
   const assistantAvatar = parseAvatar(value['assistantAvatar'])
-  if (shared === null || shell === null || canvas === null || conversation === null || assistantAvatar === null) return undefined
+  if (shared === null || unified === null || shell === null || canvas === null || conversation === null || assistantAvatar === null) return undefined
   return {
     ...(shared === undefined ? {} : { shared }),
+    ...(unified === undefined ? {} : { unified }),
     ...(shell === undefined ? {} : { shell }),
     ...(canvas === undefined ? {} : { canvas }),
     ...(conversation === undefined ? {} : { conversation }),
@@ -298,10 +302,12 @@ function usesShared(background: AppearanceBackground | undefined): boolean {
  * @returns True when at least one background is a shared reference.
  */
 export function appearanceUsesSharedBackground(document: AppearanceDocument): boolean {
-  return usesShared(document.workspace.shell) || usesShared(document.workspace.canvas) || usesShared(document.workspace.conversation)
+  return usesShared(document.workspace.unified) || usesShared(document.workspace.shell)
+    || usesShared(document.workspace.canvas) || usesShared(document.workspace.conversation)
     || Object.values(document.files).some(file => usesShared(file.canvas))
     || Object.values(document.sessions).some(session => usesShared(session.conversation))
-    || Object.values(document.presets ?? {}).some(preset => usesShared(preset.workspace.shell) || usesShared(preset.workspace.canvas) || usesShared(preset.workspace.conversation))
+    || Object.values(document.presets ?? {}).some(preset => usesShared(preset.workspace.unified)
+      || usesShared(preset.workspace.shell) || usesShared(preset.workspace.canvas) || usesShared(preset.workspace.conversation))
 }
 
 /**
@@ -391,9 +397,9 @@ export function resolveAppearance(document: AppearanceDocument, sessionId: strin
     },
     ...(document.presets === undefined ? {} : { presets: document.presets }),
     resolved: {
-      shell: resolveBackground(document.workspace.shell, shared),
-      canvas: resolveBackground(file?.canvas ?? document.workspace.canvas, shared),
-      conversation: resolveBackground(session.conversation ?? document.workspace.conversation, shared),
+      shell: resolveBackground(document.workspace.shell ?? document.workspace.unified, shared),
+      canvas: resolveBackground(file?.canvas ?? document.workspace.canvas ?? document.workspace.unified, shared),
+      conversation: resolveBackground(session.conversation ?? document.workspace.conversation ?? document.workspace.unified, shared),
       assistantAvatar: session.assistantAvatar ?? document.workspace.assistantAvatar ?? null,
     },
   }

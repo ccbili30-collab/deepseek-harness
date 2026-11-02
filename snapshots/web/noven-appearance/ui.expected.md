@@ -1,5 +1,5 @@
 - text: 对话 已自动保存
-- button "恢复 Noven 默认"
+- button "跟随统一背景"
 - text: 雾松谷编年史 ··· 创作 世界 角色
 - strong: 旅途继续
 - text: 雨声停在山口，雾松谷的灯还亮着。
@@ -17,18 +17,18 @@
 - combobox "界面视图":
   - option "亮色视图"
   - option "暗色视图" [selected]
-- text: 背景 为当前对象选择默认、共用或自定义图片。
+- text: 背景 为当前对象选择默认、背景库或自定义图片。
 - combobox "背景":
-  - option "默认薄荷白"
-  - option "共用图" [selected]
+  - option "跟随统一背景"
+  - option "背景库图片" [selected]
   - option "自定义图"
   - option "关闭背景"
 - button "更换图片"
 - text: 背景可见度 调整背景之上文字与控件的清晰承托。
 - slider "背景可见度": "85"
 - status: 85%
-- text: 高级效果 调整图片路径、焦点、淡化、材质与头像。
-- button "收起高级效果" [expanded]
+- text: 分别设置 单独修改外壳、画布、对话或当前对象，其他位置继续跟随统一背景。
+- button "收起分别设置" [expanded]
 - text: 自定义图
 - textbox "自定义图":
   - /placeholder: 项目内图片路径
@@ -71,5 +71,3 @@
   - /placeholder: 项目内图片路径
 - button "上传图片"
 - button "恢复默认"
-- text: 我的预设 还没有保存的预设
-- button "保存为预设"

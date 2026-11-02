@@ -55,6 +55,22 @@ interface AppearanceResponse {
   readonly revision: number
   readonly workspace: {
     readonly shared?: { readonly path: string }
+    readonly unified?: {
+      readonly kind: string
+      readonly focus?: string
+      readonly dim?: number
+      readonly blur?: number
+      readonly material?: string
+      readonly foreground?: string
+    }
+    readonly canvas?: {
+      readonly kind: string
+      readonly focus?: string
+      readonly dim?: number
+      readonly blur?: number
+      readonly material?: string
+      readonly foreground?: string
+    }
     readonly conversation?: {
       readonly kind: string
       readonly focus?: string
@@ -226,8 +242,9 @@ describe('web e2e: scoped Noven appearance', () => {
     console.log(`NOVEN_APPEARANCE_SHOTS=${SHOTS}`)
   }, 180_000)
 
-  it('edits one scope, autosaves, and switches between defaults and presets', async () => {
+  it('switches unified backgrounds, edits one scope, autosaves, and switches between defaults and presets', async () => {
     onTestFailed(() => saveFailureShot(page, 'noven-appearance-editor'))
+    await appearance({ action: 'canvas', scope: 'workspace', background: { kind: 'transparent' } })
     const switchAgent = page.getByRole('button', { name: '切换到Agent', exact: true })
     if (await switchAgent.count() > 0) await switchAgent.click()
     await page.getByRole('button', { name: '设置', exact: true }).click()
@@ -251,9 +268,30 @@ describe('web e2e: scoped Noven appearance', () => {
     expect(await page.locator('.nv-appearance').evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
     await page.setViewportSize({ width: 1440, height: 900 })
 
+    expect(await page.getByLabel(/^(编辑对象|Edit target)$/, { exact: true }).count()).toBe(0)
+    await page.getByLabel(/^(统一背景|Unified background)$/, { exact: true }).selectOption('custom')
+    await page.locator('.nv-ap-background-control input[type="file"]').setInputFiles(join(scaffold.workspaceCwd, '外观/conversation.webp'))
+    await expect.poll(() => backgroundImage(page, '[data-conversation-root]'), { timeout: 15_000 }).toContain('/api/noven-appearance/asset')
+    await page.getByLabel(/^(统一背景|Unified background)$/, { exact: true }).selectOption('shared')
+    await expect.poll(async () => {
+      const persisted = await (await scaffold.hostFetch(`/api/noven-appearance?session=${encodeURIComponent(SESSION_ID)}`)).json() as AppearanceResponse
+      return persisted.workspace.shared?.path
+    }, { timeout: 15_000 }).toBeDefined()
+    await expect.poll(async () => {
+      const persisted = await (await scaffold.hostFetch(`/api/noven-appearance?session=${encodeURIComponent(SESSION_ID)}`)).json() as AppearanceResponse
+      return persisted.workspace.unified?.kind
+    }, { timeout: 15_000 }).toBe('shared')
+    await expect.poll(() => backgroundImage(page, '[data-conversation-root]'), { timeout: 15_000 }).toContain('/api/noven-appearance/asset')
+    await expect.poll(async () => page.locator('.nv-leaf').first().evaluate(element => getComputedStyle(element).backgroundColor), { timeout: 15_000 }).toBe('rgba(0, 0, 0, 0)')
+    await page.getByLabel(/^(统一背景|Unified background)$/, { exact: true }).selectOption('off')
+    await expect.poll(() => backgroundImage(page, '[data-conversation-root]'), { timeout: 15_000 }).toBe('none')
+    const unifiedPersisted = await (await scaffold.hostFetch(`/api/noven-appearance?session=${encodeURIComponent(SESSION_ID)}`)).json() as AppearanceResponse
+    expect(unifiedPersisted.workspace.unified).toEqual({ kind: 'transparent' })
+    expect(unifiedPersisted.workspace.canvas).toEqual({ kind: 'transparent' })
+
+    await page.getByRole('button', { name: /^(分别设置|Customize scopes)$/ }).click()
     await page.locator('.nv-ap-target').selectOption('conversation')
     await page.getByLabel(/^(背景|Background)$/, { exact: true }).selectOption('custom')
-    await page.getByRole('button', { name: /^(高级效果|Advanced effects)$/ }).click()
     const advanced = page.locator('.nv-ap-advanced')
     await advanced.getByLabel(/^(自定义图|Custom image)$/).fill('外观/conversation.webp')
     await advanced.getByLabel(/^(自定义图|Custom image)$/).blur()
@@ -294,6 +332,7 @@ describe('web e2e: scoped Noven appearance', () => {
     const persisted = await persistedResponse.json() as AppearanceResponse
     expect(persisted.workspace.conversation).toEqual({ kind: 'shared', focus: 'top', dim: 0.25, blur: 8, material: 'frosted', foreground: 'light' })
 
+    await page.getByRole('button', { name: /^(收起分别设置|Hide scope controls)$/ }).click()
     await page.getByRole('button', { name: /^(保存为预设|Save as preset)$/ }).click()
     const preset = page.locator('.nv-ap-preset-list').getByRole('button', { name: /我的外观 1|My appearance 1/ })
     await preset.waitFor({ timeout: 15_000 })
@@ -301,7 +340,7 @@ describe('web e2e: scoped Noven appearance', () => {
     await expect.poll(() => page.locator('html[data-noven-conversation-appearance]').count(), { timeout: 15_000 }).toBe(0)
     expect(await preset.count()).toBe(1)
     await preset.click()
-    await expect.poll(async () => page.locator('[data-conversation-root]').evaluate(element => getComputedStyle(element, '::before').backgroundImage), { timeout: 15_000 }).toContain('conversation.webp')
+    await expect.poll(async () => page.locator('[data-conversation-root]').evaluate(element => getComputedStyle(element, '::before').backgroundImage), { timeout: 15_000 }).toContain('/api/noven-appearance/asset')
     await expect.poll(async () => page.locator('[data-conversation-root]').evaluate(element => getComputedStyle(element, '::before').filter), { timeout: 15_000 }).toBe('blur(8px)')
     expect(await backgroundImage(page, '[data-conversation-root]')).toBe('none')
     await page.getByRole('button', { name: /恢复 Noven 默认|Restore Noven defaults/ }).click()
@@ -319,7 +358,7 @@ describe('web e2e: scoped Noven appearance', () => {
     await appearance({ action: 'shell', background: { kind: 'image', imagePath: '外观/shell.webp' } })
     await appearance({ action: 'visual', view: 'dark', surface: 'frosted', foreground: 'system', backgroundVisibility: 0.75 })
     await expect.poll(() => page.locator('html').getAttribute('data-noven-shell-skin'), { timeout: 15_000 }).toBe('frosted')
-    expect(await page.locator('html').getAttribute('data-noven-shell-foreground')).toBe('light')
+    await expect.poll(() => page.locator('html').getAttribute('data-noven-shell-foreground'), { timeout: 15_000 }).toBe('light')
     await expect.poll(async () => page.locator('[data-shell-topbar]').evaluate(element => getComputedStyle(element).backgroundColor), { timeout: 15_000 }).toBe('rgba(0, 0, 0, 0)')
     expect(await page.locator('[data-shell-topbar]').evaluate(element => getComputedStyle(element).borderBottomColor)).toBe('rgba(0, 0, 0, 0)')
     await expect.poll(async () => page.locator('[data-sidebar-col]').evaluate(element => getComputedStyle(element).backgroundColor), { timeout: 15_000 }).toBe('rgba(0, 0, 0, 0)')
