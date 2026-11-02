@@ -17,7 +17,7 @@ import { defineStore } from '@deepseek-ai/dsh-client-store'
 import { LibraryTab } from './tabs/Library.tsx'
 import type { PropsLocale, PropsRuntime, PropsRenderSlots, PropsStore, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SidebarRightGuideBox } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import { Menu, MarkdownText, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Menu, MarkdownText, Modal, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardAddr, CardOp, CardOpResult, CardState } from './card-api.ts'
 import type { ImportReport } from './tree-api.ts'
 
@@ -39,6 +39,7 @@ import { buildEnv, realWebview, SIM_IME, WEBVIEW_BASELINE, type FrameSendResult 
 import { collectDeltas, foldArchive, DELTA_WINDOW } from './stage-archive.ts'
 import { useSessionSettings } from './session-settings.tsx'
 import { appearanceMaterial, canvasBackgroundStyle, setFocusedCanvasFile, useAppearance, useAppearanceVisual } from './appearance.tsx'
+import { AppearanceSection } from './settings/AppearanceSection.tsx'
 
 /** markdown 文稿走富编辑器（BlockNote）；其余文本（json/yaml/代码…）保留纯文本块编辑。 */
 const RICH_TEXT_PATH = /\.(md|markdown|mdx|txt)$/i
@@ -2224,6 +2225,7 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
   const featureTabs = props.useFeatureTabs(value => value)
   const [switchOpen, setSwitchOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
+  const [appearanceOpen, setAppearanceOpen] = useState(false)
   const strip = useMemo(() => {
     // chat 页签就是 Studio 面；start 只是无真实页签时的空态，不进页签条。
     const keys = [...(studioOn && !leaf.tabs.includes('chat') ? ['chat'] : []), ...leaf.tabs]
@@ -2306,6 +2308,12 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
               {glyph.caret(11)}
             </button>
           )} />}
+        {filePath !== undefined && (
+          <button type="button" className="nv-canvas-menubutton" aria-label={t('canvas.tab.background')}
+            data-noven-canvas-tab-background onClick={() => setAppearanceOpen(true)}>
+            {glyph.image(13)}
+          </button>
+        )}
         {<Menu portal open={toolsOpen} side="bottom" align="end" selection="fill"
           onClose={() => setToolsOpen(false)}
           onSelect={id => { setToolsOpen(false); props.openFeatureTab(id) }}
@@ -2354,6 +2362,14 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
           onDragLeave={e => { if (dropSpot?.leaf === leaf.id && !e.currentTarget.contains(e.relatedTarget as Node | null)) setDropSpot(undefined) }}>
           {spotZone !== undefined && <div className={`nv-leaf-hint nv-leaf-hint-${spotZone}`} />}
         </div>
+      )}
+      {filePath !== undefined && (
+        <Modal open={appearanceOpen} onClose={() => setAppearanceOpen(false)}
+          title={fmt(t, 'canvas.tab.backgroundTitle', { title: tabTitle(activeTab, t) })}
+          description={t('appearance.backgroundOnly.desc')}
+          className="nv-canvas-appearance" closeLabel={t('canvas.tab.close')}>
+          <AppearanceSection sessionId={session} t={t} filePath={filePath} backgroundOnly />
+        </Modal>
       )}
     </div>
   )

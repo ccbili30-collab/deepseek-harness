@@ -614,4 +614,83 @@ describe('web e2e: scoped Noven appearance', () => {
     await expect.poll(() => page.locator('html[data-noven-conversation-appearance]').count(), { timeout: 15_000 }).toBe(0)
     expect(tripwire.pageErrors).toEqual([])
   }, 120_000)
+
+  it('edits independent backgrounds through file tabs and preserves them across splits and reloads', async () => {
+    onTestFailed(() => saveFailureShot(page, 'noven-appearance-tabs'))
+    const manual = page.getByRole('button', { name: '切换到手作', exact: true })
+    if (await manual.count() > 0) await manual.click()
+    const createDocument = async (): Promise<string> => {
+      if (await page.locator('[data-noven-canvas-switch]').count() > 0) {
+        await page.locator('[data-noven-canvas-switch]').click()
+        await page.getByRole('menuitem', { name: '起点', exact: true }).click()
+      }
+      await page.getByRole('button', { name: /文稿 从一页白纸开始/ }).click()
+      await page.locator('.nv-ed-title').waitFor({ timeout: 15_000 })
+      const title = await page.locator('.nv-ed-title').textContent()
+      if (title === null || title === '') throw new Error('created document has no title')
+      return title
+    }
+    const firstTitle = await createDocument()
+    const secondTitle = await createDocument()
+
+    const backgroundButton = page.locator('[data-noven-canvas-tab-background]')
+    await expect.poll(() => backgroundButton.count()).toBe(1)
+    await backgroundButton.click()
+    let dialog = page.getByRole('dialog')
+    await dialog.getByLabel('背景', { exact: true }).selectOption('custom')
+    await dialog.locator('.nv-ap-background-control input[type="file"]').setInputFiles(join(scaffold.workspaceCwd, '外观/canvas.webp'))
+    await expect.poll(() => backgroundImage(page, '.nv-leaf'), { timeout: 15_000 }).toContain('/api/noven-appearance/asset')
+    const secondImage = await backgroundImage(page, '.nv-leaf')
+    const imageIdentity = (image: string): string => image.replace(/([?&])revision=\d+/, '')
+    expect(await dialog.getByLabel('界面视图', { exact: true }).count()).toBe(0)
+    expect(await dialog.getByLabel('编辑对象', { exact: true }).count()).toBe(0)
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+
+    await page.locator('.nv-canvas-tabtitle').filter({ hasText: firstTitle }).first().click()
+    await backgroundButton.click()
+    dialog = page.getByRole('dialog')
+    await dialog.getByLabel('背景', { exact: true }).selectOption('custom')
+    await dialog.locator('.nv-ap-background-control input[type="file"]').setInputFiles(join(scaffold.workspaceCwd, '外观/file.webp'))
+    await expect.poll(() => backgroundImage(page, '.nv-leaf'), { timeout: 15_000 }).toContain('/api/noven-appearance/asset')
+    const firstImage = await backgroundImage(page, '.nv-leaf')
+    await dialog.getByRole('button', { name: '关闭', exact: true }).click()
+
+    await page.locator('.nv-canvas-tabtitle').filter({ hasText: secondTitle }).click()
+    await expect.poll(async () => imageIdentity(await backgroundImage(page, '.nv-leaf')), { timeout: 15_000 }).toBe(imageIdentity(secondImage))
+    await page.evaluate(() => {
+      const key = 'noven.canvas.tabs.v4'
+      const raw = localStorage.getItem(key)
+      if (raw === null) throw new Error('canvas persistence missing')
+      const persisted = JSON.parse(raw) as { state?: Record<string, unknown> } & Record<string, unknown>
+      const state = (persisted.state ?? persisted) as {
+        layout: Record<string, { tabs: string[]; active?: string } | Record<string, unknown>>
+        focus: Record<string, string>
+      }
+      for (const [scope, node] of Object.entries(state.layout)) {
+        if (!('tabs' in node) || !Array.isArray(node.tabs) || node.tabs.length < 2) continue
+        const first = node.tabs[0]!
+        const second = node.tabs[1]!
+        state.layout[scope] = {
+          id: 'appearance-split', dir: 'x', ratio: 0.5,
+          a: { id: 'appearance-leaf-a', tabs: [first], active: first },
+          b: { id: 'appearance-leaf-b', tabs: [second], active: second },
+        }
+        state.focus[scope] = 'appearance-leaf-a'
+      }
+      localStorage.setItem(key, JSON.stringify(persisted))
+    })
+    await page.reload({ waitUntil: 'load' })
+    await page.locator('.nv-canvas').first().waitFor({ timeout: 30_000 })
+    await expect.poll(() => page.locator('.nv-leaf').count(), { timeout: 15_000 }).toBe(2)
+    const splitImages = await page.locator('.nv-leaf').evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundImage))
+    expect(splitImages.map(imageIdentity)).toContain(imageIdentity(secondImage))
+    expect(splitImages.map(imageIdentity)).toContain(imageIdentity(firstImage))
+
+    await page.reload({ waitUntil: 'load' })
+    await page.locator('.nv-canvas').first().waitFor({ timeout: 30_000 })
+    await expect.poll(() => page.locator('.nv-leaf').count(), { timeout: 15_000 }).toBe(2)
+    const restoredImages = await page.locator('.nv-leaf').evaluateAll(elements => elements.map(element => getComputedStyle(element).backgroundImage))
+    expect(restoredImages.map(imageIdentity)).toEqual(splitImages.map(imageIdentity))
+    expect(tripwire.pageErrors).toEqual([])
+  }, 120_000)
 })

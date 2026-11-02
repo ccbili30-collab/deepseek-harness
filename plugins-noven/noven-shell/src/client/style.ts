@@ -4525,6 +4525,7 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
 
 /* 外观设置沿用通用设置的 14/12px 字阶、16px 行距、细分隔线和轻选择器。 */
 .nv-appearance { display: flex; flex-direction: column; width: 100%; max-width: 720px; color: var(--dsw-alias-label-primary); }
+.nv-canvas-appearance { width: min(760px, calc(100vw - 32px)); }
 .nv-ap-row { display: flex; align-items: center; gap: 24px; padding: 16px 0; border-bottom: .5px solid var(--dsw-alias-border-l2); }
 .nv-ap-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding-right: 24px; }
 .nv-ap-title { overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 400; line-height: 22px; color: var(--dsw-alias-label-primary); }

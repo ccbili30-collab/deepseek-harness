@@ -18,6 +18,10 @@ interface Props {
   readonly t: ShellT
   /** Which scopes to show: all global settings, or only the current Session. */
   readonly sections?: 'all' | 'session'
+  /** Exact file to edit instead of the globally focused canvas file. */
+  readonly filePath?: string
+  /** Lock the editor to this file's background and omit global appearance controls. */
+  readonly backgroundOnly?: boolean
 }
 
 type Scope = 'workspace' | 'file' | 'session'
@@ -170,9 +174,9 @@ function Select({ label, value, onChange, children, className = '', disabled = f
  * @param props - Current Session and shell translator.
  * @returns The appearance settings section.
  */
-export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): ReactNode {
+export function AppearanceSection({ sessionId, t, sections = 'all', filePath: exactFilePath, backgroundOnly = false }: Props): ReactNode {
   const focused = useFocusedCanvasFile()
-  const filePath = focused?.sessionId === sessionId ? focused.path : undefined
+  const filePath = exactFilePath ?? (focused?.sessionId === sessionId ? focused.path : undefined)
   const view = useAppearance(sessionId, filePath)
   const viewRef = useRef(view)
   viewRef.current = view
@@ -181,9 +185,12 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
     acceptedRevision.current = view.revision
   }
   useEffect(() => { acceptedRevision.current = undefined }, [sessionId])
-  const [scope, setScope] = useState<Scope>(sections === 'session' ? 'session' : 'workspace')
-  const [target, setTarget] = useState<Target>('shell')
-  const [draft, setDraft] = useState<Draft>(() => view === undefined ? INITIAL_DRAFT : draftOf(view, scope, target, sections === 'all'))
+  const [scope, setScope] = useState<Scope>(sections === 'session' ? 'session' : backgroundOnly ? 'file' : 'workspace')
+  const [target, setTarget] = useState<Target>(backgroundOnly ? 'canvas' : 'shell')
+  const [draft, setDraft] = useState<Draft>(() => {
+    const initial = view === undefined ? INITIAL_DRAFT : draftOf(view, scope, target, sections === 'all' && !backgroundOnly)
+    return { ...initial, advanced: backgroundOnly }
+  })
   const draftRef = useRef(draft)
   const updateDraft = (next: Draft): void => {
     draftRef.current = next
@@ -327,16 +334,17 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
   }
   const presets = Object.entries(view.presets ?? {})
   const unified = sections === 'all' && !draft.advanced
+  const followLabel = unified ? t('appearance.defaultImage') : scope === 'workspace' ? t('appearance.followUnified') : t('appearance.followWorkspace')
   const scopeName = unified ? t('appearance.unified') : scope === 'workspace' ? t(`appearance.${target}`) : scope === 'file' ? filePath ?? t('appearance.noFile') : t('appearance.session')
 
   return (
     <div className="nv-appearance" data-saving={saving || undefined}>
       <Row title={scopeName} description={saving ? t('appearance.saving') : t('appearance.autosave')} className="nv-ap-head" live>
-        <button type="button" className="nv-ap-quiet" onClick={restore}>{unified ? t('appearance.restoreDefault') : t('appearance.followUnified')}</button>
+        <button type="button" className="nv-ap-quiet" onClick={restore}>{unified ? t('appearance.restoreDefault') : followLabel}</button>
       </Row>
       <div className="nv-ap-preview-row"><Preview sessionId={sessionId} draft={draft} revision={view.revision} sharedPath={view.workspace.shared?.path} t={t} /></div>
 
-      {sections === 'all' && draft.advanced && (
+      {sections === 'all' && draft.advanced && !backgroundOnly && (
         <Row title={t('appearance.applyTo')} description={t('appearance.applyTo.desc')}>
           <div className="nv-ap-scope-controls">
             <Select label={t('appearance.applyTo')} value={scope} onChange={value => { selectScope(value as Scope) }}>
@@ -353,28 +361,32 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
         </Row>
       )}
 
-      <Row title={t('appearance.view')} description={t('appearance.view.desc')}>
-        <Select label={t('appearance.view')} className="nv-ap-view" value={draft.view} onChange={value => { edit({ view: value as AppearanceViewMode }, visualAction) }}>
-          {(['light', 'dark'] as const).map(item => <option key={item} value={item}>{t(`appearance.view.${item}`)}</option>)}
-        </Select>
-      </Row>
+      {!backgroundOnly && (
+        <Row title={t('appearance.view')} description={t('appearance.view.desc')}>
+          <Select label={t('appearance.view')} className="nv-ap-view" value={draft.view} onChange={value => { edit({ view: value as AppearanceViewMode }, visualAction) }}>
+            {(['light', 'dark'] as const).map(item => <option key={item} value={item}>{t(`appearance.view.${item}`)}</option>)}
+          </Select>
+        </Row>
+      )}
 
       <Row title={unified ? t('appearance.unified') : t('appearance.background')} description={unified ? t('appearance.unified.desc') : t('appearance.background.desc')}>
         <div className="nv-ap-background-control">
           <Select label={unified ? t('appearance.unified') : t('appearance.background')} value={draft.mode} onChange={value => { selectBackground(value as BackgroundMode) }}>
-            {(['default', 'shared', 'custom', 'off'] as const).map(item => <option key={item} value={item}>{item === 'default' ? (unified ? t('appearance.defaultImage') : t('appearance.followUnified')) : item === 'shared' ? t('appearance.sharedImage') : item === 'custom' ? t('appearance.customImage') : t('appearance.off')}</option>)}
+            {(['default', 'shared', 'custom', 'off'] as const).map(item => <option key={item} value={item}>{item === 'default' ? followLabel : item === 'shared' ? t('appearance.sharedImage') : item === 'custom' ? t('appearance.customImage') : t('appearance.off')}</option>)}
           </Select>
           <button type="button" className="nv-ap-quiet" onClick={() => { upload.current?.click() }}>{t('appearance.changeImage')}</button>
           <input ref={upload} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; uploadImage(file) }} />
         </div>
       </Row>
 
-      <Row title={t('appearance.visibility')} description={t('appearance.visibility.desc')}>
-        <div className="nv-ap-range-control">
-          <input className="nv-ap-light-range" type="range" min="0" max="100" value={draft.visibility} aria-label={t('appearance.visibility')} onChange={event => { edit({ visibility: Number(event.target.value) }, visualAction) }} />
-          <output>{draft.visibility}%</output>
-        </div>
-      </Row>
+      {!backgroundOnly && (
+        <Row title={t('appearance.visibility')} description={t('appearance.visibility.desc')}>
+          <div className="nv-ap-range-control">
+            <input className="nv-ap-light-range" type="range" min="0" max="100" value={draft.visibility} aria-label={t('appearance.visibility')} onChange={event => { edit({ visibility: Number(event.target.value) }, visualAction) }} />
+            <output>{draft.visibility}%</output>
+          </div>
+        </Row>
+      )}
 
       <div className="nv-ap-advanced-section">
         <Row title={t('appearance.advanced')} description={t('appearance.advanced.desc')}>
@@ -388,9 +400,13 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
             <Row title={t('appearance.blur')}><div className="nv-ap-range-control"><input className="nv-ap-light-range" type="range" min="0" max="20" value={draft.blur} aria-label={t('appearance.blur')} onChange={event => { edit({ blur: Number(event.target.value) }, backgroundAction) }} /><output>{draft.blur}px</output></div></Row>
             <Row title={t('appearance.scopeMaterial')}><Select label={t('appearance.scopeMaterial')} value={draft.material} onChange={value => { edit({ material: value as AppearanceMaterial }, backgroundAction) }}>{(['auto', 'frosted', 'clear'] as const).map(item => <option key={item} value={item}>{t(`appearance.material.${item}`)}</option>)}</Select></Row>
             <Row title={t('appearance.scopeForeground')}><Select label={t('appearance.scopeForeground')} value={draft.scopeForeground} onChange={value => { edit({ scopeForeground: value as AppearanceForeground }, backgroundAction) }}>{(['system', 'light', 'dark'] as const).map(item => <option key={item} value={item}>{t(`appearance.foreground.${item}`)}</option>)}</Select></Row>
-            <Row title={t('appearance.globalMaterial')}><Select label={t('appearance.globalMaterial')} value={draft.surface} onChange={value => { edit({ surface: value as AppearanceMaterial }, visualAction) }}>{(['auto', 'frosted', 'clear'] as const).map(item => <option key={item} value={item}>{t(`appearance.material.${item}`)}</option>)}</Select></Row>
-            <Row title={t('appearance.globalForeground')}><Select label={t('appearance.globalForeground')} value={draft.foreground} onChange={value => { edit({ foreground: value as AppearanceForeground }, visualAction) }}>{(['system', 'light', 'dark'] as const).map(item => <option key={item} value={item}>{t(`appearance.foreground.${item}`)}</option>)}</Select></Row>
-            {scope !== 'file' && target === 'conversation' && (
+            {!backgroundOnly && (
+              <>
+                <Row title={t('appearance.globalMaterial')}><Select label={t('appearance.globalMaterial')} value={draft.surface} onChange={value => { edit({ surface: value as AppearanceMaterial }, visualAction) }}>{(['auto', 'frosted', 'clear'] as const).map(item => <option key={item} value={item}>{t(`appearance.material.${item}`)}</option>)}</Select></Row>
+                <Row title={t('appearance.globalForeground')}><Select label={t('appearance.globalForeground')} value={draft.foreground} onChange={value => { edit({ foreground: value as AppearanceForeground }, visualAction) }}>{(['system', 'light', 'dark'] as const).map(item => <option key={item} value={item}>{t(`appearance.foreground.${item}`)}</option>)}</Select></Row>
+              </>
+            )}
+            {!backgroundOnly && scope !== 'file' && target === 'conversation' && (
               <div className="nv-ap-avatar">
                 <Row title={t('appearance.avatar')}>
                   <div className="nv-ap-avatar-controls">
@@ -414,7 +430,7 @@ export function AppearanceSection({ sessionId, t, sections = 'all' }: Props): Re
         )}
       </div>
 
-      {unified && (
+      {unified && !backgroundOnly && (
         <div className="nv-ap-presets">
           <Row title={t('appearance.presets')} description={presets.length === 0 ? t('appearance.noPresets') : t('appearance.presets.desc')}>
             <button type="button" className="nv-ap-quiet" onClick={() => { void savePreset() }}>{t('appearance.savePreset')}</button>
