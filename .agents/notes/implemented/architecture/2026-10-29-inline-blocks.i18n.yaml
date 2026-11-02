@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-29-inline-blocks.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-29-inline-blocks.md
+/agent-note-inline-blocks-content-ownership-instead-of-per-site-fixes:
+  en: 6bcadb86e937ae28
+  zh: e61871cd0ace4ffe
+/agent-note-inline-blocks-content-ownership-instead-of-per-site-fixes/problem:
+  en: 3c41e86de087ea64
+  zh: 415108172e029938
+/agent-note-inline-blocks-content-ownership-instead-of-per-site-fixes/decision:
+  en: e28539763eccd968
+  zh: ede5fed3b1db2d70
+/agent-note-inline-blocks-content-ownership-instead-of-per-site-fixes/alternatives-considered:
+  en: 1195e86c958f4d82
+  zh: 4476029281c0f655
+/agent-note-inline-blocks-content-ownership-instead-of-per-site-fixes/verification:
+  en: 92dc72a28db0be1d
+  zh: fb1278cf66e19d09
+/agent-note-inline-blocks-content-ownership-instead-of-per-site-fixes/consequences:
+  en: 3e09076c1444103a
+  zh: 79cec2d788e0dca8

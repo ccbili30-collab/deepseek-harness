@@ -19,7 +19,7 @@
 import { useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
 import {
-  FishLogo, IconNewChatOutlineMedium, IconNewChatOutlineRegular, IconPanelLeftOutlineRegular, isDarwinDesktop, ShortcutKeys, Tooltip,
+  FishLogo, IconNewChatOutlineMedium, IconNewChatOutlineRegular, IconPanelLeftOutlineRegular, isDarwinChrome, ShortcutKeys, Tooltip,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsRenderSlots, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type {
@@ -98,9 +98,19 @@ export function SidebarRoot({
   usePanels,
   useShortcuts,
   usePanelInfo,
+  useFrameLayoutPolicy,
   t,
   renderSlot,
 }: SidebarRootComponentProps) {
+  const framePolicy = useFrameLayoutPolicy?.(policy => policy) ?? null
+  const windowsTitlebar = document.documentElement.hasAttribute('data-windows-titlebar')
+  // A fixed topbar is the window's global strip, not a replacement for the
+  // sidebar's own brand control: the brand mark stays at the navigation's
+  // leading top and is the one navigation toggle. Windows keeps its caption
+  // toggle (the native titlebar owns that row).
+  const topbarFrame = framePolicy !== null && framePolicy.topbar !== false
+  const brandToggleVisible = topbarFrame && !windowsTitlebar
+  const legacyToggleVisible = !topbarFrame || windowsTitlebar
   const panels = usePanels(snapshot => snapshot)
   const shortcut = useShortcuts(rows => rows.find(row => row.id === 'sidebar.left.toggle'))
   const newShortcut = useShortcuts(rows => rows.find(row => row.id === 'session.new'))
@@ -113,7 +123,6 @@ export function SidebarRoot({
     const timer = window.setTimeout(() => { setSettled(true) }, COLLAPSE_SETTLE_MS)
     return () => { window.clearTimeout(timer) }
   }, [collapsed])
-  const windowsTitlebar = document.documentElement.hasAttribute('data-windows-titlebar')
   const wide = windowsTitlebar ? !collapsed : !collapsed || !settled
   // The Windows caption menus occupy the strip to the right of these controls
   // (that is what --dsh-windows-menu-start reserves), so a right-side bubble
@@ -175,11 +184,11 @@ export function SidebarRoot({
 
   const buildVersion = localBuildVersion()
 
-  const darwinDesktop = isDarwinDesktop()
+  const darwinChrome = isDarwinChrome()
   // Rail resting state is the whale mark; hovering swaps in the panel icon
   // (the expand affordance, figma sidebar-hover flow). Expanded it is a plain
   // panel icon.
-  const toggle = (
+  const toggle = legacyToggleVisible ? (
     <Tooltip label={toggleLabel} shortcutKeys={shortcut?.keys} delayMs={500} side={captionTooltipSide}>
       <button
         type="button"
@@ -198,7 +207,26 @@ export function SidebarRoot({
         {!wide && renderSlot('sidebar.toggle.badge', {})}
       </button>
     </Tooltip>
-  )
+  ) : null
+  const brandToggle = brandToggleVisible ? (
+    <Tooltip label={toggleLabel} shortcutKeys={shortcut?.keys} delayMs={500} side={captionTooltipSide}>
+      <button
+        type="button"
+        className={clsx(css.iconButton, css.toggle, css.brandToggle)}
+        aria-label={toggleLabel}
+        aria-keyshortcuts={shortcut?.aria}
+        aria-expanded={!collapsed}
+        data-sidebar-brand-toggle
+        onClick={() => { toggleSidebar() }}
+      >
+        <span className={css.railMark} aria-hidden="true">
+          {renderSlot('sidebar.brand.mark', { size: 24 }, { fallback: <FishLogo size={24} /> })}
+        </span>
+        <IconPanelLeftOutlineRegular className={css.panelIcon} size={18} />
+        {!wide && renderSlot('sidebar.toggle.badge', {})}
+      </button>
+    </Tooltip>
+  ) : null
 
   return (
     <div
@@ -216,18 +244,23 @@ export function SidebarRoot({
     >
       {/* macOS hiddenInset titlebar: the strip shares the row with the
           traffic lights and keeps the toggle at the sidebar's top-right. */}
-      {darwinDesktop && <div className={css.topStrip} data-window-drag>{toggle}</div>}
-      <div className={css.logoRow} data-window-drag>
+      {darwinChrome && legacyToggleVisible && <div className={css.topStrip} data-window-drag>{toggle}</div>}
+      <div className={clsx(css.logoRow, brandToggleVisible && css.brandLeading)} data-window-drag>
         {/* Expanded, the brand doubles as a New Session shortcut — except on
             macOS, where it stays part of the logo row's window-drag surface
-            (a button would subtract itself through the global no-drag rule);
-            the collapsed rail's logo is the expand toggle below instead. */}
+            (a button would subtract itself through the global no-drag rule).
+            Under a fixed topbar the mark itself is the navigation toggle, so
+            the identity renders only the wordmark and the toggle fills the
+            rail's leading slot. */}
+        {brandToggle}
         {wide && (() => {
           const identity = (
             <span className={css.brandIdentity} aria-hidden="true">
-              <span className={css.brandMark}>
-                {renderSlot('sidebar.brand.mark', { size: 24 }, { fallback: <FishLogo size={24} /> })}
-              </span>
+              {!brandToggleVisible && (
+                <span className={css.brandMark}>
+                  {renderSlot('sidebar.brand.mark', { size: 24 }, { fallback: <FishLogo size={24} /> })}
+                </span>
+              )}
               <span className={css.brandName}>
                 {renderSlot('sidebar.brand.name', {}, {
                   fallback: buildVersion === undefined
@@ -242,7 +275,7 @@ export function SidebarRoot({
               </span>
             </span>
           )
-          return darwinDesktop
+          return darwinChrome
             ? <span className={clsx(css.brand, css.wide)}>{identity}</span>
             : (
               <Tooltip label={t('session.new.label')} shortcutKeys={newShortcut?.keys} delayMs={500}>
@@ -258,7 +291,7 @@ export function SidebarRoot({
               </Tooltip>
             )
         })()}
-        {!darwinDesktop && toggle}
+        {!darwinChrome && toggle}
       </div>
 
       {/* The label fades before the hover/focus shortcut, including on translucent backgrounds. */}

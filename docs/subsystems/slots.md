@@ -118,6 +118,7 @@ root
 │  ├─ sidebar.panellist
 │  ├─ sidebar.footer.action
 │  ├─ sidebar.workspaces
+│  │  ├─ sidebar.workspaces.content
 │  │  ├─ sidebar.workspaces.directoryFlow
 │  │  ├─ sidebar.workspaces.session.menu.item
 │  │  └─ sidebar.workspaces.session.row.action
@@ -185,6 +186,7 @@ root
 │     ├─ sidebar.right.pane.tab.title
 │     └─ sidebar.right.tab.menu.item
 ├─ shell.leading
+│  └─ shell.leading.action
 └─ shell.overlay
    └─ shell.quota-notice
 ```

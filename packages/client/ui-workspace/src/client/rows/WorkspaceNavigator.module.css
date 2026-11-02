@@ -1,0 +1,121 @@
+.root {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
+  padding-right: var(--dsh-sidebar-inline-padding);
+}
+
+.root.rail {
+  padding-right: 0;
+}
+
+.workspacePicker {
+  flex: none;
+  display: flex;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.root:not(.rail) .workspacePicker {
+  margin-top: 2px;
+}
+
+.rail .workspacePicker {
+  margin-bottom: 12px;
+}
+
+.workspaceTrigger,
+.railSessionButton {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  height: 36px;
+  border: none;
+  border-radius: var(--dsw-radius-md);
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  color: var(--dsw-alias-label-primary);
+}
+
+.workspaceTrigger {
+  width: 100%;
+  gap: 6px;
+  padding: 0 8px;
+}
+
+.rail .workspaceTrigger,
+.railSessionButton {
+  width: 36px;
+  padding: 0;
+}
+
+.workspaceTrigger:hover,
+.railSessionButton:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.workspaceTrigger:focus-visible,
+.railSessionButton:focus-visible {
+  outline: var(--dsw-focus-ring-width) solid var(--dsw-focus-ring-color, var(--dsw-alias-state-business-primary));
+  outline-offset: -2px;
+}
+
+.railSessionButton:disabled {
+  cursor: default;
+}
+
+.railSessionButton:disabled:hover {
+  background: transparent;
+}
+
+.workspaceTitle {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sessionList {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 16px;
+  scrollbar-gutter: stable;
+}
+
+.sessionList > * + * {
+  margin-top: 2px;
+}
+
+.railSessions {
+  flex: none;
+  display: flex;
+}
+
+.sessionMenu {
+  min-width: 200px;
+  max-width: 280px;
+}
+
+.empty {
+  padding: 16px 12px;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 13px;
+  line-height: 20px;
+}

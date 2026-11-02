@@ -11,8 +11,8 @@ export interface MenuSurfaceProps extends ComponentPropsWithoutRef<'div'> {
 }
 
 /**
- * Paint a menu and, on macOS, an opaque backing behind the page content within its bounds.
- * CSS anchors keep each backing aligned during placement, resizing, and nested-menu movement.
+ * Paint a menu and, on native macOS, an opaque backing behind page content within its bounds.
+ * CSS anchors keep each backing aligned during placement, resizing, and nested-menu movement. Web mirrors use only the menu material.
  * @param props - Div content and placement, and compact geometry.
  * @param ref - The visible menu div, excluding the non-interactive backing.
  * @returns Menu content plus a backing portal removed with the menu.

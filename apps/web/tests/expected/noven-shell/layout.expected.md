@@ -1,0 +1,54 @@
+- banner:
+  - navigation "会话层级": "NavScenario: first run bash to"
+  - button "项目 · {{workspace}}"
+  - button "更多操作"
+  - tablist:
+    - tab "对话" [selected]
+    - tab "执行记录"
+- navigation "轮次导航":
+  - button "跳转到第 1 轮"
+  - button "跳转到第 2 轮"
+- text: "NavScenario: first run bash to print exactly NAVIGATION_OK, then read nav-a.md and nav-b.md using two read calls in ONE assistant message, then reply with the single word FIRST_DONE and stop. {{clock}}"
+- button "复制"
+- button "修改这条消息":
+  - img
+- button "重新生成":
+  - img
+- status: 已完成工作
+- button "用时 {{duration}}"
+- paragraph: FIRST_DONE
+- button "复制"
+- button "好的回答"
+- button "有问题的回答"
+- button "重新生成":
+  - img
+- button "在新对话中分支"
+- text: "{{clock}} Reply in markdown with: a level-2 heading \"Navigation Summary\", a bulleted list of exactly two items, and a fenced code block containing echo WATERFALL. Then stop. {{clock}}"
+- button "复制"
+- button "修改这条消息":
+  - img
+- button "重新生成":
+  - img
+- status: 已完成工作
+- button "用时 {{duration}}"
+- heading "Navigation Summary" [level=2]
+- list:
+  - listitem: alpha nav
+  - listitem: beta nav
+- text: 代码块
+- button "自动换行" [pressed]
+- button "复制"
+- code: echo WATERFALL
+- button "复制"
+- button "好的回答"
+- button "有问题的回答"
+- button "重新生成":
+  - img
+- button "在新对话中分支"
+- text: {{clock}}
+- textbox "发消息或创建任务, / 调用指令, @ 文件或对话"
+- button "添加文件或调用指令"
+- button "访问模式，当前：工作区内修改": 工作区内修改
+- button "选择模型，当前 DeepSeek-V4-Flash": DeepSeek-V4-Flash
+- button "发送消息" [disabled]
+- button "展开"

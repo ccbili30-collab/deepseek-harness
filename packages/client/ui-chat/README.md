@@ -22,6 +22,7 @@ File-mention providers receive the viewed Session ID with the closing-turn owner
 - [Turn Process Folding](#turn-process-folding)
 - [Grouped rendering](#grouped-rendering)
 - [Scroll ownership](#scroll-ownership)
+- [Inline blocks](#inline-blocks)
 - [Model Experience](#model-experience)
 - [Known Limitations and Deferred Work](#known-limitations-and-deferred-work)
 - [Dev Note](#dev-note)
@@ -139,6 +140,11 @@ Active-Turn highlighting is approximate: `readVisibleTurn` binary-searches the c
 </details>
 
 -----
+
+<a id="inline-blocks"></a>
+## Inline blocks
+
+Assistant text may carry sealed `::view{...}` blocks with exactly one content field: `src` for an existing object or `data` for message-owned component JSON. Reference types reserve their declared ratio; data types use intrinsic height. Segments are keyed by source offset, so streaming appends cannot remount blocks, and focus plus Escape owns activation without active-block state. Observable registry revisions refresh mounted content after registration or disposal; failed source resolution produces the controlled notice without invoking the type renderer. Data renderers receive stable Turn/step/text-block/offset identity, workspace media resolution, and an optional Session-scoped commit callback. Structured choices append or replace existing composer chips and serialize as ordinary text on submission; no separate selection store or model-state channel exists. See [inline blocks](../../../docs/subsystems/inline-blocks.md).
 
 <a id="model-experience"></a>
 ## Model Experience

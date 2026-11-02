@@ -412,4 +412,31 @@ describe('Chat inject API', () => {
     expect(injected.loadImage.peek?.(ATTACHMENT)).toBe(loaded)
     await b.runtime.dispose()
   })
+
+  it('inserts and replaces block choices in the same Session composer', async () => {
+    const b = await bench()
+    const { injected } = b.chatViewApi(b.rootReference)
+    const input = b.rootReference.binding.ctx.get('conversation')!.input.for(b.rootReference.binding.ctx)
+    input.setDraft('继续')
+    const first = {
+      refPrefix: 'block|group|',
+      insert: { source: 'choice', ref: 'block|group|a', label: 'A', clipboardText: 'A' },
+    }
+    expect(injected.commitBlock(first)).toBe(true)
+    expect(input.state.getSnapshot().occurrences).toHaveLength(1)
+    expect(input.state.getSnapshot().draft).toContain('继续')
+    expect(injected.commitBlock({
+      refPrefix: 'block|group|',
+      insert: { source: 'choice', ref: 'block|group|b', label: 'B', clipboardText: 'B' },
+    })).toBe(true)
+    expect(input.state.getSnapshot().occurrences).toHaveLength(1)
+    expect(input.state.getSnapshot().occurrences[0]?.ref).toBe('block|group|b')
+    expect(injected.commitBlock({
+      refPrefix: 'block|other|',
+      insert: { source: 'choice', ref: 'block|other|c', label: 'C', clipboardText: 'C' },
+    })).toBe(true)
+    expect(input.state.getSnapshot().occurrences).toHaveLength(2)
+    expect(input.state.getSnapshot().draft).toContain('继续')
+    await b.runtime.dispose()
+  })
 })

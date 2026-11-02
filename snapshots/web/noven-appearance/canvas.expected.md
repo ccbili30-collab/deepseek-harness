@@ -1,0 +1,36 @@
+- tablist:
+  - button "画布工具":
+    - img
+  - button "画布全屏":
+    - img
+- paragraph: 这里是你的案头：拿一张预设开工，或者从一页白纸开始。
+- heading "预设" [level=3]
+- button "世界卡 规则、地理、势力——一个世界一张卡":
+  - img
+  - text: 世界卡 规则、地理、势力——一个世界一张卡
+- button "角色卡 外貌、性格、背景、关系":
+  - img
+  - text: 角色卡 外貌、性格、背景、关系
+- button "说明书 第一次来？先看这篇":
+  - img
+  - text: 说明书 第一次来？先看这篇
+- heading "开始" [level=3]
+- button "文稿 从一页白纸开始":
+  - img
+  - text: 文稿 从一页白纸开始
+- button "空白世界 不带骨架，从零填":
+  - img
+  - text: 空白世界 不带骨架，从零填
+- button "空白角色 不带骨架，从零填":
+  - img
+  - text: 空白角色 不带骨架，从零填
+- button "时间线 年代与事件，按时间排":
+  - img
+  - text: 时间线 年代与事件，按时间排
+- button "地图 底图加标记的交互地图":
+  - img
+  - text: 地图 底图加标记的交互地图
+- button "集合 字段加条目的结构表":
+  - img
+  - text: 集合 字段加条目的结构表
+- paragraph: 案头还空着——先从上面挑一样开始。

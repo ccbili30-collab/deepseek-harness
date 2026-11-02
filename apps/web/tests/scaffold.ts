@@ -1409,6 +1409,15 @@ function seedStreamEnd(
 }
 
 /**
+ * Register the scaffold's workspace with the real Workspace registry.
+ * @param scaffold - the settled target scaffold.
+ * @param title - display title for the registered Workspace.
+ */
+export async function createScaffoldWorkspace(scaffold: WebScaffold, title = 'Scaffold workspace'): Promise<void> {
+  await scaffold.ctx.workspaceRegistry.create(scaffold.workspaceCwd, title)
+}
+
+/**
  * Seed a recorded session fixture into the scaffold's persistence root
  * through the real Session and JSONL APIs.
  * @param scaffold - the target scaffold.

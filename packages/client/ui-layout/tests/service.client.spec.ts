@@ -2,6 +2,7 @@ import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { describe, expect, it, vi } from 'vitest'
 import { LayoutController } from '../src/client/service.ts'
 import type { LiveSessionGeometry, MainPanelId, PanelActions } from '../src/client/service.ts'
+import type { FrameLayoutPolicy } from '../src/client/policy.ts'
 
 function fakePanels(): PanelActions {
   return {
@@ -11,6 +12,8 @@ function fakePanels(): PanelActions {
     toggleSidebar: vi.fn(),
     setSidebarCollapsed: vi.fn(),
     setUnitSide: vi.fn(),
+    setCenterCollapsed: vi.fn(),
+    setAuxiliaryCollapsed: vi.fn(),
     enterSession: vi.fn(),
     seedSessionGeometry: vi.fn(),
     seedUnitShare: vi.fn(),
@@ -18,6 +21,7 @@ function fakePanels(): PanelActions {
     setRightbar: vi.fn(),
     settleRightbar: vi.fn(),
     setUnit: vi.fn(),
+    setAuxiliary: vi.fn(),
     openRightbar: vi.fn(),
     closeRightbar: vi.fn(),
     setCanvasFullscreen: vi.fn(),
@@ -84,6 +88,28 @@ describe('LayoutController', () => {
     expect(panels.closeRightbar).not.toHaveBeenCalled()
   })
 
+  it('coordinates explicit transitions through the live runner and ignores stale disposal', () => {
+    const { service } = buildService()
+    const commit = vi.fn()
+    service.transitionFrame(commit)
+    expect(commit).toHaveBeenCalledTimes(1)
+
+    const first = vi.fn((update: () => void) => { update() })
+    const second = vi.fn((update: () => void) => { update() })
+    const disposeFirst = service.provideFrameTransition(first)
+    const disposeSecond = service.provideFrameTransition(second)
+    service.transitionFrame(commit)
+    expect(second).toHaveBeenCalledTimes(1)
+    expect(first).not.toHaveBeenCalled()
+
+    disposeFirst()
+    service.transitionFrame(commit)
+    expect(second).toHaveBeenCalledTimes(2)
+    disposeSecond()
+    service.transitionFrame(commit)
+    expect(commit).toHaveBeenCalledTimes(4)
+  })
+
   it('keeps separately constructed controllers bound to their own instances', () => {
     const first = fakePanels()
     const second = fakePanels()
@@ -136,15 +162,36 @@ describe('LayoutController', () => {
     service.setUnitSide('left')
     service.seedSessionGeometry('s-a', { sidebarCollapsed: true })
     service.seedUnitShare(0.7)
+    service.setCenterCollapsed(true)
+    service.setAuxiliaryCollapsed(false)
     expect(panels.setUnitSide).toHaveBeenNthCalledWith(1, 'left')
     expect(panels.seedSessionGeometry).toHaveBeenNthCalledWith(1, 's-a', { sidebarCollapsed: true })
     expect(panels.seedUnitShare).toHaveBeenNthCalledWith(1, 0.7)
+    expect(panels.setCenterCollapsed).not.toHaveBeenCalled()
+    expect(panels.setAuxiliaryCollapsed).toHaveBeenNthCalledWith(1, true)
+    expect(panels.setAuxiliaryCollapsed).toHaveBeenNthCalledWith(2, false)
   })
 
   it('answers nav-geometry comparisons through the constructor-supplied reader', () => {
     const { service } = buildService(fakePanels(), (from, to) => from !== to)
     expect(service.navGeometryDiffers('s-a', 's-b')).toBe(true)
     expect(service.navGeometryDiffers('s-a', 's-a')).toBe(false)
+  })
+
+  it('relays the product layout policy and restores legacy geometry on detach', () => {
+    const { service } = buildService()
+    const source = createSnapshotStore<FrameLayoutPolicy>({ primary: 'rightbar', canvasSide: 'right' })
+    const detach = service.provideFrameLayoutPolicy(source)
+    expect(service.frameLayoutPolicy.getSnapshot()).toEqual({ primary: 'rightbar', canvasSide: 'right' })
+    source.set({ primary: 'main', canvasSide: 'left' })
+    expect(service.frameLayoutPolicy.getSnapshot()).toEqual({ primary: 'main', canvasSide: 'left' })
+    const alternate = createSnapshotStore<FrameLayoutPolicy>({ primary: 'main', canvasSide: 'left' })
+    const detachAlternate = service.provideFrameLayoutPolicy(alternate)
+    source.set({ primary: 'rightbar', canvasSide: 'right' })
+    expect(service.frameLayoutPolicy.getSnapshot()).toEqual({ primary: 'main', canvasSide: 'left' })
+    detachAlternate()
+    detach()
+    expect(service.frameLayoutPolicy.getSnapshot()).toBeNull()
   })
 
   it('relays the provided canvas-claim source and resets to null on detach', () => {

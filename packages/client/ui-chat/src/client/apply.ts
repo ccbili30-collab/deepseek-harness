@@ -33,6 +33,8 @@ import { registerConversationNodes } from './conversation-nodes/register.ts'
 import { QuotaNoticeHost } from './chat/QuotaNoticeHost.tsx'
 import { en, NS, zh } from './locale.ts'
 import { TranscriptViewRow, type TranscriptViewRowInjected } from './settings/TranscriptViewRow.tsx'
+import { createBlockRegistry } from './blocks/registry.tsx'
+import { commitBlockChoice } from './blocks/commit.ts'
 import { createChatStore } from './stores.ts'
 import { TranscriptViewPolicy } from './transcript-view.ts'
 import { derivePresentationPolicy } from './presentation-policy.ts'
@@ -70,6 +72,8 @@ export function apply(ctx: Context): void {
   // that newer hold alone.
   const quotaNoticeHolds = new Set<symbol>()
   const chatSources = new WeakMap<SessionBinding, ObservableSnapshot<ChatSnapshot>>()
+  const chatBlocks = createBlockRegistry()
+  ctx.provide('chatBlocks', chatBlocks)
   const quotaSubscriptions = new Set<() => Promise<void>>()
   ctx.effect(() => async () => {
     await Promise.all([...quotaSubscriptions].map(dispose => dispose()))
@@ -200,6 +204,11 @@ export function apply(ctx: Context): void {
             chatGroup: key => conversation.snapshot.getSnapshot().views.grouped('chat')?.groupSource(key as GroupKey),
           },
           fileMentions: (owner: TurnTailOwnerProps) => ctx.get('chatFileMentions')?.forClosing(owner, sessionId),
+          blocks: chatBlocks,
+          commitBlock: (request) => {
+            const input = binding.ctx.get('conversation')?.input.for(binding.ctx)
+            return input === undefined ? false : commitBlockChoice(input, request)
+          },
           // Files open in the right Sidebar, not in a desktop application: the
           // content stays in the product, beside the conversation that produced
           // it. A relative path, or an absolute one inside the session's

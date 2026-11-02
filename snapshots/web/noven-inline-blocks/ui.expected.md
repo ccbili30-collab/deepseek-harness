@@ -1,0 +1,123 @@
+- banner:
+  - navigation "会话层级": {{workspace}}
+  - button "项目 · {{workspace}}"
+  - button "更多操作"
+  - tablist:
+    - tab "对话" [selected]
+    - tab "执行记录"
+- text: 展示两个独立正文块和全部内联组件。 {{clock}}
+- button "复制"
+- button "修改这条消息":
+  - img
+- button "重新生成":
+  - img
+- status: 已完成工作
+- button "用时 {{duration}}" [disabled]
+- paragraph: 第一组正文。
+- group "code":
+  - button "A 选甲" [pressed]:
+    - text: A 选甲
+    - img
+  - button "B 选乙":
+    - text: B 选乙
+    - img
+- paragraph: 继续说明。
+- paragraph: 第二组正文。
+- group "code":
+  - button "A 选丙" [pressed]:
+    - text: A 选丙
+    - img
+  - button "B 选丁":
+    - text: B 选丁
+    - img
+- paragraph: 两组选择互不替换。
+- paragraph: 完整组件示例。
+- group "code":
+  - paragraph:
+    - text: 先让
+    - strong: 阿七
+    - text: 出场，再决定下一段剧情。
+  - img
+  - text: 初遇对话
+  - img "阿七"
+  - strong: 阿七
+  - text: 修钟匠
+  - paragraph: 别碰那根指针。
+  - strong: 闻灯
+  - text: 守夜人
+  - paragraph: 你为什么还能记得？
+  - img
+  - text: 钟楼 · 雨夜
+  - paragraph: 雨水沿着破裂的玻璃斜进来。
+  - emphasis: 这一次不能再忘记。
+  - img "雨夜钟楼"
+  - img
+  - paragraph:
+    - strong: 指针倒转
+    - text: 阿七的影子停在原地。
+  - img
+  - strong: 下一段剧情
+  - button "A 相信阿七 共同检查指针。":
+    - text: A 相信阿七 共同检查指针。
+    - img
+  - button "B 要求证明 先验证一次记忆抹除。":
+    - text: B 要求证明 先验证一次记忆抹除。
+    - img
+  - img
+  - strong: 设定修订
+  - text: 阿七 耳坠设定 修改前 耳坠只是纪念物 修改后 耳坠储存记忆
+  - button "采用修订":
+    - img
+    - text: 采用修订
+  - button "保留原设定"
+  - img
+  - paragraph: 钟楼 {{clock}} 封锁，但阿七 {{clock}} 到岗。
+  - text: 钟楼规则 阿七日程
+  - img
+  - strong: 表情差分
+  - button "阿七警惕表情 警惕":
+    - img "阿七警惕表情"
+    - img
+    - text: 警惕
+  - text: 视觉方向
+  - 'button "灰薄荷 #789486"':
+    - strong: 灰薄荷
+    - text: "#789486"
+  - 'button "旧黄铜 #B08B52"':
+    - strong: 旧黄铜
+    - text: "#B08B52"
+  - 'button "雨夜青 #344745"':
+    - strong: 雨夜青
+    - text: "#344745"
+  - text: 时间共鸣
+  - strong: "72"
+  - text: / 100
+  - paragraph: 初遇峰值
+  - text: 钟楼稳定度 64 / 100
+  - progressbar "钟楼稳定度"
+  - img
+  - strong: 四区时间裂缝
+  - text: 北塔 68 旧港 52 0 68 起
+  - img
+  - strong: 共鸣变化
+  - img "共鸣变化": 0 18 36 54 72 到场 倒转 共识 72 强度
+  - img
+  - strong: 阿七能力轮廓
+  - img "阿七能力轮廓": 感知 共情 意志 表达 战斗 隐匿
+  - text: 感知 86 共情 72 意志 78 表达 54 战斗 43 隐匿 68
+  - img "钟楼全景"
+- paragraph: 组件只表达当前消息。
+- button "复制"
+- button "好的回答"
+- button "有问题的回答"
+- button "重新生成":
+  - img
+- button "在新对话中分支"
+- text: {{clock}}
+- button "回到底部"
+- textbox "发消息或创建任务, / 调用指令, @ 文件或对话":
+  - paragraph: 第一组 · 选甲 第二组 · 选丙
+- button "添加文件或调用指令"
+- button "访问模式，当前：工作区内修改": 工作区内修改
+- button "选择模型，当前 deepseek-official/deepseek-flash，推理等级 high": deepseek-official/deepseek-flash high
+- button "发送消息"

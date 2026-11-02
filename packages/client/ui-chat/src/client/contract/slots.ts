@@ -1,6 +1,7 @@
 /** Chat-owned Slot declarations and composed component props. */
 import type { MessageId } from '@deepseek-ai/dsh-llm/brand'
 import type { SessionId, SessionSeq } from '@deepseek-ai/dsh-session/types'
+import type { BlockCommitter, BlockRegistry } from '../blocks/registry.tsx'
 import type {
   CommandNode, CompactionSummaryNode, ConversationLocationDataStore, ConversationTurnDataMap,
   ConversationGroupData, GroupSnapshot,
@@ -271,6 +272,10 @@ export interface ChatViewInjected {
   }
   forkAt: (seq: number) => void
   fileMentions: (owner: TurnTailOwnerProps) => MarkdownFileMentions | undefined
+  /** Inline block types every assistant text block resolves against. */
+  blocks: BlockRegistry
+  /** Insert or replace one structured block choice in this Session's composer. */
+  commitBlock: BlockCommitter
 }
 
 /** Full Chat view props. */

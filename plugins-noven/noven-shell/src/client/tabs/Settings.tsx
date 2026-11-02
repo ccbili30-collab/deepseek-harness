@@ -18,6 +18,7 @@ import type { SidecarState } from './Sidecar.tsx'
 import type { SidecarOp } from '../sidecar-api.ts'
 import type { DocsHook } from '../canvas.tsx'
 import { useSessionSettings, type SessionSettings } from '../session-settings.tsx'
+import { AppearanceSection } from '../settings/AppearanceSection.tsx'
 
 type FieldKey = keyof SessionSettings
 type FieldLabel =
@@ -104,6 +105,10 @@ export function SettingsTab({ t, useTabInfo, sessionId, useSidecar, run, useDocs
             onChange={next => { void run({ op: 'paused', paused: !next }) }}
           />
         </div>
+      </section>
+      <section className="nv-sesset-group">
+        <h4>{t('appearance.title')}</h4>
+        <AppearanceSection sessionId={sessionId} t={t} sections="session" />
       </section>
       <div className="nv-sesset-foot">{t('session.set.foot')}</div>
     </div>

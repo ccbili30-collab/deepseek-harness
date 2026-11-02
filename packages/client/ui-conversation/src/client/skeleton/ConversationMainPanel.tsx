@@ -64,7 +64,13 @@ export function ConversationMainPanel(props: ConversationSlotProps) {
   const phase = restoring ? 'restoring' : settling ? 'settling' : hero ? 'hero' : 'active'
 
   return (
-    <div className={css.root} data-phase={phase} data-restoring={restoring || undefined} aria-busy={restoring || undefined}>
+    <div
+      className={css.root}
+      data-conversation-root
+      data-phase={phase}
+      data-restoring={restoring || undefined}
+      aria-busy={restoring || undefined}
+    >
       {renderSlot('conversation.header', {})}
       {renderFactorySlot('conversation.content', {
         variant: 'main',

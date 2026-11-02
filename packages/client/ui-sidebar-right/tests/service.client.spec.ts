@@ -103,6 +103,48 @@ describe('SidebarRightController — opening', () => {
     } finally { release() }
   })
 
+  it('lets the active product router handle or fall through and restores the previous provider', () => {
+    const h = harness()
+    h.tabs.register({ id: 'test/terminal', kind: 'terminal', multiple: true, title: () => 'terminal' })
+    h.publish()
+    const first = { route: vi.fn((_sessionId: SessionId, _kind: string) => false) }
+    const second = { route: vi.fn((_sessionId: SessionId, _kind: string) => true) }
+    const disposeFirst = h.controller.provideTabRouter(first)
+    const disposeSecond = h.controller.provideTabRouter(second)
+
+    h.controller.openTab('terminal')
+    expect(second.route).toHaveBeenCalledWith(SESSION, 'terminal', {})
+    expect(first.route).not.toHaveBeenCalled()
+    expect(h.titles()).not.toContain('terminal')
+
+    disposeSecond()
+    h.controller.openTab('terminal')
+    expect(first.route).toHaveBeenCalledWith(SESSION, 'terminal', {})
+    expect(h.titles()).toContain('terminal')
+    disposeFirst()
+  })
+
+  it('routes an off-screen opening to the requested Session before falling back to host placement', () => {
+    const h = harness()
+    h.tabs.register({ id: 'test/terminal', kind: 'terminal', multiple: true, title: () => 'terminal' })
+    const other = 's-other' as SessionId
+    h.instance.actions.open(other)
+    const releaseAdoption = h.adopt(other, h.instance)
+    h.publish()
+    const router = { route: vi.fn((_sessionId: SessionId, _kind: string) => true) }
+    const dispose = h.controller.provideTabRouter(router)
+
+    h.controller.openTabIn(other, 'terminal')
+    expect(router.route).toHaveBeenCalledWith(other, 'terminal', {})
+    expect(Object.values(h.instance.getSnapshot().bySession[other]?.layout.tabs ?? {})).toHaveLength(0)
+
+    dispose()
+    h.controller.openTabIn(other, 'terminal')
+    const tabs = Object.values(h.instance.getSnapshot().bySession[other]?.layout.tabs ?? {})
+    expect(tabs.some(tab => tab.kind === 'terminal')).toBe(true)
+    releaseAdoption()
+  })
+
   it('refuses every write while no seat is mounted', () => {
     const { controller } = harness()
     expect(() => { controller.openResource('dsh-resource://file/session/s-test/a.txt') }).toThrow('no session surface is mounted')

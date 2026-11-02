@@ -23,11 +23,12 @@ import { resolveDesktopAutoUpdateConfig } from './desktop-auto-update-environmen
 import { resolveDesktopBuildCommit } from './desktop-build-commit.mjs'
 import { resolveDesktopBuildVersion } from './desktop-build-version.mjs'
 import { resolveDesktopPolicyEnvironment } from './desktop-policy-environment.mjs'
-import { desktopTargetBuildPaths, resolveDesktopBuildTarget } from './desktop-build-paths.mjs'
+import { desktopTargetBuildPaths, NOVEN_PROFILE_RESOURCE, resolveDesktopBuildTarget } from './desktop-build-paths.mjs'
 import { installWindowsDirectoryInstaller } from './windows-directory-installer.mjs'
 import { preserveWindowsRuntimeSignature, signWindowsCode } from './windows-runtime-signature.mjs'
 import { prepareWindowsAsarUnpack, verifyWindowsAsarUnpack } from './windows-asar-unpack.mjs'
 import { recordPackagingEvent } from './packaging-run.mjs'
+import { novenIconAssetPaths, prepareNovenIconAssets } from './noven-icon-assets.mjs'
 import {
   resolveMacOSAppUpdateFeed,
   verifyMacOSAppUpdateConfig,
@@ -97,11 +98,16 @@ export function createElectronBuilderConfig(
   const buildVersion = resolveDesktopBuildVersion(env, productVersion)
   const packaged = resolveDesktopBuildCommit(env)
   const channel = env.NOVEN_CHANNEL === 'test' ? 'test' : 'release'
-  const seedName = channel === 'test' ? 'noven-profile-test' : 'noven-profile'
-  const seedRoot = fileURLToPath(new URL(`../.desktop-build/${seedName}`, import.meta.url))
+  const seedRoot = channel === 'test' ? buildPaths.novenProfileTest : buildPaths.novenProfile
+  if (env.NOVEN_REQUIRE_PROFILE === '1'
+    && (!existsSync(join(seedRoot, 'package.json')) || !existsSync(join(seedRoot, 'node_modules')))) {
+    throw new Error(`desktop package: required Noven profile is missing or incomplete at ${seedRoot}; run prepare:noven-profile`)
+  }
   const productName = channel === 'test' ? 'Noven Test' : 'Noven'
   const protocolScheme = channel === 'test' ? 'noven-test' : 'noven'
   const effectiveAppId = channel === 'test' ? `${appId}.test` : appId
+  const iconVariantRoot = join(buildPaths.root, 'icon-variants', channel)
+  const icons = novenIconAssetPaths(channel, iconVariantRoot)
   return {
     appId: effectiveAppId,
     protocols: [{ name: productName, schemes: [protocolScheme] }],
@@ -119,6 +125,7 @@ export function createElectronBuilderConfig(
     electronDist: buildPaths.electron,
     electronFuses: { runAsNode: true },
     beforeBuild: async () => {
+      await prepareNovenIconAssets(channel, iconVariantRoot)
       if (resolvedPlatform !== 'win32') return true
       await promisify(execFile)('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
         fileURLToPath(new URL('./prepare-windows-installer.ps1', import.meta.url)),
@@ -151,23 +158,25 @@ export function createElectronBuilderConfig(
       // Default Noven plugin profile; the shell seeds a fresh profile from it.
       ...(existsSync(seedRoot)
         ? [
-          { from: seedRoot, to: 'noven-profile', filter: ['**/*', '!node_modules/**/*'] },
-          { from: join(seedRoot, 'node_modules'), to: 'noven-profile/node_modules', filter: ['**/*'] },
+          { from: seedRoot, to: NOVEN_PROFILE_RESOURCE, filter: ['**/*', '!node_modules/**/*'] },
+          { from: join(seedRoot, 'node_modules'), to: `${NOVEN_PROFILE_RESOURCE}/node_modules`, filter: ['**/*'] },
         ]
         : []),
-      { from: fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)), to: 'icon.png' },
+      { from: icons.windowsIcon, to: 'icon.png' },
       // Windows tray bitmaps; macOS keeps the Dock and ships no menu bar icon.
-      ...(packagesWindows ? [{ from: fileURLToPath(new URL('../resources/tray-windows.ico', import.meta.url)), to: 'tray.ico' }] : []),
+      ...(packagesWindows ? [{ from: icons.trayIcon, to: 'tray.ico' }] : []),
     ],
     mac: {
-      icon: fileURLToPath(new URL('../resources/icon-macos.png', import.meta.url)),
+      icon: icons.macIcon,
       category: 'public.app-category.graphics-design',
       // macOS matches the application locale against this bundle, not Electron Framework resources.
-      extendInfo: { CFBundleLocalizations: ['en', 'zh_CN'] },
+      extendInfo: {
+        CFBundleLocalizations: ['en', 'zh_CN'],
+        NSMicrophoneUsageDescription: 'Noven uses your microphone to transcribe speech into message drafts.',
+      },
       identity: unsigned ? null : macOSSigning?.signingIdentity,
       forceCodeSigning: !unsigned,
       hardenedRuntime: !unsigned,
-      extendInfo: { NSMicrophoneUsageDescription: 'Noven uses your microphone to transcribe speech into message drafts.' },
       // ASAR-unpacked native runtime files are pre-signed; PAK resources are sealed by their enclosing bundle.
       signIgnore: ['/Contents/Resources/app\\.asar\\.unpacked/dsh(?:/|$)', '/Contents/Resources/runtime/primary-runtime(?:/|$)', '\\.pak$'],
       notarize: !unsigned,
@@ -237,7 +246,7 @@ export function createElectronBuilderConfig(
       )
     },
     win: {
-      icon: fileURLToPath(new URL('../resources/icon-windows.png', import.meta.url)),
+      icon: icons.windowsIcon,
       forceCodeSigning: !unsigned,
       signtoolOptions: {
         sign: windowsSigner,

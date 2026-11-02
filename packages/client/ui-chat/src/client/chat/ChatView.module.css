@@ -60,6 +60,9 @@
   margin: 0 auto;
   display: flex;
   flex-direction: column;
+  padding: var(--noven-conversation-reading-padding, 0);
+  border-radius: 16px;
+  background: var(--noven-conversation-reading-surface, transparent);
 }
 
 /* `hidden="until-found"` retains a zero-height box so browser find can reveal

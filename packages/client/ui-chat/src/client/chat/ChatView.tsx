@@ -21,6 +21,7 @@ import { TurnNavigator } from './TurnNavigator.tsx'
 import { mergeTurnRailItems } from './turn-rail-items.ts'
 import { useChatScroll } from './use-chat-scroll.ts'
 import { fileMediaUrl, resolveWorkspacePath } from '@deepseek-ai/dsh-util-workspace-path'
+import { BlockRegistryProvider, type BlockSourceKind } from '../blocks/registry.tsx'
 import css from './ChatView.module.css'
 
 /** Host/OS refusal text for the file-open dialog; empty throws keep a locale fallback. */
@@ -100,6 +101,7 @@ const ChatNodeList = memo(function ChatNodeList({ entries, useChatGroup, pending
 export function ChatView({
   useSession, useChat, useChatNode, useChatNodeProcess, useChatGroup, useConversation, useSessions, useStore, actions, renderSlot,
   sessionId, openFile, openSkill, openExternalLink, loadOlder, loadThrough, loadImage, inspectCall, chatScroll, forkAt, fileMentions,
+  blocks, commitBlock,
   usePresentation, useProjection, t,
 }: ChatViewSlotProps) {
   const order = useChat(s => s.order)
@@ -121,6 +123,12 @@ export function ChatView({
   const inbox = useProjection('inbox') as unknown as InboxState | undefined
   // Workspace root off the session list row: path summaries display relative to it.
   const cwd = useSessions(s => s.byId[sessionId]?.cwd)
+  const resolveBlockSource = useMemo(
+    () => (kind: BlockSourceKind, src: string) => kind === 'workspace'
+      ? fileMediaUrl(document.baseURI, resolveWorkspacePath(cwd, src))
+      : (kind === 'raw' ? src : blocks.resolveSource(kind, src, sessionId, cwd)),
+    [blocks, cwd, sessionId],
+  )
   const fileImages = useMemo(() => ({
     resolve: (path: string) => fileMediaUrl(document.baseURI, resolveWorkspacePath(cwd, path)),
     labels: {
@@ -219,7 +227,7 @@ export function ChatView({
     loadedTurns: turnNavigationItems,
   })
 
-  return (
+  const frame = (
     <div className={css.frame}>
       {scroll.initialized && (
         <TurnNavigator
@@ -300,6 +308,7 @@ export function ChatView({
       )}
     </div>
   )
+  return <BlockRegistryProvider registry={blocks} resolveSource={resolveBlockSource} commit={commitBlock}>{frame}</BlockRegistryProvider>
 }
 
 /** In-page Host open-path refusal: the wire reason plus a retry of the same path. */

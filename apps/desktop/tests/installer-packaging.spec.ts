@@ -64,6 +64,17 @@ describe('installer preparation preserves application dependencies', () => {
     }
   })
 
+  it('rejects a release build when the generated Noven profile is absent', async () => {
+    const { createElectronBuilderConfig } = await import('../scripts/electron-builder-config.mjs')
+    expect(() => createElectronBuilderConfig({
+      DSH_DESKTOP_APP_ID: 'com.example.installer',
+      DSH_DESKTOP_TARGET_PLATFORM: 'win32',
+      DSH_DESKTOP_TARGET_ARCH: 'x64',
+      DSH_DESKTOP_UNSIGNED: '1',
+      NOVEN_REQUIRE_PROFILE: '1',
+    }, 'win32', 'x64')).toThrow('required Noven profile is missing or incomplete')
+  })
+
   it('names unsigned Windows artifacts so they cannot pass for release builds', async () => {
     const { createElectronBuilderConfig } = await import('../scripts/electron-builder-config.mjs')
     const config = createElectronBuilderConfig({
@@ -74,7 +85,7 @@ describe('installer preparation preserves application dependencies', () => {
       DSH_DESKTOP_TARGET_ARCH: 'x64',
       DSH_DESKTOP_UNSIGNED: '1',
     }, 'win32', 'x64')
-    expect(config.artifactName).toBe('deepseek-harness-${version}-${os}-${arch}-unsigned.${ext}')
+    expect(config.artifactName).toBe('Noven-${version}-${os}-${arch}-unsigned.${ext}')
   })
 
   it('packages every preload entry point the shell loads', async () => {

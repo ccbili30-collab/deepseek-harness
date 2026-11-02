@@ -102,12 +102,12 @@ describe('ui-layout client apply', () => {
     const fiber = ctx.plugin({ inject: [...inject], apply })
     await fiber.await()
     const entry = slots.entries('root')[0]!
-    // The frame's inject is the canvas-claims share alone: the claim arrives
-    // pulled, never through the store the root registration seats.
+    // Claims are pulled through the injected source; the mounted frame also
+    // receives the explicit product-transition runner.
     const injected = (entry.inject as ((key?: unknown) => unknown) | undefined)?.(undefined) as { canvasClaims: LayoutController['canvasClaims'] } | undefined
     const layout0 = ctx.get('layout') as LayoutController
     expect(injected?.canvasClaims).toBe(layout0.canvasClaims)
-    expect(injected && Object.keys(injected)).toEqual(['canvasClaims'])
+    expect(injected && Object.keys(injected)).toEqual(['canvasClaims', 'provideFrameTransition'])
     const handle = entry.store as ReturnType<typeof createLayoutStore>
     const instance = handle.create()
     expect(handle.create()).toBe(instance)

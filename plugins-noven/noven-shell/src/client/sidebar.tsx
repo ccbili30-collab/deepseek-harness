@@ -30,7 +30,7 @@ export function FootLauncher({ wide, openSettings, openMy, t }: FootLauncherProp
   }
   return (
     <div className="nv-foot">
-      <button type="button" className="nv-foot-user" onClick={openMy}>
+      <button type="button" className="nv-foot-user" onClick={openSettings}>
         <FootAvatar src={profileAvatarUrl(profile)} />
         <span className="nv-foot-name">{profile.name}</span>
       </button>

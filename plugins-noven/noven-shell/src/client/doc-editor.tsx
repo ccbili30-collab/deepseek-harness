@@ -3,7 +3,7 @@
  * 斜杠插入、块拖拽；markdown 只是硬盘格式，打开时解析成块、存盘时序列化回 md。
  * 左侧标题树由块的 heading 实时生成，点条目跳到对应标题。
  */
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { Block } from '@blocknote/core'
 import { zh } from '@blocknote/core/locales'
 import { useCreateBlockNote } from '@blocknote/react'
@@ -11,6 +11,41 @@ import { BlockNoteView } from '@blocknote/mantine'
 import { wordCount } from './editor.tsx'
 import { applyImageWidths, extractImageWidths, percentToPx, pxToPercent } from './doc-image-width.ts'
 import { BLOCKNOTE_CSS } from './doc-blocknote-css.ts'
+
+export type NovenColorScheme = 'light' | 'dark'
+let colorScheme: NovenColorScheme = 'light'
+const colorSchemeListeners = new Set<() => void>()
+/** Subscribe to resolved editor themes. @param listener - change callback. @returns subscription disposer. */
+export const subscribeNovenColorScheme = (listener: () => void): (() => void) => {
+  colorSchemeListeners.add(listener)
+  return () => { colorSchemeListeners.delete(listener) }
+}
+/** Read the current resolved editor theme. @returns light or dark. */
+export const readNovenColorScheme = (): NovenColorScheme => colorScheme
+
+/**
+ * Bind both BlockNote editors to the product's resolved theme, including later changes.
+ * @param read - current resolved color scheme.
+ * @param subscribe - resolved-scheme subscription; returns its disposer.
+ * @returns the theme subscription disposer.
+ */
+export function bindNovenEditorTheme(
+  read: () => NovenColorScheme,
+  subscribe: (listener: (scheme: NovenColorScheme) => void) => () => void,
+): () => void {
+  const update = (next: NovenColorScheme): void => {
+    if (colorScheme === next) return
+    colorScheme = next
+    for (const listener of colorSchemeListeners) listener()
+  }
+  update(read())
+  return subscribe(update)
+}
+
+/** Read the resolved product color scheme reactively. @returns light or dark. */
+export function useNovenColorScheme(): NovenColorScheme {
+  return useSyncExternalStore(subscribeNovenColorScheme, readNovenColorScheme)
+}
 
 /** 右缘刻度：标题在全文中的相对位置（0..1，按可滚动高度归一）。 */
 export interface OutlineMark {
@@ -98,9 +133,13 @@ function useBlockNoteStyles(): void {
  * @param outlineLabel - 标题树的标题文案（locale 归调用方）。
  * @param onChange - 防抖后的 markdown 快照。
  */
-export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, onWordCount, onMarks, zoom, onZoom }: {
+export function BlockNoteDocEditor({ markdown, onChange, onDraft, autoSave = true, onOutline, onActive, onWordCount, onMarks, zoom, onZoom }: {
   readonly markdown: string
   readonly onChange: (markdown: string) => void
+  /** Latest draft for the manual-save path; never written automatically when autoSave is false. */
+  readonly onDraft?: ((markdown: string) => void) | undefined
+  /** When false, keep edits in the draft instead of calling the persistence callback. */
+  readonly autoSave?: boolean
   /** 当前缩放（1 = 100%），Ctrl/Cmd + 滚轮调整，页签层负责持久化。 */
   readonly zoom: number
   readonly onZoom: (zoom: number) => void
@@ -114,6 +153,7 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
   readonly onMarks: (marks: readonly OutlineMark[]) => void
 }) {
   useBlockNoteStyles()
+  const colorScheme = useNovenColorScheme()
   const editor = useCreateBlockNote({ dictionary: zh })
   const itemsRef = useRef<readonly OutlineItem[]>([])
   const scroller = useRef<HTMLDivElement | null>(null)
@@ -195,13 +235,14 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
       style={{ ['--nv-doc-zoom' as string]: String(zoom) }}>
       <BlockNoteView
         editor={editor}
-        theme="light"
+        theme={colorScheme}
         onChange={() => {
           const items = outlineOf(editor.document)
           itemsRef.current = items
           onOutline(items)
           onWordCount(wordCount(plainTextOf(editor.document)))
           reportMarks()
+          if (ready.current) onDraft?.(editor.blocksToMarkdownLossy())
           if (timer.current !== undefined) window.clearTimeout(timer.current)
           timer.current = window.setTimeout(() => {
             timer.current = undefined
@@ -214,7 +255,8 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
             const text = applyImageWidths(editor.blocksToMarkdownLossy(), widths)
             if (text === last.current) return
             last.current = text
-            onChange(text)
+            onDraft?.(text)
+            if (autoSave) onChange(text)
           }, 600)
         }}
       />
@@ -226,25 +268,47 @@ export function BlockNoteDocEditor({ markdown, onChange, onOutline, onActive, on
  * 纯文本编辑面（代码/配置等非文稿文件）：不改写内容，原样进出。
  * markdown 文稿一律走上面的 BlockNote；这里只服务 json/yaml/代码类文件。
  */
-export function PlainTextDocEditor({ text, onChange }: {
+export function PlainTextDocEditor({ text, onChange, onDraft, autoSave = true, lineNumbers = false }: {
   readonly text: string
   readonly onChange: (text: string) => void
+  /** Latest draft for the manual-save path; never written automatically when autoSave is false. */
+  readonly onDraft?: ((text: string) => void) | undefined
+  /** When false, keep edits in the draft instead of calling the persistence callback. */
+  readonly autoSave?: boolean
+  /** Show synchronized line numbers beside the plain-text editor. */
+  readonly lineNumbers?: boolean
 }) {
   const timer = useRef<number | undefined>(undefined)
   const last = useRef(text)
+  const numbersRef = useRef<HTMLOListElement | null>(null)
+  const [lineCount, setLineCount] = useState(() => text.split('\n').length)
   useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
-  return (
+  const editor = (
     <textarea className="nv-doc-plain" defaultValue={text} spellCheck={false}
+      onScroll={event => {
+        if (numbersRef.current !== null) numbersRef.current.scrollTop = event.currentTarget.scrollTop
+      }}
       onChange={event => {
         const value = event.currentTarget.value
+        setLineCount(value.split('\n').length)
+        onDraft?.(value)
         if (timer.current !== undefined) window.clearTimeout(timer.current)
         timer.current = window.setTimeout(() => {
           timer.current = undefined
           if (value === last.current) return
           last.current = value
-          onChange(value)
+          if (autoSave) onChange(value)
         }, 600)
       }} />
+  )
+  if (!lineNumbers) return editor
+  return (
+    <div className="nv-doc-plain-with-lines">
+      <ol ref={numbersRef} className="nv-doc-line-numbers" aria-hidden="true">
+        {Array.from({ length: lineCount }, (_, index) => <li key={index + 1}>{index + 1}</li>)}
+      </ol>
+      {editor}
+    </div>
   )
 }
 
@@ -262,6 +326,7 @@ export function CardMarkdownEditor({ markdown, onSave, locked = false }: {
   readonly locked?: boolean
 }) {
   useBlockNoteStyles()
+  const colorScheme = useNovenColorScheme()
   const editor = useCreateBlockNote({ dictionary: zh })
   const loaded = useRef(false)
   const last = useRef(markdown)
@@ -327,7 +392,7 @@ export function CardMarkdownEditor({ markdown, onSave, locked = false }: {
     <div className="nv-card-bn" ref={box}>
       <BlockNoteView
         editor={editor}
-        theme="light"
+        theme={colorScheme}
         editable={!locked}
         onChange={() => {
           if (locked) return

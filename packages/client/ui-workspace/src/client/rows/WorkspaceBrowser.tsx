@@ -12,7 +12,9 @@
  * and `sidebar.workspaces.session.row.action` lists rendered through this
  * entry's `renderSlot`; the actions in them, this package's own included,
  * are slot entries with their own behavior, so this component threads no
- * action callbacks and hosts no action surface.
+ * action callbacks and hosts no action surface. When a product occupies
+ * `sidebar.workspaces.content`, that navigation replaces this whole region;
+ * an empty seat or absent current Session restores this Session browser.
  */
 import {
   type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode,
@@ -915,6 +917,7 @@ export function WorkspaceBrowser({
   actions,
   startSession,
   open,
+  dismissSessionBrowser,
   requestSessionRename,
   notifyArchivedNotOpenable,
   renameWorkspace,
@@ -926,6 +929,7 @@ export function WorkspaceBrowser({
   searchSessions,
   searchResultLimit,
   useDirectoryFlow,
+  useSessionBrowser,
   useHostInfo,
   useShortcuts,
   useWorkspaceShortcuts,
@@ -964,6 +968,7 @@ export function WorkspaceBrowser({
   // Live occupancy of this surface's directory-flow hole (the same source the
   // flow reads): a composition without a picking affordance can add nothing.
   const directoryFlowAvailable = useDirectoryFlow(occupied => occupied)
+  const temporarySessionBrowser = useSessionBrowser(shown => shown)
   const groupBy = useStore(s => s.groupBy)
   const orderBy = useStore(s => s.orderBy)
   // Persisted view blobs written before the archived filter existed rehydrate
@@ -1363,7 +1368,7 @@ export function WorkspaceBrowser({
     })
   }
 
-  return (
+  const sessionBrowser = (
     <div className={clsx(css.root, !wide && css.rail)}>
       {wide && topPinnedNodes.length > 0 && (
         <div className={css.pinnedSection} role="group" aria-label={t('section.pinned')}>
@@ -1448,6 +1453,14 @@ export function WorkspaceBrowser({
           </div>
         )}
         <div className={clsx(css.headerActions, wide && searchExpanded && css.headerActionsHidden)}>
+          {temporarySessionBrowser && (
+            <Tooltip label={t('content.restore')} side="bottom" delayMs={400}>
+              <button type="button" className={css.iconButton} aria-label={t('content.restore')}
+                data-workspace-content-restore onClick={dismissSessionBrowser}>
+                <IconCloseFillRegular size={wide ? 13 : 18} />
+              </button>
+            </Tooltip>
+          )}
           {wide && (
             <ViewOptionsMenu
               groupBy={groupBy}
@@ -1669,4 +1682,6 @@ export function WorkspaceBrowser({
         onDone={dismissForkError} />}
     </div>
   )
+  if (mainSessionId === undefined || temporarySessionBrowser) return sessionBrowser
+  return renderSlot('sidebar.workspaces.content', { wide, expandSidebar }, { fallback: sessionBrowser })
 }

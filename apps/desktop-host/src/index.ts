@@ -2,8 +2,9 @@
 
 import { delimiter, join } from 'node:path'
 import { inspect } from 'node:util'
-import { loadLayeredEnv, loadProfileDirectory, reportSkippedBundles } from '@deepseek-ai/dsh-app-boot'
+import { loadLayeredEnv, reportSkippedBundles } from '@deepseek-ai/dsh-app-boot'
 import { runProfile } from '@deepseek-ai/dsh/profile-boot'
+import { loadDesktopProfile } from './profile.ts'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import type {} from '@deepseek-ai/dsh-deepseek-account'
@@ -20,14 +21,15 @@ async function main(): Promise<void> {
   const projectDir = process.argv[3] as string
   installOfficeEngineResolution(runtimeDir)
   const installAnchor = join(runtimeDir, 'node_modules', '@deepseek-ai', 'dsh', 'package.json')
-  const profile = loadProfileDirectory('dsh', projectDir, installAnchor)
+  const profile = loadDesktopProfile(projectDir, installAnchor)
   reportSkippedBundles('dsh', profile)
   const application = runProfile({
     environment: loadLayeredEnv('dsh'),
     profile: 'desktop',
     resolvedProfile: { profile, installAnchor },
     patchFiles: [],
-    args: ['--no-open', '--port', '19387'],
+    // Tests can request an ephemeral port without changing the production default.
+    args: ['--no-open', '--port', process.env.DSH_DESKTOP_WEB_PORT ?? '19387'],
     ...(process.argv[5] === undefined ? {} : {
       packageManager: {
         command: process.execPath,

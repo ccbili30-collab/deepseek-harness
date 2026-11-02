@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for 2026-10-29-noven-workspace-shell.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write .agents/notes/implemented/architecture/2026-10-29-noven-workspace-shell.md
+/agent-note-noven-workspace-shell-one-frame-one-auxiliary-region-and-workspace-owned-work:
+  en: ed73ee72b4d3ea96
+  zh: bcce69bd2f57f291
+/agent-note-noven-workspace-shell-one-frame-one-auxiliary-region-and-workspace-owned-work/problem:
+  en: ff382625683e905e
+  zh: ced97c72b09a9e6d
+/agent-note-noven-workspace-shell-one-frame-one-auxiliary-region-and-workspace-owned-work/decision:
+  en: 5da301c6bbc9718e
+  zh: 67393cb40ef62b5b
+/agent-note-noven-workspace-shell-one-frame-one-auxiliary-region-and-workspace-owned-work/alternatives-considered:
+  en: 3d339f7a101e76f2
+  zh: cb57e619bef324d3
+/agent-note-noven-workspace-shell-one-frame-one-auxiliary-region-and-workspace-owned-work/consequences:
+  en: 07a9b92a871fbb62
+  zh: d67deaf2301c7467
+/agent-note-noven-workspace-shell-one-frame-one-auxiliary-region-and-workspace-owned-work/testing:
+  en: a66b7336e2374314
+  zh: 248798136e7e4d36

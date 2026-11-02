@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import type { GlobalStandardProps } from '@deepseek-ai/dsh-client-ui-slots'
+import type { GlobalStandardProps, RenderOpts } from '@deepseek-ai/dsh-client-ui-slots'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, createEvent, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
@@ -98,10 +98,12 @@ function dragData(): Pick<DataTransfer, 'effectAllowed' | 'dropEffect' | 'setDat
 // The default child stub: an open directory flow shows its marker; the two
 // Session row lists stay empty (their entries have their own spec). A stub
 // satisfies the generic render signature only with an erased owner type.
-const renderDirectoryFlowOnly: WorkspaceBrowserProps['renderSlot'] = (name: string, owner: object) =>
-  name === 'sidebar.workspaces.directoryFlow' && (owner as DirectoryFlowOwnerProps).open
+const renderDirectoryFlowOnly: (name: string, owner: object, options: RenderOpts | undefined) => ReturnType<WorkspaceBrowserProps['renderSlot']> = (name, owner, options) => {
+  if (name === 'sidebar.workspaces.content') return options?.fallback ?? null
+  return name === 'sidebar.workspaces.directoryFlow' && (owner as DirectoryFlowOwnerProps).open
     ? <div data-testid="directory-flow" />
     : null
+}
 
 function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
   const controls = createWorkspaceShortcutControls()
@@ -126,6 +128,7 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     actions: store.actions,
     startSession: vi.fn(),
     open: vi.fn(),
+    dismissSessionBrowser: vi.fn(),
     searchSessions: vi.fn(async () => ({ items: [], hasMore: false })),
     searchResultLimit: 20,
     syncSelection: () => {},
@@ -138,8 +141,10 @@ function mount(overrides: Partial<WorkspaceBrowserProps> = {}) {
     insertWorkspaceBefore: vi.fn(async () => {}),
     createWorkspace: vi.fn(async () => workspace('created', [])),
     useDirectoryFlow: bindSnapshotSelector({ getSnapshot: () => true, subscribe: () => () => {} }),
+    useSessionBrowser: hook(false),
     useHostInfo: selector => selector({ home: undefined, isLoopback: true }),
     renderSlot: renderDirectoryFlowOnly,
+    SessionProvider: ({ children }) => children,
     t,
     ...overrides,
   }
@@ -154,6 +159,52 @@ function rerender(b: ReturnType<typeof mount>, overrides: Partial<WorkspaceBrows
 }
 
 describe('WorkspaceBrowser', () => {
+  it('uses occupied content navigation and restores the Session browser fallback', () => {
+    const sessions = sessionState([summary('current', 1)], { main: sid('current') })
+    const expandSidebar = vi.fn()
+    const withContent: WorkspaceBrowserProps['renderSlot'] = (name: string, owner: object, options: RenderOpts | undefined) => {
+      if (name === 'sidebar.workspaces.content') {
+        expect(owner).toEqual({ wide: true, expandSidebar })
+        return <div>项目内容树</div>
+      }
+      return renderDirectoryFlowOnly(name, owner, options)
+    }
+    const b = mount({ useSessions: hook(sessions), expandSidebar, renderSlot: withContent })
+    expect(screen.getByText('项目内容树')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: '视图选项' })).toBeNull()
+
+    const withoutContent: WorkspaceBrowserProps['renderSlot'] = (name: string, owner: object, options: RenderOpts | undefined) => {
+      if (name === 'sidebar.workspaces.content') return options?.fallback ?? null
+      return renderDirectoryFlowOnly(name, owner, options)
+    }
+    rerender(b, { renderSlot: withoutContent })
+    expect(screen.queryByText('项目内容树')).toBeNull()
+    expect(screen.getByRole('button', { name: '视图选项' })).not.toBeNull()
+
+    rerender(b, {
+      useSessions: hook(sessionState([summary('current', 1)])),
+      renderSlot: withContent,
+    })
+    expect(screen.queryByText('项目内容树')).toBeNull()
+    expect(screen.getByRole('button', { name: '视图选项' })).not.toBeNull()
+  })
+
+  it('temporarily restores the full Session browser over product navigation and offers a way back', () => {
+    const sessions = sessionState([summary('current', 1)], { main: sid('current') })
+    const withContent: WorkspaceBrowserProps['renderSlot'] = (name: string, owner: object, options: RenderOpts | undefined) => {
+      if (name === 'sidebar.workspaces.content') return <div>项目内容树</div>
+      return renderDirectoryFlowOnly(name, owner, options)
+    }
+    const b = mount({ useSessions: hook(sessions), renderSlot: withContent, useSessionBrowser: hook(false) })
+    expect(screen.getByText('项目内容树')).not.toBeNull()
+
+    rerender(b, { useSessionBrowser: hook(true) })
+    expect(screen.queryByText('项目内容树')).toBeNull()
+    expect(screen.getByRole('button', { name: '视图选项' })).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '返回内容导航' }))
+    expect(b.props.dismissSessionBrowser).toHaveBeenCalledOnce()
+  })
+
   it.each([{ messages: en, common: commonEn }, { messages: zh, common: commonZh }])('shows localized fork failures and dismisses them', ({ messages, common }) => {
     const b = mount({ t: makeTranslate(messages, common) })
     act(() => { b.controls.forkFailed('unavailable') })

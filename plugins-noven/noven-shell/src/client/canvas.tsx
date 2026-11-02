@@ -9,10 +9,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ComponentType } from 'react'
 import { createPortal } from 'react-dom'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { NovenWorkbenchSettings } from './workbench.ts'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import { defineStore } from '@deepseek-ai/dsh-client-store'
 import { LibraryTab } from './tabs/Library.tsx'
-import type { PropsLocale, PropsRuntime, PropsStore, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
+import type { PropsLocale, PropsRuntime, PropsRenderSlots, PropsStore, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SidebarRightGuideBox } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import { Menu, MarkdownText, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardAddr, CardOp, CardOpResult, CardState } from './card-api.ts'
 import type { ImportReport } from './tree-api.ts'
@@ -34,6 +38,7 @@ import type { IslandCall, IslandFrame } from './stage-island.tsx'
 import { buildEnv, realWebview, SIM_IME, WEBVIEW_BASELINE, type FrameSendResult } from './stage-frame.ts'
 import { collectDeltas, foldArchive, DELTA_WINDOW } from './stage-archive.ts'
 import { useSessionSettings } from './session-settings.tsx'
+import { appearanceMaterial, canvasBackgroundStyle, setFocusedCanvasFile, useAppearance, useAppearanceVisual } from './appearance.tsx'
 
 /** markdown 文稿走富编辑器（BlockNote）；其余文本（json/yaml/代码…）保留纯文本块编辑。 */
 const RICH_TEXT_PATH = /\.(md|markdown|mdx|txt)$/i
@@ -50,13 +55,15 @@ export const fileTabKind = (path: string): 'doc' | 'work' =>
 /** 走图片查看器而非 iframe 画框的作品扩展名——与创作库登记的 kind 推断同口径。 */
 const IMAGE_WORK_EXTS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.svg'])
 
-/** 画布上一个打开的对象：key 去重，kind 派发体组件，owner 归属会话（C9）。 */
+/** 画布上一个打开的对象：key 在工作区内去重，kind 派发体组件。 */
 export interface CanvasTab {
   readonly key: string
   readonly kind: 'start' | 'chat' | 'card' | 'doc' | 'files' | 'work' | 'conv' | 'manual' | 'library' | 'page'
   readonly title: string
-  /** 会话域归属——"开着什么"是每个会话自己的工作现场，跨会话不串。 */
+  /** 现有 Session 消费者的对象操作与 I/O 身份；不作为布局分片键。 */
   readonly owner: SessionId
+  /** 布局所属工作区；工作区列表尚未解析时暂缺，绑定后由 store 补齐。 */
+  readonly workspace?: WorkspaceId
   /** card 体：卡号与它的家（存根不存会话地址，会话会变、项目不会）。 */
   readonly cardId?: string
   readonly cardAddr?: CardAddr
@@ -91,14 +98,20 @@ export interface FloatPage {
   readonly h: number
 }
 
-/** 会话的起点标签：每个会话自己的第一格。 */
-export function startTab(owner: SessionId): CanvasTab {
-  return { key: 'start', kind: 'start', title: '', owner }
+type CanvasScopeKey = `workspace:${string}` | `session:${string}`
+
+const workspaceScopeKey = (workspace: WorkspaceId): CanvasScopeKey => `workspace:${workspace}`
+const sessionScopeKey = (owner: SessionId): CanvasScopeKey => `session:${owner}`
+const tabScopeKey = (tab: CanvasTab): CanvasScopeKey => tab.workspace === undefined ? sessionScopeKey(tab.owner) : workspaceScopeKey(tab.workspace)
+
+/** 工作区的起点空态：没有真实页签时显示，不占页签条。 */
+export function startTab(owner: SessionId, workspace?: WorkspaceId): CanvasTab {
+  return { key: 'start', kind: 'start', title: '', owner, workspace }
 }
 
-/** 会话的手机屏标签：常驻不可关——手机上会话本身就是那个屏。 */
-export function chatTab(owner: SessionId): CanvasTab {
-  return { key: 'chat', kind: 'chat', title: '', owner }
+/** 工作区的手机屏标签：常驻不可关——手机上会话本身就是那个屏。 */
+export function chatTab(owner: SessionId, workspace?: WorkspaceId): CanvasTab {
+  return { key: 'chat', kind: 'chat', title: '', owner, workspace }
 }
 
 /** 布局树叶：一组页签（各自页签条 + 活动页）。 */
@@ -124,16 +137,18 @@ export type DropZone = 'left' | 'right' | 'top' | 'bottom' | 'center'
 
 export type CanvasState = {
   tabs: CanvasTab[]
-  /** owner → 布局树。缺省/坏数据由 normLayout 自愈（旧 v3 快照只有 active）。 */
+  /** 工作区作用域 → 布局树；未解析工作区的临时数据使用会话作用域。 */
   layout: Record<string, CanvasNode>
-  /** owner → 浮窗页表：页签拖出成浮窗=前台工作面，键仍指向 tabs 里的同一实体。 */
+  /** 工作区作用域 → 浮窗页表：页签拖出成浮窗=前台工作面，键仍指向 tabs 里的同一实体。 */
   floats?: Record<string, FloatPage[]>
-  /** owner → 焦点叶 id：新页签落在哪、外部 select 作用于哪。 */
+  /** 工作区作用域 → 焦点叶 id：新页签落在哪、外部 select 作用于哪。 */
   focus: Record<string, string>
+  /** 现有 Session 动作参数到工作区的解析表；不是第二份布局状态。 */
+  sessionWorkspaces: Record<string, WorkspaceId>
   /** @deprecated v3 及更早的活动页签表——normLayout 读一次建叶，之后由叶自持。 */
   active?: Record<string, string>
-  /** 新建面板：挂在发起它的会话名下；dir 是文稿要落的分组目录。 */
-  dialog: { readonly owner: SessionId; readonly kind: CreateKind; readonly dir?: string } | null
+  /** 新建面板：布局挂在工作区作用域，owner 保留发起 Session；dir 是文稿目录。 */
+  dialog: { readonly owner: SessionId; readonly scope?: CanvasScopeKey; readonly kind: CreateKind; readonly dir?: string } | null
   /** 手机模拟器（按项目根记）：open=当前在屏会话；pick=被标「模拟」的绑定会话。 */
   simOpen: Record<string, SessionId>
   simPick: Record<string, SessionId[]>
@@ -150,6 +165,8 @@ export type CanvasState = {
 }
 
 type CanvasActions = {
+  /** 绑定 Session 动作与 Workspace 布局；active 仅由当前项目焦点驱动，避免旧宿主抢回对象 I/O 身份。 */
+  bindWorkspace: (draft: CanvasState, owner: SessionId, workspace: WorkspaceId, active: boolean) => void
   open: (draft: CanvasState, tab: CanvasTab, leafId?: string) => void
   close: (draft: CanvasState, owner: SessionId, key: string) => void
   select: (draft: CanvasState, owner: SessionId, key: string) => void
@@ -206,11 +223,25 @@ function leafById(node: CanvasNode, id: string): CanvasLeaf | undefined {
   return leafById(node.a, id) ?? leafById(node.b, id)
 }
 
-/** owner 画布焦点叶的当前页签 key；取不到焦点叶回退首叶，无布局返回 undefined。 */
-export function activeKey(state: Pick<CanvasState, 'layout' | 'focus'>, owner: SessionId): string | undefined {
-  const node = state.layout[owner]
+type CanvasScopeState = Partial<Pick<CanvasState, 'sessionWorkspaces'>>
+
+function scopeForSession(state: CanvasScopeState, owner: SessionId): CanvasScopeKey {
+  const workspace = state.sessionWorkspaces?.[owner]
+  return workspace === undefined ? sessionScopeKey(owner) : workspaceScopeKey(workspace)
+}
+
+/** 当前 Session 对应工作区内的全部对象；Session 只用于解析布局作用域。 */
+export function canvasTabs(state: Pick<CanvasState, 'tabs'> & CanvasScopeState, owner: SessionId): CanvasTab[] {
+  const scope = scopeForSession(state, owner)
+  return state.tabs.filter(row => tabScopeKey(row) === scope)
+}
+
+/** Session 对应工作区焦点叶的当前页签 key；取不到焦点叶回退首叶，无布局返回 undefined。 */
+export function activeKey(state: Pick<CanvasState, 'layout' | 'focus'> & CanvasScopeState, owner: SessionId): string | undefined {
+  const scope = scopeForSession(state, owner)
+  const node = state.layout[scope]
   if (node === undefined) return undefined
-  return (leafById(node, state.focus[owner] ?? '') ?? leavesOf(node)[0])?.active
+  return (leafById(node, state.focus[scope] ?? '') ?? leavesOf(node)[0])?.active
 }
 
 /** 把 leafId 那片叶换成节点 n（分裂时用），纯函数。 */
@@ -231,11 +262,11 @@ function splitLeaf(leaf: CanvasLeaf, zone: Exclude<DropZone, 'center'>, fresh: C
  * 每条页签只许在一叶——重复引用按先序保留第一份。v3 快照没有 layout 时按
  * active 表建单叶，老现场一格不丢。
  */
-function normLayout(state: Pick<CanvasState, 'tabs' | 'layout' | 'active' | 'floats'>, owner: SessionId): CanvasNode {
-  const keys = state.tabs.filter(row => row.owner === owner).map(row => row.key)
+function normLayout(state: Pick<CanvasState, 'tabs' | 'layout' | 'active' | 'floats'>, scope: CanvasScopeKey): CanvasNode {
+  const keys = state.tabs.filter(row => tabScopeKey(row) === scope).map(row => row.key)
   const seen = new Set<string>()
   // 浮窗里的键是有家的——不算无家可归、不塞回叶里。
-  for (const f of state.floats?.[owner] ?? []) seen.add(f.key)
+  for (const f of state.floats?.[scope] ?? []) seen.add(f.key)
   const rebuild = (node: CanvasNode): CanvasNode | null => {
     if (isLeaf(node)) {
       // start/chat 是宿主补的虚拟页签——可以在某叶显式落位（拖分栏双视口），
@@ -254,8 +285,8 @@ function normLayout(state: Pick<CanvasState, 'tabs' | 'layout' | 'active' | 'flo
     return { ...node, a, b }
   }
   const firstLeaf = (node: CanvasNode): CanvasLeaf | undefined => isLeaf(node) ? node : firstLeaf(node.a) ?? firstLeaf(node.b)
-  const rebuilt = state.layout?.[owner] !== undefined ? rebuild(state.layout[owner] as CanvasNode) : null
-  let node = rebuilt ?? { id: nid('L'), tabs: [], active: state.active?.[owner] ?? 'chat' }
+  const rebuilt = state.layout?.[scope] !== undefined ? rebuild(state.layout[scope] as CanvasNode) : null
+  let node = rebuilt ?? { id: nid('L'), tabs: [], active: state.active?.[scope] ?? 'chat' }
   const missing = keys.filter(key => !seen.has(key))
   const first = firstLeaf(node)
   if (first !== undefined && missing.length > 0) {
@@ -264,77 +295,181 @@ function normLayout(state: Pick<CanvasState, 'tabs' | 'layout' | 'active' | 'flo
   return node
 }
 
-/** draft 版自愈：规整 layout[owner] 并修 focus。 */
-function normDraft(d: CanvasState, owner: SessionId): CanvasNode {
+/** draft 版自愈：规整 layout[scope] 并修 focus。 */
+function normDraft(d: CanvasState, scope: CanvasScopeKey): CanvasNode {
   if (d.layout === undefined) d.layout = {}
   if (d.focus === undefined) d.focus = {}
-  const node = normLayout(d, owner)
-  d.layout[owner] = node
-  if (d.active !== undefined) delete d.active[owner] // 迁移完即清，不拖着两口径
-  if (d.focus[owner] === undefined || leafById(node, d.focus[owner]) === undefined) {
-    d.focus[owner] = leavesOf(node)[0]?.id ?? ''
+  const node = normLayout(d, scope)
+  d.layout[scope] = node
+  if (d.active !== undefined) delete d.active[scope] // 迁移完即清，不拖着两口径
+  if (d.focus[scope] === undefined || leafById(node, d.focus[scope]) === undefined) {
+    d.focus[scope] = leavesOf(node)[0]?.id ?? ''
   }
   return node
 }
 
-/** 画布标签 store：一份持久态按 owner 切成会话切片（C9：开着什么归会话）。 */
-export function createCanvasStore() {
+const CANVAS_V3_KEY = 'noven.canvas.tabs.v3'
+const CANVAS_V4_KEY = 'noven.canvas.tabs.v4'
+
+function freshCanvasState(): CanvasState {
+  return { tabs: [], layout: {}, focus: {}, sessionWorkspaces: {}, dialog: null, simOpen: {}, simPick: {}, studioOn: {}, simSize: 'p390', simIme: false, simWebview: 'baseline', simView: {}, floats: {} }
+}
+
+function remapLegacyMap<T>(values: Record<string, T> | undefined): Record<string, T> {
+  const mapped: Record<string, T> = {}
+  for (const [owner, value] of Object.entries(values ?? {})) mapped[sessionScopeKey(owner as SessionId)] = value
+  return mapped
+}
+
+/** 已提交 v4 存在时绝不回读 v3；否则只把 v3 复制进初始内存，原键保持不动。 */
+function initialCanvasState(): CanvasState {
+  const fresh = freshCanvasState()
+  if (typeof localStorage === 'undefined') return fresh
+  try {
+    if (localStorage.getItem(CANVAS_V4_KEY) !== null) return fresh
+    const raw = localStorage.getItem(CANVAS_V3_KEY)
+    if (raw === null) return fresh
+    const legacy = JSON.parse(raw) as Partial<CanvasState> | null
+    if (legacy === null || !Array.isArray(legacy.tabs)) return fresh
+    return {
+      ...fresh,
+      ...legacy,
+      tabs: legacy.tabs.map(row => ({ ...row, workspace: undefined })),
+      layout: remapLegacyMap(legacy.layout),
+      floats: remapLegacyMap(legacy.floats),
+      focus: remapLegacyMap(legacy.focus),
+      sessionWorkspaces: {},
+      active: legacy.active === undefined ? undefined : remapLegacyMap(legacy.active),
+      dialog: legacy.dialog == null ? null : { ...legacy.dialog, scope: sessionScopeKey(legacy.dialog.owner) },
+    }
+  } catch (error) {
+    console.error('noven canvas v3 migration read failed:', error)
+    return fresh
+  }
+}
+
+function adoptWorkspace(d: CanvasState, owner: SessionId, workspace: WorkspaceId, active: boolean): void {
+  const from = sessionScopeKey(owner)
+  const to = workspaceScopeKey(workspace)
+  ;(d.sessionWorkspaces ??= {})[owner] = workspace
+  let migrated = false
+  for (let index = d.tabs.length - 1; index >= 0; index -= 1) {
+    const row = d.tabs[index]
+    if (row.workspace !== undefined || row.owner !== owner) continue
+    const duplicate = d.tabs.some(candidate => candidate.workspace === workspace && candidate.key === row.key)
+    if (duplicate) d.tabs.splice(index, 1)
+    else {
+      d.tabs[index] = { ...row, workspace }
+      migrated = true
+    }
+  }
+  const sourceLayout = d.layout[from]
+  if (sourceLayout !== undefined) {
+    const targetLayout = d.layout[to]
+    d.layout[to] = targetLayout === undefined ? sourceLayout : { id: nid('s'), dir: 'x', ratio: 0.5, a: targetLayout, b: sourceLayout }
+    delete d.layout[from]
+    migrated = true
+  }
+  const sourceFloats = d.floats?.[from]
+  if (sourceFloats !== undefined) {
+    const targetFloats = d.floats?.[to] ?? []
+    const keys = new Set(targetFloats.map(row => row.key))
+    ;(d.floats ??= {})[to] = [...targetFloats, ...sourceFloats.filter(row => !keys.has(row.key))]
+    delete d.floats?.[from]
+    migrated = true
+  }
+  const sourceFocus = d.focus[from]
+  if (sourceFocus !== undefined) {
+    if (d.focus[to] === undefined) d.focus[to] = sourceFocus
+    delete d.focus[from]
+  }
+  const sourceActive = d.active?.[from]
+  if (sourceActive !== undefined) {
+    if (d.active?.[to] === undefined) (d.active ??= {})[to] = sourceActive
+    delete d.active?.[from]
+  }
+  if (d.dialog?.scope === from) d.dialog = { ...d.dialog, scope: to }
+  if (migrated || d.layout[to] !== undefined) normDraft(d, to)
+  // 非当前宿主只登记解析关系；迟到的 workspace 列表不能抢回当前对象的 Session 身份。
+  if (active) {
+    for (let index = 0; index < d.tabs.length; index += 1) {
+      const row = d.tabs[index]
+      if (row.workspace === workspace) d.tabs[index] = { ...row, owner }
+    }
+    if (d.dialog?.scope === to) d.dialog = { ...d.dialog, owner }
+  }
+}
+
+/**
+ * 画布标签 store：v4 按工作区保存布局，Session 仅保留对象操作与 I/O 身份。
+ * @param restoreCanvas - Whether to read canvas persistence; false starts fresh without deleting the saved value.
+ */
+export function createCanvasStore(restoreCanvas: () => boolean = () => true) {
   return defineStore<CanvasState, CanvasActions>({
-    // 持久键沿用 v3：v3 快照的 active 表由 normLayout 迁成单叶布局，老现场不丢。
-    persist: 'noven.canvas.tabs.v3',
-    init: () => ({ tabs: [], layout: {}, focus: {}, dialog: null, simOpen: {}, simPick: {}, studioOn: {}, simSize: 'p390', simIme: false, simWebview: 'baseline', simView: {}, floats: {} }),
+    persist: restoreCanvas() ? CANVAS_V4_KEY : undefined,
+    init: restoreCanvas() ? initialCanvasState : freshCanvasState,
     actions: {
+      bindWorkspace: adoptWorkspace,
       open: (d, tab, leafId) => {
-        const existing = d.tabs.findIndex(t => t.key === tab.key && t.owner === tab.owner)
-        if (existing >= 0) d.tabs[existing] = { ...d.tabs[existing], ...tab }
-        else d.tabs.push(tab)
+        if (tab.workspace !== undefined) (d.sessionWorkspaces ??= {})[tab.owner] = tab.workspace
+        const scope = scopeForSession(d, tab.owner)
+        const workspace = tab.workspace ?? d.sessionWorkspaces?.[tab.owner]
+        const opened = workspace === undefined ? tab : { ...tab, workspace }
+        const existing = d.tabs.findIndex(row => row.key === tab.key && tabScopeKey(row) === scope)
+        if (existing >= 0) d.tabs[existing] = { ...d.tabs[existing], ...opened }
+        else d.tabs.push(opened)
         // open = 归队：浮窗里的同键页被请回页签条（一处栖身，不两头在）。
-        const floats = d.floats?.[tab.owner]
+        const floats = d.floats?.[scope]
         const at = floats?.findIndex(f => f.key === tab.key) ?? -1
         if (floats !== undefined && at >= 0) floats.splice(at, 1)
-        normDraft(d, tab.owner)
-        const node = d.layout[tab.owner] as CanvasNode
+        normDraft(d, scope)
+        const node = d.layout[scope] as CanvasNode
         // 落点序：显式叶 → 页签已在的叶 → 焦点叶 → 第一叶。已存在 = 跳回旧页签。
         const leaf = (leafId !== undefined ? leafById(node, leafId) : undefined)
           ?? leafWith(node, tab.key)
-          ?? leafById(node, d.focus[tab.owner])
+          ?? leafById(node, d.focus[scope])
           ?? leavesOf(node)[0]
         if (leaf === undefined) return
         if (!leaf.tabs.includes(tab.key)) leaf.tabs.push(tab.key)
         leaf.active = tab.key
-        d.focus[tab.owner] = leaf.id
+        d.focus[scope] = leaf.id
       },
       close: (d, owner, key) => {
-        const index = d.tabs.findIndex(t => t.key === key && t.owner === owner)
+        const scope = scopeForSession(d, owner)
+        const index = d.tabs.findIndex(row => row.key === key && tabScopeKey(row) === scope)
         if (index < 0) return
         d.tabs.splice(index, 1)
-        const floats = d.floats?.[owner]
+        const floats = d.floats?.[scope]
         const fat = floats?.findIndex(f => f.key === key) ?? -1
         if (floats !== undefined && fat >= 0) floats.splice(fat, 1)
         // 剔死引用、合空叶、修 active/focus 全交给 normalize。
-        normDraft(d, owner)
+        normDraft(d, scope)
       },
       // 虚拟页签（start/chat）可能在任一叶活动——找不到宿主叶就落在焦点叶。
       select: (d, owner, key) => {
-        normDraft(d, owner)
-        const node = d.layout[owner] as CanvasNode
-        const leaf = leafWith(node, key) ?? leafById(node, d.focus[owner]) ?? leavesOf(node)[0]
+        const scope = scopeForSession(d, owner)
+        normDraft(d, scope)
+        const node = d.layout[scope] as CanvasNode
+        const leaf = leafWith(node, key) ?? leafById(node, d.focus[scope]) ?? leavesOf(node)[0]
         if (leaf === undefined) return
         if (!leaf.tabs.includes(key) && key !== 'start' && key !== 'chat') return
         leaf.active = key
-        d.focus[owner] = leaf.id
+        d.focus[scope] = leaf.id
       },
       retitle: (d, owner, key, title) => {
-        const index = d.tabs.findIndex(t => t.key === key && t.owner === owner)
+        const scope = scopeForSession(d, owner)
+        const index = d.tabs.findIndex(row => row.key === key && tabScopeKey(row) === scope)
         if (index >= 0) d.tabs[index] = { ...d.tabs[index], title }
       },
       focusLeaf: (d, owner, leafId) => {
-        normDraft(d, owner)
-        if (leafById(d.layout[owner] as CanvasNode, leafId) !== undefined) d.focus[owner] = leafId
+        const scope = scopeForSession(d, owner)
+        normDraft(d, scope)
+        if (leafById(d.layout[scope] as CanvasNode, leafId) !== undefined) d.focus[scope] = leafId
       },
       moveTab: (d, owner, key, leafId, zone) => {
-        normDraft(d, owner)
-        const node = d.layout[owner] as CanvasNode
+        const scope = scopeForSession(d, owner)
+        normDraft(d, scope)
+        const node = d.layout[scope] as CanvasNode
         const target = leafById(node, leafId)
         if (target === undefined) return
         const src = leafWith(node, key)
@@ -343,25 +478,26 @@ export function createCanvasStore() {
         if (zone === 'center') {
           if (!target.tabs.includes(key)) target.tabs.push(key)
           target.active = key
-          d.focus[owner] = target.id
+          d.focus[scope] = target.id
         } else {
           const fresh: CanvasLeaf = { id: nid('L'), tabs: [key], active: key }
-          d.layout[owner] = replaceLeaf(node, leafId, splitLeaf(target, zone, fresh))
-          d.focus[owner] = fresh.id
+          d.layout[scope] = replaceLeaf(node, leafId, splitLeaf(target, zone, fresh))
+          d.focus[scope] = fresh.id
         }
-        d.layout[owner] = normLayout(d, owner)
-        if (d.focus[owner] === undefined || leafById(d.layout[owner] as CanvasNode, d.focus[owner]) === undefined) {
-          d.focus[owner] = leavesOf(d.layout[owner] as CanvasNode)[0]?.id ?? ''
+        d.layout[scope] = normLayout(d, scope)
+        if (d.focus[scope] === undefined || leafById(d.layout[scope] as CanvasNode, d.focus[scope]) === undefined) {
+          d.focus[scope] = leavesOf(d.layout[scope] as CanvasNode)[0]?.id ?? ''
         }
       },
       resize: (d, owner, splitId, ratio) => {
-        const node = d.layout?.[owner]
+        const scope = scopeForSession(d, owner)
+        const node = d.layout?.[scope]
         if (node === undefined) return
         const set = (n: CanvasNode): CanvasNode => isLeaf(n) ? n
           : n.id === splitId ? { ...n, ratio } : { ...n, a: set(n.a), b: set(n.b) }
-        d.layout[owner] = set(node)
+        d.layout[scope] = set(node)
       },
-      openDialog: (d, owner, kind, dir) => { d.dialog = { owner, kind, dir } },
+      openDialog: (d, owner, kind, dir) => { d.dialog = { owner, scope: scopeForSession(d, owner), kind, dir } },
       closeDialog: (d) => { d.dialog = null },
       simOpenSet: (d, root, sessionId) => {
         if (sessionId === undefined) delete d.simOpen[root]; else d.simOpen[root] = sessionId
@@ -383,32 +519,34 @@ export function createCanvasStore() {
         if (view === undefined) delete d.simView[owner]; else d.simView[owner] = view
       },
       floatTab: (d, owner, key, x, y) => {
+        const scope = scopeForSession(d, owner)
         if (d.floats === undefined) d.floats = {}
-        const list = d.floats[owner] ?? (d.floats[owner] = [])
+        const list = d.floats[scope] ?? (d.floats[scope] = [])
         if (!list.some(f => f.key === key)) {
           list.push({ key, x: Math.max(8, Math.min(x, window.innerWidth - 80)), y: Math.max(8, Math.min(y, window.innerHeight - 60)), w: 340, h: 420 })
         }
         // 从叶里摘掉（有的话）——页签→浮窗是挪窝不是复制。
-        const node = d.layout[owner]
+        const node = d.layout[scope]
         const src = node !== undefined ? leafWith(node, key) : undefined
         if (src !== undefined) src.tabs.splice(src.tabs.indexOf(key), 1)
-        normDraft(d, owner)
+        normDraft(d, scope)
       },
       dockFloat: (d, owner, key, leafId) => {
-        const floats = d.floats?.[owner]
+        const scope = scopeForSession(d, owner)
+        const floats = d.floats?.[scope]
         const at = floats?.findIndex(f => f.key === key) ?? -1
         if (floats === undefined || at < 0) return
         floats.splice(at, 1)
-        normDraft(d, owner)
-        const node = d.layout[owner] as CanvasNode
-        const leaf = leafById(node, leafId) ?? leafById(node, d.focus[owner]) ?? leavesOf(node)[0]
+        normDraft(d, scope)
+        const node = d.layout[scope] as CanvasNode
+        const leaf = leafById(node, leafId) ?? leafById(node, d.focus[scope]) ?? leavesOf(node)[0]
         if (leaf === undefined) return
         if (!leaf.tabs.includes(key)) leaf.tabs.push(key)
         leaf.active = key
-        d.focus[owner] = leaf.id
+        d.focus[scope] = leaf.id
       },
       floatSet: (d, owner, key, patch) => {
-        const list = d.floats?.[owner]
+        const list = d.floats?.[scopeForSession(d, owner)]
         const at = list?.findIndex(row => row.key === key) ?? -1
         if (list === undefined || at < 0) return
         const f = list[at]
@@ -419,23 +557,28 @@ export function createCanvasStore() {
         list[at] = { key, x, y, w, h }
       },
       floatFocus: (d, owner, key) => {
-        const list = d.floats?.[owner]
+        const list = d.floats?.[scopeForSession(d, owner)]
         if (list === undefined) return
         const at = list.findIndex(f => f.key === key)
         if (at >= 0 && at < list.length - 1) list.push(list.splice(at, 1)[0])
       },
-      // 分叉后子会话继承父画布：页签行换 owner 克隆，布局/浮窗/焦点整树照搬。
-      // 'start'/'chat' 是虚键不进 tabs，布局里的引用由 normLayout 保留。
+      // 同工作区分叉共享一套布局，只登记新 Session 的解析关系；模拟器视图仍按 Session 继承。
       inheritOwner: (d, from, to) => {
-        for (const row of d.tabs.filter(t => t.owner === from)) {
-          d.tabs.push({ ...row, owner: to })
+        const workspace = d.sessionWorkspaces?.[from]
+        if (workspace !== undefined) adoptWorkspace(d, to, workspace, false)
+        else {
+          const fromScope = sessionScopeKey(from)
+          const toScope = sessionScopeKey(to)
+          for (const row of d.tabs.filter(tab => tab.owner === from && tab.workspace === undefined)) {
+            if (!d.tabs.some(tab => tab.owner === to && tab.workspace === undefined && tab.key === row.key)) d.tabs.push({ ...row, owner: to })
+          }
+          const layout = d.layout[fromScope]
+          if (layout !== undefined && d.layout[toScope] === undefined) d.layout[toScope] = structuredClone(layout)
+          const floats = d.floats?.[fromScope]
+          if (floats !== undefined && d.floats?.[toScope] === undefined) (d.floats ??= {})[toScope] = floats.map(f => ({ ...f }))
+          const focus = d.focus[fromScope]
+          if (focus !== undefined && d.focus[toScope] === undefined) d.focus[toScope] = focus
         }
-        const layout = d.layout?.[from]
-        if (layout !== undefined) d.layout[to] = structuredClone(layout)
-        const floats = d.floats?.[from]
-        if (floats !== undefined) (d.floats ??= {})[to] = floats.map(f => ({ ...f }))
-        const focus = d.focus?.[from]
-        if (focus !== undefined) d.focus[to] = focus
         const view = d.simView?.[from]
         if (view !== undefined) d.simView[to] = view
       },
@@ -530,7 +673,13 @@ export interface CanvasInjected {
   }
   /** Open one registered page kind as a new canvas tab. */
   readonly openPage: (kind: string) => void
+  /** Open a feature through the same route used by the tree and Conversation tools. */
+  readonly openFeatureTab: (kind: string) => void
   readonly hooks: {
+    /** Registered feature guides available from the canvas tools menu. */
+    readonly featureTabs: ObservableSnapshot<readonly SidebarRightGuideBox[]>
+    /** Shared editor and canvas preferences owned by the global workbench store. */
+    readonly workbench: ObservableSnapshot<NovenWorkbenchSettings>
     /** 当前项目（绑定会话的 cwd + 创作库标题）；无项目时空态禁写。 */
     readonly project: ObservableSnapshot<ProjectFocus | undefined>
     /** 内容树快照——起点页据此决定空态。 */
@@ -591,8 +740,6 @@ export interface CanvasInjected {
   readonly listDir: (sessionId: SessionId, path: string) => Promise<readonly { name: string; type: string }[]>
   /** 让画布里的模块把一句话排进本会话对话队列（如地图的「直接生成底图」）。 */
   readonly ask: (text: string) => Promise<void>
-  /** Reapply the official IDE panel arrangement without creating content. */
-  readonly applyLayoutSeed: () => void
   /** 新建面板提交：宿主决定落到哪条路由。 */
   readonly submitCreate: (request: CreateRequest) => void
   /** 导入卡包文件（隐藏 input 的 onChange 直达）：analyze 后单卡直通、包/文件进对话框。 */
@@ -760,7 +907,7 @@ function CardTab({ tab, t, loadCard, op, ask, seedComposer, readFile, resolvePro
         pageModuleId={tab.moduleId}
         owner={tab.owner}
         autoLibrary={autoLibrary}
-        scrollKey={`${tab.owner}|${tab.key}`}
+        scrollKey={`${tab.workspace ?? tab.owner}|${tab.key}`}
         t={t}
         loadCard={loadCard}
         op={op}
@@ -776,13 +923,15 @@ function CardTab({ tab, t, loadCard, op, ask, seedComposer, readFile, resolvePro
 }
 
 /** 文稿体：通用编辑器 + /api/noven-doc 乐观锁保存；内容走温层——重挂先渲缓存不闪 loading。 */
-function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, renameFile, deleteFile }: {
+function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, autoSave, lineNumbers, setStatus, renameFile, deleteFile }: {
   readonly tab: CanvasTab
   readonly t: ShellT
   readonly sessionId: SessionId
   readonly useDocs: CanvasProps['useDocs']
   readonly ensureDoc: CanvasInjected['ensureDoc']
   readonly saveDoc: CanvasInjected['saveDoc']
+  readonly autoSave: boolean
+  readonly lineNumbers: boolean
   readonly setStatus: CanvasInjected['setStatus']
   readonly renameFile: CanvasInjected['renameFile']
   readonly deleteFile: CanvasInjected['deleteFile']
@@ -860,10 +1009,15 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
   }, [panelOpen, pinned])
   const state = entry === undefined || entry.state === 'loading' ? 'loading' : entry.state
   const base = entry?.content
+  const [draft, setDraft] = useState<string | undefined>(base)
+  const [saving, setSaving] = useState(false)
+  useEffect(() => { setDraft(base) }, [base])
   const saveText = useCallback(async (text: string): Promise<'ok' | 'conflict' | 'error'> => {
     // 注入的 saveDoc 在 'ok' 时把新内容写回温层——base 的推进由缓存承担。
+    setSaving(true)
     setStatus(tab.key, 'working', true)
     const result = await saveDoc(sessionId, path, text, base ?? null)
+    setSaving(false)
     setStatus(tab.key, 'working', false)
     setStatus(tab.key, 'error', result !== 'ok')
     return result
@@ -978,6 +1132,10 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
           fmt(t, 'editor.wordcount', { count: liveCount ?? wordCount(base) }),
           zoom === 1 ? undefined : `${String(Math.round(zoom * 100))}%`,
         ])}</div>
+        {!autoSave && (
+          <button type="button" className="nv-ed-save nv-ed-outline-btn" disabled={saving || draft === base}
+            onClick={() => { void saveText(draft ?? '') }}>{t('editor.save')}</button>
+        )}
         <Menu portal open={menuOpen} side="bottom" align="end" selection="fill" listClassName="nv-tree-newmenu"
           onClose={() => { arm.reset(); setMenuOpen(false) }}
           onSelect={id => {
@@ -1005,10 +1163,11 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, setStatus, ren
         )}
       </header>
       {RICH_TEXT_PATH.test(path)
-        ? <BlockNoteDocEditor markdown={base} onChange={text => { void saveText(text) }}
+        ? <BlockNoteDocEditor markdown={base} onChange={text => { void saveText(text) }} onDraft={setDraft} autoSave={autoSave}
             onOutline={setOutline} onActive={setActiveHeading} onWordCount={setLiveCount} onMarks={setMarks}
             zoom={zoom} onZoom={setZoom} />
-        : <PlainTextDocEditor text={base} onChange={text => { void saveText(text) }} />}
+        : <PlainTextDocEditor text={base} onChange={text => { void saveText(text) }} onDraft={setDraft}
+            autoSave={autoSave} lineNumbers={lineNumbers} />}
       </div>
       {RICH_TEXT_PATH.test(path) && (
         <>
@@ -1174,6 +1333,7 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
 
   const frameBase = useMemo<IslandFrame>(() => {
     const cs = getComputedStyle(document.documentElement)
+    const body = getComputedStyle(document.body)
     return {
       session: openId ?? sessionId,
       base: '',
@@ -1183,6 +1343,8 @@ function ChatTab({ t, sessionId, useStore, actions, useSims, useSimTranscript, u
         accent: cs.getPropertyValue('--nv-accent').trim(),
         text: cs.getPropertyValue('--nv-primary-text').trim(),
         surface: cs.getPropertyValue('--nv-surface').trim(),
+        scrollbar: body.getPropertyValue('--dsw-alias-scrollbar-bg-l1').trim(),
+        scrollbarHover: body.getPropertyValue('--dsw-alias-scrollbar-hover-l1').trim(),
       },
     }
   }, [openId, sessionId, sizeKey, imeOn, wvMode])
@@ -1578,6 +1740,7 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
   /** 契约帧的非消息部分：档案播种 + 壳侧主题（岛据此对齐产品色）。 */
   const frameBase = useMemo<IslandFrame>(() => {
     const cs = getComputedStyle(document.documentElement)
+    const body = getComputedStyle(document.body)
     const cardRaw = stageData.card
     const card = cardRaw !== null && typeof cardRaw === 'object' && !Array.isArray(cardRaw)
       ? cardRaw as { readonly name?: string; readonly kind?: string }
@@ -1597,6 +1760,8 @@ function WorkTab({ tab, t, sessionId, openDoc, embedFile, listCards, useSimTrans
         accent: cs.getPropertyValue('--nv-accent').trim(),
         text: cs.getPropertyValue('--nv-primary-text').trim(),
         surface: cs.getPropertyValue('--nv-surface').trim(),
+        scrollbar: body.getPropertyValue('--dsw-alias-scrollbar-bg-l1').trim(),
+        scrollbarHover: body.getPropertyValue('--dsw-alias-scrollbar-hover-l1').trim(),
       },
     }
   }, [stageData, folded, deltas, stem, stageSession, dir, sizeKey, imeOn, wvMode])
@@ -1868,6 +2033,7 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
   /** 本项目 simOpen 绑定的模拟器会话——作品页签的戏台数据源。 */
   const simOpenId = useStore(s => project === undefined ? undefined : s.simOpen[project.root])
   const composerDraft = props.useInput(state => state.draft)
+  const workbench = props.useWorkbench(value => value)
   const seedComposer = useCallback((text: string) => {
     const existing = composerDraft.trimEnd()
     props.inputActions.setDraft(existing === '' ? text : `${existing}\n\n${text}`)
@@ -1891,7 +2057,7 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
             if (preset === 'manual') {
               actions.open({
                 key: 'manual:getting-started', kind: 'manual', title: t('canvas.desk.manual'),
-                owner: session, slug: 'getting-started',
+                owner: session, workspace: tab.workspace, slug: 'getting-started',
               })
               return
             }
@@ -1931,7 +2097,7 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
           onOpenFile={path => openDoc(path, path.split('/').pop() ?? path)}
           onOpenCard={(cardId, moduleId) => actions.open({
             key: moduleId === undefined ? `card:${cardId}` : `mod:${cardId}:${moduleId}`,
-            kind: 'card', title: '', owner: session, cardId,
+            kind: 'card', title: '', owner: session, workspace: tab.workspace, cardId,
             cardAddr: tab.cardAddr, moduleId,
             presentation: moduleId === undefined ? 'inline' : 'page',
           })}
@@ -1940,6 +2106,7 @@ function TabBody({ tab, t, session, useStore, actions, props, openDoc, readCardF
       {tab.kind === 'doc' && (
         <DocTab key={tab.key} tab={tab} t={t} sessionId={session}
           useDocs={props.useDocs} ensureDoc={props.ensureDoc} saveDoc={props.saveDoc}
+          autoSave={workbench.autoSave} lineNumbers={workbench.lineNumbers}
           setStatus={props.setStatus} renameFile={props.renameFile} deleteFile={props.deleteFile} />
       )}
       {tab.kind === 'files' && (
@@ -2025,7 +2192,7 @@ function dropZone(e: React.DragEvent, el: HTMLElement): DropZone {
 }
 
 /** 一片叶：页签条 + 活动页体 + 拖放落区（拖页签经过时显形）。 */
-function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCanvasFullscreen, t, session, actions, props, tabByKey, project, tree, sims, statusMap, simOpenMap, openDoc, readCardFile, resolveProjectAsset, importRef, dragKey, setDragKey, dropSpot, setDropSpot }: {
+function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCanvasFullscreen, t, session, workspace, actions, props, tabByKey, project, tree, sims, statusMap, simOpenMap, openDoc, readCardFile, resolveProjectAsset, importRef, dragKey, setDragKey, dropSpot, setDropSpot }: {
   readonly leaf: CanvasLeaf
   readonly focused: boolean
   /** Module fullscreen: the page fills the canvas and the strip steps aside. */
@@ -2034,6 +2201,7 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
   readonly toggleCanvasFullscreen: () => void
   readonly t: ShellT
   readonly session: SessionId
+  readonly workspace: WorkspaceId | undefined
   readonly actions: CanvasProps['actions']
   readonly props: CanvasProps
   readonly tabByKey: ReadonlyMap<string, CanvasTab>
@@ -2053,24 +2221,42 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
 }) {
   const studioOn = props.useStore(s => project !== undefined && s.studioOn?.[project.root] === true)
   const aiEdits = useAiEdits()
+  const featureTabs = props.useFeatureTabs(value => value)
+  const [switchOpen, setSwitchOpen] = useState(false)
+  const [toolsOpen, setToolsOpen] = useState(false)
   const strip = useMemo(() => {
-    // chat 页签就是 Studio 面：组关着时整条不出（持久叶里残留的 'chat' 一并滤掉）。
-    const keys = [...(leaf.tabs.includes('start') ? [] : ['start']),
-      ...(studioOn && !leaf.tabs.includes('chat') ? ['chat'] : []), ...leaf.tabs]
-      .filter(key => studioOn || key !== 'chat')
+    // chat 页签就是 Studio 面；start 只是无真实页签时的空态，不进页签条。
+    const keys = [...(studioOn && !leaf.tabs.includes('chat') ? ['chat'] : []), ...leaf.tabs]
+      .filter(key => (studioOn || key !== 'chat') && key !== 'start')
     const seen = new Set<string>()
     return keys.filter(key => {
       if (seen.has(key)) return false
       seen.add(key)
       return true
-    }).map(key => tabByKey.get(key) ?? (key === 'start' ? startTab(session) : key === 'chat' ? chatTab(session) : undefined))
+    }).map(key => tabByKey.get(key) ?? (key === 'chat' ? chatTab(session, workspace) : undefined))
       .filter((row): row is CanvasTab => row !== undefined)
-  }, [leaf.tabs, tabByKey, session, studioOn])
-  const activeTab = strip.find(row => row.key === leaf.active) ?? strip[0]
+  }, [leaf.tabs, tabByKey, session, workspace, studioOn])
+  const activeTab = leaf.active === undefined || leaf.active === 'start'
+    ? startTab(session, workspace)
+    : strip.find(row => row.key === leaf.active) ?? strip[0] ?? startTab(session, workspace)
   const active = activeTab?.key ?? leaf.active ?? 'chat'
+  const filePath = activeTab?.kind === 'doc' || activeTab?.kind === 'work' ? activeTab.path : undefined
+  const appearance = useAppearance(session, filePath)
+  const visual = useAppearanceVisual(session)
+  useEffect(() => {
+    if (!focused) return
+    setFocusedCanvasFile(session, filePath)
+  }, [focused, session, filePath])
+  const canvasBackground = canvasBackgroundStyle(
+    session, appearance?.resolved.canvas ?? null, appearance?.revision ?? 0, visual,
+  )
   const spotZone = dropSpot?.leaf === leaf.id ? dropSpot.zone : undefined
   return (
     <div className="nv-leaf"
+      style={canvasBackground}
+      data-noven-canvas-background={appearance?.resolved.canvas?.kind}
+      data-noven-canvas-skin={appearanceMaterial(appearance?.resolved.canvas ?? null, visual)}
+      data-noven-canvas-blur={appearance?.resolved.canvas?.kind === 'asset' && (appearance.resolved.canvas.blur ?? 0) > 0 ? '' : undefined}
       onMouseDownCapture={() => actions.focusLeaf(session, leaf.id)}>
       {!immersive && <div className="nv-canvas-strip" role="tablist" data-leaf={leaf.id}>
         {strip.map(row => {
@@ -2110,8 +2296,32 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
           </div>
           )
         })}
-        <button type="button" className="nv-canvas-plus" aria-label={t('canvas.tab.new')}
-          onClick={() => actions.open(startTab(session), leaf.id)}>+</button>
+        {strip.length > 0 && <Menu portal open={switchOpen} side="bottom" align="start" selection="check" selectedId={active}
+          onClose={() => setSwitchOpen(false)}
+          onSelect={id => { setSwitchOpen(false); actions.select(session, id) }}
+          items={[{ id: 'start', label: t('canvas.start.tab') }, ...strip.map(row => ({ id: row.key, label: tabTitle(row, t) }))]}
+          anchor={(
+            <button type="button" className="nv-canvas-menubutton" aria-label={t('canvas.tab.switch')}
+              data-noven-canvas-switch onClick={() => setSwitchOpen(value => !value)}>
+              {glyph.caret(11)}
+            </button>
+          )} />}
+        {<Menu portal open={toolsOpen} side="bottom" align="end" selection="fill"
+          onClose={() => setToolsOpen(false)}
+          onSelect={id => { setToolsOpen(false); props.openFeatureTab(id) }}
+          items={featureTabs.length === 0
+            ? [{ id: 'empty', label: t('canvas.tools.empty'), disabled: true }]
+            : featureTabs.map(box => ({
+              id: box.kind,
+              label: box.title(),
+              icon: box.icon === undefined ? undefined : <box.icon size={13} />,
+            }))}
+          anchor={(
+            <button type="button" className="nv-canvas-menubutton" aria-label={t('canvas.tools')}
+              data-noven-canvas-tools onClick={() => setToolsOpen(value => !value)}>
+              {glyph.grid(13)}
+            </button>
+          )} />}
         <button type="button" className="nv-canvas-fullscreentoggle" data-active={canvasFullscreen || undefined}
           aria-label={t('canvas.fullscreen')} title={t('canvas.fullscreen')}
           onClick={toggleCanvasFullscreen}>{glyph.expand(13)}</button>
@@ -2361,24 +2571,37 @@ export function CanvasHost(props: CanvasProps) {
   const simOpenMap = useStore(s => s.simOpen)
   const focusMap = useStore(s => s.focus)
   const floatsMap = useStore(s => s.floats)
+  const workspaceItems = props.useWorkspaces(value => value.items)
+  const workspacePhase = props.useWorkspaces(value => value.phase)
+  const boundWorkspace = useStore(s => s.sessionWorkspaces?.[session])
+  const memberWorkspace = workspaceItems.find(row => row.sessionIds.includes(session))?.workspaceId
+  const projectWorkspace = project?.sessionId === session
+    ? workspaceItems.find(row => row.path === project.root)?.workspaceId : undefined
+  const registeredWorkspace = memberWorkspace ?? projectWorkspace
+  // Host 列表尚未到达时只用 v4 已存绑定恢复；ready 后不以旧绑定冒充现存工作区。
+  const workspace = registeredWorkspace ?? (workspacePhase === 'pending' ? boundWorkspace : undefined)
+  const scope = workspace === undefined ? sessionScopeKey(session) : workspaceScopeKey(workspace)
+  useEffect(() => {
+    if (registeredWorkspace !== undefined) actions.bindWorkspace(session, registeredWorkspace, project?.sessionId === session)
+  }, [actions, session, registeredWorkspace, project?.sessionId])
   const [dragKey, setDragKey] = useState<string | undefined>(undefined)
   const [dropSpot, setDropSpot] = useState<{ readonly leaf: string; readonly zone: DropZone } | undefined>(undefined)
   /** Module fullscreen: the tab key whose page fills the canvas. */
   const [immersiveKey, setImmersiveKey] = useState<string | undefined>(undefined)
   /** Canvas fullscreen: the frame collapses to this column. */
   const [canvasFullscreen, setCanvasFullscreen] = useState(false)
-  // 会话切片 + 布局自愈（v3 快照无 layout 时建单叶，老现场不丢）。
-  const tabs = useMemo(() => allTabs.filter(row => row.owner === session), [allTabs, session])
-  const floats = useMemo(() => floatsMap?.[session] ?? [], [floatsMap, session])
-  const node = useMemo(() => normLayout({ tabs: allTabs, layout: layoutMap, active: legacyActive, floats: floatsMap }, session),
-    [allTabs, layoutMap, legacyActive, floatsMap, session])
+  // 工作区切片 + 布局自愈（v3 快照无 layout 时建单叶，老现场不丢）。
+  const tabs = useMemo(() => allTabs.filter(row => tabScopeKey(row) === scope), [allTabs, scope])
+  const floats = useMemo(() => floatsMap?.[scope] ?? [], [floatsMap, scope])
+  const node = useMemo(() => normLayout({ tabs: allTabs, layout: layoutMap, active: legacyActive, floats: floatsMap }, scope),
+    [allTabs, layoutMap, legacyActive, floatsMap, scope])
   const tabByKey = useMemo(() => new Map(tabs.map(row => [row.key, row] as const)), [tabs])
-  const dialog = dialogRow !== null && dialogRow.owner === session ? dialogRow : null
+  const dialog = dialogRow !== null && (dialogRow.scope ?? sessionScopeKey(dialogRow.owner)) === scope ? dialogRow : null
   const importRef = useRef<HTMLInputElement | null>(null)
   const openDoc = useCallback((path: string, title: string) => {
     const kind = fileTabKind(path)
-    actions.open({ key: `${kind}:${path}`, kind, title, owner: session, path })
-  }, [actions, session])
+    actions.open({ key: `${kind}:${path}`, kind, title, owner: session, workspace, path })
+  }, [actions, session, workspace])
   const submit = useCallback((request: CreateRequest) => {
     actions.closeDialog()
     props.submitCreate(request)
@@ -2440,7 +2663,7 @@ export function CanvasHost(props: CanvasProps) {
     }
     seenTargets.current = { cards, modules }
   }, [tree, tabs, session, actions, project])
-  const focusedLeaf = leafById(node, focusMap?.[session] ?? '') ?? leavesOf(node)[0]
+  const focusedLeaf = leafById(node, focusMap?.[scope] ?? '') ?? leavesOf(node)[0]
   const activeTabKey = focusedLeaf?.active ?? 'start'
   const immersiveLeaf = immersiveKey === undefined ? undefined : leafWith(node, immersiveKey)
   const immersive = immersiveKey !== undefined && immersiveLeaf?.active === immersiveKey
@@ -2463,7 +2686,7 @@ export function CanvasHost(props: CanvasProps) {
   useEffect(() => {
     if (!immersive && !canvasFullscreen) return
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return
+      if (event.key !== 'Escape' || event.defaultPrevented) return
       const target = event.target
       if (target instanceof Element && target.closest('input, textarea, [contenteditable]')) return
       // A menu or dialog above the page owns Escape first.
@@ -2477,9 +2700,9 @@ export function CanvasHost(props: CanvasProps) {
     return () => { document.removeEventListener('keydown', onKey, true) }
   }, [immersive, canvasFullscreen])
   const leafProps = {
-    t, session, actions, props, tabByKey, project, tree, sims, statusMap, simOpenMap,
+    t, session, workspace, actions, props, tabByKey, project, tree, sims, statusMap, simOpenMap,
     openDoc, readCardFile, resolveProjectAsset, importRef, dragKey, setDragKey, dropSpot, setDropSpot,
-    focusLeaf: focusMap?.[session], canvasFullscreen, toggleCanvasFullscreen,
+    focusLeaf: focusMap?.[scope], canvasFullscreen, toggleCanvasFullscreen,
   }
   const aiEditing = edits.cards.size > 0
   return (
@@ -2492,10 +2715,10 @@ export function CanvasHost(props: CanvasProps) {
       {immersive && immersiveLeaf !== undefined
         // Module fullscreen renders one leaf only: the layout tree is left
         // untouched, so exiting restores every split exactly.
-        ? <LeafView {...leafProps} leaf={immersiveLeaf} focused={false} immersive />
+        ? <LeafView {...leafProps} leaf={immersiveLeaf} focused immersive />
         : isLeaf(node)
           // 焦点标记只在多分栏时有意义——单叶恒焦点，打标就成页签条上一条多余的色线。
-          ? <LeafView {...leafProps} leaf={node} focused={false} />
+          ? <LeafView {...leafProps} leaf={node} focused />
           : <SplitView node={node} leafProps={leafProps} actions={actions} session={session} />}
       {dialog !== null && dialog.kind !== 'import' && (
         <CreateDialog kind={dialog.kind} dir={dialog.dir} t={t}

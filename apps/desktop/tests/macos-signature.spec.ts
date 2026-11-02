@@ -41,10 +41,13 @@ describe('desktop macOS release signature', () => {
   it('loads release identifiers from the environment and requires code signing', async () => {
     const { createElectronBuilderConfig } = await import('../electron-builder.config.mjs')
     const config = createElectronBuilderConfig(RELEASE_ENVIRONMENT, 'darwin', 'arm64')
-    expect(config.protocols).toEqual([{ name: 'DeepSeek Harness', schemes: ['dsh'] }])
+    expect(config.protocols).toEqual([{ name: 'Noven', schemes: ['noven'] }])
     expect(portablePath(config.directories.output)).toContain('/.desktop-build/targets/mac-arm64/artifacts')
     expect(config.mac.extendInfo.NSMicrophoneUsageDescription).toContain('microphone')
-    expect(config.extraResources).toHaveLength(2)
+    expect(config.mac.extendInfo.CFBundleLocalizations).toEqual(['en', 'zh_CN'])
+    expect(config.extraResources).toHaveLength(4)
+    expect(config.extraResources[1]?.to).toBe('noven-profile')
+    expect(config.extraResources[2]?.to).toBe('noven-profile/node_modules')
     expect(config.extraResources[0]?.to).toBe('runtime')
     expect(portablePath(config.extraResources[0]?.from ?? '')).toContain('/.desktop-build/targets/mac-arm64/runtime')
     const [dshFiles, dshNodeModules] = config.files.slice(-2)
@@ -122,10 +125,11 @@ describe('desktop macOS release signature', () => {
     })
   })
 
-  it('rejects unsigned macOS builds and malformed signing modes', async () => {
+  it('accepts unsigned macOS builds and rejects malformed signing modes', async () => {
     const { createElectronBuilderConfig } = await import('../electron-builder.config.mjs')
-    expect(() => createElectronBuilderConfig({ ...RELEASE_ENVIRONMENT, DSH_DESKTOP_UNSIGNED: '1' }))
-      .toThrow(/unsigned builds require Windows/u)
+    const unsigned = createElectronBuilderConfig({ ...RELEASE_ENVIRONMENT, DSH_DESKTOP_UNSIGNED: '1' }, 'darwin', 'arm64')
+    expect(unsigned.mac).toMatchObject({ identity: null, forceCodeSigning: false, hardenedRuntime: false, notarize: false })
+    expect(unsigned.publish).toBeNull()
     expect(() => createElectronBuilderConfig({ ...RELEASE_ENVIRONMENT, DSH_DESKTOP_UNSIGNED: 'yes' }))
       .toThrow(/must be 0 or 1/u)
   })

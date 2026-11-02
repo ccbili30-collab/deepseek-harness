@@ -1,0 +1,22 @@
+# Bilingual-pair consistency record for inline-blocks.md (docs/i18n/README.md): per heading
+# section, a hash of its English and Chinese blocks outside code blocks and generated regions.
+# After editing either side, bring the other along and re-record with:
+#   pnpm run verify-translation-pairing --write docs/subsystems/inline-blocks.md
+/inline-blocks:
+  en: db6792815dd881ae
+  zh: f73f9ee4dd95e274
+/inline-blocks/the-directive:
+  en: e83aea5e9c264b97
+  zh: 98770e76a50ef2e3
+/inline-blocks/segments-and-identity:
+  en: 2ea4fd5c6595a6f7
+  zh: 00d62e2b91d0f53c
+/inline-blocks/the-registry:
+  en: 89b6e5a0f6f7fa9a
+  zh: f525f391e77a6a7e
+/inline-blocks/the-frame:
+  en: 585aac5b436c35ea
+  zh: 5470f6f969715ef8
+/inline-blocks/choices-and-model-visibility:
+  en: b8d59e18220385c0
+  zh: 0d88a003e3947b68

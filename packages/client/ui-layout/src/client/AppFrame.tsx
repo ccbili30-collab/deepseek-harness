@@ -15,27 +15,35 @@
  * `canvasClaims`, and a claimed canvas widens the column into a flexible
  * region the occupant fills beside its panel.
  * Everything arrives through the framework
- * shares — zero cordis or framework imports, zero self-made hooks.
+ * shares — zero cordis or framework imports, zero self-made hooks. An optional
+ * product policy supplies the effective primary column and Canvas side; the
+ * frame executes that policy without treating Session geometry as a second
+ * product mode, and keeps both content containers mounted during switches.
  */
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import type {
   InjectFace, PropsLocale, PropsRenderSlots, PropsRuntime, PropsStore,
 } from '@deepseek-ai/dsh-client-ui-slots'
-import { CANVAS_MIN, CENTER_MIN, clampWidth, computeColumns, canvasShareWidth, RIGHTBAR_DEFAULT, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, RIGHTBAR_RAIL, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns.ts'
+import { CANVAS_MIN, CENTER_MIN, clampWidth, computeColumns, computeWorkRegions, canvasShareWidth, RIGHTBAR_DEFAULT, RIGHTBAR_MAX_RATIO, RIGHTBAR_MIN, RIGHTBAR_RAIL, SIDEBAR_AUTO_COLLAPSE, SIDEBAR_COLLAPSED, SIDEBAR_DEFAULT } from './columns.ts'
+import { IconPanelLeftOutlineRegular, isDarwinChrome, isDarwinDesktop } from '@deepseek-ai/dsh-client-ui-primitives'
 import { useRegionSort } from './region-sort.ts'
 import { DocumentTitle } from './DocumentTitle.tsx'
-import type { CanvasClaims } from './service.ts'
+import type { CanvasClaims, FrameTransition } from './service.ts'
 import type { createLayoutStore } from './stores.ts'
 import css from './AppFrame.module.css'
 
 /** Full composed props: runtime share + child-slot render share + store share. */
 export type AppFrameProps =
   & PropsRuntime<'root'>
-  & PropsRenderSlots<'sidebar' | 'main' | 'rightbar' | 'shell.overlay' | 'shell.leading'>
+  & PropsRenderSlots<'sidebar' | 'main' | 'rightbar' | 'shell.overlay' | 'shell.leading' | 'shell.topbar' | 'shell.topbar.navigation' | 'side.header.trailing'>
   & PropsStore<ReturnType<typeof createLayoutStore>>
   & PropsLocale<'common'>
-  & InjectFace<{ readonly canvasClaims: CanvasClaims }>
+  & InjectFace<{
+    readonly canvasClaims: CanvasClaims
+    /** Runtime-provided in production; optional for isolated frame fixtures. */
+    readonly provideFrameTransition?: (runner: FrameTransition) => () => void
+  }>
 
 /**
  * After a visible-session switch, the target session's right panel reports
@@ -44,12 +52,75 @@ export type AppFrameProps =
  * later than this.
  */
 const RECOVERY_WINDOW_MS = 400
+/** Fixed application-topbar row used by an opt-in product frame policy. */
+const TOPBAR_HEIGHT = 48
+
+interface FrameRegionSnapshot {
+  readonly element: HTMLElement
+  readonly left: number
+  readonly width: number
+  readonly height: number
+  readonly opacity: number
+}
+
+interface PendingFrameTransition {
+  readonly center: FrameRegionSnapshot
+  readonly rightbar: FrameRegionSnapshot
+  readonly primary: 'main' | 'rightbar' | null
+  readonly sessionId: string | null
+  readonly centerCollapsed: boolean
+  readonly generation: number
+  timer?: ReturnType<typeof setTimeout>
+}
+
+/** The frame's one side fold; the product frame swaps the glyph for the panel icon. */
+function SideFold(props: {
+  collapsed: boolean
+  productFold?: boolean | undefined
+  toggle: () => void
+  collapseLabel: string
+  expandLabel: string
+}) {
+  return (
+    <button type="button" className={css.centerFold} data-side-fold
+      aria-label={props.collapsed ? props.expandLabel : props.collapseLabel} onClick={props.toggle}>
+      {props.productFold === true
+        ? <span className={css.sideFoldGlyph} aria-hidden="true"><IconPanelLeftOutlineRegular size={16} /></span>
+        : props.collapsed ? '‹' : '›'}
+    </button>
+  )
+}
 
 /** Center column grid item (session-body building block). */
-function CenterColumn(props: { order: number; children?: ReactNode }) {
-  // data-region-grip: blank presses inside the conversation column arm the
-  // frame's long-press sort (region-sort.ts skips interactive elements).
-  return <div className={css.centerCol} data-center-col data-region-grip="conv" style={{ order: props.order }}>{props.children}</div>
+function CenterColumn(props: {
+  order: number
+  collapsible: boolean
+  collapsed: boolean
+  productFold?: boolean
+  /** Product side chrome rendered before the fold; the parent entry, not a content control. */
+  sideChrome?: ReactNode
+  toggle: () => void
+  collapseLabel: string
+  expandLabel: string
+  children?: ReactNode
+}) {
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    if (contentRef.current !== null) contentRef.current.inert = props.collapsed
+  }, [props.collapsed])
+  const fold = props.collapsible
+    ? <SideFold collapsed={props.collapsed} productFold={props.productFold} toggle={props.toggle}
+      collapseLabel={props.collapseLabel} expandLabel={props.expandLabel} />
+    : null
+  return (
+    <div className={css.centerCol} data-center-col data-region-grip="conv" data-center-collapsed={props.collapsed || undefined}
+      data-side-chrome={props.sideChrome != null && !props.collapsed ? '' : undefined} style={{ order: props.order }}>
+      {props.productFold === true && props.collapsible
+        ? <div className={css.sideTrailing} data-side-trailing>{props.sideChrome}{fold}</div>
+        : fold}
+      <div ref={contentRef} className={css.centerContent} aria-hidden={props.collapsed || undefined}>{props.children}</div>
+    </div>
+  )
 }
 
 /** Subscribe to the main key without subscribing the column frame to each panel id. */
@@ -65,10 +136,38 @@ function MainPanel({ usePanelInfo, renderSlot }: Pick<PropsRuntime<'root'>, 'use
  * column's right edge, which never moves, so it can hang over the centre when
  * there is no track.
  */
-function RightbarColumn(props: { order: number; children?: ReactNode }) {
+function RightbarColumn(props: {
+  order: number
+  collapsible: boolean
+  collapsed: boolean
+  productFold?: boolean
+  /** Product side chrome rendered before the fold; the parent entry, not a content control. */
+  sideChrome?: ReactNode
+  toggle: () => void
+  collapseLabel: string
+  expandLabel: string
+  children?: ReactNode
+}) {
+  const contentRef = useRef<HTMLDivElement | null>(null)
+  useLayoutEffect(() => {
+    if (contentRef.current !== null) contentRef.current.inert = props.collapsed
+  }, [props.collapsed])
   // data-region-grip: blank presses on the column's own surface arm the
   // frame's long-press sort (the canvas/drawer grips sit closer and win).
-  return <div className={css.rightbarCol} data-rightbar-col data-region-grip="unit" style={{ order: props.order }}>{props.children}</div>
+  const fold = props.collapsible
+    ? <SideFold collapsed={props.collapsed} productFold={props.productFold} toggle={props.toggle}
+      collapseLabel={props.collapseLabel} expandLabel={props.expandLabel} />
+    : null
+  return (
+    <div className={css.rightbarCol} data-rightbar-col data-region-grip="unit"
+      data-auxiliary-collapsed={props.collapsed || undefined}
+      data-side-chrome={props.sideChrome != null && !props.collapsed ? '' : undefined} style={{ order: props.order }}>
+      {props.productFold === true && props.collapsible
+        ? <div className={css.sideTrailing} data-side-trailing>{props.sideChrome}{fold}</div>
+        : fold}
+      <div ref={contentRef} className={css.rightbarContent} aria-hidden={props.collapsed || undefined}>{props.children}</div>
+    </div>
+  )
 }
 
 /**
@@ -142,33 +241,41 @@ export function AppFrame({
   useStore,
   useSessions,
   usePanelInfo,
+  useFrameLayoutPolicy,
   actions,
   renderSlot,
   t,
   canvasClaims,
+  provideFrameTransition,
 }: AppFrameProps) {
   const layoutInfo = useStore(state => state.layoutInfo)
   /** Canvas-only presentation: the frame collapses to the right column. */
   const canvasFullscreen = useStore(state => state.canvasFullscreen)
   const frameRef = useRef<HTMLDivElement | null>(null)
+  const workRef = useRef<HTMLDivElement | null>(null)
   // A global panel occupying the main seat has no swappable sibling: the
   // conv/unit sort only exists while the conversation faces the unit.
   const panelActive = usePanelInfo(info => info.activePanelId !== null)
+  const framePolicy = useFrameLayoutPolicy?.(policy => policy) ?? null
   const viewport = layoutInfo.viewportWidth
-  // Which side of the centre the panel+canvas unit stands on — the visible
-  // session's structural preference (geometry.active's record).
-  const unitLeft = layoutInfo.unitSide === 'left'
-  const onUnitSwap = useCallback(() => {
-    actions.setUnitSide(unitLeft ? 'right' : 'left')
-  }, [actions, unitLeft])
-  useRegionSort(frameRef, !panelActive, onUnitSwap)
-
   // Session recovery lands on the target's saved geometry instantly: a change
   // of the visible session lifts the work-layer track transition for that
   // render. The page turn itself is the View Transition started by the
   // navigation (ui-workspace page-turn.ts), not a frame animation.
   const currentSessionId = useSessions(state =>
     Object.values(state.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)?.id ?? null)
+  // A product policy outranks legacy Session geometry without being persisted here.
+  const unitLeft = framePolicy === null ? layoutInfo.unitSide === 'left' : framePolicy.primary === 'rightbar'
+  const centerCollapsible = framePolicy?.primary === 'rightbar' && !panelActive
+  const centerCollapsed = centerCollapsible && layoutInfo.auxiliaryCollapsed
+  const onUnitSwap = useCallback(() => {
+    actions.setUnitSide(unitLeft ? 'right' : 'left')
+  }, [actions, unitLeft])
+  useRegionSort(frameRef, !panelActive && framePolicy === null, onUnitSwap)
+  const toggleCenter = useCallback(() => {
+    actions.setAuxiliaryCollapsed(!layoutInfo.auxiliaryCollapsed)
+  }, [actions, layoutInfo.auxiliaryCollapsed])
+
   // Per-session structural records: read when a session switch lands to
   // pre-sync the nav easing baseline to the incoming geometry.
   const geometryById = useStore(state => state.geometry.byId)
@@ -212,21 +319,37 @@ export function AppFrame({
   // Which side of the panel a canvas page claims, or null while none is up.
   // Pulled, never reported: the claim is derivable from the session's surface,
   // so a retained surface reactivating with its canvas open counts without
-  // waiting on any report. The drawn panel gates it — no panel, no track.
-  const claimedCanvas = useSyncExternalStore(
+  // waiting on any report. Legacy geometry gates the track on the drawn drawer;
+  // a drawerless product policy derives the canvas track from the claim alone.
+  const canvasClaim = useSyncExternalStore(
     listener => canvasClaims.subscribe(listener),
-    () => canvasClaims.claim(currentSessionId),
+    () => canvasClaims.claim(currentSessionId, framePolicy !== null),
   )
-  const canvas = layoutInfo.rightbarShown ? claimedCanvas : null
+  const claimedCanvas = canvasClaim === null || (framePolicy?.primary === 'main' && layoutInfo.auxiliaryCollapsed)
+    ? null
+    : framePolicy?.canvasSide ?? canvasClaim
+  const canvas = framePolicy !== null && panelActive
+    ? null
+    : layoutInfo.rightbarShown || framePolicy?.drawer === false ? claimedCanvas : null
+  const canvasAuxiliary = framePolicy?.primary === 'main' && framePolicy.drawer === false && !panelActive && canvasClaim !== null
+  const rightbarAuxiliaryCollapsed = canvasAuxiliary && layoutInfo.auxiliaryCollapsed
+  // One side column per product arrangement: the centre holds the side subject
+  // in handcraft, the right column holds the side Canvas in Agent. The slot
+  // renders the side parent once; the frame owns the fold beside it.
+  const sideColumn = centerCollapsible ? 'center' : canvasAuxiliary ? 'rightbar' : null
+  const sideChrome = framePolicy === null || sideColumn === null ? null : renderSlot('side.header.trailing', {
+    collapsed: sideColumn === 'center' ? centerCollapsed : rightbarAuxiliaryCollapsed,
+  })
   // The panel's anchored edge inside the unit column: opposite the canvas when
   // one is claimed; facing away from the conversation (its own outer edge)
   // while it fills the column alone.
   const anchorLeft = canvas === null ? unitLeft : canvas === 'right'
   // Desktop reopen controls occupy the frame's shell.leading seat (macOS) or
   // the Windows caption row; neither platform keeps an icon rail.
-  const darwin = document.documentElement.dataset.platform === 'darwin'
-  const collapsedWidth = darwin
-    || document.documentElement.hasAttribute('data-windows-titlebar') ? 0 : SIDEBAR_COLLAPSED
+  const darwin = isDarwinChrome()
+  const mirrorLights = darwin && !isDarwinDesktop()
+  const collapsedWidth = (framePolicy === null || framePolicy.topbar === false)
+    && (darwin || document.documentElement.hasAttribute('data-windows-titlebar')) ? 0 : SIDEBAR_COLLAPSED
   // Opening on a narrow frame collapses the left sidebar. Eligibility must
   // include that space before the occupant's first shown report arrives.
   const rail = layoutInfo.rightbarRail
@@ -238,10 +361,10 @@ export function AppFrame({
     normal.rightbar = Math.min(RIGHTBAR_RAIL, Math.max(0, viewport - normal.sidebar - CENTER_MIN))
     if (layoutInfo.rightbarTrack) cols.rightbar = normal.rightbar
   }
+  const policyDrawerWidth = framePolicy?.drawer === false ? 0 : normal.rightbar
   const colsRef = useRef(cols)
   colsRef.current = cols
   const rightbarWidth = useRef(normal.rightbar)
-  rightbarWidth.current = normal.rightbar
 
   // The drag base is the rendered width captured at drag start (grabbing a
   // concession-clamped panel must not jump back to the stored preference);
@@ -262,10 +385,178 @@ export function AppFrame({
   const [outerAnim, setOuterAnim] = useState(0)
   const [workAnim, setWorkAnim] = useState(0)
   const sidebarToggle = sidebarCollapsed
-  const workToggle = `${layoutInfo.rightbarTrack}:${canvas !== null}:${rail}`
+  const workToggle = `${layoutInfo.rightbarTrack}:${canvas !== null}:${rail}:${unitLeft}:${centerCollapsed}:${rightbarAuxiliaryCollapsed}`
   const previousSidebarToggle = useRef(sidebarToggle)
   const previousWorkToggle = useRef(workToggle)
   const previousViewport = useRef(viewport)
+
+  // Explicit product-mode transitions use live FLIP instead of interpolating
+  // incompatible grid tracks. Only this armed path may move primary regions;
+  // recovery, first paint, resize, and covered frames still land directly.
+  const pendingFrameTransition = useRef<PendingFrameTransition | null>(null)
+  const modeCommitRef = useRef(false)
+  const modeAnimations = useRef<Animation[]>([])
+  const animatedRegions = useRef<HTMLElement[]>([])
+  const modeGeneration = useRef(0)
+  const clearModeMotion = useCallback(() => {
+    workRef.current?.removeAttribute('data-mode-scene')
+    for (const element of animatedRegions.current) {
+      element.style.willChange = ''
+      element.style.zIndex = ''
+    }
+    animatedRegions.current = []
+  }, [])
+  const cancelModeMotion = useCallback(() => {
+    modeGeneration.current += 1
+    for (const animation of modeAnimations.current) animation.cancel()
+    modeAnimations.current = []
+    clearModeMotion()
+  }, [clearModeMotion])
+  const snapshotRegion = useCallback((element: HTMLElement): FrameRegionSnapshot => {
+    const rect = element.getBoundingClientRect()
+    const opacity = Number(window.getComputedStyle(element).opacity)
+    return { element, left: rect.left, width: rect.width, height: rect.height, opacity: Number.isFinite(opacity) ? opacity : 1 }
+  }, [])
+  const runFrameTransition = useCallback<FrameTransition>((commit) => {
+    const reduced = typeof window.matchMedia === 'function'
+      && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const covered = document.querySelector('[role="dialog"], [role="menu"]') !== null
+      || document.documentElement.hasAttribute('data-create-scene')
+      || document.documentElement.hasAttribute('data-panel-handoff')
+    const work = workRef.current
+    const center = work?.querySelector<HTMLElement>('[data-center-col]')
+    const rightbar = work?.querySelector<HTMLElement>('[data-rightbar-col]')
+    if (reduced || covered || panelActive || canvasFullscreen || narrow || layoutInfo.rightbarFullscreen
+      || center == null || rightbar == null
+      || typeof center.animate !== 'function' || typeof rightbar.animate !== 'function') {
+      cancelModeMotion()
+      commit()
+      return
+    }
+    // Capture before cancelling: getBoundingClientRect includes the current
+    // transform, so a rapid reversal starts from what the user actually sees.
+    const centerBefore = snapshotRegion(center)
+    const rightBefore = snapshotRegion(rightbar)
+    cancelModeMotion()
+    const pending: PendingFrameTransition = {
+      center: centerBefore,
+      rightbar: rightBefore,
+      primary: framePolicy?.primary ?? null,
+      sessionId: currentSessionId,
+      centerCollapsed,
+      generation: modeGeneration.current,
+    }
+    pendingFrameTransition.current = pending
+    try {
+      commit()
+    } catch (error: unknown) {
+      if (pendingFrameTransition.current === pending) pendingFrameTransition.current = null
+      throw error
+    }
+    // A no-op commit may not render at all. Do not leave an armed transaction
+    // waiting to animate an unrelated later update.
+    if (pendingFrameTransition.current === pending) {
+      pending.timer = window.setTimeout(() => {
+        if (pendingFrameTransition.current === pending) pendingFrameTransition.current = null
+      }, 0)
+    }
+  }, [
+    cancelModeMotion, canvasFullscreen, centerCollapsed, currentSessionId, framePolicy,
+    layoutInfo.rightbarFullscreen, narrow, panelActive, snapshotRegion,
+  ])
+
+  useLayoutEffect(() => {
+    const pending = pendingFrameTransition.current
+    if (pending === null) return
+    pendingFrameTransition.current = null
+    if (pending.timer !== undefined) clearTimeout(pending.timer)
+    modeCommitRef.current = true
+    const stage = workRef.current
+    const primary = framePolicy?.primary ?? null
+    const valid = stage !== null && pending.generation === modeGeneration.current
+      && pending.primary !== null && primary !== null && pending.primary !== primary
+      && pending.sessionId === currentSessionId && !panelActive && !canvasFullscreen && !narrow
+      && !layoutInfo.rightbarFullscreen
+      && document.querySelector('[role="dialog"], [role="menu"]') === null
+      && !document.documentElement.hasAttribute('data-create-scene')
+      && !document.documentElement.hasAttribute('data-panel-handoff')
+    if (!valid) { cancelModeMotion(); return }
+
+    const centerAfter = snapshotRegion(pending.center.element)
+    const rightAfter = snapshotRegion(pending.rightbar.element)
+    const pairs = [
+      { before: pending.center, after: centerAfter },
+      { before: pending.rightbar, after: rightAfter },
+    ]
+    const mirror = pairs.every(pair => Math.abs(pair.before.width - pair.after.width) < 1
+      && Math.abs(pair.before.height - pair.after.height) < 1)
+      && !pending.centerCollapsed && !centerCollapsed
+    const swaps = mirror
+      ? pairs.map(pair => ({ ...pair, dx: pair.before.left - pair.after.left })).filter(pair => Math.abs(pair.dx) >= 1)
+      : []
+    if (mirror && swaps.length === 0) { cancelModeMotion(); return }
+
+    const css = window.getComputedStyle(stage)
+    const rawDuration = css.getPropertyValue('--dsh-frame-mode-duration').trim()
+    const parsedDuration = rawDuration.endsWith('ms')
+      ? Number.parseFloat(rawDuration)
+      : rawDuration.endsWith('s') ? Number.parseFloat(rawDuration) * 1000 : Number.NaN
+    const sceneDuration = Number.isFinite(parsedDuration) && parsedDuration > 0 ? parsedDuration : 300
+    const duration = mirror ? sceneDuration : Math.min(200, sceneDuration)
+    const easing = css.getPropertyValue('--dsh-frame-mode-easing').trim()
+      || 'cubic-bezier(0.4, 0, 0.2, 1)'
+    const generation = modeGeneration.current
+    animatedRegions.current = pairs.map(pair => pair.after.element)
+    stage.dataset.modeScene = mirror ? 'swap' : 'fade'
+    try {
+      for (const [index, pair] of pairs.entries()) {
+        const element = pair.after.element
+        element.style.willChange = 'transform, opacity'
+        element.style.zIndex = index === 0 ? '2' : '1'
+        const dx = mirror ? pair.before.left - pair.after.left : 0
+        const frames = mirror
+          ? [
+            { transform: `translateX(${dx}px)`, opacity: pair.before.opacity },
+            { transform: 'translateX(0)', opacity: 1 },
+          ]
+          : [{ opacity: pair.before.opacity }, { opacity: 1 }]
+        modeAnimations.current.push(element.animate(frames, { duration, easing, fill: 'both' }))
+      }
+    } catch {
+      cancelModeMotion()
+      return
+    }
+    const animations = [...modeAnimations.current]
+    void Promise.allSettled(animations.map(animation => animation.finished)).then(() => {
+      if (generation !== modeGeneration.current) return
+      for (const animation of animations) animation.cancel()
+      modeAnimations.current = []
+      clearModeMotion()
+    })
+  })
+
+  useEffect(() => provideFrameTransition?.(runFrameTransition), [provideFrameTransition, runFrameTransition])
+  useEffect(() => {
+    const onResize = (): void => { cancelModeMotion() }
+    window.addEventListener('resize', onResize)
+    const query = typeof window.matchMedia === 'function'
+      ? window.matchMedia('(prefers-reduced-motion: reduce)') : undefined
+    const onMotionChange = (): void => { if (query?.matches) cancelModeMotion() }
+    query?.addEventListener('change', onMotionChange)
+    return () => {
+      window.removeEventListener('resize', onResize)
+      query?.removeEventListener('change', onMotionChange)
+    }
+  }, [cancelModeMotion])
+  useLayoutEffect(() => {
+    if (canvasFullscreen || narrow || layoutInfo.rightbarFullscreen) cancelModeMotion()
+  }, [cancelModeMotion, canvasFullscreen, layoutInfo.rightbarFullscreen, narrow])
+  useEffect(() => () => {
+    const pending = pendingFrameTransition.current
+    if (pending?.timer !== undefined) clearTimeout(pending.timer)
+    pendingFrameTransition.current = null
+    cancelModeMotion()
+  }, [cancelModeMotion])
 
   // One-shot canvas halving: the first time the USER opens a canvas in a layout
   // that carries no saved unit width, conversation and canvas split the work
@@ -278,15 +569,20 @@ export function AppFrame({
     const openNow = canvas !== null
     const sameSession = canvasSessionRef.current === currentSessionId
     canvasSessionRef.current = currentSessionId
-    if (openNow && !wasCanvasOpen.current && sameSession && layoutInfo.unit === null && layoutInfo.unitCanvasShare === null) {
+    if (framePolicy === null && openNow && !wasCanvasOpen.current && sameSession
+      && layoutInfo.unit === null && layoutInfo.unitCanvasShare === null) {
       const panelShare = layoutInfo.rightbarTrack ? normal.rightbar : 0
       const half = Math.round((viewport - cols.sidebar - panelShare) / 2)
       const target = Math.max(CANVAS_MIN, half + panelShare)
       actions.setUnit(target)
+    } else if (framePolicy !== null && openNow && !wasCanvasOpen.current && sameSession
+      && layoutInfo.auxiliary === null && layoutInfo.unitCanvasShare === null) {
+      const half = Math.round((viewport - cols.sidebar - policyDrawerWidth) / 2)
+      actions.setAuxiliary(Math.max(CANVAS_MIN, half))
     }
     wasCanvasOpen.current = openNow
-  }, [canvas, currentSessionId, layoutInfo.unit, layoutInfo.unitCanvasShare,
-    layoutInfo.rightbarTrack, normal.rightbar, viewport, cols.sidebar, actions])
+  }, [canvas, currentSessionId, layoutInfo.unit, layoutInfo.auxiliary, layoutInfo.unitCanvasShare, framePolicy,
+    layoutInfo.rightbarTrack, policyDrawerWidth, viewport, cols.sidebar, actions])
 
   // Easing only follows a discrete USER toggle. A structural change arriving
   // with a visible-session change (or settling within the switch window right
@@ -323,9 +619,11 @@ export function AppFrame({
     if (sidebarChanged && !viewportChanged && !recovering) setOuterAnim(token => token + 1)
 
     const workChanged = previousWorkToggle.current !== workToggle
+    const modeCommitted = modeCommitRef.current
+    modeCommitRef.current = false
     previousWorkToggle.current = workToggle
-    if (workChanged && !viewportChanged && !recovering) setWorkAnim(token => token + 1)
-    if (recovering) setWorkAnim(0)
+    if (workChanged && !viewportChanged && !recovering && !modeCommitted) setWorkAnim(token => token + 1)
+    if (recovering || modeCommitted) setWorkAnim(0)
   }, [workToggle, sidebarToggle, viewport, currentSessionId, geometryById, narrow, actions])
 
   useEffect(() => {
@@ -344,7 +642,6 @@ export function AppFrame({
       clearTimeout(timer)
     }
   }, [outerAnim])
-  const workRef = useRef<HTMLDivElement | null>(null)
   useEffect(() => {
     if (workAnim === 0) return
     const stage = workRef.current
@@ -369,10 +666,7 @@ export function AppFrame({
   const onSidebarDrag = useCallback((dx: number) => {
     actions.setSidebar(sidebarBase.current + dx)
   }, [actions])
-  const onRightbarStart = useCallback(() => { rightbarBase.current = rightbarWidth.current; setDragging(true) }, [])
-  const onRightbarDrag = useCallback((dx: number) => {
-    actions.setRightbar(rightbarBase.current + (anchorLeft ? dx : -dx))
-  }, [actions, anchorLeft])
+  const rightbarAuxiliaryBase = useRef(0)
   const productTitle = process.env.DSH_CLIENT_TITLE ?? t('brand.localBuild')
   // The rendered template lets the grid solve the squeeze natively: the centre
   // declares its protected minimum and the right column bids up to the clamped
@@ -391,6 +685,7 @@ export function AppFrame({
   // the third track's max bound — so grid-template-columns interpolates on the
   // open/close transition instead of freezing at its start value.
   const centerCap = Math.max(CENTER_MIN, Math.max(440, SIDEBAR_COLLAPSED + viewport * 0.3) - cols.sidebar)
+  const workWidth = Math.max(0, viewport - cols.sidebar)
   // One-shot even split, rendered on the opening paint: with no saved unit
   // width and a canvas up, conversation and canvas halve the remainder after
   // the drawer panel. The open effect above persists this into layoutInfo.unit
@@ -401,53 +696,81 @@ export function AppFrame({
     : Math.max(CANVAS_MIN,
       Math.round((viewport - cols.sidebar - (layoutInfo.rightbarTrack ? normal.rightbar : 0)) / 2)
       + (layoutInfo.rightbarTrack ? normal.rightbar : 0))
-  // A claimed canvas widens the right column into the region that holds both
-  // the canvas page and the panel. Its conversation-facing edge is the unit
-  // seam: draggable between the conversation's protected share and a floor of
-  // the drawn panel plus a usable canvas.
-  // An explicit preset ratio resolves against the rendered navigation and
-  // drawer once a canvas claims the column; committing it through setUnit both
-  // persists the concrete width and clears the request, so a later drag — or
-  // nothing at all — wins from there.
-  const presetUnit = canvas === null || rail || layoutInfo.unitCanvasShare === null
+  // Legacy DSH resolves the old host-bound unit ratio. A product policy instead
+  // resolves the same request as auxiliary content, excluding the drawer.
+  const presetUnit = framePolicy !== null || canvas === null || rail || layoutInfo.unitCanvasShare === null
     ? null
-    : canvasShareWidth(viewport - cols.sidebar, layoutInfo.rightbarTrack ? normal.rightbar : 0, layoutInfo.unitCanvasShare)
+    : canvasShareWidth(workWidth, layoutInfo.rightbarTrack ? normal.rightbar : 0, layoutInfo.unitCanvasShare)
+  const presetAuxiliary = framePolicy === null || canvas === null || rail || layoutInfo.unitCanvasShare === null
+    ? null
+    : Math.max(0, canvasShareWidth(workWidth, policyDrawerWidth, layoutInfo.unitCanvasShare) - policyDrawerWidth)
   useLayoutEffect(() => {
     if (presetUnit !== null) actions.setUnit(presetUnit)
-  }, [presetUnit, actions])
-  const unitCeiling = Math.max(0, viewport - cols.sidebar - CENTER_MIN)
+    else if (presetAuxiliary !== null) actions.setAuxiliary(presetAuxiliary)
+  }, [presetUnit, presetAuxiliary, actions])
+  const unitCeiling = Math.max(0, workWidth - CENTER_MIN)
   const unitFloor = Math.min(normal.rightbar + CANVAS_MIN, unitCeiling)
-  const rightTrackMax = canvas === null
+  const defaultAuxiliary = Math.max(0, Math.round((workWidth - policyDrawerWidth) / 2))
+  const policyRegions = framePolicy === null || canvas === null
+    ? null
+    : computeWorkRegions(workWidth, policyDrawerWidth, presetAuxiliary ?? layoutInfo.auxiliary ?? defaultAuxiliary)
+  const policyCenterWidth = policyRegions === null
+    ? null
+    : framePolicy?.primary === 'main' ? policyRegions.primary : policyRegions.auxiliary
+  const policyRightbarWidth = policyRegions === null
+    ? null
+    : (framePolicy?.primary === 'main' ? policyRegions.auxiliary : policyRegions.primary) + policyRegions.drawer
+  const rightTrackMax = policyRightbarWidth ?? (canvas === null
     ? rightbarMax
-    : Math.min(unitCeiling, Math.max(unitFloor, presetUnit ?? layoutInfo.unit ?? halveUnit ?? (viewport - cols.sidebar - centerCap)))
+    : Math.min(unitCeiling, Math.max(unitFloor, presetUnit ?? layoutInfo.unit ?? halveUnit ?? (workWidth - centerCap))))
+  const drawerWidth = policyRegions?.drawer ?? normal.rightbar
+  rightbarWidth.current = drawerWidth
+  const onRightbarStart = useCallback(() => {
+    rightbarBase.current = rightbarWidth.current
+    rightbarAuxiliaryBase.current = policyRegions?.auxiliary ?? 0
+    setDragging(true)
+  }, [policyRegions])
+  const onRightbarDrag = useCallback((dx: number) => {
+    const delta = anchorLeft ? dx : -dx
+    actions.setRightbar(rightbarBase.current + delta)
+    if (policyRegions !== null) actions.setAuxiliary(rightbarAuxiliaryBase.current - delta)
+  }, [actions, anchorLeft, policyRegions])
   // The handles sit on the moving edges: the panel's free edge inside the
   // column, and the column's own conversation-facing edge while a canvas is up.
-  const unitW = canvas === null ? cols.rightbar : rightTrackMax
+  const unitW = centerCollapsed && policyRegions !== null
+    ? workWidth - SIDEBAR_COLLAPSED
+    : canvas === null ? cols.rightbar : rightTrackMax
   // The handles anchor to the solved centre width, not centerCap: a stored
   // unit width makes the drawn unit column narrower than the default share,
   // and placing grips off the nominal cap detaches them from the real seams.
-  const convW = viewport - cols.sidebar - unitW
+  const convW = centerCollapsed && policyRegions !== null
+    ? SIDEBAR_COLLAPSED
+    : policyCenterWidth ?? workWidth - unitW
   const unitColLeft = unitLeft ? cols.sidebar : cols.sidebar + convW
   const rightbarHandleLeft = anchorLeft
-    ? unitColLeft + normal.rightbar
-    : unitColLeft + unitW - normal.rightbar
+    ? unitColLeft + drawerWidth
+    : unitColLeft + unitW - drawerWidth
   const unitHandleLeft = unitLeft ? unitColLeft + unitW : unitColLeft
   const unitWRef = useRef(unitW)
   unitWRef.current = unitW
   const unitBase = useRef(0)
   const unitRightbarBase = useRef(0)
+  const unitAuxiliaryBase = useRef(0)
   const onUnitStart = useCallback(() => {
     unitBase.current = unitWRef.current
     unitRightbarBase.current = rightbarWidth.current
+    unitAuxiliaryBase.current = policyRegions?.auxiliary ?? 0
     setDragging(true)
-  }, [])
+  }, [policyRegions])
   const onUnitDrag = useCallback((dx: number) => {
-    // When the canvas is parked to the drawer's right in the agent
-    // arrangement, the drawer sits between conversation and canvas. The outer
-    // line is then the drawer's conversation-facing edge; moving it changes the
-    // drawer width from that side while the canvas-facing edge stays put, so
-    // the conversation yields and the canvas keeps its width. With the canvas
-    // parked left (the default), this line borders the canvas instead.
+    // Under a product policy the outer seam always resizes the semantic
+    // auxiliary region. Its content width therefore survives a later mode swap.
+    if (policyRegions !== null) {
+      actions.setAuxiliary(unitAuxiliaryBase.current - dx)
+      return
+    }
+    // Legacy DSH keeps its host-bound unit behavior, including the drawer seam
+    // that adjusts the unit and drawer together to leave Canvas width fixed.
     if (!unitLeft && canvas === 'right') {
       const delta = -dx
       actions.setUnit(unitBase.current + delta)
@@ -455,7 +778,7 @@ export function AppFrame({
       return
     }
     actions.setUnit(unitBase.current + (unitLeft ? dx : -dx))
-  }, [actions, unitLeft, canvas])
+  }, [actions, unitLeft, canvas, policyRegions])
   const sidebar = useMemo(() => renderSlot('sidebar', {
     collapsed: sidebarCollapsed,
     width: cols.sidebar,
@@ -470,7 +793,8 @@ export function AppFrame({
   // row (ui-sidebar). AppFrame.module.css publishes the matching
   // --dsh-frame-leading-clearance under the same collapsed condition.
   const leading = useMemo(() => renderSlot('shell.leading', {}), [renderSlot])
-  const leadingMounted = darwin && sidebarCollapsed
+  const leadingMounted = darwin && sidebarCollapsed && (framePolicy === null || framePolicy.topbar === false)
+  const topbarMounted = framePolicy !== null && framePolicy.topbar !== false && !canvasFullscreen
 
   return (
     <div
@@ -483,17 +807,36 @@ export function AppFrame({
         // drop that track too: a hidden first child would otherwise leave the
         // work layer auto-placed in the zero-width track.
         gridTemplateColumns: canvasFullscreen ? 'minmax(0px, 1fr)' : `${cols.sidebar}px minmax(0px, 1fr)`,
+        gridTemplateRows: topbarMounted ? `${TOPBAR_HEIGHT}px minmax(0px, 1fr)` : 'minmax(0px, 1fr)',
       }}
       data-sidebar-collapsed={sidebarCollapsed || undefined}
+      data-topbar={topbarMounted || undefined}
+      data-product-frame={framePolicy !== null || undefined}
       data-canvas-fullscreen={canvasFullscreen || undefined}
       data-dragging={dragging || undefined}
       data-animating={outerAnim > 0 || undefined}
     >
+      {mirrorLights && (
+        <div className={css.mirrorLights} aria-hidden="true" data-chrome-mirror-lights>
+          <span /><span /><span />
+        </div>
+      )}
       <DocumentTitle
         productTitle={productTitle}
         useSessions={useSessions}
         usePanelInfo={usePanelInfo}
       />
+      {topbarMounted && (
+        <div className={css.topbar} data-shell-topbar>
+          {leadingMounted && <div className={css.topbarLeading} data-shell-leading>{leading}</div>}
+          <div className={css.topbarContent} data-shell-topbar-content>
+            {renderSlot('shell.topbar', { collapsed: sidebarCollapsed })}
+          </div>
+          <div className={css.topbarNavigation} data-shell-topbar-navigation>
+            {renderSlot('shell.topbar.navigation', { collapsed: sidebarCollapsed })}
+          </div>
+        </div>
+      )}
       <div className={css.sidebarCol} data-sidebar-col>
         {sidebar}
       </div>
@@ -515,23 +858,34 @@ export function AppFrame({
           viewTransitionName: 'noven-work',
           gridTemplateColumns: canvasFullscreen
             ? 'minmax(0px, 1fr)'
-            : unitLeft
-              ? `minmax(0px, ${rightTrackMax}px) minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr)`
-              : `minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightTrackMax}px)`,
+            : centerCollapsed || rightbarAuxiliaryCollapsed
+              ? 'minmax(0px, 1fr) 0px'
+              : policyRegions !== null
+                ? unitLeft
+                  ? `minmax(${Math.min(CENTER_MIN, policyRegions.primary)}px, 1fr) minmax(0px, ${policyRegions.auxiliary}px)`
+                  : `minmax(${Math.min(CENTER_MIN, policyRegions.primary)}px, 1fr) minmax(0px, ${policyRegions.auxiliary + policyRegions.drawer}px)`
+                : unitLeft
+                  ? `minmax(0px, ${rightTrackMax}px) minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr)`
+                  : `minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightTrackMax}px)`,
         }}
       >
-        <CenterColumn order={unitLeft ? 2 : 1}>{main}</CenterColumn>
-        <RightbarColumn order={unitLeft ? 1 : 2}>
-          {renderSlot('rightbar', { width: normal.rightbar, viewportWidth: viewport, canShow: normal.rightbar > 0, collapsePreview: layoutInfo.rightbarCollapsePreview })}
+        <CenterColumn order={unitLeft ? 2 : 1} collapsible={centerCollapsible} collapsed={centerCollapsed}
+          productFold={framePolicy !== null} sideChrome={sideColumn === 'center' ? sideChrome : null} toggle={toggleCenter}
+          collapseLabel={t('collapse')} expandLabel={t('expand')}>{main}</CenterColumn>
+        <RightbarColumn order={unitLeft ? 1 : 2} collapsible={canvasAuxiliary} collapsed={rightbarAuxiliaryCollapsed}
+          productFold={framePolicy !== null} sideChrome={sideColumn === 'rightbar' ? sideChrome : null} toggle={toggleCenter}
+          collapseLabel={t('collapse')} expandLabel={t('expand')}>
+          {renderSlot('rightbar', { width: drawerWidth, viewportWidth: viewport, canShow: drawerWidth > 0, collapsePreview: layoutInfo.rightbarCollapsePreview })}
         </RightbarColumn>
-        {!canvasFullscreen && layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && !rail && normal.rightbar > 0
+        {!canvasFullscreen && layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && !rail && drawerWidth > 0
           && (canvas === null || layoutInfo.rightbarTrack) && (
           <DragHandle side="rightbar" left={rightbarHandleLeft - cols.sidebar} onStart={onRightbarStart} onDrag={onRightbarDrag} onEnd={onRightbarEnd} />
         )}
         {/* The unit seam exists only while a canvas claims the column: it moves
             the whole region against the conversation, the panel's own handle
             keeps dividing canvas from panel inside it. */}
-        {!canvasFullscreen && canvas !== null && layoutInfo.rightbarShown && !layoutInfo.rightbarFullscreen && (
+        {!canvasFullscreen && !centerCollapsed && !rightbarAuxiliaryCollapsed && canvas !== null
+          && (layoutInfo.rightbarShown || framePolicy?.drawer === false) && !layoutInfo.rightbarFullscreen && (
           <DragHandle side="unit" left={unitHandleLeft - cols.sidebar} onStart={onUnitStart} onDrag={onUnitDrag} onEnd={onDragEnd} />
         )}
       </div>
@@ -542,7 +896,7 @@ export function AppFrame({
       <div className={css.overlayLayer} data-shell-overlay>
         {overlays}
       </div>
-      {leadingMounted && (
+      {leadingMounted && !topbarMounted && (
         <div className={css.leadingSeat} data-shell-leading>
           {leading}
         </div>

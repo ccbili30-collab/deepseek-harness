@@ -1,20 +1,16 @@
 /**
- * Workspace plugin, browser half. Two registrations: WorkspaceBrowser fills
- * the sidebar shell's `sidebar.workspaces` hole (the whole browsing region),
- * and WorkspacePicker fills the conversation hero's picker hole
- * (`conversation.hero.workspace` — both hero forms). Both read real Host
- * Workspaces through the global useWorkspaces hook, and each declares its
- * own `single` directory-flow child hole for the composed picker package's
- * client half. WorkspaceBrowser additionally declares the two Session row
- * action lists, and this apply registers the shipped actions — pin, rename,
- * fork, archive, and the archived-only permanent deletion — into them the
- * way any client plugin would, each with its own behavior, plus the rename
- * dialog, the deletion confirmation, and the row-action notice into
- * `shell.overlay` (see the contract module doc). It also declares two
- * Session-row seats: the leading decoration a row renders only while its own
- * primary state is idle, and the section the row's hover card renders between
- * its relative time and its trailing status line. Export discipline:
- * packages/client/AGENTS.md.
+ * Workspace plugin, browser half. Two registrations: WorkspaceNavigator fills
+ * the sidebar shell's `sidebar.workspaces` hole with a fixed Workspace picker
+ * above current-Workspace Sessions or product content, and WorkspacePicker
+ * fills the conversation hero's picker hole (`conversation.hero.workspace`).
+ * Both read real Host Workspaces through the global useWorkspaces hook, and
+ * each declares its own `single` directory-flow child hole for the composed
+ * picker package's client half. WorkspaceNavigator declares the strict-Session
+ * `sidebar.workspaces.content` seat and the Session row action lists; this
+ * apply registers the shipped actions — pin, rename, fork, archive, and the
+ * archived-only permanent deletion — plus their dialogs and row-action notice.
+ * The legacy WorkspaceBrowser stays in its own module without a production
+ * registration. Export discipline: packages/client/AGENTS.md.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { RemoteHostFacts } from '@deepseek-ai/dsh-api-remotes/client'
@@ -36,16 +32,16 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 // Type-only: pulls the Session root standard-hook merge.
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import {
-  type ArchiveSessionInjected, type ForkSessionInjected, menuOpenStateFactory, workspaceMenuOpenStateFactory, type PinSessionInjected,
+  type ArchiveSessionInjected, type ForkSessionInjected, menuOpenStateFactory, type PinSessionInjected,
   type SessionArchiveConfirmInjected, type SessionArchiveConfirmRequest,
   type DeleteSessionMenuInjected, type RenameSessionInjected, type RowToast, type RowToastInjected, type RowToastState,
   type SessionDeleteInjected, type SessionRenameDialogInjected,
-  type WorkspaceBrowserInjected, type WorkspacePickerInjected,
+  type WorkspaceBrowserInjected, type WorkspaceNavigatorInjected, type WorkspacePickerInjected,
 } from './contract/slots.ts'
 import { createWorkspaceShortcutControls, installWorkspaceShortcuts } from './shortcuts.ts'
 import { UiWorkspaceService } from './navigation.ts'
 import { createWorkspaceViewStore } from './stores.ts'
-import { WorkspaceBrowser } from './rows/WorkspaceBrowser.tsx'
+import { WorkspaceNavigator } from './rows/WorkspaceNavigator.tsx'
 import { ArchiveSessionMenuItem, ArchiveSessionRowButton, SessionArchiveConfirmDialog } from './session-actions/ArchiveSession.tsx'
 import { derive } from './session-actions/derived.ts'
 import { DeleteSessionMenuItem, SessionDeleteDialog } from './session-actions/DeleteSession.tsx'
@@ -197,17 +193,16 @@ export function apply(ctx: Context): void {
     })
   }
   const requestSessionRename = shortcutControls.rename
-  const unarchiveSession = (sessionId: SessionId): void => {
+  const unarchiveSession = (sessionId: SessionId): Promise<void> => {
     const targets = selectionTargets(sessionId, id => archivedSet.getSnapshot().has(id))
     if (targets.length === 1 && targets[0] === sessionId) {
-      uiWorkspace.unarchiveSession(sessionId).catch((reason: unknown) => {
+      return uiWorkspace.unarchiveSession(sessionId).catch((reason: unknown) => {
         console.warn('session unarchive rejected:', reason)
       })
-      return
     }
     let succeeded = 0
     const failed: SessionId[] = []
-    void (async () => {
+    return (async () => {
       for (const id of targets) {
         try {
           await uiWorkspace.unarchiveSession(id)
@@ -259,7 +254,7 @@ export function apply(ctx: Context): void {
         archiveRequest.set({ sessionId, displayTitle, activity })
       })
     },
-    unarchiveSession,
+    unarchiveSession: (sessionId) => { void unarchiveSession(sessionId) },
   })
   installWorkspaceShortcuts(ctx, uiWorkspace, shortcutControls, archiveInjected().archiveSession)
   const archiveConfirmInjected = (): SessionArchiveConfirmInjected => ({
@@ -322,14 +317,20 @@ export function apply(ctx: Context): void {
   const rowToastInjected = (): RowToastInjected => ({
     hooks: { toast: rowToast },
     dismissToast: () => { rowToast.set(null) },
-    undoArchive: unarchiveSession,
+    undoArchive: (sessionId) => { void unarchiveSession(sessionId) },
     showArchived: () => { viewInstance.actions.setArchivedFilter('show') },
   })
-  const browserInjected = (): WorkspaceBrowserInjected => ({
+  const navigatorInjected = (): WorkspaceBrowserInjected & WorkspaceNavigatorInjected => ({
     // Explicit group actions keep their target; unscoped New Session inherits
     // the current Session Workspace before the recent-Workspace fallback.
     startSession: (workspaceId) => { uiWorkspace.startSession(workspaceId) },
     open: openSession,
+    switchWorkspace: (workspaceId) => {
+      uiWorkspace.switchWorkspace(workspaceId).catch((reason: unknown) => {
+        console.warn('workspace switch rejected:', reason)
+      })
+    },
+    dismissSessionBrowser: () => { uiWorkspace.hideSessionBrowser() },
     searchSessions,
     searchResultLimit: sessions.searchResultLimit,
     requestSessionRename,
@@ -339,7 +340,7 @@ export function apply(ctx: Context): void {
     insertWorkspaceBefore: async (workspaceId, beforeWorkspaceId) => {
       await workspaces.insertBefore(workspaceId, beforeWorkspaceId)
     },
-    unarchiveSession: async (sessionId) => { unarchiveSession(sessionId) },
+    unarchiveSession,
     requestDeleteSessions,
     notifyArchiveResult: (operation, succeeded, failed) => {
       notify({ kind: 'archiveResult', operation, succeeded, failed })
@@ -351,7 +352,13 @@ export function apply(ctx: Context): void {
     closeAddWorkspace: shortcutControls.closeAdd,
     setDirectoryBusy: shortcutControls.directoryBusy,
     dismissForkError: shortcutControls.dismissForkError,
-    hooks: { directoryFlow: browserFlowSource, hostInfo, workspaceShortcuts: shortcutControls.state, shortcuts: ctx.shortcuts.catalog },
+    hooks: {
+      directoryFlow: browserFlowSource,
+      hostInfo,
+      workspaceShortcuts: shortcutControls.state,
+      shortcuts: ctx.shortcuts.catalog,
+      sessionBrowser: uiWorkspace.sessionBrowser,
+    },
   })
   const pickerInjected = (): WorkspacePickerInjected => ({
     createWorkspace: input => workspaces.create(input),
@@ -363,6 +370,7 @@ export function apply(ctx: Context): void {
     {
       name: 'sidebar.workspaces',
       children: {
+        'sidebar.workspaces.content': { kind: 'single', scope: 'session' },
         'sidebar.workspaces.directoryFlow': { kind: 'single', scope: 'root' },
         // Every row entry reads the menu's open state through a hook bound
         // from the row's render occurrence (the owner passes the state pair
@@ -370,18 +378,15 @@ export function apply(ctx: Context): void {
         'sidebar.workspaces.session.menu.item': {
           kind: 'list', scope: 'root', inject: { hooks: { menuOpenState: menuOpenStateFactory, shortcuts: ctx.shortcuts.catalog } },
         },
-        'sidebar.workspaces.workspace.menu.item': {
-          kind: 'list', scope: 'root', inject: { hooks: { menuOpenState: workspaceMenuOpenStateFactory } },
-        },
         'sidebar.workspaces.session.row.action': { kind: 'list', scope: 'root' },
         'sidebar.session.row.leading': { kind: 'list', scope: 'root' },
         'sidebar.session.row.hover': { kind: 'list', scope: 'root' },
       },
       store: viewStore,
-      inject: browserInjected,
+      inject: navigatorInjected,
       locale: NS,
     },
-    WorkspaceBrowser,
+    WorkspaceNavigator,
   ))
   // The shipped row actions take the same route as a plugin's: `slots.inject`
   // waits for the browser registration above to declare each list, and the

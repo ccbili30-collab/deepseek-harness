@@ -8,6 +8,7 @@ import type {
   SessionReference,
   SessionTarget,
   SessionListState,
+  SessionSummary,
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { SubagentAddress } from '@deepseek-ai/dsh-subagent/client'
@@ -16,6 +17,7 @@ import type {
 } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
+import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { RowToast } from './contract/slots.ts'
 import { handOffPanel, rowDirection, turnPage, type PageTurnWeight } from './page-turn.ts'
 import { pinOrderAccounts, pinOrderSource } from './pin-order.ts'
@@ -53,6 +55,12 @@ export interface ConnectWorkspaceOptions {
 
 /** Workspace archive and directory operations consumed by Client UI domains. */
 export interface UiWorkspace {
+  /** Whether the full Session browser temporarily replaces product content navigation. */
+  readonly sessionBrowser: HostObservable<boolean>
+  /** Show the full Session browser without changing the selected Session or product mode. */
+  showSessionBrowser(): void
+  /** Return from the temporary Session browser to product content navigation. */
+  hideSessionBrowser(): void
   /**
    * Select a Session and show its Conversation as one UI navigation action.
    * A blank Session is seated as a host and routed to the registered
@@ -73,6 +81,19 @@ export interface UiWorkspace {
    * notice unless a later navigation or disposal superseded the request.
    */
   openWorkspace(workspaceId: WorkspaceId, beforeOpen?: (sessionId: SessionId) => void): Promise<void>
+  /**
+   * Switch the main Session to a Workspace without changing the active panel or
+   * product mode. The last ordinary Session selected in that Workspace wins;
+   * otherwise its most recently updated ordinary Session is selected. Blank,
+   * archived, and classified-origin Sessions are not ordinary destinations. A
+   * Workspace without one uses the blank connection flow without opening the
+   * new-session surface. Later navigation supersedes a pending switch; blank
+   * connection failures use the Workspace notice.
+   * @param workspaceId - target Workspace.
+   * @returns completion; a superseded blank connection does not select its result.
+   * @throws on an unknown Workspace, blank connection failure, or selection failure.
+   */
+  switchWorkspace(workspaceId: WorkspaceId): Promise<void>
   /**
    * Fork a Session without changing the current selection.
    * @param sessionId - source Session.
@@ -181,10 +202,16 @@ export class DirectoryBrowseError extends Error {
 class UiWorkspaceService extends Service implements UiWorkspace {
   private readonly connecting = new Map<string, Promise<SessionId>>()
   private readonly lifetime = new AbortController()
+  private readonly sessionBrowserState = createSnapshotStore(false)
+  readonly sessionBrowser: HostObservable<boolean> = {
+    getSnapshot: () => this.sessionBrowserState.getSnapshot(),
+    subscribe: listener => this.sessionBrowserState.subscribe(listener),
+  }
   private readonly selection = createSnapshotStore<MainSelection>(
     {}, { persist: { name: 'dsh.sessions.current' } },
   )
   private mainReference: SessionReference | undefined
+  private readonly ordinarySelectionByWorkspace = new Map<WorkspaceId, SessionId>()
   private newSessionSurface: (() => void) | undefined
 
   /**
@@ -216,6 +243,14 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     }, 'ui-workspace: Workspace navigation policy')
   }
 
+  showSessionBrowser(): void {
+    this.sessionBrowserState.set(true)
+  }
+
+  hideSessionBrowser(): void {
+    this.sessionBrowserState.set(false)
+  }
+
   async connectWorkspace(workspaceId: WorkspaceId, options: ConnectWorkspaceOptions = {}): Promise<SessionId> {
     const workspace = this.workspaces.list.getSnapshot().items
       .find(item => item.workspaceId === workspaceId)
@@ -232,6 +267,17 @@ class UiWorkspaceService extends Service implements UiWorkspace {
       .finally(() => { this.connecting.delete(key) })
     this.connecting.set(key, attempt)
     return attempt
+  }
+
+  private async connectForNavigation(workspaceId: WorkspaceId, navigation: AbortSignal): Promise<SessionId> {
+    try {
+      return await this.connectWorkspace(workspaceId)
+    } catch (error: unknown) {
+      // Reported here, not in connectWorkspace: startup restoration calls that
+      // directly and stays console-only.
+      if (!navigation.aborted) this.notify({ kind: 'createFailed', message: creationFailureMessage(error) })
+      throw error
+    }
   }
 
   private reuseOrCreateBlank(workspace: WorkspaceView, agentPreset?: string): Promise<SessionId> {
@@ -280,6 +326,8 @@ class UiWorkspaceService extends Service implements UiWorkspace {
   }
 
   openSession(target: SessionTarget, options?: OpenSessionOptions): void {
+    this.hideSessionBrowser()
+    const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal])
     const panel = options?.panel === 'preserve' ? 'preserve' : 'reveal'
     const current = this.mainReference?.sessionId
     const targetId = typeof target === 'string' ? target : target.childSessionId
@@ -290,14 +338,14 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     if (panel === 'reveal' && options?.transition !== 'none'
       && this.newSessionSurface !== undefined
       && this.sessions.list.getSnapshot().byId[targetId]?.blank === true) {
-      this.replaceMain(target, this.lifetime.signal, 'preserve')
+      this.replaceMain(target, navigation, 'preserve')
       this.newSessionSurface()
       return
     }
     // A scene-owned commit runs inside the caller's View Transition; starting
     // another here would skip that scene, so commit straight through.
     if (options?.transition === 'none') {
-      this.replaceMain(target, this.lifetime.signal, panel)
+      this.replaceMain(target, navigation, panel)
       return
     }
     // Leaving a global panel is the panel's own exit, not a Session↔Session
@@ -305,39 +353,32 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     // over a default crossfade. A `preserve` open keeps the panel on stage,
     // so it commits without any motion at all.
     if (panel === 'preserve') {
-      this.replaceMain(target, this.lifetime.signal, panel)
+      this.replaceMain(target, navigation, panel)
       return
     }
     const panelActive = this.ctx.layout.panelInfo.getSnapshot().activePanelId !== null
     if (current === undefined || current === targetId) {
       if (panelActive) {
-        handOffPanel(() => { this.replaceMain(target, this.lifetime.signal, panel) })
+        handOffPanel(() => { this.replaceMain(target, navigation, panel) })
         return
       }
-      this.replaceMain(target, this.lifetime.signal, panel)
+      this.replaceMain(target, navigation, panel)
       return
     }
     if (panelActive) {
-      handOffPanel(() => { this.replaceMain(target, this.lifetime.signal, panel) })
+      handOffPanel(() => { this.replaceMain(target, navigation, panel) })
       return
     }
     const byId = this.sessions.list.getSnapshot().byId
     const weight: PageTurnWeight = byId[current]?.cwd !== byId[targetId]?.cwd
       || this.ctx.layout.navGeometryDiffers(current, targetId) ? 'project' : 'session'
-    turnPage(() => { this.replaceMain(target, this.lifetime.signal, panel) }, rowDirection(current, targetId), weight)
+    turnPage(() => { this.replaceMain(target, navigation, panel) }, rowDirection(current, targetId), weight)
   }
 
   async openWorkspace(workspaceId: WorkspaceId, beforeOpen?: (sessionId: SessionId) => void): Promise<void> {
+    this.hideSessionBrowser()
     const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal])
-    let sessionId: SessionId
-    try {
-      sessionId = await this.connectWorkspace(workspaceId)
-    } catch (error: unknown) {
-      // Reported here, not in connectWorkspace: startup restoration calls that
-      // directly and stays console-only.
-      if (!navigation.aborted) this.notify({ kind: 'createFailed', message: creationFailureMessage(error) })
-      throw error
-    }
+    const sessionId = await this.connectForNavigation(workspaceId, navigation)
     if (navigation.aborted) return
     // connectWorkspace always resolves to a blank Session. Revealing it would
     // strand the viewer on an empty conversation; a registered new-session
@@ -362,11 +403,27 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     }, rowDirection(current, sessionId), weight)
   }
 
+  async switchWorkspace(workspaceId: WorkspaceId): Promise<void> {
+    this.hideSessionBrowser()
+    const navigation = AbortSignal.any([this.ctx.layout.beginNavigation(), this.lifetime.signal])
+    const workspace = this.workspaces.list.getSnapshot().items
+      .find(item => item.workspaceId === workspaceId)
+    const existing = workspace === undefined ? undefined : this.ordinaryWorkspaceTarget(workspace)
+    if (existing !== undefined) {
+      this.replaceMain(existing, navigation, 'preserve')
+      return
+    }
+    const sessionId = await this.connectForNavigation(workspaceId, navigation)
+    if (navigation.aborted) return
+    this.replaceMain(sessionId, navigation, 'preserve')
+  }
+
   async forkSession(sessionId: SessionId): Promise<void> {
     await this.sessions.fork({ sessionId, increaseTitle: true })
   }
 
   startSession(workspaceId?: WorkspaceId): void {
+    this.hideSessionBrowser()
     if (this.newSessionSurface !== undefined) {
       if (workspaceId === undefined) {
         this.newSessionSurface()
@@ -411,6 +468,23 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     // The list update normally lands the rule in clearArchivedCurrent; this
     // covers a controller that reports completion before its snapshot settles.
     this.landAfterRemoved(sessionId)
+  }
+
+  private ordinaryWorkspaceTarget(workspace: WorkspaceView): SessionId | undefined {
+    const sessions = this.sessions.list.getSnapshot()
+    const archived = new Set(this.workspaces.list.getSnapshot().archivedSessionIds)
+    const rememberedId = this.ordinarySelectionByWorkspace.get(workspace.workspaceId)
+    const remembered = ordinaryWorkspaceSession(workspace, sessions, archived, rememberedId)
+    if (remembered !== undefined) return remembered.id
+    if (rememberedId !== undefined) this.ordinarySelectionByWorkspace.delete(workspace.workspaceId)
+    let recent: SessionSummary | undefined
+    for (const id of sessions.ids) {
+      const candidate = ordinaryWorkspaceSession(workspace, sessions, archived, id)
+      if (candidate !== undefined && (recent === undefined || candidate.updatedAt > recent.updatedAt)) {
+        recent = candidate
+      }
+    }
+    return recent?.id
   }
 
   /**
@@ -594,6 +668,15 @@ class UiWorkspaceService extends Service implements UiWorkspace {
     if (options.keepPanel !== true) this.ctx.layout.selectPanel(null)
   }
 
+  private rememberOrdinarySelection(sessionId: SessionId): void {
+    const workspaces = this.workspaces.list.getSnapshot()
+    const sessions = this.sessions.list.getSnapshot()
+    const archived = new Set(workspaces.archivedSessionIds)
+    const workspace = workspaces.items.find(item =>
+      ordinaryWorkspaceSession(item, sessions, archived, sessionId) !== undefined)
+    if (workspace !== undefined) this.ordinarySelectionByWorkspace.set(workspace.workspaceId, sessionId)
+  }
+
   private replaceMain(
     target: SessionTarget,
     signal: AbortSignal,
@@ -616,6 +699,7 @@ class UiWorkspaceService extends Service implements UiWorkspace {
         sessionId: reference.sessionId,
         ...(subagentAddress === undefined ? {} : { subagentAddress }),
       })
+      this.rememberOrdinarySelection(reference.sessionId)
     } catch (error: unknown) {
       reference.release()
       throw error
@@ -645,6 +729,21 @@ function creationFailureMessage(error: unknown): string {
   const refused = sessionCreateErrorOf(error)
   if (refused !== undefined) return `${refused.rpcError.code}: ${refused.rpcError.message}`
   return error instanceof Error ? error.message : String(error)
+}
+
+/** A Workspace member eligible as an ordinary navigation destination. */
+function ordinaryWorkspaceSession(
+  workspace: WorkspaceView,
+  sessions: SessionListState,
+  archived: ReadonlySet<SessionId>,
+  sessionId: SessionId | undefined,
+): SessionSummary | undefined {
+  if (sessionId === undefined || archived.has(sessionId) || !workspace.sessionIds.includes(sessionId)) return undefined
+  const summary = sessions.byId[sessionId]
+  if (summary === undefined || summary.blank || summary.origin !== undefined || summary.cwd !== workspace.path) {
+    return undefined
+  }
+  return summary
 }
 
 /** Stable tie-breaking follows Host Workspace order. */

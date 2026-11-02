@@ -35,7 +35,7 @@
    the window's top strip in both sidebar states so it never jumps, and the head
    owns the window drag over its own box — clearance included — so this page's
    top strip drags without a frame band. */
-:global([data-platform='darwin']) .pageHead {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .pageHead {
   padding-top: calc(28px + var(--dsh-frame-top-clearance, 0px));
 }
 
@@ -1069,7 +1069,7 @@ label.registryOption {
   padding-top: 28px;
 }
 
-:global([data-platform='darwin']) .detailTop {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .detailTop {
   padding-top: calc(28px + var(--dsh-frame-top-clearance, 0px));
 }
 

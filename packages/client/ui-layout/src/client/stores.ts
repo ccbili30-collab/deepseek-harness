@@ -88,6 +88,12 @@ type LayoutInfo = {
    * panel's own drag stays inside it through `rightbar`.
    */
   unit: number | null
+  /**
+   * Auxiliary content width used by a product policy, independent of whether
+   * the main or rightbar host currently renders that content. The legacy unit
+   * remains host-bound for the unpolicied DSH arrangement.
+   */
+  auxiliary: number | null
   /** Pending explicit canvas/conversation ratio; resolved against rendered columns, never persisted. */
   unitCanvasShare: number | null
   /**
@@ -128,6 +134,8 @@ type LayoutInfo = {
   rightbarInstant: boolean
   /** Live structural unit side of the visible session (geometry.active). */
   unitSide: UnitSide
+  /** One global fold for the auxiliary region, whichever content the product mode assigns to it. */
+  auxiliaryCollapsed: boolean
 }
 
 /** Live structural fields of layoutInfo that mirror the active session's record. */
@@ -174,6 +182,9 @@ type LayoutActions = {
   toggleSidebar: (draft: LayoutState) => void
   setSidebarCollapsed: (draft: LayoutState, collapsed: boolean) => void
   setUnitSide: (draft: LayoutState, side: UnitSide) => void
+  /** @deprecated Compatibility alias for the one auxiliary fold. */
+  setCenterCollapsed: (draft: LayoutState, collapsed: boolean) => void
+  setAuxiliaryCollapsed: (draft: LayoutState, collapsed: boolean) => void
   enterSession: (draft: LayoutState, sessionId: string) => void
   seedSessionGeometry: (draft: LayoutState, sessionId: string, patch: Partial<SessionGeometry>) => void
   seedUnitShare: (draft: LayoutState, share: number) => void
@@ -181,6 +192,7 @@ type LayoutActions = {
   setRightbar: (draft: LayoutState, px: number) => void
   settleRightbar: (draft: LayoutState) => void
   setUnit: (draft: LayoutState, px: number) => void
+  setAuxiliary: (draft: LayoutState, px: number) => void
   openRightbar: (draft: LayoutState, track: boolean, fullscreen: boolean, rail: boolean) => void
   closeRightbar: (draft: LayoutState) => void
   setCanvasFullscreen: (draft: LayoutState, on: boolean) => void
@@ -206,6 +218,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         narrowExpanded: false,
         rightbar: null,
         unit: null,
+        auxiliary: null,
         unitCanvasShare: null,
         rightbarCollapsed: false,
         rightbarCollapsePreview: false,
@@ -215,6 +228,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         rightbarFullscreen: false,
         rightbarInstant: false,
         unitSide: DEFAULT_GEOMETRY.unitSide,
+        auxiliaryCollapsed: true,
         sidebarCollapsed: DEFAULT_GEOMETRY.sidebarCollapsed,
       },
       geometry: { active: null, byId: {} },
@@ -246,6 +260,14 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
       },
       setUnitSide: (d, side: UnitSide) => {
         structural(d, { unitSide: side })
+      },
+      setCenterCollapsed: (d, collapsed: boolean) => {
+        d.layoutInfo.rightbarInstant = false
+        d.layoutInfo.auxiliaryCollapsed = collapsed
+      },
+      setAuxiliaryCollapsed: (d, collapsed: boolean) => {
+        d.layoutInfo.rightbarInstant = false
+        d.layoutInfo.auxiliaryCollapsed = collapsed
       },
       // Entry-path seeding: stamp a named structure onto one session's record
       // before or after it becomes visible. A session that is already live
@@ -306,6 +328,11 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         d.layoutInfo.rightbarInstant = false
         d.layoutInfo.unit = clampWidth(px, CANVAS_MIN, Math.max(CANVAS_MIN, d.layoutInfo.viewportWidth - CENTER_MIN))
       },
+      setAuxiliary: (d, px: number) => {
+        d.layoutInfo.unitCanvasShare = null
+        d.layoutInfo.rightbarInstant = false
+        d.layoutInfo.auxiliary = clampWidth(px, CANVAS_MIN, Math.max(CANVAS_MIN, d.layoutInfo.viewportWidth - CENTER_MIN))
+      },
       openRightbar: (d, track: boolean, fullscreen: boolean, rail: boolean) => {
         const presentationMoved = !d.layoutInfo.rightbarShown || d.layoutInfo.rightbarTrack !== track
           || d.layoutInfo.rightbarFullscreen !== fullscreen || d.layoutInfo.rightbarRail !== rail
@@ -350,16 +377,27 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         const latest = Object.values(saved.byId).reduce<SessionGeometryRecord | undefined>(
           (newest, record) => newest === undefined || record.updatedAt > newest.updatedAt ? record : newest, undefined)
         instance.store.set({ ...fresh,
-          layoutInfo: latest === undefined ? { ...fresh.layoutInfo, sidebar: saved.sidebar, rightbar: saved.rightbar, unit: saved.unit } : {
-            ...fresh.layoutInfo,
-            sidebar: saved.sidebar,
-            rightbar: saved.rightbar,
-            unit: saved.unit,
-            sidebarCollapsed: latest.sidebarCollapsed,
-            narrowExpanded: latest.narrowExpanded,
-            unitSide: latest.unitSide,
-            rightbarCollapsed: latest.rightbarCollapsed,
-          },
+          layoutInfo: latest === undefined
+            ? {
+              ...fresh.layoutInfo,
+              sidebar: saved.sidebar,
+              rightbar: saved.rightbar,
+              unit: saved.unit,
+              auxiliary: saved.auxiliary,
+              auxiliaryCollapsed: saved.auxiliaryCollapsed,
+            }
+            : {
+              ...fresh.layoutInfo,
+              sidebar: saved.sidebar,
+              rightbar: saved.rightbar,
+              unit: saved.unit,
+              auxiliary: saved.auxiliary,
+              auxiliaryCollapsed: saved.auxiliaryCollapsed,
+              sidebarCollapsed: latest.sidebarCollapsed,
+              narrowExpanded: latest.narrowExpanded,
+              unitSide: latest.unitSide,
+              rightbarCollapsed: latest.rightbarCollapsed,
+            },
           geometry: { ...fresh.geometry, byId: saved.byId },
         })
       }

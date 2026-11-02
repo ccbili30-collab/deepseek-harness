@@ -5,6 +5,7 @@ import { cleanup, render } from '@testing-library/react'
 import { makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import { zh as commonZh } from '@deepseek-ai/dsh-client-locale/src/locales/zh.ts'
 import { AssistantMarkdown, type AssistantMarkdownProps } from '../src/client/chat/AssistantMarkdown.tsx'
+import { BlockRegistryProvider, createBlockRegistry } from '../src/client/blocks/registry.tsx'
 import { useDetailedPresentation } from './presentation-fixture.client.ts'
 import { useDisclosure } from '../src/client/chat/use-disclosure.ts'
 import { zh } from '../src/client/locale.ts'
@@ -43,6 +44,29 @@ describe('tails', () => {
       />,
     )
     expect(stopped.getByText('已停止')).toBeTruthy()
+  })
+
+  it('AssistantMarkdown gives every text block a distinct inline choice scope', () => {
+    const registry = createBlockRegistry()
+    registry.register({
+      id: 'code', content: 'data',
+      render: ({ blockId }) => <span data-inline-scope={blockId} />,
+    })
+    const directive = '::view{"block":"code","data":{"version":1,"component":"choices","group":"branch","options":[]}}'
+    const view = render(
+      <BlockRegistryProvider registry={registry}>
+        <AssistantMarkdown useDisclosure={useDisclosure}
+          usePresentation={useDetailedPresentation}
+          t={t}
+          contentScope="4:2"
+          blocks={[{ kind: 'text', text: directive }, { kind: 'text', text: directive }]}
+          streaming={false}
+          renderMessageImages={renderMessageImages}
+        />
+      </BlockRegistryProvider>,
+    )
+    expect([...view.container.querySelectorAll('[data-inline-scope]')].map(element => element.getAttribute('data-inline-scope')))
+      .toEqual(['4:2:0:0', '4:2:1:0'])
   })
 
   it('AssistantMarkdown skips the root shell when only tool-call heads remain', () => {

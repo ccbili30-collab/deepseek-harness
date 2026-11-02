@@ -360,6 +360,9 @@ importers:
       '@mantine/hooks':
         specifier: ^8.3.18
         version: 8.3.18(react@18.3.1)
+      perfect-freehand:
+        specifier: 1.2.2
+        version: 1.2.2
       sucrase:
         specifier: ^3.35.1
         version: 3.35.1
@@ -445,18 +448,24 @@ importers:
       '@deepseek-ai/dsh-session':
         specifier: ^0.1.7-rc.1
         version: 0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-scope@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)(@deepseek-ai/dsh-invariants@0.1.7-rc.2(@deepseek-ai/cordis@4.0.4)))
+      '@deepseek-ai/dsh-tools':
+        specifier: ^0.1.7-rc.1
+        version: 0.1.7-rc.2(d2e08270f2205e73d65e98cfcd910cae)
       '@types/react':
         specifier: ^18.3.12
         version: 18.3.31
       '@types/react-dom':
         specifier: ~18.3.7
         version: 18.3.7(@types/react@18.3.31)
+      immer:
+        specifier: ^10.1.1
+        version: 10.2.0
       noven-fmg:
         specifier: workspace:*
         version: link:../noven-fmg
-      perfect-freehand:
-        specifier: 1.2.2
-        version: 1.2.2
+      noven-ledger:
+        specifier: workspace:*
+        version: link:../noven-ledger
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -469,6 +478,9 @@ importers:
       typescript:
         specifier: ^5.9.3
         version: 5.9.3
+      zustand:
+        specifier: ~4.4.7
+        version: 4.4.7(@types/react@18.3.31)(immer@10.2.0)(react@18.3.1)
 
   noven-sidecar:
     dependencies:
@@ -2425,6 +2437,9 @@ packages:
   ignore@3.3.10:
     resolution: {integrity: sha512-Pgs951kaMm5GXP7MOvxERINe3gsaVjUWFm+UZPSq9xYriQAksyhg0csnS0KXSNRD5NmNdapXEpjxG49+AKh/ug==}
 
+  immer@10.2.0:
+    resolution: {integrity: sha512-d/+XTN3zfODyjr89gM3mPq1WNX2B8pYsu7eORitdwyA2sBubnTl3laYlBk4sXY5FUa5qTZGBDPJICVbvqzjlbw==}
+
   import-meta-resolve@4.2.0:
     resolution: {integrity: sha512-Iqv2fzaTQN28s/FwZAoFq0ZSs/7hMAHJVX+w8PZl3cY19Pxk6jFFalxQoIfW2826i/fDLXv8IiEZRIT0lDuWcg==}
 
@@ -3076,6 +3091,11 @@ packages:
       '@types/react':
         optional: true
 
+  use-sync-external-store@1.2.0:
+    resolution: {integrity: sha512-eEgnFxGQ1Ife9bzYs6VLi8/4X6CObHMw9Qr9tPY43iKwsPw8xE8+EFsf/2cFZ5S3esXgpWgtSCtLNS41F+sKPA==}
+    peerDependencies:
+      react: ^16.8.0 || ^17.0.0 || ^18.0.0
+
   use-sync-external-store@1.6.0:
     resolution: {integrity: sha512-Pp6GSwGP/NrPIrxVFAIkOQeyw8lFenOHijQWkUTrDvrF4ALqylP2C/KCkeS9dpUM3KvYRQhna5vt7IL95+ZQ9w==}
     peerDependencies:
@@ -3144,6 +3164,21 @@ packages:
 
   zod@4.6.5:
     resolution: {integrity: sha512-v5l/aFXZQeai4awLbOpSoHecE9UiMrnfx75tEXLjNonXVARxQ5mOeipTjROUchszUNCqnE+hqAMujRsRHsut2Q==}
+
+  zustand@4.4.7:
+    resolution: {integrity: sha512-QFJWJMdlETcI69paJwhSMJz7PPWjVP8Sjhclxmxmxv/RYI7ZOvR5BHX+ktH0we9gTWQMxcne8q1OY8xxz604gw==}
+    engines: {node: '>=12.7.0'}
+    peerDependencies:
+      '@types/react': '>=16.8'
+      immer: '>=9.0'
+      react: '>=16.8'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+      immer:
+        optional: true
+      react:
+        optional: true
 
 snapshots:
 
@@ -5106,6 +5141,8 @@ snapshots:
 
   ignore@3.3.10: {}
 
+  immer@10.2.0: {}
+
   import-meta-resolve@4.2.0: {}
 
   import-without-cache@0.4.1: {}
@@ -5692,6 +5729,10 @@ snapshots:
     optionalDependencies:
       '@types/react': 18.3.31
 
+  use-sync-external-store@1.2.0(react@18.3.1):
+    dependencies:
+      react: 18.3.1
+
   use-sync-external-store@1.6.0(react@18.3.1):
     dependencies:
       react: 18.3.1
@@ -5767,3 +5808,11 @@ snapshots:
       '@yuku-parser/binding-win32-x64': 0.8.7
 
   zod@4.6.5: {}
+
+  zustand@4.4.7(@types/react@18.3.31)(immer@10.2.0)(react@18.3.1):
+    dependencies:
+      use-sync-external-store: 1.2.0(react@18.3.1)
+    optionalDependencies:
+      '@types/react': 18.3.31
+      immer: 10.2.0
+      react: 18.3.1

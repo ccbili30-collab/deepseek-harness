@@ -1,11 +1,12 @@
 /**
  * noven-shell browser half — the product IA on top of DSH's public seams:
  *
- * - `sidebar.panellist` rows (首页 / 创作 / 消息 / 我的) each selecting a
- *   `main` keyed panel; the conversation stays the default main key.
- * - `main` panels: the community feed (with its landing drawer), the creation
- *   surface, the creator profile with 世界/角色/创作库 tabs, a messages
- *   placeholder, and the three-pane card editor reached from 我的.
+ * - `sidebar.panellist` rows (首页 / 创作 / 消息 / 我的): 创作 is the New
+ *   Session command; the rest select keyed `main` panels, and the conversation
+ *   stays the default main key.
+ * - `main` panels: the community feed (with its landing drawer), the creator
+ *   profile with 世界/角色/创作库 tabs, a messages placeholder, and the
+ *   three-pane card editor reached from 我的.
  * - `betterSidebar` tabs 本会话 / 创作库 for the session's card context.
  * - `ctx.theme.overrideTokens` maps the shipped palette onto the Noven one.
  *
@@ -27,6 +28,8 @@ import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import type {} from '@deepseek-ai/dsh-client-ui-chat/client'
+import { registerInlineBlocks } from './blocks.tsx'
+import { AppearanceEffects, type AppearanceEffectsInjected } from './appearance.tsx'
 import type {} from '@deepseek-ai/dsh-client-ui-conversation/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 import type { InjectFace, PropsLocale, PropsRenderFactories, PropsRuntime, PropsStore, SlotHookFactory } from '@deepseek-ai/dsh-client-ui-slots'
@@ -36,14 +39,13 @@ import type { NovenShellLocaleKey } from './locales.ts'
 import { defineStore } from '@deepseek-ai/dsh-client-store'
 import type { ObservableSnapshot, SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { Home, fmt } from './pages/Home.tsx'
+import { Messages } from './pages/Messages.tsx'
 import { notifyUndo } from './ui/interact.tsx'
 import { openWorkspaceFolder } from './workspace-folder.ts'
 import { cardCache } from './ui/retain.ts'
 import { forgetColdWhere } from './ui/cold-store.ts'
-import { Create } from './pages/Create.tsx'
 import { MeHome, type LibraryFocus } from './pages/MeHome.tsx'
 import { CardPreview } from './card-page.tsx'
-import { Messages } from './pages/Messages.tsx'
 import { isMiscRoot, libraryOp, miscProjectRoot, projectOp, projectsCatalog, setMiscProjectRoot } from './library-api.ts'
 import type { ProjectAddr, ProjectRow } from './library-api.ts'
 import { cardOp, exportCardPackage, fetchCard, fetchCardList, type CardCommand } from './card-api.ts'
@@ -55,6 +57,10 @@ import { LibraryTab } from './tabs/Library.tsx'
 import { SidecarTab, type SidecarMessage, type SidecarState } from './tabs/Sidecar.tsx'
 import { SettingsTab } from './tabs/Settings.tsx'
 import { UpdatesSection } from './settings/UpdatesSection.tsx'
+import { WorkbenchSection } from './settings/WorkbenchSection.tsx'
+import { AppearanceSettingsSection } from './settings/AppearanceSettingsSection.tsx'
+import { bindNovenEditorTheme } from './doc-editor.tsx'
+import { createNovenWorkbenchStore } from './workbench.ts'
 import { fetchSidecar, sidecarOp, type SidecarOp } from './sidecar-api.ts'
 import type { SessionEventLikeEntry, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { HeroBrandMarkOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
@@ -70,16 +76,18 @@ import { applyQuote } from './quote.tsx'
 import { applyBranches } from './branches.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
 import { showComingSoon } from './coming-soon.ts'
-import { applyArrangement, type ArrangementDeps } from './arrangement.ts'
-import { enterCreateScene, enterHandcraftScene } from './creation-transition.ts'
+import { createNovenSubjectStore, frameLayoutPolicy, subjectOfMode, type NovenMode, type NovenSubject } from './arrangement.ts'
+import { NovenModeSwitch, type SideSessions } from './mode.tsx'
+import { SideParent, type SideParentInjected } from './side-parent.tsx'
+import { enterHandcraftScene } from './creation-transition.ts'
 import { injectNovenStyles } from './style.ts'
 import { CanvasHost, createCanvasStore, activeKey, fileTabKind, docKey, dirKey, statusKey, type CanvasInjected, type CanvasState, type DocEntry, type DirEntry, type ImportPack, type ProjectFocus, type SimRow, type TabFlags } from './canvas.tsx'
 import { aiEditsSource } from './ai-edits.ts'
-import { ContentTree, type TreeInjected } from './tree.tsx'
+import { DirectorySideEntry, LeftContentTree, type TreeInjected } from './tree.tsx'
 import type { TranscriptMsg, TranscriptState } from './stage-phone.tsx'
 import { foldConvEntries, type ConvChannel, type ConvEntry, type ConvMsg, type ConvsMap } from './conv.tsx'
 import type { CreateRequest } from './creation.tsx'
-import { bindTreeColdCache, novenTreeSource, treeOp, fileOp, presentNode, importAnalyze, importCommit } from './tree-api.ts'
+import { bindTreeColdCache, novenTreeSource, treeOp, fileOp, presentNode, importAnalyze, importCommit, type ImportLanded } from './tree-api.ts'
 import { readCachedTree, writeCachedTree, forgetCachedTree } from './tree-cache.ts'
 import { capturePanelGhost, installPanelGhost } from './panel-ghost.ts'
 import { en, zh } from './locales.ts'
@@ -234,23 +242,8 @@ interface PreviewPageInjected {
 }
 
 /** Injected face for 创作: blank-host ensure, conversation reveal, card creation, and the drafts catalog. */
-export interface CreatePageInjected extends ShellFace {
-  readonly hooks: { readonly cards: ObservableSnapshot<readonly CardRow[]> }
-  /**
-   * Ensure the current main-view Session is a blank host for the page's
-   * embedded composer: acquire (reuse-or-create) a blank in the chosen
-   * workspace and select it under the panel — the page never visibly leaves.
-   */
-  readonly ensureBlankHost: (workspaceId: WorkspaceId | undefined) => Promise<void>
-  /** Reveal a Session's conversation in the main area (the submission handoff). */
-  readonly revealSession: (sessionId: SessionId) => void
-  readonly importCard: (file: File, workspaceId?: WorkspaceId) => void
-  /** Connect or create the chosen workspace session, then enter the persisted IDE canvas. */
-  readonly startHandcraft: (workspaceId: WorkspaceId | undefined, source: HTMLElement) => Promise<boolean>
-}
 
 type PageProps = PropsRuntime<'main'> & PropsLocale<'novenShell'> & PropsRenderFactories
-type FacePageProps = PageProps & InjectFace<ShellFace>
 type TabBodyProps = PropsRuntime<'sidebar.right.pane.tab'> & PropsLocale<'novenShell'>
 type WorkspaceMenuItemProps = PropsRuntime<'sidebar.workspaces.workspace.menu.item'> & PropsLocale<'novenShell'>
 
@@ -1146,10 +1139,72 @@ export function apply(ctx: ClientContext): void {
     '--dsw-specific-bubble': { light: 'rgba(52, 211, 153, 0.12)', dark: 'rgba(52, 211, 153, 0.18)' },
     '--dsw-specific-bubble-highlight': { light: 'rgba(52, 211, 153, 0.22)', dark: 'rgba(52, 211, 153, 0.28)' },
   }), 'noven-shell: theme tokens')
+  const themeColorSchemeSource: ObservableSnapshot<'light' | 'dark'> = {
+    getSnapshot: () => ctx.theme.getTheme().active.colorScheme,
+    subscribe: listener => ctx.on('theme/change', () => { listener() }),
+  }
+  ctx.effect(() => bindNovenEditorTheme(
+    themeColorSchemeSource.getSnapshot,
+    listener => themeColorSchemeSource.subscribe(() => { listener(themeColorSchemeSource.getSnapshot()) }),
+  ), 'noven-shell: editor theme')
 
   const handle = createShellStore()
   const instance = handle.create()
   const store: typeof handle = { ...handle, create: () => instance }
+  const subjectHandle = createNovenSubjectStore()
+  const subjectInstance = subjectHandle.create()
+  const subjectStore: typeof subjectHandle = { ...subjectHandle, create: () => subjectInstance }
+  const workbenchHandle = createNovenWorkbenchStore()
+  const workbenchInstance = workbenchHandle.create()
+  const workbenchStore: typeof workbenchHandle = { ...workbenchHandle, create: () => workbenchInstance }
+  const subjectSource: ObservableSnapshot<NovenSubject> = {
+    getSnapshot: () => subjectInstance.getSnapshot().subject,
+    subscribe: listener => subjectInstance.subscribe(listener),
+  }
+  const currentSessionSource: ObservableSnapshot<SessionId | undefined> = {
+    getSnapshot: () => ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined,
+    subscribe: listener => ctx.uiSession.adapter.current.subscribe(listener),
+  }
+  ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay', id: 'noven-appearance', locale: NS,
+    inject: (): AppearanceEffectsInjected => ({ current: currentSessionSource, scheme: themeColorSchemeSource, theme: ctx.theme }),
+  }, AppearanceEffects)), 'noven-shell: appearance surface')
+  let directoryQueryValue = ''
+  const directoryQueryListeners = new Set<() => void>()
+  const directoryQuery: ObservableSnapshot<string> = {
+    getSnapshot: () => directoryQueryValue,
+    subscribe: listener => { directoryQueryListeners.add(listener); return () => { directoryQueryListeners.delete(listener) } },
+  }
+  const setDirectoryQuery = (value: string): void => {
+    if (value === directoryQueryValue) return
+    directoryQueryValue = value
+    for (const listener of directoryQueryListeners) listener()
+  }
+  const featureTabsSource: ObservableSnapshot<readonly SidebarRightGuideBox[]> = {
+    getSnapshot: () => ctx.sidebarRightTabs.guide(),
+    subscribe: listener => ctx.sidebarRightTabs.subscribe(listener),
+  }
+  let modePolicy = frameLayoutPolicy(subjectInstance.getSnapshot().subject)
+  const modePolicySource: ObservableSnapshot<ReturnType<typeof frameLayoutPolicy>> = {
+    getSnapshot: () => modePolicy,
+    subscribe: listener => subjectInstance.subscribe(() => {
+      modePolicy = frameLayoutPolicy(subjectInstance.getSnapshot().subject)
+      listener()
+    }),
+  }
+  const changeMode = (mode: NovenMode): void => {
+    const subject = subjectOfMode(mode)
+    ctx.layout.transitionFrame(() => {
+      subjectInstance.actions.setSubject(subject)
+      ctx.layout.selectPanel(null)
+      if (subject === 'canvas') ensureCanvas()
+    })
+  }
+  ctx.effect(() => ctx.layout.provideFrameLayoutPolicy(modePolicySource), 'noven-shell: frame layout policy')
+  ctx.slots.inject('shell.topbar', () => ctx.slots.register({
+    name: 'shell.topbar', id: 'noven-mode', order: -100, locale: NS, store: subjectStore,
+    inject: () => ({ onMode: changeMode }),
+  }, NovenModeSwitch))
   const projects = projectsCatalog(ctx.sessions)
   // 杂项项目是永久兜底（设计理念 §15）：注册表自举后只补登记一次上游工作区，
   // 复用同一份项目快照，不再另发一次请求。浏览器没有 HOME，不能本地拼路径。
@@ -1169,14 +1224,17 @@ export function apply(ctx: ClientContext): void {
   const bindings = bindingCache(ctx.sessions)
   const allBindings = bindingsCatalog(bindings, ctx.sessions)
   const sidecars = new Map<SessionId, ReturnType<typeof sidecarSource>>()
-  /** The most recently active session with a workspace — the default target for new sessions and card ops. */
-  const recentSession = (): { id: SessionId; cwd: string } | undefined => {
+  /** The most recently active session, optionally restricted to one workspace root. */
+  const recentSession = (root?: string): { id: SessionId; cwd: string } | undefined => {
     const state = ctx.sessions.list.getSnapshot()
+    const workspaces = ctx.workspaces.list.getSnapshot().items
     let best: { id: SessionId; cwd: string; at: number } | undefined
     for (const id of state.ids) {
       const row = state.byId[id]
-      if (row?.cwd === undefined) continue
-      if (best === undefined || row.updatedAt >= best.at) best = { id, cwd: row.cwd, at: row.updatedAt }
+      if (row === undefined) continue
+      const cwd = workspaces.find(workspace => workspace.sessionIds.includes(id))?.path ?? row.cwd
+      if (cwd === undefined || (root !== undefined && cwd !== root)) continue
+      if (best === undefined || row.updatedAt >= best.at) best = { id, cwd, at: row.updatedAt }
     }
     return best === undefined ? undefined : { id: best.id, cwd: best.cwd }
   }
@@ -1209,13 +1267,16 @@ export function apply(ctx: ClientContext): void {
   /** 建卡后要打开画布编辑器：拿到落在该工作区的会话（无则 connect 出/复用一个 blank）。 */
   const cardSessionFor = async (workspaceId: WorkspaceId | undefined): Promise<{ sessionId?: SessionId; root?: string }> => {
     if (workspaceId === undefined) {
-      // 未指定项目：复用最近会话；连会话都没有时落杂项，绝不留无 cwd 的卡（设计理念 §15）。
-      const target = recentSession()
-      if (target !== undefined) return { sessionId: target.id, root: target.cwd || miscProjectRoot() }
-      const misc = miscProjectRoot()
-      if (misc === '') return {}
-      const id = await createSessionIn(misc)
-      return { sessionId: id, root: misc }
+      // Object commands stay in the current workspace; only a focus-less entry
+      // uses the global recent Session and finally the miscellaneous project.
+      const focus = focusSnapshot
+      const target = recentSession(focus?.root)
+      if (target !== undefined) return { sessionId: target.id, root: target.cwd }
+      const root = focus?.root ?? miscProjectRoot()
+      if (root === '') return {}
+      const id = await createSessionIn(root)
+      if (focus !== undefined) ctx.uiWorkspace.openSession(id)
+      return { sessionId: id, root }
     }
     const root = workspaceRootFor(workspaceId)
     if (root === undefined) return { sessionId: recentSession()?.id ?? await createSessionIn(undefined) }
@@ -1269,12 +1330,12 @@ export function apply(ctx: ClientContext): void {
         const res = await importCommit(addr, file.name, encoded, '卡')
         cards.refresh()
         treeSource.refresh()
-        const cardId = res?.landed.find(l => l.type === 'card')?.cardId
-        if (cardId !== undefined) face.openCard(cardId, target)
+        if (res !== undefined) openLandedImport(res.landed, target)
         return
       }
       pendingImportFile = file
       pendingImportAddr = addr
+      changeMode('ide')
       setImportPack({ name: file.name, report })
     })().catch((reason: unknown) => { console.warn('noven-shell: card import failed:', reason) })
   }
@@ -1291,6 +1352,7 @@ export function apply(ctx: ClientContext): void {
     setImportPack(undefined)
     cards.refresh()
     treeSource.refresh()
+    openLandedImport(res.landed, pendingImportAddr)
     return true
   }
 
@@ -1300,16 +1362,7 @@ export function apply(ctx: ClientContext): void {
     setImportPack(undefined)
   }
 
-  /** 组装排布种子的写入口；发布版布局未带的新方法按可选口径跳过（旧构建只缺新种子能力，不报错）。 */
-  const arrangementDeps = (): ArrangementDeps => ({
-    seedSessionGeometry: (sessionId, seed) => { ctx.layout.seedSessionGeometry?.(sessionId, seed) },
-    seedUnitShare: share => { ctx.layout.seedUnitShare?.(share) },
-  })
-
-  /**
-   * 创作页手作入口：复用该工作区最近的会话（没有才新建），纸升过渡进
-   * IDE 排布——排布落点走 arrangement 种子（与会话内手作开关同一条管线）。
-   */
+  /** 创作页手作入口：必要时接上工作区会话，再由唯一模式按钮切到 IDE。 */
   const startHandcraft = async (workspaceId: WorkspaceId | undefined, source: HTMLElement): Promise<boolean> => {
     const root = workspaceRootFor(workspaceId)
     let reusable: { id: SessionId; cwd: string } | undefined
@@ -1339,18 +1392,7 @@ export function apply(ctx: ClientContext): void {
     return enterHandcraftScene(source, async () => {
       // 场景内的提交：转场归外层手作场景所有。
       ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { transition?: 'none' }) => void)(sessionId, { transition: 'none' })
-      // openSession 的绑定在提交后才完成；立刻 seed 会被会话载入的旧几何盖掉。
-      // 等一拍再落排布，旧会话也能稳定切成案头。
-      await new Promise<void>(resolve => { window.setTimeout(resolve, 250) })
-      applyArrangement(arrangementDeps(), sessionId, 'ide')
-      // 可见会话的结构直接落一次：种子在部分发布版/恢复路径会被旧几何盖掉，
-      // 这里再按入口意图收轨、把抽屉+画布放到对话左侧。
-      ctx.layout.setSidebarCollapsed?.(true)
-      ctx.layout.setUnitSide?.('left')
-      setCanvasParked(sessionId, false)
-      // 创作页的「手作」落点是通用案头：复用会话时也把画布切回起点页，
-      // 不能停在会话上次打开的对话或卡页上。
-      canvasInstance.actions.select(sessionId, 'start')
+      changeMode('ide')
       return true
     })
   }
@@ -1376,60 +1418,22 @@ export function apply(ctx: ClientContext): void {
     ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { panel?: 'preserve' }) => void)(sessionId, { panel: 'preserve' })
   }
 
-  /**
-   * 投稿落点：揭开指定会话的对话面（面板回到 Conversation）。
-   * 「直接对话」的落点永远按入口意图重种 agent 排布：宿主空白可能曾被手作
-   * 入口复用并盖上 IDE 章，发送时该空白转正；若继承它的历史几何，ping 会落
-   * 进手作布局——排布属于入口，不属于被复用的空白。
-   */
+  /** 首页投稿进入 Agent；工作区、会话内容和辅助区现场仍由各自所有者保持。 */
   const revealSession = (sessionId: SessionId): void => {
-    applyArrangement(arrangementDeps(), sessionId, 'agent')
-    // 发布版 openSession 类型未带 options（源码已带 preserve/transition），按惯例局部窄化；
-    // transition:'none' 表示本次提交归外层场景转场所有，不再起导航转场。
-    ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { panel?: 'preserve', transition?: 'none' }) => void)(
-      sessionId, { transition: 'none' },
-    )
-    // 画布的抬起/停靠归会话 surface、不进几何种子：手作把复用空白的画布抬起来过，
-    // 直接对话必须把它收回停靠，否则对话被挤成窄条、整页是导航展开+画布大开的缝合态。
-    setCanvasParked(sessionId, true)
-  }
-
-  /**
-   * 停靠/抬起一个会话的画布区域。停靠只保留画布轨，对话占回完整宽度；
-   * 抬起走 openTab（openContent 恒 lift park）。停靠走控制器的正口
-   * parkCanvasIn，按会话的采纳 store 路由，不经过当前绑定；工作区运行时
-   * 已有、发布版类型未带，按可选视图调用（slots.d.ts 桥记录同一成员）。
-   */
-  const parkCanvasIn = (sessionId: SessionId): void => {
-    ;(ctx.sidebarRight as { parkCanvasIn?: (id: SessionId) => void }).parkCanvasIn?.(sessionId)
-  }
-  const setCanvasParked = (sessionId: SessionId, parked: boolean): void => {
-    if (parked) {
-      parkCanvasIn(sessionId)
-      return
-    }
-    raiseCanvas()
-  }
-
-  /**
-   * The creation page is a focused ritual surface: its host blank must not
-   * inherit IDE geometry from a reused handcraft session (nav collapsed, canvas
-   * open). Put the host back on the agent arrangement before showing the page.
-   */
-  const resetCreateLayout = (sessionId: SessionId | undefined): void => {
-    if (sessionId === undefined) return
-    applyArrangement(arrangementDeps(), sessionId, 'agent')
-    ctx.layout.setSidebarCollapsed?.(false)
-    ctx.layout.setUnitSide?.('right')
-    setCanvasParked(sessionId, true)
-    ctx.layout.closeRightbar()
+    ctx.layout.transitionFrame(() => {
+      subjectInstance.actions.setSubject('conversation')
+      // transition:'none' 表示本次提交归外层场景转场所有，不再起导航转场。
+      ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { panel?: 'preserve', transition?: 'none' }) => void)(
+        sessionId, { transition: 'none' },
+      )
+    })
   }
 
   // ——— 四栏外壳：导航栏（图标 + 会话列表）原样不动；抽屉上区装内容树；
   // 画布是 rightbar 单元里的一个 selfChrome 页签；会话走 main 的
   // conversation 上游原样实现。零遮蔽，全部经原生座。
 
-  const canvasHandle = createCanvasStore()
+  const canvasHandle = createCanvasStore(() => workbenchInstance.getSnapshot().restoreCanvas)
   const canvasInstance = canvasHandle.create()
   const canvasStore: typeof canvasHandle = { ...canvasHandle, create: () => canvasInstance }
 
@@ -1483,20 +1487,24 @@ export function apply(ctx: ClientContext): void {
     const row = key === undefined ? undefined : sessionState.byId[key]
     const cwd = row?.cwd
     const projectRows = projects.getSnapshot()
+    const workspace = key === undefined ? undefined : ctx.workspaces.list.getSnapshot().items.find(candidate =>
+      candidate.sessionIds.includes(key) || (cwd !== undefined && candidate.path === cwd))
     // Keep the restored focus until the app has produced a current session at
     // least once, and until that session's row/project row can actually judge
     // it. Clearing on the first empty snapshot would flash an empty drawer and
     // discard the cached tree the snapshot exists for.
     if (focusSnapshot !== undefined && !currentKeySeen) return
     if (focusSnapshot !== undefined && key !== undefined && row === undefined) return
-    if (focusSnapshot !== undefined && key !== undefined && cwd !== undefined && projectRows.length === 0) return
-    // 项目 = 注册表里的根，不是随便一个 cwd：会话落在没登记的目录上就没有
-    // 工作台——树清空、画布只留起点、写入口关闭（C6）。
+    if (focusSnapshot !== undefined && key !== undefined && cwd !== undefined && workspace === undefined && projectRows.length === 0) return
+    // The selected Workspace owns the directory even before it carries Noven
+    // project metadata. The library catalog remains the fallback for legacy
+    // Sessions whose cwd names a registered project but not a Workspace.
     const project = cwd === undefined ? undefined : projectRows.find(candidate => candidate.root === cwd)
-    const next: ProjectFocus | undefined = project === undefined || key === undefined ? undefined : {
-      root: project.root,
+    const root = workspace?.path ?? project?.root
+    const next: ProjectFocus | undefined = root === undefined || key === undefined ? undefined : {
+      root,
       sessionId: key,
-      title: project.title,
+      title: project?.title ?? workspace?.title,
     }
     // 滞回：绑定会话还在、只是 cwd/登记行瞬时空白时不清焦点——否则内容树被
     // publish(undefined) 清成「新建」空态，下一拍又回来，肉眼就是导航抽搐。
@@ -1515,12 +1523,40 @@ export function apply(ctx: ClientContext): void {
     getSnapshot: () => focusSnapshot,
     subscribe: listener => { focusListeners.add(listener); return () => { focusListeners.delete(listener) } },
   }
+  /** Current-Workspace Sessions for the side Conversation's header menu. */
+  const computeSideSessions = (): SideSessions => {
+    const root = focusSnapshot?.root
+    const list = ctx.sessions.list.getSnapshot()
+    const workspace = ctx.workspaces.list.getSnapshot().items.find(item => item.path === root)
+    const rows = list.ids
+      .map(id => list.byId[id])
+      .filter((row): row is NonNullable<typeof row> => row !== undefined
+        && (workspace?.sessionIds.includes(row.id) === true || (root !== undefined && row.cwd === root)))
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map(row => ({ id: row.id, title: row.displayTitle, blank: row.blank === true }))
+    return { rows, currentId: rows.find(row => (list.byId[row.id]?.retainedBy.mainView ?? 0) > 0)?.id }
+  }
+  let sideSessionsCache: SideSessions | undefined
+  const sideSessionsSource: ObservableSnapshot<SideSessions> = {
+    getSnapshot: () => (sideSessionsCache ??= computeSideSessions()),
+    subscribe: listener => {
+      const refresh = (): void => {
+        sideSessionsCache = computeSideSessions()
+        listener()
+      }
+      const stopSessions = ctx.sessions.list.subscribe(refresh)
+      const stopWorkspaces = ctx.workspaces.list.subscribe(refresh)
+      const stopFocus = projectFocus.subscribe(refresh)
+      return () => { stopSessions(); stopWorkspaces(); stopFocus() }
+    },
+  }
   ctx.effect(() => {
     const offCurrent = ctx.uiSession.adapter.current.subscribe(computeFocus)
     const offList = ctx.sessions.list.subscribe(computeFocus)
     const offProjects = projects.subscribe(computeFocus)
+    const offWorkspaces = ctx.workspaces.list.subscribe(computeFocus)
     computeFocus()
-    return () => { offCurrent(); offList(); offProjects() }
+    return () => { offCurrent(); offList(); offProjects(); offWorkspaces() }
   }, 'noven-shell: project focus')
 
   /** 内容树轮询源：跟着当前项目走；未绑会话时按裸 root 聚合。 */
@@ -1545,6 +1581,8 @@ export function apply(ctx: ClientContext): void {
 
   /** canvasSide/canvas 在工作区的服务上有、发布版类型上还没有——全可选口径，旧版上自然缺席。 */
   const rightExtras = ctx.sidebarRight as {
+    /** Product-owned feature routing; the host controller implements it in this workspace. */
+    provideTabRouter?: (router: { route(sessionId: SessionId, kind: string): boolean }) => () => void
     canvasSide?: { get(): 'left' | 'right'; toggle(): void }
     canvas?: {
       getSnapshot(): { readonly kind: string } | undefined
@@ -1557,42 +1595,65 @@ export function apply(ctx: ClientContext): void {
     }
   }
 
-  /** 抬起画布页签：页签在 rightbar 单元的画布面，openTab 顺带展开抽屉列。 */
-  const raiseCanvas = (): void => {
-    try { ctx.sidebarRight.openTab(CANVAS_KIND) }
-    catch { /* 座未挂（无绑定会话）——对象标签照开，画布等座出现再抬 */ }
+  /** 确保画布宿主存在；内容和当前折叠状态由各自所有者决定。 */
+  const ensureCanvas = (): void => {
+    try { ctx.sidebarRight.openTab(CANVAS_KIND, { expandColumn: false, preserveCanvasParked: true }) }
+    catch { /* 座未挂（无绑定会话）——对象标签照开，画布等座出现再挂 */ }
   }
 
-  /** 打开一个 host 注册页（终端等）：每个实例独立 key，关闭页签时页面自己清理资源。 */
+  /** 打开或激活一个 host 注册页；默认入口在同一画布内去重，关闭页签仍由页面自己清理资源。 */
   const openCanvasPage = (sessionId: SessionId, kind: string): void => {
     const definition = canvasPages?.get(kind)
     if (definition === undefined) return
-    const pageKey = `${kind}:${crypto.randomUUID()}`
+    const pageKey = kind
     canvasInstance.actions.open({
       key: `page:${pageKey}`, kind: 'page', title: definition.title(),
       owner: sessionId, pageKind: kind, pageKey,
     })
-    raiseCanvas()
+    ensureCanvas()
+  }
+
+  /** Open a host page in the current session without making the footer depend on canvas ownership. */
+  const openCurrentCanvasPage = (kind: string): void => {
+    const sessionId = (ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined) ?? recentSession()?.id
+    if (sessionId !== undefined) openCanvasPage(sessionId, kind)
   }
 
   /**
    * 功能入口的唯一路由：对象页进画布页签，只有伴随视图（本会话/设定/会话设置）
    * 留在右栏。工具菜单与会话 ⋯ 菜单都走这里，避免两处语义分叉。
    */
-  const openFeatureTabFor = (sessionId: SessionId, kind: string): void => {
+  const openFeatureTabFor = (sessionId: SessionId, kind: string): boolean => {
     const title = ctx.sidebarRightTabs.guide().find(box => box.kind === kind)?.title() ?? kind
     if (kind === 'files') {
       canvasInstance.actions.open({ key: 'files', kind: 'files', title, owner: sessionId })
-      raiseCanvas()
-      return
+      ensureCanvas()
+      return true
     }
     if (kind === 'noven:library') {
       canvasInstance.actions.open({ key: 'library', kind: 'library', title, owner: sessionId })
-      raiseCanvas()
-      return
+      ensureCanvas()
+      return true
     }
-    if (canvasPages?.get(kind) !== undefined) { openCanvasPage(sessionId, kind); return }
-    ctx.sidebarRight.openTab(kind)
+    if (canvasPages?.get(kind) !== undefined) { openCanvasPage(sessionId, kind); return true }
+    return false
+  }
+  ctx.effect(() => rightExtras.provideTabRouter?.({
+    route: (sessionId, kind) => openFeatureTabFor(sessionId, kind),
+  }) ?? (() => {}), 'noven-shell: feature tab routing')
+  let featureTabsValue: readonly SidebarRightGuideBox[] | undefined
+  let canvasFeatureTabsValue: readonly SidebarRightGuideBox[] = []
+  const canvasFeatureTabsSource: ObservableSnapshot<readonly SidebarRightGuideBox[]> = {
+    getSnapshot: () => {
+      const current = featureTabsSource.getSnapshot()
+      if (current !== featureTabsValue) {
+        featureTabsValue = current
+        canvasFeatureTabsValue = current.filter(box =>
+          box.kind === 'files' || box.kind === 'noven:library' || canvasPages?.get(box.kind) !== undefined)
+      }
+      return canvasFeatureTabsValue
+    },
+    subscribe: listener => featureTabsSource.subscribe(listener),
   }
 
   /**
@@ -1609,7 +1670,23 @@ export function apply(ctx: ClientContext): void {
       cardAddr: { root: rootOf(addr) }, moduleId,
       presentation: moduleId === undefined ? 'inline' : 'page',
       ...(addModule ? { addModule: true } : {}) })
-    raiseCanvas()
+    ensureCanvas()
+  }
+
+  /** Open the first committed import object, then reveal it in the IDE canvas. */
+  const openLandedImport = (items: readonly ImportLanded[], addr: CardAddr): boolean => {
+    const item = items[0]
+    const session = addr.sessionId ?? (ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined) ?? recentSession()?.id
+    if (item === undefined || session === undefined) return false
+    if (item.cardId !== undefined) {
+      openCanvasCard(item.cardId, addr, undefined, session, false, item.name)
+    } else {
+      const kind = fileTabKind(item.path)
+      canvasInstance.actions.open({ key: `${kind}:${item.path}`, kind, title: item.name, owner: session, path: item.path })
+      ensureCanvas()
+    }
+    changeMode('ide')
+    return true
   }
 
   /** 模块级命令的公共通道：先 loadCard 拿 version 再 apply（树行 ⋯ 菜单走这里）。 */
@@ -1760,10 +1837,6 @@ export function apply(ctx: ClientContext): void {
       ;(ctx.uiWorkspace.openSession as (id: SessionId, options?: { transition?: 'none' }) => void)(target, { transition: 'none' })
       await new Promise<void>(resolve => { window.setTimeout(resolve, 250) })
     }
-    applyArrangement(arrangementDeps(), target, 'ide')
-    ctx.layout.setSidebarCollapsed?.(true)
-    ctx.layout.setUnitSide?.('left')
-    setCanvasParked(target, false)
     openCanvasCard(cardId, { sessionId: target, root }, undefined, target)
     if (created) {
       await bindingOp(target, { op: 'set-managed', cardId, permission: 'free' }).catch((reason: unknown) => {
@@ -1773,21 +1846,19 @@ export function apply(ctx: ClientContext): void {
     }
   }
 
-  /** 拿一个能读写文件的会话：绑定会话优先，其次最近工作区会话，最后按当前项目现建并绑定。 */
+  /** Resolve object I/O to a Session in the focused workspace, creating one only in that root. */
   const ensureSession = async (): Promise<SessionId | undefined> => {
     const bound = ctx.uiSession.adapter.current.getSnapshot().key as SessionId | undefined
-    if (bound !== undefined) return bound
-    const recent = recentSession()
+    const root = focusSnapshot?.root
+    const boundRoot = bound === undefined ? undefined
+      : ctx.workspaces.list.getSnapshot().items.find(workspace => workspace.sessionIds.includes(bound))?.path
+        ?? ctx.sessions.list.getSnapshot().byId[bound]?.cwd
+    if (bound !== undefined && (root === undefined || boundRoot === root)) return bound
+    const recent = recentSession(root)
     if (recent !== undefined) { ctx.uiWorkspace.openSession(recent.id); return recent.id }
-    if (focusSnapshot?.root !== undefined) {
-      const id = await createSessionIn(focusSnapshot.root).catch(() => undefined)
-      if (id !== undefined) ctx.uiWorkspace.openSession(id)
-      return id
-    }
-    // 没有任何项目时，新会话落进杂项（设计理念 §15），不再留下无 cwd 的会话。
-    const misc = miscProjectRoot()
-    if (misc === '') return undefined
-    const id = await createSessionIn(misc).catch(() => undefined)
+    const targetRoot = root ?? miscProjectRoot()
+    if (targetRoot === '') return undefined
+    const id = await createSessionIn(targetRoot).catch(() => undefined)
     if (id !== undefined) ctx.uiWorkspace.openSession(id)
     return id
   }
@@ -1795,6 +1866,13 @@ export function apply(ctx: ClientContext): void {
   const readDoc = async (sessionId: SessionId, path: string): Promise<string | undefined> => {
     const page = await ctx.remote.workspaceFiles.read(sessionId, path, {}, new AbortController().signal).catch(() => undefined)
     return page !== undefined && page.ok ? page.value.text : undefined
+  }
+
+  const readProjectAsset = async (sessionId: SessionId, assetPath: string, base?: string): Promise<Blob | null> => {
+    const params = new URLSearchParams({ session: sessionId, path: assetPath })
+    if (base !== undefined && base !== '') params.set('base', base)
+    const response = await fetch(new URL(`api/noven-frame?${params.toString()}`, document.baseURI).href).catch(() => undefined)
+    return response?.ok === true ? response.blob() : null
   }
 
   const saveDoc = async (sessionId: SessionId, path: string, content: string, base: string | null): Promise<'ok' | 'conflict' | 'error'> => {
@@ -1933,7 +2011,7 @@ export function apply(ctx: ClientContext): void {
         const path = `${dir}/${request.name}.md`
         if (await saveDoc(sessionId, path, '', null) !== 'ok') return
         canvasInstance.actions.open({ key: `doc:${path}`, kind: 'doc', title: request.name, owner: sessionId, path })
-        raiseCanvas()
+        ensureCanvas()
         treeSource.refresh()
         return
       }
@@ -1945,7 +2023,7 @@ export function apply(ctx: ClientContext): void {
         if (await saveDoc(sessionId, path, scaffold, null) !== 'ok') return
         docCache.put(docKey(sessionId, path), { state: 'ready', content: scaffold })
         canvasInstance.actions.open({ key: `work:${path}`, kind: 'work', title: request.name, owner: sessionId, path })
-        raiseCanvas()
+        ensureCanvas()
         treeSource.refresh()
         return
       }
@@ -1974,37 +2052,21 @@ export function apply(ctx: ClientContext): void {
   }
 
   /**
-   * 社区与消息尚未接入：行灰置可见，点击不切面板，只抖一下 + 居中「敬请期待」
-   * （showComingSoon）。它们仍是合法 main key（未来直接接回），此处仅拦截导航。
+   * 创作行只触发新建会话命令；它不再是 main 面板目的地。
    */
   const sidebarPanels = ctx.get('sidebarPanels') as {
     registerActivation(id: MainPanelId, activate: (target: HTMLElement) => void): () => void
   }
-  const SOON_IDS: ReadonlySet<MainPanelId> = new Set([HOME_ID, MESSAGES_ID])
-  for (const id of SOON_IDS) {
-    ctx.effect(() => sidebarPanels.registerActivation(id, target => {
-      showComingSoon(target, t('nav.comingSoon'))
-    }), `noven-shell: unavailable panel ${id}`)
-  }
   /**
-   * The creation page is the one New Session surface: the nav row, the shell's
-   * new-session action (sidebar brand button and its shortcut), and the empty
-   * main view after archiving all land here. It enters with its own scene, not
-   * the Session page turn. The in-flight latch is synchronous: the scene's
-   * panel commit lands inside an async update, so a second route (list update,
-   * blank routing) firing before it would start a competing transition.
+   * New Session is a command, not a third main panel: it selects a reusable
+   * blank Session and clears any panel selection. The blank conversation's own
+   * hero is the creation surface; the main subject stays conversation.
    */
   let openingCreateSurface = false
   const onCreateSurface = (): void => {
     if (openingCreateSurface) return
-    if (ctx.layout.panelInfo.getSnapshot().activePanelId === CREATE_ID) return
     openingCreateSurface = true
-    void enterCreateScene(() => {
-      // Host seat inside the same commit: the page's first render then already
-      // has hostBlank, so the composer mounts with the title instead of
-      // arriving a beat later through the async ensure. A host that routed a
-      // specific blank here (workspace switch, blank session open) has already
-      // selected it — seat that one, never a recent-workspace guess.
+    try {
       const seam = ctx.uiWorkspace as {
         reusableBlank?: (workspaceId?: WorkspaceId, options?: { agentPreset?: string }) => SessionId | undefined
         openSession?: (target: SessionId, options?: { panel?: 'preserve', transition?: 'none' }) => void
@@ -2014,12 +2076,11 @@ export function apply(ctx: ClientContext): void {
       const host = current?.blank === true && current.projectionValues?.agentPreset === 'explore'
         ? current.id
         : seam.reusableBlank?.(undefined, { agentPreset: 'explore' })
-      if (host !== undefined) {
-        seam.openSession?.(host, { panel: 'preserve', transition: 'none' })
-        resetCreateLayout(host)
-      }
-      ctx.layout.selectPanel(CREATE_ID)
-    }).finally(() => { openingCreateSurface = false })
+      if (host !== undefined) seam.openSession?.(host, { panel: 'preserve', transition: 'none' })
+      ctx.layout.selectPanel(null)
+    } finally {
+      openingCreateSurface = false
+    }
   }
   ctx.effect(() => sidebarPanels.registerActivation(CREATE_ID, () => { onCreateSurface() }),
     'noven-shell: create surface activation')
@@ -2053,60 +2114,20 @@ export function apply(ctx: ClientContext): void {
     reconcile()
     return () => { stopSessions(); stopWorkspaces?.() }
   }, 'noven-shell: archive fallback surface')
-  // A restored blank Session would show the retired empty-session page: during
-  // startup, route it to the creation page and keep reasserting until the panel
-  // actually owns the main view. The watch is bounded to startup — later blank
-  // main views belong to their surface (handcraft's IDE hosts one).
-  ctx.effect(() => {
-    let stopped = false
-    let resetId: SessionId | undefined
-    const stop = (): void => { stopped = true }
-    const check = (): void => {
-      if (stopped || inCreateScene()) return
-      const active = ctx.layout.panelInfo.getSnapshot().activePanelId
-      const list = ctx.sessions.list.getSnapshot()
-      const current = Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
-      if (current === undefined) return
-      if (current.blank !== true) { stop(); return }
-      if (active === CREATE_ID) {
-        if (resetId !== current.id) {
-          resetId = current.id
-          resetCreateLayout(current.id)
-        }
-        stop()
-        return
-      }
-      // Another panel may be transient during hydration; wait for the main
-      // view to settle rather than dropping the route.
-      if (active !== null) return
-      if (resetId !== current.id) {
-        resetId = current.id
-        // Restored blank: put the host back on the agent arrangement and seat
-        // the page in place. Running the creation scene here would capture the
-        // retired empty-session page and animate it out on every reload.
-        resetCreateLayout(current.id)
-      }
-      ctx.layout.selectPanel(CREATE_ID)
-    }
-    const stopSessions = ctx.sessions.list.subscribe(check)
-    const stopPanels = ctx.layout.panelInfo.subscribe(check)
-    const interval = window.setInterval(check, 200)
-    const timer = window.setTimeout(stop, 20000)
-    check()
-    return () => {
-      stop()
-      stopSessions()
-      stopPanels()
-      window.clearInterval(interval)
-      window.clearTimeout(timer)
-    }
-  }, 'noven-shell: restored blank surface')
   const NAV: readonly { id: MainPanelId; order: number; label: () => string; Icon: (p: { size: number; active: boolean }) => React.ReactNode }[] = [
     { id: CREATE_ID, order: 5, label: () => t('nav.create'), Icon: CreateIcon },
     { id: HOME_ID, order: 10, label: () => t('nav.home'), Icon: HomeIcon },
     { id: MESSAGES_ID, order: 30, label: () => t('nav.messages'), Icon: BellIcon },
     { id: ME_ID, order: 40, label: () => t('nav.me'), Icon: MeIcon },
   ]
+
+  /** 社区与消息尚未接入：行灰置可见，点击不切面板，只抖一下 + 居中「敬请期待」。 */
+  const SOON_IDS: ReadonlySet<MainPanelId> = new Set([HOME_ID, MESSAGES_ID])
+  for (const id of SOON_IDS) {
+    ctx.effect(() => sidebarPanels.registerActivation(id, target => {
+      showComingSoon(target, t('nav.comingSoon'))
+    }), `noven-shell: unavailable panel ${id}`)
+  }
 
   // 挂窗/底部面板的宿主服务都是可选的：插件缺席时工具菜单对应行不出。
   // 挂窗服务只剩配对查询/开配对——窗本体是画布的 conv 浮窗（同一页实体）。
@@ -2136,16 +2157,13 @@ export function apply(ctx: ClientContext): void {
     },
   }
 
-  // 抽屉上区：内容树进 sidebar.right.pane.top（工作台导航的原座）。座是
-  // single，原来被无头 PresentWatcher 占着——它挪去了 shell.overlay。
-  ctx.slots.inject('sidebar.right.pane.top', () => ctx.slots.register({
-    name: 'sidebar.right.pane.top', locale: NS,
-    inject: (sessionId): TreeInjected => {
+  // 同一份数据与操作面供右侧画布树和左侧内容导航复用；挂载位置不持有页面模式。
+  const treeInjected = (sessionId: SessionId): TreeInjected => {
       /** Studio 新建入口：建一条 模- 会话并把本会话画布切到手机屏。 */
       const createSim = (): void => {
         const root = focusSnapshot?.root
         void createSimSession(root)
-          .then(id => { if (id !== undefined) { canvasInstance.actions.select(sessionId, 'chat'); raiseCanvas() } })
+          .then(id => { if (id !== undefined) { canvasInstance.actions.select(sessionId, 'chat'); ensureCanvas() } })
           .catch((reason: unknown) => { console.warn('noven-shell: sim create failed:', reason) })
       }
       /** 「新建 → Studio」：翻转 Studio 组存续态；开启时把画布切回会话页签（手机屏在其中）。 */
@@ -2154,37 +2172,12 @@ export function apply(ctx: ClientContext): void {
         if (root === undefined) return
         const on = canvasInstance.getSnapshot().studioOn?.[root] === true
         canvasInstance.actions.studioSet(root, !on)
-        if (!on) { canvasInstance.actions.select(sessionId, 'chat'); raiseCanvas() }
+        if (!on) { canvasInstance.actions.select(sessionId, 'chat'); ensureCanvas() }
       }
       /** 本会话画布焦点叶的当前页签 key——树行点亮"当前页"用。 */
       const activeTabSnap: ObservableSnapshot<string | undefined> = {
         getSnapshot: () => activeKey(canvasInstance.getSnapshot(), sessionId),
         subscribe: listener => canvasInstance.subscribe(listener),
-      }
-      /** 画布是否真的展开：claim 在有活动页且未停靠时给 side，停靠/空画布为 null。 */
-      const claims = rightExtras.canvasClaims
-      const canvasOpenSnap: ObservableSnapshot<boolean> = {
-        getSnapshot: () => claims === undefined
-          ? rightExtras.canvas?.getSnapshot() !== undefined
-          : claims.claim(sessionId) !== null,
-        subscribe: listener => {
-          const stopTabs = canvasInstance.subscribe(listener)
-          const stopClaims = claims?.subscribe(listener)
-          return () => { stopTabs(); stopClaims?.() }
-        },
-      }
-      /** 底排只放一枚画布开合：开着就停靠，关着就抬回；无页先开起点页。 */
-      const toggleCanvas = (): void => {
-        if (canvasOpenSnap.getSnapshot()) { setCanvasParked(sessionId, true); return }
-        if (activeKey(canvasInstance.getSnapshot(), sessionId) === undefined) {
-          canvasInstance.actions.select(sessionId, 'start')
-        }
-        raiseCanvas()
-      }
-      /** 工具菜单功能行 = 右栏 guide 清单——与 ⋯ 菜单同一枚举源。 */
-      const featureTabsSnap: ObservableSnapshot<readonly SidebarRightGuideBox[]> = {
-        getSnapshot: () => ctx.sidebarRightTabs.guide(),
-        subscribe: (listener: () => void) => ctx.sidebarRightTabs.subscribe(listener),
       }
       /** 挂窗勾选态：本会话有 conv 浮窗漂着即算挂着。 */
       const dockFloatSnap: ObservableSnapshot<boolean> = {
@@ -2193,24 +2186,24 @@ export function apply(ctx: ClientContext): void {
       }
       const ensureDockFn = dockApi?.ensureDock
       return {
+      directoryQuery,
+      setDirectoryQuery,
       sessionId,
       hooks: {
         tree: treeSource, project: projectFocus, projects,
         sims: simSessionsSource(ctx.sessions, ctx.workspaces, canvasInstance, sessionId),
         dock: dockFloatSnap, bottomPanel: bottomOpenSnap, studio: studioOnSnap, activeTab: activeTabSnap,
-        canvas: canvasOpenSnap,
-        featureTabs: featureTabsSnap,
+        featureTabs: canvasFeatureTabsSource,
       },
       openSim: id => {
         const root = focusSnapshot?.root
         if (root === undefined) return
         canvasInstance.actions.simOpenSet(root, id)
         canvasInstance.actions.select(sessionId, 'chat')
-        raiseCanvas()
+        ensureCanvas()
       },
       createSim,
       toggleStudio,
-      toggleCanvas,
       deleteGroup: name => {
         void treeOp({ sessionId, root: focusSnapshot?.root }, { op: 'rmdir', name })
           .then(ok => {
@@ -2220,7 +2213,7 @@ export function apply(ctx: ClientContext): void {
           .catch((reason: unknown) => { console.warn('noven-shell: rmdir failed:', reason); notifyUndo({ text: fmt(t, 'ui.receipt.failed', { name }) }) })
       },
       /** 工具菜单功能行 → 画布页签；只有伴随视图留在右栏。 */
-      openFeatureTab: kind => { openFeatureTabFor(sessionId, kind) },
+      openFeatureTab: kind => { ctx.sidebarRight.openTabIn(sessionId, kind) },
       /** 挂窗 = conv 页的浮窗形态：开着（浮着或钉成页签）再点收起。 */
       toggleDock: ensureDockFn === undefined ? undefined : () => {
           void ensureDockFn(sessionId)
@@ -2233,7 +2226,7 @@ export function apply(ctx: ClientContext): void {
             }
             canvasInstance.actions.open({ key, kind: 'conv', title: t('tree.tool.dock'), owner: sessionId, convId: dockId, convChannel: 'direct' })
             canvasInstance.actions.floatTab(sessionId, key, 96, 96)
-            raiseCanvas()
+            ensureCanvas()
           })
           .catch((reason: unknown) => { console.warn('noven-shell: dock open failed:', reason) })
       },
@@ -2282,7 +2275,7 @@ export function apply(ctx: ClientContext): void {
           : cardTabs.find(tab => tab.moduleId !== undefined) ?? cardTabs[0]
         if (open !== undefined) {
           canvasInstance.actions.open({ ...open, addModule: true })
-          raiseCanvas()
+          ensureCanvas()
           return
         }
         openCanvasCard(cardId, { sessionId, root: focusSnapshot?.root }, undefined, sessionId, true)
@@ -2324,21 +2317,21 @@ export function apply(ctx: ClientContext): void {
       openDoc: (path, title) => {
         const kind = fileTabKind(path)
         canvasInstance.actions.open({ key: `${kind}:${path}`, kind, title, owner: sessionId, path })
-        raiseCanvas()
+        ensureCanvas()
       },
       openWork: (path, title) => {
         canvasInstance.actions.open({ key: `work:${path}`, kind: 'work', title, owner: sessionId, path })
-        raiseCanvas()
+        ensureCanvas()
       },
       openFiles: () => {
         canvasInstance.actions.open({ key: 'files', kind: 'files', title: t('tree.files'), owner: sessionId })
-        raiseCanvas()
+        ensureCanvas()
       },
       openCreate: (kind, dir) => {
         // studio 不进面板：它是 Studio 组的开关；其余 kinds 走画布新建面板。
         if (kind === 'studio') { toggleStudio(); return }
         canvasInstance.actions.openDialog(sessionId, kind, dir)
-        raiseCanvas()
+        ensureCanvas()
       },
       openModule: () => {
         // 「新建 → 新增模块」永远落一个新的无分组卡：模块库直接弹出，选中的模块
@@ -2418,8 +2411,63 @@ export function apply(ctx: ClientContext): void {
       },
       expandDrawer: () => ctx.sidebarRight.toggleExpanded(),
       }
+  }
+
+  ctx.effect(() => {
+    let dispose: (() => void) | undefined
+    const sync = (): void => {
+      const ide = subjectInstance.getSnapshot().subject === 'canvas'
+      if (ide && dispose === undefined) {
+        dispose = ctx.slots.inject('sidebar.workspaces.content', () => ctx.slots.register({
+          name: 'sidebar.workspaces.content', locale: NS,
+          inject: (sessionId: SessionId) => treeInjected(sessionId),
+        }, LeftContentTree))
+      }
+      if (!ide) { dispose?.(); dispose = undefined }
+    }
+    sync()
+    const unsubscribe = subjectInstance.subscribe(sync)
+    return () => { unsubscribe(); dispose?.() }
+  }, 'noven-shell: mode content navigation')
+
+  // 皮肤由主体决定：空白会话 hero 的薄荷底只在 Agent 主视图成立，手作的
+  // 侧边会话保持普通会话底色。
+  ctx.effect(() => {
+    const root = document.documentElement
+    const sync = (): void => { root.dataset.novenSubject = subjectInstance.getSnapshot().subject }
+    sync()
+    const unsubscribe = subjectInstance.subscribe(sync)
+    return () => { unsubscribe(); delete root.dataset.novenSubject }
+  }, 'noven-shell: subject attribute')
+
+  // 侧边主体的上级入口只注册一次：哪个主体在侧边，就换哪个 provider；
+  // 位置由框架的侧边 trailing 座固定，内容不再各自注册自己的上级。
+  const retainSideSession = (id: SessionId) => ctx.sessions.retain(id, { source: 'novenShell' })
+  ctx.effect(() => ctx.slots.inject('side.header.trailing', () => ctx.slots.register({
+    name: 'side.header.trailing', locale: NS,
+    children: {
+      'side.parent.directory': { kind: 'single', scope: 'session' },
     },
-  }, ContentTree))
+    inject: (): SideParentInjected => ({
+      subject: subjectSource,
+      currentSession: currentSessionSource,
+      sessions: sideSessionsSource,
+      openSession: (id: SessionId) => {
+        ctx.uiWorkspace.openSession(id)
+        ctx.layout.setAuxiliaryCollapsed(false)
+      },
+      retainSession: retainSideSession,
+    }),
+  }, SideParent)), 'noven-shell: side parent')
+  // 目录 provider 是侧边父级的 session 子座：框架绑定树的 hook 面，
+  // 不在父组件里手工重建。
+  ctx.effect(() => ctx.slots.inject('side.parent.directory', () => ctx.slots.register({
+    name: 'side.parent.directory', locale: NS,
+    inject: (sessionId: SessionId) => ({
+      ...treeInjected(sessionId),
+      revealSide: () => { ctx.layout.setAuxiliaryCollapsed(false) },
+    }),
+  }, DirectorySideEntry)), 'noven-shell: side parent directory')
 
   // 画布：一个 selfChrome 页签类型，body 挂在 pane.tab 键控座下——openTab
   // 落进单元的画布浮层、顺带展开抽屉，selfChrome 跳过宿主镀铬、标签条自绘。
@@ -2439,7 +2487,13 @@ export function apply(ctx: ClientContext): void {
       openCard: cardId => { openCanvasCard(cardId, currentCardAddr(), undefined, sessionId) },
       pages: canvasPages,
       openPage: kind => { openCanvasPage(sessionId, kind) },
+      openFeatureTab: kind => { ctx.sidebarRight.openTabIn(sessionId, kind) },
       hooks: {
+        featureTabs: canvasFeatureTabsSource,
+        workbench: {
+          getSnapshot: () => workbenchInstance.getSnapshot(),
+          subscribe: listener => workbenchInstance.subscribe(listener),
+        },
         project: projectFocus,
         tree: treeSource,
         outputs: sessionOutputs(ctx.sessions, sessionId),
@@ -2517,9 +2571,6 @@ export function apply(ctx: ClientContext): void {
           await reference.binding.session.prompt([{ type: 'text', text }], 'queue')
         })
       },
-      applyLayoutSeed: () => {
-        applyArrangement(arrangementDeps(), sessionId, 'ide')
-      },
       submitCreate,
       importCard,
       commitImport,
@@ -2549,37 +2600,19 @@ export function apply(ctx: ClientContext): void {
     }),
   }, CanvasHost))
 
-  // 排布不再全局播种：结构归会话（ui-layout 几何记录），agent/ide 两种种子由
-  // 各入口在 openSession 时按会话 id 落（arrangement.ts）。老的全局
-  // unit-side/canvas-side 键留在盘上不再读——agent 的抽屉轨从此在最右缘。
-
-  // 会话座挂上：画布处女挂载（还没有任何页签）时开起点页，并按该会话的
-  // 排布记录决定默认停靠——agent 停靠让出对话宽度，IDE 保持展开。已有页签
-  // 的会话（翻页回来、刷新恢复、用户自己开过）一律不动它的画布状态：
-  // 判定只看「该会话自己的记录」+「是否处女挂载」，不读 live 几何（翻页
-  // 瞬态会误判），也不做粘滞重放（排布中途变化会把离开会话误收起，
-  // 2026-10-16 修：翻页回来画布被收起）。另一半在控制器：bind 先发布
-  // canvas 再宣布 mounted，本回调读到的才是新会话的画布，恢复展开的
-  // 画布不会被误判成处女挂载而停靠。mounted 每次 surface 提交都
-  // 解绑重绑，开页签每会话只做一次。
+  // Agent and IDE share the Workspace canvas. Ensure its host whenever a
+  // conversation seat becomes active, without inferring mode or changing the
+  // fold or active object; global panels do not publish a mounted seat.
   ctx.effect(() => {
-    const seeded = new Set<SessionId>()
-    return ctx.sidebarRight.mounted.subscribe(() => {
-      const sessionId = ctx.sidebarRight.mounted.getSnapshot()
-      if (sessionId === undefined || seeded.has(sessionId)) return
-      seeded.add(sessionId)
-      if (rightExtras.canvas?.getSnapshot() !== undefined) return
-      raiseCanvas()
-      const record = ctx.layout.sessionGeometry?.getSnapshot().byId?.[sessionId]
-      const ide = record?.sidebarCollapsed === true && record?.unitSide === 'left'
-      if (ide) return
-      // 停靠走控制器的正口（按会话的采纳 store 路由，不经过当前绑定）。
-      parkCanvasIn(sessionId)
-    })
-  }, 'noven-shell: seed canvas')
+    const ensureForMode = (): void => {
+      if (ctx.sidebarRight.mounted.getSnapshot() !== undefined) ensureCanvas()
+    }
+    const stopMode = subjectInstance.subscribe(ensureForMode)
+    const stopMounted = ctx.sidebarRight.mounted.subscribe(ensureForMode)
+    ensureForMode()
+    return () => { stopMode(); stopMounted() }
+  }, 'noven-shell: ensure mode canvas')
 
-  // 社区/消息保留标准 panellist 行；sidebarPanels 的 scoped activation
-  // 覆盖在选择动作之前解释占位状态，插件释放后恢复正常面板导航。
   const SoonNavGlyph = ({ Icon }: { readonly Icon: (p: { size: number; active: boolean }) => React.ReactNode }): React.ReactNode => (
     <span className="nv-nav-soon-glyph"><Icon size={18} active={false} /></span>
   )
@@ -2601,22 +2634,6 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('main', function* () {
     yield ctx.slots.register({ name: 'main', key: HOME_ID, locale: NS },
       (p: PageProps) => <Home t={p.t} />)
-    yield ctx.slots.register({ name: 'main', key: CREATE_ID, locale: NS,
-      inject: (): CreatePageInjected => ({
-        ...face,
-        hooks: { cards },
-        ensureBlankHost,
-        revealSession,
-        startHandcraft,
-        importCard,
-      }),
-    }, (p: FacePageProps & InjectFace<CreatePageInjected>) => (
-      <Create t={p.t} useWorkspaces={p.useWorkspaces} useSessions={p.useSessions}
-        renderFactorySlot={p.renderFactorySlot}
-        ensureBlankHost={p.ensureBlankHost} revealSession={p.revealSession}
-        onStartHandcraft={p.startHandcraft}
-        onImportCard={p.importCard} />
-    ))
     yield ctx.slots.register({ name: 'main', key: MESSAGES_ID, locale: NS },
       (p: PageProps) => <Messages t={p.t} />)
     yield ctx.slots.register({ name: 'main', key: ME_ID, locale: NS, store, inject: (): MePageInjected => ({
@@ -2809,6 +2826,20 @@ export function apply(ctx: ClientContext): void {
       useSidecar={p.useSidecar} run={p.run}
       useDocs={p.useDocs} ensureDoc={p.ensureDoc} saveDoc={p.saveDoc} />
   ))), 'noven-shell: 会话设置 body')
+  // The dedicated appearance page is the only visible view switch. The
+  // upstream row would otherwise be a second action competing for the same view.
+  ctx.effect(() => ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+    name: 'settings.general.item', id: 'appearance', priority: -1,
+  }, () => null)), 'noven-shell: unified appearance entry')
+  ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section', id: 'noven-workbench', order: 90, locale: NS, store: workbenchStore,
+    label: () => t('workbench.settings.group'),
+  }, WorkbenchSection)), 'noven-shell: workbench settings')
+  ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
+    name: 'settings.section', id: 'noven-appearance', order: 80, locale: NS,
+    label: () => t('appearance.title'),
+    inject: () => ({ current: currentSessionSource }),
+  }, AppearanceSettingsSection)), 'noven-shell: global appearance settings')
   ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'noven-updates', order: 100, locale: NS,
     label: () => t('updates.nav'),
@@ -2906,13 +2937,8 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('conversation.session.header.more.item', () => ctx.slots.register({
     name: 'conversation.session.header.more.item', id: 'noven-features', order: 100, locale: NS,
     inject: (sessionId: SessionId): FeatureMenuInjected => ({
-      hooks: {
-        guide: {
-          getSnapshot: () => ctx.sidebarRightTabs.guide(),
-          subscribe: (listener: () => void) => ctx.sidebarRightTabs.subscribe(listener),
-        },
-      },
-      openTab: kind => { openFeatureTabFor(sessionId, kind) },
+      hooks: { guide: featureTabsSource },
+      openTab: kind => { ctx.sidebarRight.openTabIn(sessionId, kind) },
     }),
   }, (p: FeatureMenuProps) => <FeatureMenuItems {...p} />))
 
@@ -2935,6 +2961,10 @@ export function apply(ctx: ClientContext): void {
   ctx.slots.inject('conversation.input.dock', () => ctx.slots.register({
     name: 'conversation.input.dock', id: 'noven-input-quote', order: 20, locale: NS,
   }, InputQuote))
+
+  // 对话内联块：code 引用工作区 HTML，module 引用现有卡片模块。
+  // 只注入读取与资源服务；没有 Chat 时 registerInlineBlocks 保持关闭态。
+  registerInlineBlocks(ctx, { t, readFile: readDoc, resolveProjectAsset: readProjectAsset })
 
   // 空白会话的 hero 槽位：用创作页同一套 hero 覆盖 noven-brand 的旧标牌。
   ctx.slots.inject('conversation.hero.brand.mark', () => ctx.slots.register({

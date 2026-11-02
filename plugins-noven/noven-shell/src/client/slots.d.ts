@@ -1,20 +1,101 @@
 /**
  * Local slot declarations bridging the workspace shell and this plugin's
- * published dependency types: `sidebar.right.pane.top`,
- * `sidebar.workspaces.workspace.menu.item`, `selfChrome`, and
- * `ILayout.setUnitSide` exist in the runtime before its published package
+ * published dependency types: content-navigation slots, frame policy/fold
+ * contracts and `selfChrome` exist in the runtime before its published package
  * types carry them. Remove this file once the dependency versions register
  * the seats and fields.
  */
-import type { SlotHookFactory } from '@deepseek-ai/dsh-client-ui-slots'
+import type { SlotHookFactory, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
+import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
+import type { FrameFoldState, FrameLayoutPolicy } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { MenuOpenState, UseMenuOpenState } from '@deepseek-ai/dsh-client-ui-workspace/client'
+import type { ReactNode } from 'react'
+
+/** 内联块的递归 JSON 数据。 */
+type InlineJson = null | boolean | number | string | readonly InlineJson[] | InlineJsonObject
+interface InlineJsonObject { readonly [key: string]: InlineJson }
+
+/** 引用已有对象的内联块。 */
+interface InlineBlockSourceRef {
+  readonly block: string
+  readonly src: string
+  readonly title?: string | undefined
+  readonly size?: string | undefined
+}
+
+/** 内容直接属于消息的内联块。 */
+interface InlineBlockDataRef {
+  readonly block: string
+  readonly data: InlineJsonObject
+  readonly title?: string | undefined
+}
+
+/** 选择提交请求；由当前 Session 的 Chat 容器实现。 */
+interface InlineBlockCommitRequest {
+  readonly refPrefix: string
+  readonly insert: import('@deepseek-ai/dsh-client-ui-conversation/client').ReferenceInsert
+}
+
+interface InlineBlockSpecBase { readonly id: string }
+
+/** 引用块类型：声明尺寸与来源。 */
+interface InlineBlockReferenceSpec extends InlineBlockSpecBase {
+  readonly content?: 'reference' | undefined
+  readonly source?: 'raw' | 'workspace' | 'frame' | 'card' | undefined
+  readonly size: { readonly ratio: number }
+  readonly variants?: Readonly<Record<string, number>> | undefined
+  readonly render: (props: {
+    readonly source: InlineBlockSourceRef
+    readonly commit?: ((request: InlineBlockCommitRequest) => boolean) | undefined
+  }) => ReactNode
+}
+
+/** 内联数据块类型：自然高度、消息内位置和工作区媒体解析。 */
+interface InlineBlockDataSpec extends InlineBlockSpecBase {
+  readonly content: 'data'
+  readonly render: (props: {
+    readonly data: InlineJsonObject
+    readonly blockId: string
+    readonly resolveMedia: (src: string) => string | undefined
+    readonly commit?: ((request: InlineBlockCommitRequest) => boolean) | undefined
+  }) => ReactNode
+}
+
+type InlineBlockSpec = InlineBlockReferenceSpec | InlineBlockDataSpec
+
+/** 内联块注册表（发布的 ui-chat 类型尚未带该服务）。 */
+interface InlineBlockRegistry {
+  register(spec: InlineBlockSpec): () => void
+  registerSource(
+    kind: 'raw' | 'workspace' | 'frame' | 'card',
+    resolver: (src: string, sessionId: string, workspaceRoot: string | undefined) => string | undefined,
+  ): () => void
+  resolve(id: string): InlineBlockSpec | undefined
+  count(): number
+  subscribe(listener: () => void): () => void
+  revision(): number
+  resolveSource(kind: string, src: string, sessionId: string, workspaceRoot?: string): string | undefined
+}
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
-    /** The drawer's upper zone above the feature entries: the product's permanent navigation (here, the content tree). */
-    'sidebar.right.pane.top': { kind: 'single'; scope: 'session'; owner: { readonly rail: boolean } }
+    /** Side-subject trailing seat before the frame's one fold. */
+    'side.header.trailing': { kind: 'single'; scope: 'root'; owner: { readonly collapsed: boolean } }
+    /** Directory provider bound to the side parent's current Session. */
+    'side.parent.directory': { kind: 'single'; scope: 'session' }
+
+    /** Fixed application-topbar content, including the product mode switch. */
+    'shell.topbar': { kind: 'list'; scope: 'root'; owner: { readonly collapsed: boolean } }
+    /** Fixed navigation toggle outside the sidebar track. */
+    'shell.topbar.navigation': { kind: 'single'; scope: 'root'; owner: { readonly collapsed: boolean } }
+    /** Product content navigation replacing the Session browser in IDE mode. */
+    'sidebar.workspaces.content': {
+      kind: 'single'
+      scope: 'session'
+      owner: { readonly wide: boolean; readonly expandSidebar: () => void }
+    }
     /**
      * Extra rows of one Workspace header's "…" menu — the runtime seat
      * ui-workspace registers; the published rc.2 types do not carry it yet.
@@ -50,10 +131,18 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
       }
     }
   }
+  interface GlobalStandardProps {
+    useFrameLayoutPolicy?: SnapshotSelectorHook<FrameLayoutPolicy | null>
+    useFrameFoldState?: SnapshotSelectorHook<FrameFoldState>
+  }
 }
 
 declare module '@deepseek-ai/dsh-client-ui-workspace/client' {
   interface UiWorkspace {
+    /** Temporary Session navigation source; absent on older published builds. */
+    readonly sessionBrowser: ObservableSnapshot<boolean>
+    showSessionBrowser(): void
+    hideSessionBrowser(): void
     /**
      * Resolve a blank host that runs the requested Agent preset; a mismatch is
      * skipped and creation requests the preset. Absent on older published builds.
@@ -77,51 +166,36 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' {
 }
 
 declare module '@deepseek-ai/dsh-client-ui-layout/client' {
+  interface FrameLayoutPolicy {
+    readonly primary: 'main' | 'rightbar'
+    readonly canvasSide: 'left' | 'right'
+    readonly drawer?: boolean
+  }
+  interface FrameFoldState {
+    readonly centerCollapsed: boolean
+    readonly auxiliaryCollapsed: boolean
+  }
   interface ILayout {
-    /** Collapse/expand the navigation column; absent on older published builds. */
-    setSidebarCollapsed?(collapsed: boolean): void
-    /** Move the drawer+canvas unit to a side of the conversation; absent on older published builds. */
-    setUnitSide?(side: 'left' | 'right'): void
-    /**
-     * Stamp a structural arrangement seed onto one session's geometry record;
-     * absent on older published builds.
-     */
-    seedSessionGeometry?(sessionId: string, seed: {
-      sidebarCollapsed?: boolean
-      narrowExpanded?: boolean
-      unitSide?: 'left' | 'right'
-      rightbarCollapsed?: boolean
-    }): void
-    /** Request an explicit canvas share the frame resolves once; absent on older published builds. */
-    seedUnitShare?(share: number): void
-    /** Live structural geometry of the visible session; absent on older published builds. */
-    readonly sessionGeometry?: {
-      getSnapshot(): {
-        readonly active: string | null
-        readonly sidebarCollapsed: boolean
-        readonly narrowExpanded: boolean
-        readonly unitSide: 'left' | 'right'
-        readonly rightbarCollapsed: boolean
-        readonly canvasSide: 'left' | 'right'
-        /** Per-session structural records; judge a target session without racing the visible-session swap. */
-        readonly byId?: Readonly<Record<string, {
-          readonly sidebarCollapsed?: boolean
-          readonly unitSide?: 'left' | 'right'
-        }>>
-      }
+    /** Coordinated explicit frame transition; absent on older published builds. */
+    transitionFrame(commit: () => void): void
+    setSidebarCollapsed(collapsed: boolean): void
+    provideFrameLayoutPolicy(source: {
+      getSnapshot(): FrameLayoutPolicy
       subscribe(listener: () => void): () => void
-    }
+    }): () => void
+    setCenterCollapsed(collapsed: boolean): void
+    setAuxiliaryCollapsed(collapsed: boolean): void
   }
 }
 
 declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' {
+  interface SidebarRightOpenTabOptions<K extends string = string> {
+    readonly expandColumn?: boolean
+    readonly preserveCanvasParked?: boolean
+  }
   interface SidebarRightTabDefinition {
     /** The type draws its own canvas chrome; the host's bar is skipped. */
     selfChrome?: boolean
-  }
-  interface ISidebarRight {
-    /** Park one session's canvas — the arrangement-seeding write path; absent on older published builds. */
-    parkCanvasIn?(sessionId: string): void
   }
 }
 
@@ -152,6 +226,8 @@ declare module '@deepseek-ai/cordis' {
       getHidden(): ReadonlySet<string>
       subscribe(listener: () => void): () => void
     }
+    /** 对话内联块注册表；未组合 Chat 时缺席。 */
+    chatBlocks?: InlineBlockRegistry
   }
 }
 

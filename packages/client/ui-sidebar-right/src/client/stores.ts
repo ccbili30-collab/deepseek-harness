@@ -118,6 +118,8 @@ export interface OpenContentIntent {
   readonly revealIfOpened?: boolean
   /** `false` opens on the canvas beside a collapsed column instead of expanding it first. */
   readonly expandColumn?: boolean
+  /** Keep the existing Canvas fold while content changes. */
+  readonly preserveCanvasParked?: boolean
 }
 
 /** A mint that counts, so the surface can carry its position forward. */
@@ -430,8 +432,8 @@ export function createSidebarRightStore(
       // landed on, synchronously, because actions return nothing.
       openContent: (d, sessionId: string, intent, settled) => {
         d.bySession = seat(d, sessionId, (s) => {
-          // An open is always an ask to see the canvas: even a no-op reveal
-          // (the page already at the stack top) lifts the park.
+          // Ordinary opens lift parking; preserveCanvasParked keeps a folded
+          // canvas folded even when the opened tab changes the stack top.
           const next = advance(s, (state, mint) => {
             const { kind, contentId, title, replaceTab: replace } = intent
             // A rail pick (`expandColumn: false`) leaves the column collapsed:
@@ -492,6 +494,7 @@ export function createSidebarRightStore(
             settled(planned.tabId)
             return ops
           }, seed)
+          if (intent.preserveCanvasParked === true && s.canvasParked) return { ...next, canvasParked: true }
           return next.canvasParked ? { ...next, canvasParked: false } : next
         })
       },

@@ -55,6 +55,9 @@ type FilterState = { cellType: "all" | "land" | "water" };
 const dialogId = "heightmapEditor";
 const EDITOR_OPTIONS = ["renderOcean", "showDrainage", "allowErosion"] as const; // the customization menu checkboxes
 const historyLimit = 100;
+// Module state: assigning through `window` in an ESM bundle would not initialize
+// the lexical binding the history functions read.
+let edits: Uint8Array[] & { n: number } = Object.assign([], { n: 0 });
 let filterState: FilterState;
 let templateInput: HTMLInputElement | null = null;
 let converterInput: HTMLInputElement | null = null;
@@ -495,7 +498,7 @@ async function finalizeHeightmap(): Promise<void> {
     return;
   }
 
-  Reflect.deleteProperty(window, "edits");
+  edits = Object.assign([], { n: 0 });
   setHistoryButtonsDisabled(true, true);
   HeightmapGenerator.clearData(); // the edited grid is no longer needed once the editor is left
 
@@ -1033,7 +1036,7 @@ function restoreHistory(step: number): void {
 
 // restart edits from 1st step
 function restartHistory(): void {
-  window.edits = Object.assign([], { n: 0 });
+  edits = Object.assign([], { n: 0 });
   setHistoryButtonsDisabled(true, true);
   updateHistory();
 }
@@ -2314,7 +2317,3 @@ function applyHeights(heights: Uint8Array): void {
 }
 
 export const HeightmapEditor = { open, openBrushes: openBrushesPanel, applyHeights, redrawDrainage, finalize: finalizeHeightmap };
-
-declare global {
-  var edits: Uint8Array[] & { n: number };
-}

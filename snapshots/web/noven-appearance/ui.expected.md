@@ -1,0 +1,75 @@
+- text: 对话 已自动保存
+- button "恢复 Noven 默认"
+- text: 雾松谷编年史 ··· 创作 世界 角色
+- strong: 旅途继续
+- text: 雨声停在山口，雾松谷的灯还亮着。
+- strong: Noven
+- text: 下一页要写守灯人的选择，还是先从沿途见闻开始？ 继续这段旅途…… ↑ 编辑对象 选择要修改的工作区、文件或会话。
+- combobox "编辑对象":
+  - option "工作区默认" [selected]
+  - option "当前文件" [disabled]
+  - option "当前会话"
+- combobox "编辑位置":
+  - option "工作区与导航"
+  - option "画布"
+  - option "对话" [selected]
+- text: 界面视图 同步切换整个界面的文字、控件与底色。
+- combobox "界面视图":
+  - option "亮色视图"
+  - option "暗色视图" [selected]
+- text: 背景 为当前对象选择默认、共用或自定义图片。
+- combobox "背景":
+  - option "默认薄荷白"
+  - option "共用图" [selected]
+  - option "自定义图"
+  - option "关闭背景"
+- button "更换图片"
+- text: 背景可见度 调整背景之上文字与控件的清晰承托。
+- slider "背景可见度": "85"
+- status: 85%
+- text: 高级效果 调整图片路径、焦点、淡化、材质与头像。
+- button "收起高级效果" [expanded]
+- text: 自定义图
+- textbox "自定义图":
+  - /placeholder: 项目内图片路径
+  - text: 外观/shared.webp
+- text: 背景焦点
+- combobox "背景焦点":
+  - option "居中"
+  - option "靠上" [selected]
+  - option "靠下"
+  - option "靠左"
+  - option "靠右"
+- text: 背景淡化
+- slider "背景淡化": "25"
+- status: 25%
+- text: 背景模糊
+- slider "背景模糊": "8"
+- status: 8px
+- text: 当前背景材质
+- combobox "当前背景材质":
+  - option "跟随背景"
+  - option "磨砂" [selected]
+  - option "透明"
+- text: 当前背景文字
+- combobox "当前背景文字":
+  - option "跟随系统" [selected]
+  - option "浅色"
+  - option "深色"
+- text: 全局控件材质
+- combobox "全局控件材质":
+  - option "跟随背景"
+  - option "磨砂" [selected]
+  - option "透明"
+- text: 全局文字颜色
+- combobox "全局文字颜色":
+  - option "跟随系统" [selected]
+  - option "浅色"
+  - option "深色"
+- text: AI 头像
+- textbox "AI 头像":
+  - /placeholder: 项目内图片路径
+- button "上传图片"
+- button "恢复默认"
+- text: 我的预设 还没有保存的预设
+- button "保存为预设"

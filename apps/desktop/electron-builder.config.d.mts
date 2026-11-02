@@ -3,8 +3,9 @@ import type { AfterPackContext, BeforePackContext } from 'app-builder-lib'
 /** Electron-builder fields asserted by the Desktop release tests. */
 export interface DesktopElectronBuilderConfig {
   readonly appId: string
+  readonly productName: 'Noven' | 'Noven Test'
   readonly artifactName: string
-  readonly protocols: readonly [{ readonly name: 'DeepSeek Harness'; readonly schemes: readonly ['dsh'] }]
+  readonly protocols: readonly [{ readonly name: 'Noven' | 'Noven Test'; readonly schemes: readonly ['noven' | 'noven-test'] }]
   readonly directories: {
     readonly output: string
   }
@@ -20,12 +21,18 @@ export interface DesktopElectronBuilderConfig {
   readonly asarUnpack: readonly string[]
   readonly extraResources: readonly [
     { readonly from: string, readonly to: 'runtime' },
+    { readonly from: string, readonly to: 'noven-profile' },
+    { readonly from: string, readonly to: 'noven-profile/node_modules' },
     { readonly from: string, readonly to: 'icon.png' },
     ...{ readonly from: string, readonly to: 'tray.ico' }[],
   ]
   readonly mac: {
-    readonly extendInfo: { readonly NSMicrophoneUsageDescription: string }
-    readonly identity: string | undefined
+    readonly icon: string
+    readonly extendInfo: {
+      readonly CFBundleLocalizations: readonly ['en', 'zh_CN']
+      readonly NSMicrophoneUsageDescription: string
+    }
+    readonly identity: string | null | undefined
     readonly forceCodeSigning: boolean
     readonly notarize: boolean
     readonly signIgnore: readonly string[]
@@ -35,6 +42,7 @@ export interface DesktopElectronBuilderConfig {
     readonly writeUpdateInfo: boolean
   }
   readonly win: {
+    readonly icon: string
     readonly forceCodeSigning: boolean
     readonly signtoolOptions: {
       readonly publisherName: string | undefined

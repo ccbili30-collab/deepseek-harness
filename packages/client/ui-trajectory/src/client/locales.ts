@@ -5,8 +5,8 @@ export const NS = 'trajectory'
 
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {
-  'view.trajectory': '轨迹',
-  'toolbar.aria': '轨迹工具栏',
+  'view.trajectory': '执行记录',
+  'toolbar.aria': '执行记录工具栏',
   'toolbar.duration': '时长',
   'toolbar.useActualDuration': '使用实际时长',
   'toolbar.useEqualWidth': '使用等宽操作',

@@ -15,9 +15,9 @@ import type { WorkspaceBrowserInjected, WorkspacePickerInjected } from '@deepsee
 import {
   type ArchiveSessionInjected, type ForkSessionInjected, menuOpenStateFactory, type PinSessionInjected,
   type RenameSessionInjected, type RowToastInjected, type SessionArchiveConfirmInjected, type SessionRenameDialogInjected,
-  type SessionDeleteInjected, type WorkspaceViewStoreHandle,
+  type SessionDeleteInjected, type WorkspaceNavigatorInjected, type WorkspaceViewStoreHandle,
 } from '../src/client/contract/slots.ts'
-import { WorkspaceBrowser } from '../src/client/rows/WorkspaceBrowser.tsx'
+import { WorkspaceNavigator } from '../src/client/rows/WorkspaceNavigator.tsx'
 import { ArchiveSessionMenuItem, ArchiveSessionRowButton, SessionArchiveConfirmDialog } from '../src/client/session-actions/ArchiveSession.tsx'
 import { DeleteSessionMenuItem, SessionDeleteDialog } from '../src/client/session-actions/DeleteSession.tsx'
 import { ForkSessionMenuItem } from '../src/client/session-actions/ForkSession.tsx'
@@ -217,7 +217,8 @@ describe('ui-workspace apply', () => {
     const before = await bench()
     declare(before.slots, 'sidebar.workspaces')
     await before.ctx.plugin({ inject: [...inject], apply }).await()
-    expect(before.slots.entries('sidebar.workspaces')[0]!.component).toBe(WorkspaceBrowser)
+    expect(before.slots.entries('sidebar.workspaces')[0]!.component).toBe(WorkspaceNavigator)
+    expect(before.slots.spec('sidebar.workspaces.content')).toEqual({ kind: 'single', scope: 'session' })
     // Copy rides the standard locale seat: the entry declares the namespace
     // and apply registered both dictionaries.
     expect(before.slots.entries('sidebar.workspaces')[0]!.locale).toBe('workspace')
@@ -539,8 +540,12 @@ describe('ui-workspace apply', () => {
     declare(b.slots, 'sidebar.workspaces', 'conversation.hero.workspace')
     await b.ctx.plugin({ inject: [...inject], apply }).await()
     const startSession = vi.spyOn(b.ctx.uiWorkspace, 'startSession').mockImplementation(() => undefined)
+    const switchWorkspace = vi.spyOn(b.ctx.uiWorkspace, 'switchWorkspace').mockResolvedValue(undefined)
 
     const browser = faceOf(b.slots.entries('sidebar.workspaces')[0]!) as WorkspaceBrowserInjected
+    const navigator = browser as WorkspaceBrowserInjected & WorkspaceNavigatorInjected
+    navigator.switchWorkspace('ws' as never)
+    expect(switchWorkspace).toHaveBeenCalledWith('ws')
     // The browser share delegates to the shared Session navigation action.
     browser.startSession('ws' as never)
     expect(startSession).toHaveBeenLastCalledWith('ws')

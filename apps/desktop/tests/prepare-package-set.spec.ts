@@ -63,6 +63,18 @@ describe('desktop package-set selection', () => {
     ]))).toThrow(/omit @deepseek-ai\/dsh-desktop-host/u)
   })
 
+  it('includes additional product roots and their internal dependencies exactly once', () => {
+    const available = new Map<string, PackedDesktopPackage>([
+      ['@deepseek-ai/dsh', packed('@deepseek-ai/dsh')],
+      ['@deepseek-ai/dsh-desktop-host', packed('@deepseek-ai/dsh-desktop-host')],
+      ['noven-cards', packed('noven-cards', { dependencies: { 'noven-ledger': 'workspace:*' } })],
+      ['noven-ledger', packed('noven-ledger')],
+      ['noven-explore', packed('noven-explore', { dependencies: { 'noven-ledger': 'workspace:*' } })],
+    ])
+    expect(selectDesktopPackageClosure(available, ['noven-cards', 'noven-explore'])
+      .map(entry => entry.manifest.name)).toEqual(['noven-cards', 'noven-explore', 'noven-ledger'])
+  })
+
   it('leaves independently published Office packages to npm resolution', () => {
     const available = new Map<string, PackedDesktopPackage>([
       ['@deepseek-ai/dsh', packed('@deepseek-ai/dsh', {

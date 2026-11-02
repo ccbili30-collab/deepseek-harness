@@ -14,7 +14,7 @@ import type { ShellT } from './pages/Home.tsx'
 import type { WidgetSend } from './widgets.tsx'
 
 /** Same-origin FMG document; the shell is mounted inside it, so there is no second host page. */
-const EDITOR_URL = '/api/noven-map-editor/index.html?noven=blank&v=18'
+const EDITOR_URL = '/api/noven-map-editor/index.html?noven=blank&v=19'
 
 /** A real FMG document starts with its version, e.g. `1.154.2|...`. */
 const FMG_DOCUMENT = /^\d+\.\d+\.\d+\|/
@@ -46,6 +46,8 @@ interface MapGenerationRequest {
   readonly points?: number
   readonly empty?: boolean
 }
+
+type MapGenerationKind = NonNullable<MapGenerationRequest['kind']> | 'generate'
 
 function isMapOperation(value: unknown): value is MapOperation {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
@@ -106,6 +108,7 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
 }) {
   const frameRef = useRef<HTMLIFrameElement | null>(null)
   const [ready, setReady] = useState(false)
+  const [frameVersion, setFrameVersion] = useState(0)
   const [legacy, setLegacy] = useState(false)
   const [error, setError] = useState(false)
   const [expanded, setExpanded] = useState(false)
@@ -117,6 +120,8 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
   requestRef.current = mapRequestOf(module)
   /** Last generation request this host handed to the editor. */
   const requestSentRef = useRef('')
+  /** The consumed request whose generated results may be persisted in reading mode. */
+  const generationRef = useRef<MapGenerationKind | undefined>(undefined)
   /** Terrain request waiting for the blank sheet to finish booting. */
   const pendingTerrainRef = useRef<MapGenerationRequest | undefined>(undefined)
   /** Applied-AI history is scoped to this card module, so a reload can still undo. */
@@ -147,6 +152,7 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
       }
       if (request !== undefined) {
         requestSentRef.current = JSON.stringify(request)
+        generationRef.current = request.kind ?? 'generate'
         setDraft(false)
         setTerrain(false)
         if (request.kind === 'compose' || request.kind === 'paint') {
@@ -237,6 +243,7 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
       if (win?.novenHostReady !== true) return
       if (request.kind === 'edit' && request.operations !== undefined) {
         requestSentRef.current = key
+        generationRef.current = 'edit'
         setDraft(false)
         setTerrain(false)
         win.postMessage({ type: 'noven-map-edit', operations: request.operations, undoKey }, '*')
@@ -244,6 +251,7 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
       }
       if (request.kind === 'compose' && request.spec !== undefined) {
         requestSentRef.current = key
+        generationRef.current = 'compose'
         setDraft(true)
         setTerrain(false)
         win.postMessage({ type: 'noven-map-compose', spec: request.spec }, '*')
@@ -251,6 +259,7 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
       }
       if (request.kind === 'paint' && request.terrain !== undefined) {
         requestSentRef.current = key
+        generationRef.current = 'paint'
         setDraft(true)
         setTerrain(false)
         win.postMessage({ type: 'noven-map-paint', operations: request.terrain }, '*')
@@ -258,10 +267,12 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
       }
       if (request.kind === 'human') {
         requestSentRef.current = key
+        generationRef.current = 'human'
         win.postMessage({ type: 'noven-map-human' }, '*')
         return
       }
       requestSentRef.current = key
+      generationRef.current = 'generate'
       win.postMessage({ type: 'noven-map-generate', options: request }, '*')
     }
     const timer = window.setInterval(() => { void check() }, 1500)
@@ -287,6 +298,10 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
       if (data.type === 'noven-map-save' && typeof data.data === 'string') {
         const stage = data.stage === 'terrain' || data.stage === 'world' ? data.stage : undefined
         const summary = data.summary !== null && typeof data.summary === 'object' && !Array.isArray(data.summary) ? data.summary : undefined
+        if (readOnly && generationRef.current === undefined) {
+          frame.contentWindow?.postMessage({ type: 'noven-map-save-failed', message: t('canvas.map.saveFailed') }, '*')
+          return
+        }
         void send({
           kind: 'write_map_document',
           moduleId: module.id,
@@ -295,6 +310,10 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
           ...(summary === undefined ? {} : { summary }),
         })
           .then(ok => {
+            const generation = generationRef.current
+            if (ok && readOnly && (stage === 'world' || generation === 'generate' || generation === 'human' || generation === 'edit')) {
+              generationRef.current = undefined
+            }
             frame.contentWindow?.postMessage({
               type: ok ? 'noven-map-saved' : 'noven-map-save-failed',
               ...(ok ? {} : { message: t('canvas.map.saveFailed') }),
@@ -321,7 +340,9 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
         return
       }
       if (data.type === 'noven-map-terrain-summary' && data.summary !== null && typeof data.summary === 'object' && !Array.isArray(data.summary)) {
-        void send({ kind: 'record_map_terrain', moduleId: module.id, summary: data.summary })
+        if (!readOnly || generationRef.current !== undefined) {
+          void send({ kind: 'record_map_terrain', moduleId: module.id, summary: data.summary })
+        }
         return
       }
       if (data.type === 'noven-map-terrain-finalized') {
@@ -361,7 +382,7 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
     }
     window.addEventListener('message', onMessage)
     return () => { window.removeEventListener('message', onMessage) }
-  }, [module.id, send, t])
+  }, [module.id, send, t, readOnly])
 
   useEffect(() => {
     frameRef.current?.contentWindow?.postMessage({ type: 'noven-map-fullscreen', expanded }, '*')
@@ -376,23 +397,29 @@ export function FmgMapHost({ module, t, send, addr, cardId, readOnly = false }: 
     const id = 'noven-map-readonly'
     let style = doc.getElementById(id) as HTMLStyleElement | null
     if (style === null) {
+      const parent = doc.head ?? doc.documentElement
+      if (parent === null) return
       style = doc.createElement('style')
       style.id = id
-      doc.head.appendChild(style)
+      parent.appendChild(style)
     }
     style.textContent = `
       #toolbar, #mainMenu, #controlPanel, #mapInfo, #mapLayers, #zoom, #status,
-      #sticked, #tooltip, .ui-dialog, #loading, #noven-topbar { display: none !important; }
+      #sticked, .ui-dialog, #loading, #noven-topbar,
+      #nv-topbar, #nv-tools, #nv-inspector, #nv-inspector-open, #nv-panel,
+      #nv-card, #nv-brush, #nv-menu, #nv-cmdbar, #nv-stagebar, #nv-gen,
+      #nv-boot, #nv-toast, #nv-status, #nv-actions { display: none !important; }
       #map { top: 0 !important; left: 0 !important; }
       body { overflow: hidden !important; }
     `
     return () => { style?.remove() }
-  }, [readOnly, ready])
+  }, [readOnly, ready, frameVersion])
 
   return (
     <div className={`nv-fmg-host${expanded ? ' nv-fmg-host-full' : ''}`} data-ready={ready ? '' : undefined}
       data-draft={draft ? '' : undefined} data-terrain={terrain ? '' : undefined}>
-      <iframe ref={frameRef} className="nv-fmg-frame" src={EDITOR_URL} title={module.name} />
+      <iframe ref={frameRef} className="nv-fmg-frame" src={EDITOR_URL} title={module.name}
+        onLoad={() => { setFrameVersion(value => value + 1) }} />
       {!ready && <div className="nv-fmg-loading">{t('canvas.map.loading')}</div>}
       {legacy && <div className="nv-fmg-notice">{t('canvas.map.legacy')}</div>}
       {error && <div className="nv-fmg-notice nv-fmg-error">{t('canvas.map.saveFailed')}</div>}

@@ -40,7 +40,7 @@ export interface IslandFrame {
   readonly cast?: readonly FrameCastRow[]
   /** send 出站回执（r2 B2）；每次回执是新对象，壳据此推 reason:'send'。 */
   readonly sendResult?: FrameSendResult
-  readonly theme?: { readonly dark?: boolean; readonly accent?: string; readonly text?: string; readonly surface?: string }
+  readonly theme?: { readonly dark?: boolean; readonly accent?: string; readonly text?: string; readonly surface?: string; readonly scrollbar?: string; readonly scrollbarHover?: string }
 }
 
 /** 岛→壳出站消息（包装页 postMessage 上来，壳侧按 noven 派发）。 */
@@ -80,6 +80,20 @@ const SURFACE_TOKENS = '--nv-font-sans:system-ui,-apple-system,"PingFang SC","Mi
   + '--nv-space-1:4px;--nv-space-2:8px;--nv-space-3:12px;--nv-space-4:16px;--nv-space-5:24px;--nv-space-6:32px;'
   + '--nv-shadow-1:0 1px 4px rgba(20,30,26,.07);--nv-shadow-2:0 8px 30px rgba(20,30,26,.12);'
   + '--nv-dur-micro:120ms;--nv-dur-short:200ms;--nv-dur-scene:420ms;--nv-ease-out:cubic-bezier(.22,.8,.28,1);'
+  + '--dsh-scrollbar-width:5px;--dsh-scrollbar-thumb-border:0px;--dsh-scrollbar-track-margin:0px;'
+
+/* Sandboxed documents need the same scrollbar rules as the host document. */
+const SCROLLBAR_CSS = `
+@supports not selector(::-webkit-scrollbar) {
+  :root, body, body * { scrollbar-width: thin; scrollbar-color: var(--dsh-scrollbar-thumb) transparent; }
+}
+::-webkit-scrollbar { width: var(--dsh-scrollbar-width); height: var(--dsh-scrollbar-width); }
+::-webkit-scrollbar-track { margin-block: var(--dsh-scrollbar-track-margin); background: transparent; }
+::-webkit-scrollbar-thumb { border: var(--dsh-scrollbar-thumb-border) solid transparent; border-radius: 999px; corner-shape: round;
+  background: var(--dsh-scrollbar-thumb); background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background-color: var(--dsh-scrollbar-thumb-hover); }
+::-webkit-scrollbar-corner { background: transparent; }
+`
 
 /** UTF-8 → base64（分块，避免大源码触发参数上限）。 */
 const base64Utf8 = (text: string): string => {
@@ -269,8 +283,8 @@ if(STANDALONE){
 })()`
     const theme = frame.theme
   // Product tokens every surface can lean on; a free page may override them.
-  const themeCss = `:root{${SURFACE_TOKENS}${theme === undefined ? '' : `${theme.dark === true ? 'color-scheme:dark;' : ''}--nv-accent:${theme.accent ?? ''};--nv-text:${theme.text ?? ''};--nv-primary-text:${theme.text ?? ''};--nv-surface:${theme.surface ?? ''};`}}`
-  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline' data: blob: 'wasm-unsafe-eval'; font-src data: blob:; media-src data: blob:; worker-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src data: blob:"><style>html,body{margin:0;padding:0;background:transparent}${themeCss}</style><script>${boot}</script></head><body>${documentHtml}</body></html>`
+  const themeCss = `:root{${SURFACE_TOKENS}--dsh-scrollbar-thumb:${theme?.scrollbar ?? (theme?.dark === true ? '#52525B' : '#E4E4E7')};--dsh-scrollbar-thumb-hover:${theme?.scrollbarHover ?? (theme?.dark === true ? '#71717A' : '#D4D4D8')};${theme === undefined ? '' : `${theme.dark === true ? 'color-scheme:dark;' : ''}--nv-accent:${theme.accent ?? ''};--nv-text:${theme.text ?? ''};--nv-primary-text:${theme.text ?? ''};--nv-surface:${theme.surface ?? ''};`}}`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; script-src 'unsafe-inline' data: blob: 'wasm-unsafe-eval'; font-src data: blob:; media-src data: blob:; worker-src blob:; object-src 'none'; base-uri 'none'; form-action 'none'; connect-src data: blob:"><style>html,body{margin:0;padding:0;background:transparent}${themeCss}${SCROLLBAR_CSS}</style><script>${boot}</script></head><body>${documentHtml}</body></html>`
 }
 
 /** 独立分发文件：卡数据内嵌、资源为 data URL、存档留在浏览器本地。 */

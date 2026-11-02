@@ -81,6 +81,10 @@ const broken = parseSurface(JSON.stringify({ version: 1, kind: 'surface', noven:
 check(assembleSurface(broken).includes('TypeScript 转译失败'), 'broken TS becomes a readable runtime error')
 const tokenDoc = islandDoc('<p>x</p>', { theme: { dark: false, accent: '#34D399', text: '#16181A', surface: '#FFFFFF' } })
 check(tokenDoc.includes('--nv-space-4') && tokenDoc.includes('--nv-radius-lg') && tokenDoc.includes('--nv-accent:#34D399'), 'surface token sheet is injected')
+const scrollbarDoc = islandDoc('<p>x</p>', { theme: { scrollbar: '#123456', scrollbarHover: '#654321' } })
+check(scrollbarDoc.includes('--dsh-scrollbar-width:5px') && scrollbarDoc.includes('--dsh-scrollbar-thumb:#123456')
+  && scrollbarDoc.includes('--dsh-scrollbar-thumb-hover:#654321') && scrollbarDoc.includes('::-webkit-scrollbar-track')
+  && scrollbarDoc.includes('scrollbar-color: var(--dsh-scrollbar-thumb) transparent'), 'sandbox scrollbars share host geometry and theme tokens')
 
 console.log(failures === 0 ? 'ALL PASS' : `${failures} FAILURES`)
 process.exit(failures === 0 ? 0 : 1)

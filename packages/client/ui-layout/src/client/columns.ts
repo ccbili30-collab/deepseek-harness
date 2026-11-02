@@ -56,6 +56,34 @@ export function canvasShareWidth(workWidth: number, drawerWidth: number, share: 
   return clampWidth(drawerWidth + Math.max(0, workWidth - drawerWidth) * share, floor, ceiling)
 }
 
+/** Semantic work-region widths, independent of which stable host renders each region. */
+export interface WorkRegions {
+  /** Primary Conversation or Canvas content width in px. */
+  readonly primary: number
+  /** Auxiliary Canvas or Conversation content width in px. */
+  readonly auxiliary: number
+  /** Right-column drawer width reserved beside the rightbar content in px. */
+  readonly drawer: number
+}
+
+/**
+ * Resolve semantic work regions before assigning them to stable hosts. The same
+ * result drives both product arrangements, so switching primary regions does
+ * not reinterpret a host-bound unit width as a different auxiliary width.
+ * @param workWidth - frame width excluding the navigation column.
+ * @param drawerWidth - requested drawer width inside the rightbar host.
+ * @param auxiliaryWidth - requested auxiliary content width.
+ * @returns actual content widths after protecting the primary and auxiliary floors.
+ */
+export function computeWorkRegions(workWidth: number, drawerWidth: number, auxiliaryWidth: number): WorkRegions {
+  const drawer = Math.min(Math.max(0, drawerWidth), Math.max(0, workWidth - CENTER_MIN - CANVAS_MIN))
+  const remaining = Math.max(0, workWidth - drawer)
+  const ceiling = Math.max(0, remaining - CENTER_MIN)
+  const floor = Math.min(CANVAS_MIN, ceiling)
+  const auxiliary = clampWidth(auxiliaryWidth, floor, ceiling)
+  return { primary: remaining - auxiliary, auxiliary, drawer }
+}
+
 /**
  * Solve the three column widths for one viewport frame.
  * @param viewport - available frame width in px.

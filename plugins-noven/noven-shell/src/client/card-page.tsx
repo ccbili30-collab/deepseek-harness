@@ -265,7 +265,7 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
   readonly t: ShellT
   readonly addr: CardAddr
   readonly loadCard: (addr: CardAddr, cardId: string) => Promise<CardState | undefined>
-  readonly op: (addr: CardAddr, op: import('./card-api.ts').CardOp) => Promise<CardOpResult>
+  readonly op?: (addr: CardAddr, op: import('./card-api.ts').CardOp) => Promise<CardOpResult>
   readonly onOpenCard?: (cardId: string, moduleId?: string) => void
   readonly refTargets?: readonly RefTarget[]
 }) {
@@ -285,7 +285,7 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
     return ref === undefined || state === undefined || state === null ? '' : cardContentUrl(addr.root ?? '', state.dir, ref)
   }, [addr.root, state])
   const send = useCallback(async (command: Parameters<WidgetSend>[0]): Promise<boolean> => {
-    if (state === undefined || state === null) return false
+    if (state === undefined || state === null || op === undefined) return false
     try {
       const result = await op(addr, { op: 'apply', cardId: state.cardId, version: state.version, command })
       const next = await loadCard(addr, state.cardId)
@@ -380,9 +380,8 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
   )
 }
 
-/** 一个模块盒：标题（点击即改名）+ 正文（模块内富文本 / 预制模块渲染器）。
-    子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
-function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, imageResources, saveBlock, saveMarkdown, send, onOpenModule, ask, seedComposer, readFile, onOpenFile, refTargets, siblings, refEdges, locked = false, readOnly = false, fill = false, resolveProjectAsset, reportDiagnostics }: {
+/** 模块盒的显示数据，以及只有完整卡片页才提供的可选命令能力。 */
+export interface ModuleBoxProps {
   readonly module: CardModuleDoc
   readonly t: ShellT
   /** AI 正在写这个模块：内容只读，子模块入口仍可点。 */
@@ -394,12 +393,13 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
   readonly imageUrl: (resourceId: string) => string
   /** 本卡可用的图片资源（地图选底图用）。 */
   readonly imageResources: readonly { readonly id: string, readonly mediaType?: string }[]
-  readonly saveBlock: (module: CardModuleDoc, blockId: string, text: string, expected: string) => Promise<EditorSaveResult>
-  readonly saveMarkdown: (module: CardModuleDoc, text: string) => Promise<EditorSaveResult>
-  /** 预制模块的编辑命令直发（apply + 刷新由宿主负责）。 */
-  readonly send: WidgetSend
-  /** 打开另一个模块的页签。 */
-  readonly onOpenModule: (moduleId: string) => void
+  readonly saveMarkdown?: (module: CardModuleDoc, text: string) => Promise<EditorSaveResult>
+  /** 预制模块的编辑命令直发（apply + 刷新由宿主负责）；缺席时统一拒绝写入。 */
+  readonly send?: WidgetSend
+  /** Only an authorized map-generation result channel may override the display-only sender. */
+  readonly mapSend?: WidgetSend
+  /** 打开另一个模块的页签；内联显示没有此页面能力。 */
+  readonly onOpenModule?: (moduleId: string) => void
   /** 引用选择器的目标卡（项目引用索引）。 */
   readonly refTargets?: readonly RefTarget[]
   /** 同一张卡的模块清单——集合的直接引用（如多形态→角色档案）靠它解析。 */
@@ -407,15 +407,14 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
   /** 同卡引用派生的关系边（渲染用，不落盘）。 */
   readonly refEdges?: readonly { readonly from: string, readonly to: string, readonly label: string }[]
   /** 模块向本会话排一句话（AI 任务入口）。 */
-  readonly ask: (text: string) => Promise<void>
+  readonly ask?: (text: string) => Promise<void>
   /** 把 AI 编辑指令填进会话输入框（自由界面/自由 3D）。 */
   readonly seedComposer?: (text: string) => void
   /** 跨卡引用需要的源卡加载与命令入口。 */
   readonly addr: CardAddr
   readonly loadCard: (addr: CardAddr, cardId: string) => Promise<CardState | undefined>
-  readonly op: (addr: CardAddr, op: import('./card-api.ts').CardOp) => Promise<CardOpResult>
+  readonly op?: (addr: CardAddr, op: import('./card-api.ts').CardOp) => Promise<CardOpResult>
   readonly onOpenCard?: (cardId: string, moduleId?: string) => void
-
   /** 读项目内文件文本（html 模块的活引用渲染）。 */
   readonly readFile?: (path: string) => Promise<string | undefined>
   /** 打开项目文件到画布页签。 */
@@ -426,7 +425,12 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
   readonly resolveProjectAsset?: (path: string, base?: string) => Promise<Blob | null>
   /** Console tail reporter: the AI reads it back with surface_diagnostics. */
   readonly reportDiagnostics?: (moduleId: string, entries: readonly CardDiagnosticEntry[]) => void
-}) {
+}
+
+/** 一个模块盒：标题（点击即改名）+ 正文（模块内富文本 / 预制模块渲染器）。
+    子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
+export function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, imageResources, saveMarkdown, send: sendCommand, mapSend, onOpenModule, ask, seedComposer, readFile, onOpenFile, refTargets, siblings, refEdges, locked = false, readOnly = false, fill = false, resolveProjectAsset, reportDiagnostics }: ModuleBoxProps) {
+  const send = useCallback<WidgetSend>(async command => sendCommand?.(command) ?? false, [sendCommand])
   const widget = module.widget?.type
   const mapPlaces: TlPlace[] = (siblings ?? []).flatMap(candidate => {
     if (candidate.widget?.type !== 'map') return []
@@ -437,8 +441,9 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
         : [])
   })
   const openPlace = (place: TlPlace): void => {
+    if (onOpenModule === undefined) return
     setPlaceFocus({ cardId: card.id, mapModuleId: place.mapModuleId, markerId: place.markerId, ...(place.label === undefined ? {} : { label: place.label }) })
-    onOpenModule(place.mapModuleId)
+    onOpenModule?.(place.mapModuleId)
   }
   const profileTarget = (siblings ?? []).find(candidate => candidate.widget?.type === 'collection' && (coll(candidate.widget.data).presentation?.contract === 'profile' || candidate.name === '角色档案' || candidate.name === '基本信息'))?.id
   const relationTarget = (siblings ?? []).find(candidate => candidate.widget?.type === 'collection' && (coll(candidate.widget.data).presentation?.contract === 'relations' || coll(candidate.widget.data).view === 'graph' || candidate.name === '关系'))?.id
@@ -453,14 +458,16 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
     .filter(name => name !== ''))]
   const characterNames = [...new Set([card.name, ...(refTargets ?? []).filter(target => target.kind === 'CHARACTER').map(target => target.name)])]
   const followTimeline = (target: string | undefined): void => {
-    if (target === undefined) return
+    if (target === undefined || onOpenModule === undefined) return
     setModuleLinkFocus({ cardId: card.id, targetModuleId: target, sourceModuleId: module.id, sourceModuleName: module.name })
-    onOpenModule(target)
+    onOpenModule?.(target)
   }
   const bodyRef = useRef<HTMLDivElement | null>(null)
-  // Text modules stay interactive so markdown links work; widget modules are
-  // inert in reading mode because their write controls are not all separable.
-  const blockBody = locked || (readOnly && widget !== undefined && widget !== 'document')
+  // Text modules stay interactive so markdown links work. Map and free-surface
+  // reading modes already remove their editor chrome, so their viewing gestures
+  // remain available; other widgets stay inert because their write controls are
+  // not separable from inspection yet.
+  const blockBody = locked || (readOnly && widget !== undefined && widget !== 'document' && widget !== 'map' && widget !== 'html')
   useEffect(() => {
     const body = bodyRef.current
     if (body === null) return
@@ -468,7 +475,7 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
     else body.removeAttribute('inert')
   }, [blockBody])
   return (
-    <section className={`nv-modbox${widget === 'map' ? ' nv-modbox-map' : ''}${locked ? ' nv-ai-locked' : ''}${readOnly ? ' nv-readonly' : ''}`} data-ai-locked={locked ? '' : undefined} data-readonly={readOnly ? '' : undefined} aria-busy={locked || undefined}>
+    <section className={`nv-modbox${widget === 'map' ? ' nv-modbox-map' : ''}${widget === 'html' ? ' nv-modbox-html' : ''}${locked ? ' nv-ai-locked' : ''}${readOnly ? ' nv-readonly' : ''}`} data-ai-locked={locked ? '' : undefined} data-readonly={readOnly ? '' : undefined} aria-busy={locked || undefined}>
       <div className="nv-modbox-body" ref={bodyRef}>
         {widget === 'ref' && (
           <RefModule module={module} t={t} addr={addr} loadCard={loadCard} op={op}
@@ -483,7 +490,7 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
             onCreateRelation: relationTarget === undefined ? () => { void send({ kind: 'add_module', name: '关系', preset: 'graph' }) } : undefined }} />}
         {widget === 'scene' && <SceneWidget module={module} t={t} send={send} imageUrl={imageUrl} />}
         {widget === 'relation' && <RelationWidget module={withDerivedRelation(module, refEdges)} t={t} send={send} imageUrl={imageUrl} />}
-        {widget === 'map' && <FmgMapHost module={module} t={t} send={send} addr={addr} cardId={card.id} readOnly={readOnly} />}
+        {widget === 'map' && <FmgMapHost module={module} t={t} send={mapSend ?? send} addr={addr} cardId={card.id} readOnly={readOnly} />}
         {widget === 'collection' && <CollectionWidget module={module} t={t} send={send} imageUrl={imageUrl} refTargets={refTargets}
           siblings={siblings} ownerName={card.name} ownerId={card.id} cardKind={card.kind} onOpenModule={onOpenModule} places={mapPlaces} />}
         {widget !== undefined && widget !== 'document' && widget !== 'html'
@@ -501,13 +508,13 @@ function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, 
         )}
         {(widget === undefined || widget === 'document') && (
           <CardMarkdownEditor markdown={moduleMarkdown(module.blocks)} locked={locked || readOnly}
-            onSave={(text: string) => { void saveMarkdown(module, text) }} />
+            onSave={(text: string) => { void saveMarkdown?.(module, text) }} />
         )}
       </div>
       {module.children.length > 0 && !readOnly && (
         <div className="nv-page-children">
           {module.children.map(child => (
-            <button key={child.id} type="button" className="nv-page-childlink" onClick={() => onOpenModule(child.id)}>
+            <button key={child.id} type="button" className="nv-page-childlink" onClick={() => onOpenModule?.(child.id)}>
               <span className="nv-tree-glyph">{moduleGlyph(child, 13)}</span>
               <span>{child.name}</span>
             </button>
@@ -542,13 +549,16 @@ const HTML_WRITE_KINDS = new Set([
   'surface_set_state',
 ])
 
-const readTheme = (): { dark: boolean, accent: string, text: string, surface: string } => {
+const readTheme = (): { dark: boolean, accent: string, text: string, surface: string, scrollbar: string, scrollbarHover: string } => {
   const cs = getComputedStyle(document.documentElement)
+  const body = getComputedStyle(document.body)
   return {
     dark: document.documentElement.dataset.theme === 'dark',
     accent: cs.getPropertyValue('--nv-accent').trim(),
     text: cs.getPropertyValue('--nv-primary-text').trim(),
     surface: cs.getPropertyValue('--nv-surface').trim(),
+    scrollbar: body.getPropertyValue('--dsw-alias-scrollbar-bg-l1').trim(),
+    scrollbarHover: body.getPropertyValue('--dsw-alias-scrollbar-hover-l1').trim(),
   }
 }
 
@@ -623,7 +633,7 @@ function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, i
   readonly imageUrl: (resourceId: string) => string
   readonly imageResources: readonly { readonly id: string, readonly mediaType?: string }[]
   readonly send: WidgetSend
-  readonly ask: (text: string) => Promise<void>
+  readonly ask?: (text: string) => Promise<void>
   readonly seedComposer?: (text: string) => void
   readonly cardData: HtmlCardData
   readonly onOpenCard?: (cardId: string, moduleId?: string) => void
@@ -922,7 +932,7 @@ function HtmlModule({ module, t, readFile, onOpenFile, card, cardId, imageUrl, i
                 noteLog({ level: 'log', text: t('editor.html.shotSaved') })
               }}
               onCall={call => {
-                if (call.kind === 'compose' || call.kind === 'send') void ask(call.text ?? '')
+                if ((call.kind === 'compose' || call.kind === 'send') && ask !== undefined) void ask(call.text ?? '')
                 else if (call.kind === 'openModule' && call.moduleId !== undefined) { setModuleLinkFocus({ cardId, targetModuleId: call.moduleId, sourceModuleId: module.id, sourceModuleName: module.name }); if (call.itemId !== undefined) setCollectionFocus({ cardId, moduleId: call.moduleId, itemId: call.itemId }); onOpenModule?.(call.moduleId) }
                 else if (call.kind === 'openCard' && call.cardId !== undefined) onOpenCard?.(call.cardId)
                 else if (call.kind === 'navigate' && call.target !== undefined) {
@@ -1288,22 +1298,6 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     if (url.hostname === 'file' && parts.length > 0) onOpenFile?.(parts.join('/'))
   }, [onOpenCard, onOpenFile])
 
-  const saveBlock = useCallback(async (module: CardModuleDoc, blockId: string, text: string, expected: string): Promise<EditorSaveResult> => {
-    try {
-      const result = await op(addr, {
-        op: 'apply', cardId, targetId, version,
-        command: { kind: 'write_text', moduleId: module.id, blockId, moduleName: module.name, text, expectedContent: expected },
-      })
-      if (result.version !== undefined) setVersion(result.version)
-      void refresh()
-      return 'ok'
-    } catch (error: unknown) {
-      if (error instanceof CardConflict) { setNotice(t('editor.conflict')); void refresh(); return 'conflict' }
-      setNotice(String(error instanceof Error ? error.message : error))
-      return 'error'
-    }
-  }, [addr, cardId, op, refresh, t, targetId, version])
-
   const saveMarkdown = useCallback(async (module: CardModuleDoc, text: string): Promise<EditorSaveResult> => {
     try {
       const result = await op(addr, {
@@ -1488,7 +1482,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       card={{ id: cardId, name: doc.name, kind: doc.kind }}
       addr={addr} loadCard={loadCard} op={op} onOpenCard={onOpenCard}
       imageUrl={imageUrl} imageResources={imageResources}
-      saveBlock={saveBlock} saveMarkdown={saveMarkdown} send={send}
+      saveMarkdown={saveMarkdown} send={send}
       onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} seedComposer={seedComposer} readFile={readFile} onOpenFile={onOpenFile}
       resolveProjectAsset={resolveProjectAsset} reportDiagnostics={reportDiagnostics}
       refTargets={refIndex?.targets} siblings={target.modules} refEdges={refDerived.edges} />
@@ -1575,7 +1569,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                   card={{ id: cardId, name: doc.name, kind: doc.kind }}
                   addr={addr} loadCard={loadCard} op={op} onOpenCard={onOpenCard}
                   imageUrl={imageUrl} imageResources={imageResources}
-                  saveBlock={saveBlock} saveMarkdown={saveMarkdown} send={send}
+                  saveMarkdown={saveMarkdown} send={send}
                   onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} seedComposer={seedComposer} readFile={readFile} onOpenFile={onOpenFile}
                   fill={fillPage} resolveProjectAsset={resolveProjectAsset} reportDiagnostics={reportDiagnostics}
                   refTargets={refIndex?.targets} siblings={target.modules} refEdges={refDerived.edges} />
@@ -1619,7 +1613,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
                     card={{ id: cardId, name: doc.name, kind: doc.kind }}
                     addr={addr} loadCard={loadCard} op={op} onOpenCard={onOpenCard}
                       imageUrl={imageUrl} imageResources={imageResources}
-                    saveBlock={saveBlock} saveMarkdown={saveMarkdown} send={send}
+                    saveMarkdown={saveMarkdown} send={send}
                     onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} seedComposer={seedComposer} readFile={readFile} onOpenFile={onOpenFile}
                     resolveProjectAsset={resolveProjectAsset} reportDiagnostics={reportDiagnostics}
                     refTargets={refIndex?.targets} siblings={target.modules} refEdges={refDerived.edges} />
@@ -1992,7 +1986,7 @@ export function CardPreview({ addr, cardId, t, loadCard, onBack, onEdit, onExpor
                       card={{ id: current.cardId, name: doc.name, kind: doc.kind }}
                       addr={current.addr} loadCard={loadCard} op={readOnlyOp} onOpenCard={id => { pushCard(id) }}
                       imageUrl={imageUrl} imageResources={imageResources}
-                      saveBlock={saveOk} saveMarkdown={saveOk} send={noSend}
+                      saveMarkdown={saveOk} send={noSend}
                       onOpenModule={id => { scrollToSection(id) }} ask={noAsk}
                       readFile={undefined} onOpenFile={undefined}
                       refTargets={refIndex?.targets} siblings={target.modules} refEdges={refEdges}

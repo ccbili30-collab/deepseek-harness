@@ -5,15 +5,18 @@
  * @module noven-shell
  */
 import type { Context } from '@deepseek-ai/cordis'
+import { registerBlockPrompt } from './blocks-prompt.ts'
 import type {} from '@deepseek-ai/dsh-client-connection'
 import { readFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { dirname, extname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { registerRewind } from './rewind.ts'
+import { registerAppearanceRoutes } from './appearance/routes.ts'
+import { registerAppearanceTools } from './appearance/tools.ts'
 
 export const name = 'noven-shell'
-export const inject = ['connection', 'sessionController']
+export const inject = ['connection', 'sessionController', 'tools']
 
 const ASSETS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'assets')
 /** Vendored Fantasy-Map-Generator editor (complete upstream app, built with a relative base). */
@@ -131,7 +134,10 @@ async function serveMapEditor(req: IncomingMessage, res: ServerResponse): Promis
 
 /** Register the read-only asset route; all presentation ships through ./client. */
 export function apply(ctx: Context): void {
+  registerBlockPrompt(ctx)
   registerRewind(ctx)
+  registerAppearanceRoutes(ctx)
+  registerAppearanceTools(ctx)
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/noven-assets',
     methods: ['GET', 'HEAD'],

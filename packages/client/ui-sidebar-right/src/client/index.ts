@@ -161,13 +161,8 @@ export function apply(ctx: ClientContext): void {
   // The canvas claim travels the opposite way from the presentation report:
   // the frame pulls it from the controller's source through its own seam, so
   // a claim can never go stale waiting on a report — a retained surface
-  // reactivating with its canvas open counts immediately. Benches may seat a
-  // partial layout face; the no-op disposer keeps them alive.
-  ctx.effect(() => {
-    const claims = ctx.layout.canvasClaims
-    if (claims === undefined) return () => {}
-    return claims.provide(controller.canvasClaims)
-  }, 'ui-sidebar-right: canvas claims')
+  // reactivating with its canvas open counts immediately.
+  ctx.effect(() => ctx.layout.canvasClaims.provide(controller.canvasClaims), 'ui-sidebar-right: canvas claims')
   ctx.effect(() => registerSidebarShortcuts(ctx.shortcuts, controller, t, () => {
     void ctx.shortcuts.closeWindow().catch((error: unknown) => { console.error('Window close failed', error) })
   }), 'ui-sidebar-right: shortcuts')
@@ -209,6 +204,7 @@ export function apply(ctx: ClientContext): void {
       splitPane: (paneId) => { controller.split(paneId) },
       toggleFullscreen: () => { const target = controller.commandTarget(); if (target !== undefined) controller.toggleFullscreen(target) },
       toggleSidebar: () => { ctx.layout.toggleSidebar() },
+      setAuxiliaryCollapsed: (collapsed) => { layout.setAuxiliaryCollapsed(collapsed) },
       openTab: (kind, options) => { controller.openTab(kind, options) },
       hooks: {
         shortcuts: ctx.shortcuts.catalog,

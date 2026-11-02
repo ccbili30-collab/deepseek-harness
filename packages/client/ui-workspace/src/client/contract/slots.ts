@@ -1,12 +1,11 @@
 /**
  * ui-workspace contracts. Two registrations share this package:
  *
- * - WorkspaceBrowser fills the sidebar shell's `sidebar.workspaces` hole —
- *   the whole browsing region (section header, search, grouped/flat session
- *   list, workspace dialogs). It registers this package's viewing store and
- *   consumes the shell's two-fact owner share (wide / expandSidebar).
+ * - WorkspaceNavigator fills the sidebar shell's `sidebar.workspaces` hole:
+ *   a fixed Workspace selector above either current-Workspace Sessions or the
+ *   product content seat. WorkspaceBrowser remains as the legacy full browser.
  * - WorkspacePicker fills the conversation empty-state hole (menu + error
- *   dialog shared with the browser).
+ *   dialog shared with the navigator).
  *
  * Both registrations declare a **directory-flow hole** (`single` kind): the
  * slot a composed picker package's client half fills with its
@@ -101,7 +100,12 @@ export type UseMenuOpenState = () => MenuOpenState
 export const menuOpenStateFactory: SlotHookFactory<'sidebar.workspaces.session.menu.item', UseMenuOpenState> =
   (_standard, state) => () => state
 
-/** The same open-state binding for the Workspace header-row menu seats. */
+/**
+ * Bind a Workspace header menu's open state into its action entries.
+ * @param _standard - framework standard props (unused).
+ * @param state - the menu's open-state pair from the render occurrence.
+ * @returns the hook the entry calls.
+ */
 export const workspaceMenuOpenStateFactory: SlotHookFactory<'sidebar.workspaces.workspace.menu.item', UseMenuOpenState> =
   (_standard, state) => () => state
 
@@ -125,12 +129,22 @@ export interface SessionRowScheduleOwnerProps {
   readonly sessionId: SessionId
 }
 
+/** Owner controls supplied to a product content navigator replacing the Session browser. */
+export interface WorkspaceContentOwnerProps {
+  /** Whether the sidebar is wide enough for the expanded navigation. */
+  readonly wide: boolean
+  /** Reopen the sidebar from its rail presentation. */
+  readonly expandSidebar: () => void
+}
+
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
     /** Directory-flow hole under the conversation empty-state picker (declared by the WorkspacePicker entry). */
     'conversation.hero.workspace.directoryFlow': { kind: 'single'; scope: 'root'; owner: DirectoryFlowOwnerProps }
     /** Directory-flow hole under the sidebar browsing region (declared by the WorkspaceBrowser entry). */
     'sidebar.workspaces.directoryFlow': { kind: 'single'; scope: 'root'; owner: DirectoryFlowOwnerProps }
+    /** Product content navigation shown instead of the Session browser when occupied. */
+    'sidebar.workspaces.content': { kind: 'single'; scope: 'session'; owner: WorkspaceContentOwnerProps }
     /**
      * Leading decoration of one Session row, in the 16px cell before the title
      * that the row's own state dot otherwise occupies. A higher-priority state
@@ -254,6 +268,8 @@ export type WorkspaceBrowserInjected = {
     hostInfo: HostObservable<RemoteHostFacts>
     workspaceShortcuts: HostObservable<WorkspaceShortcutState>
     shortcuts: HostObservable<readonly ShortcutCatalogEntry[]>
+    /** Temporary full Session navigation requested by the product shell. */
+    sessionBrowser: HostObservable<boolean>
   }
   /** Open the browser search and focus its input. */
   requestSearch: () => void
@@ -273,6 +289,8 @@ export type WorkspaceBrowserInjected = {
   startSession: (workspaceId?: WorkspaceId) => void
   /** Open a real Session. */
   open: (sessionId: SessionId) => void
+  /** Dismiss temporary Session navigation without changing the current selection. */
+  dismissSessionBrowser: () => void
   /**
    * Search current visible conversation messages. The Host fixes the result
    * bound; `hasMore` means the query needs narrowing.
@@ -496,6 +514,7 @@ export type RowToastProps =
 export type WorkspaceBrowserProps =
   PropsRuntime<'sidebar.workspaces'>
   & PropsRenderSlots<
+    | 'sidebar.workspaces.content'
     | 'sidebar.workspaces.directoryFlow'
     | 'sidebar.workspaces.session.menu.item'
     | 'sidebar.workspaces.session.row.action'
@@ -505,6 +524,34 @@ export type WorkspaceBrowserProps =
   & PropsStore<WorkspaceViewStoreHandle>
   & Omit<WorkspaceBrowserInjected, 'hooks'>
   & PropsHooks<WorkspaceBrowserInjected['hooks']>
+  & PropsLocale<'workspace'>
+
+/** Actions and reactive facts consumed by the current-Workspace navigator. */
+export type WorkspaceNavigatorInjected = DirectoryPickingInjected & {
+  /** Open a real Session without expanding the sidebar. */
+  open: (sessionId: SessionId) => void
+  /** Select a Workspace through the navigation service's restore-or-blank flow. */
+  switchWorkspace: (workspaceId: WorkspaceId) => void
+  /** Open the Session rename dialog from a row title double-click. */
+  requestSessionRename: (sessionId: SessionId, currentTitle: string) => void
+  /** Adopt a picked host directory as a real Workspace. */
+  createWorkspace: (input: { path: string }) => Promise<WorkspaceView>
+}
+
+/** Current-Workspace navigator props: owner, viewing store, directory flow, row seats, and locale. */
+export type WorkspaceNavigatorProps =
+  PropsRuntime<'sidebar.workspaces'>
+  & PropsRenderSlots<
+    | 'sidebar.workspaces.content'
+    | 'sidebar.workspaces.directoryFlow'
+    | 'sidebar.workspaces.session.menu.item'
+    | 'sidebar.workspaces.session.row.action'
+    | 'sidebar.session.row.leading'
+    | 'sidebar.session.row.hover'
+  >
+  & PropsStore<WorkspaceViewStoreHandle>
+  & Omit<WorkspaceNavigatorInjected, 'hooks'>
+  & PropsHooks<WorkspaceNavigatorInjected['hooks']>
   & PropsLocale<'workspace'>
 
 /**

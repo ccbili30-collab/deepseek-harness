@@ -6,7 +6,7 @@ import { Remote, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol'
 import { WorkspaceCommands } from './commands.ts'
 import { DirectoryPickerController } from './directory-picker.ts'
 import { WorkspaceFeed, workspaceView } from './feed.ts'
-import { defaultWorkspaceDirectory, validateDocumentsDirectory } from './default-directory.ts'
+import { defaultWorkspaceDirectory, validateDefaultWorkspaceDirectory, validateDocumentsDirectory } from './default-directory.ts'
 import type {
   WorkspaceArchiveSessionRequest,
   WorkspaceArchiveValue,
@@ -33,6 +33,8 @@ export { DirectoryPickerController } from './directory-picker.ts'
 
 /** First-use directory policy for the Host account. */
 export interface Config {
+  /** Override the complete first-use Workspace path instead of resolving a Documents directory. */
+  defaultWorkspaceDirectory?: string
   /** Override the system Documents directory with a fully qualified path. */
   documentsDirectory?: string
   /** Maximum duration of the operating system's Documents lookup. */
@@ -62,6 +64,7 @@ export class WorkspaceController extends TypertRemoteService {
   static inject = ['typert', 'workspaceRegistry']
 
   static Config: z<Config, ResolvedConfig> = z.object({
+    defaultWorkspaceDirectory: z.string(),
     documentsDirectory: z.string(),
     archivedSessionRetentionDays: z.natural().min(1).default(15),
     archivedSessionCleanupIntervalMs: z.natural().min(1).max(2_147_483_647).default(3_600_000),
@@ -79,6 +82,9 @@ export class WorkspaceController extends TypertRemoteService {
   constructor(ctx: Context, config: Config = {}) {
     super(ctx, 'workspaceController', { namespace: 'workspace' })
     this.config = WorkspaceController.Config(config)
+    if (this.config.defaultWorkspaceDirectory !== undefined) {
+      this.config.defaultWorkspaceDirectory = validateDefaultWorkspaceDirectory(this.config.defaultWorkspaceDirectory)
+    }
     if (this.config.documentsDirectory !== undefined) validateDocumentsDirectory(this.config.documentsDirectory)
     this.commands = new WorkspaceCommands(ctx, this.config.archivedSessionRetentionDays)
     this.feed = new WorkspaceFeed(ctx, this.config.archivedSessionRetentionDays)
@@ -137,6 +143,10 @@ export class WorkspaceController extends TypertRemoteService {
   @Remote('initializeDefault')
   async initializeDefault(signal: AbortSignal): Promise<WorkspaceValue | undefined> {
     const workspace = await this.ctx.workspaceRegistry.initializeDefault(async () => {
+      if (this.config.defaultWorkspaceDirectory !== undefined) {
+        signal.throwIfAborted()
+        return this.config.defaultWorkspaceDirectory
+      }
       const timeout = AbortSignal.timeout(this.config.documentsLookupTimeoutMs)
       return await defaultWorkspaceDirectory(
         this.config.documentsDirectory, AbortSignal.any([signal, timeout]),

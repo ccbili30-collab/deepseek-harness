@@ -2,6 +2,7 @@ import { Fragment, memo, useMemo } from 'react'
 import { fileMediaUrl } from '@deepseek-ai/dsh-util-workspace-path'
 import type { ReactNode } from 'react'
 import { JsonBlock, MarkdownText } from '@deepseek-ai/dsh-client-ui-primitives'
+import { BlockSegments } from '../blocks/Segments.tsx'
 import type { MarkdownFileMentions, MarkdownPathImages } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ChatNodeOwnerProps, ChatViewSlotProps, UseDisclosure, UsePresentation } from '../contract/slots.ts'
 import type { AssistantBlock } from '../contract/snapshot.ts'
@@ -28,6 +29,8 @@ export function localPathMediaUrl(base: string, value: string): string | undefin
 }
 
 export interface AssistantMarkdownProps {
+  /** Stable Turn/step identity for inline block choice groups. */
+  contentScope?: string | undefined
   /** Render only the requested business portion, preserving original block indexes. */
   groupPart?: string | undefined
   /** Stable Hook forwarded to each independently expandable reasoning block. */
@@ -52,7 +55,7 @@ export interface AssistantMarkdownProps {
 
 /** Reasoning block as the Think variant summary row (figma 39:28304). */
 export const AssistantMarkdown = memo(function AssistantMarkdown({
-  blocks, streaming, interrupted, renderMessageImages, groupPart, useDisclosure,
+  blocks, streaming, interrupted, renderMessageImages, groupPart, useDisclosure, contentScope = 'preview',
   reasoningHidden = false, usePresentation, revealProcess, mentions, t,
 }: AssistantMarkdownProps) {
   // Stable per locale revision (t identity changes on switch): a fresh object
@@ -79,13 +82,20 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     switch (block.kind) {
       case 'text':
         rendered.push(
-          <MarkdownText
+          <BlockSegments
             key={i}
             text={block.text}
+            scopeId={`${contentScope}:${i}`}
             streaming={streaming}
-            labels={labels}
-            fileMentions={mentions}
-            pathImages={pathImages}
+            renderText={text => (
+              <MarkdownText
+                text={text}
+                streaming={streaming}
+                labels={labels}
+                fileMentions={mentions}
+                pathImages={pathImages}
+              />
+            )}
           />,
         )
         break
@@ -140,7 +150,7 @@ export const AssistantMarkdown = memo(function AssistantMarkdown({
     }
   }
   return (
-    <div className={css.root} data-streaming={streaming || undefined}>
+    <div className={css.root} data-noven-assistant-answer={groupPart === 'reasoning' ? undefined : ''} data-streaming={streaming || undefined}>
       <div className={css.body}>
         {rendered}
         {interrupted && (groupPart === undefined || groupPart === 'response'

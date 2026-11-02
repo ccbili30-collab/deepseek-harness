@@ -199,6 +199,11 @@ function mount(
   }
 }
 
+it('marks the heading as a native window drag surface', () => {
+  const { view } = mount()
+  expect(view.container.querySelector(`.${css.pageHeading}`)?.hasAttribute('data-window-drag')).toBe(true)
+})
+
 function taskNames(): string[] {
   return within(screen.getByRole('list', { name: en['list.label'] })).queryAllByRole('button')
     .filter(button => button.closest('li') !== null)

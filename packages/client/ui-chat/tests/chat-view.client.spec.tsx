@@ -13,6 +13,7 @@ import type {
   ToolCallBlock, ToolResultNode, TurnErrorNode, TurnMaxTokensNode, UseChatNodeTurnData,
   TranscriptViewMode, UserMessageNode,
 } from '@deepseek-ai/dsh-client-ui-chat/client'
+import { createBlockRegistry } from '@deepseek-ai/dsh-client-ui-chat/client'
 import type {
   SessionListState, SessionSnapshot,
 } from '@deepseek-ai/dsh-api-session-controller/client'
@@ -406,6 +407,8 @@ function makeHarness(
   // ChatView never invokes it (pass-through stub).
   const SessionProviderStub: ChatViewSlotProps['SessionProvider'] = ({ children }) => <>{children}</>
   const props: ChatViewSlotProps = {
+    blocks: createBlockRegistry(),
+    commitBlock: vi.fn(() => true),
     usePanelInfo: selector => selector({ activePanelId: null }),
     sessionId: SID,
     useSession: bindSnapshotSelector(session.source),

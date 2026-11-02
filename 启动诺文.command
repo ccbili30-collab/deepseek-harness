@@ -1,33 +1,54 @@
 #!/bin/zsh
-# 诺文本地启动器：起服务（如未起）并自动打开浏览器。
-# 双击运行，或终端执行 ./启动诺文.command
+# 诺文 Web 镜像：固定使用本仓库的隔离数据根；已有服务只复用，不重复启动。
+set -u
 
-REPO="/Users/noven/Documents/Codex/CodexProduct/1/桌面端 noven"
-LOG="/tmp/noven-web.log"
-PORT=3081
+REPO="${0:A:h}"
+PORT=3083
+LOG="$REPO/.data/web-$PORT.log"
+URL=""
 
-cd "$REPO" || { echo "找不到仓库目录：$REPO"; read -q "?按任意键退出"; exit 1 }
+export DSH_HOME="$REPO/.data/harness"
+export NOVEN_HOME="$REPO/.data/library"
+export NOVEN_PROJECTS_ROOT="$REPO/.data/projects"
 
-if pgrep -f "dsh web.*--port $PORT" > /dev/null 2>&1; then
-  echo "诺文已在运行，直接打开页面…"
+mkdir -p "$DSH_HOME" "$NOVEN_HOME" "$NOVEN_PROJECTS_ROOT"
+
+if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  print -r -- "端口 $PORT 已有服务，只复用现有实例。"
 else
-  echo "正在启动诺文…"
-  nohup env NODE_NO_BUILD=1 pnpm dsh web --no-open --port $PORT > "$LOG" 2>&1 &
+  if [[ ! -f "$REPO/apps/web/dist/index.html" ]]; then
+    print -r -- "缺少 Web 构建，请先在仓库根目录运行 pnpm run build。" >&2
+    exit 1
+  fi
+  : > "$LOG"
+  print -r -- "正在启动隔离的 Noven Web 镜像…"
+  nohup env NODE_NO_BUILD=1 pnpm --dir "$REPO" dsh web \
+    --patch "$REPO/apps/desktop/noven/profile/cordis.patch.yml" \
+    --no-open --port "$PORT" > "$LOG" 2>&1 &
+  STARTED_PID=$!
 fi
 
-URL=""
 for _ in {1..60}; do
-  for candidate in "$LOG" /tmp/dsh-web9.log; do
-    URL=$(grep -m1 -o "http://127.0.0.1:$PORT/?token=[A-Za-z0-9_-]*" "$candidate" 2>/dev/null)
-    [[ -n "$URL" ]] && break 2
-  done
+  if [[ -f "$LOG" ]]; then
+    URL=$(grep -m1 -o "http://127.0.0.1:$PORT/?token=[A-Za-z0-9_-]*" "$LOG" 2>/dev/null || true)
+    [[ -n "$URL" ]] && break
+  fi
   sleep 0.5
 done
 
-if [[ -n "$URL" ]]; then
-  open "$URL"
-  echo "已打开：$URL"
-  echo "日志：$LOG"
-else
-  echo "启动超时，请查看日志：$LOG"
+if [[ -z "$URL" ]]; then
+  if [[ -n "${STARTED_PID:-}" ]] && kill -0 "$STARTED_PID" 2>/dev/null; then
+    kill "$STARTED_PID"
+  fi
+  print -r -- "启动失败或超时；未重复启动。日志：$LOG" >&2
+  exit 1
 fi
+
+if ! curl -fsS --max-time 5 "$URL" -o /dev/null; then
+  print -r -- "现有地址不可访问；未再启动第二套服务。日志：$LOG" >&2
+  exit 1
+fi
+
+open "$URL"
+print -r -- "已打开：$URL"
+print -r -- "数据根：$REPO/.data（与 Noven Test、正式版隔离）"

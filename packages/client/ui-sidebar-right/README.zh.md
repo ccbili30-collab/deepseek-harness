@@ -49,14 +49,14 @@ kind: "package-reference"
 
 面板是导航列，不是内容宿主：上半区是产品导航席位（`sidebar.right.pane.top`），发丝线以下按 `guide` 贡献逐行排列功能入口，并以面板的两个控件收尾——形态切换与折叠。点开入口把页落到画布上，而不是落进这列。收起后该列保留一条图标栏，上下两半都还在——上半区的图标形态列在功能图标之上，各行维持展开时的排布；点图标把页落到画布上而不展开这列，栏上自己的展开控件是唯一的展开途径。
 
-画布把停靠面的浮窗栈画在右列轨道内、面板旁侧——它是申报来的版面，不是覆盖层：框架从注入的认领源拉取展开画布的认领，据此撑宽该列，会话让出宽度而非被压住。每次打开都落在画布上：最新的浮窗盖住其余浮窗，被盖的浮窗保持挂载——隐藏且 inert，于是一页在另一页盖住它时保留自己的状态——注册了 `keepMounted` 的正文在被盖住期间也保留。关掉栈顶剥掉这一层，焦点落到它露出的浮窗上；关掉最后一个浮窗画布随之消失。Escape 剥掉栈顶，除非事件始于输入框、textarea 或 contenteditable。画布开着时会把会话轨道停到一边腾出空间，关闭时恢复。画布的换位手势（成员拖拽排序）把栈贴到面板内缘或框架右缘；朝向是会话 surface 自己的持久化字段，经 surface 的 `setCanvasSide` 动作提交——单一归属，没有同步。停靠位同样随 surface 持久化，恢复的 surface 按原样找回画布，展开或停靠。声明 `selfChrome` 的 tab 类型在画布上画自己的顶栏；宿主的标题、换位与折叠控件会让位。
+画布把停靠面的浮窗栈画在右列轨道内、面板旁侧——它是申报来的版面，不是覆盖层：框架从注入的认领源拉取展开画布的认领，据此撑宽该列，会话让出宽度而非被压住。每次打开都落在画布上：最新的浮窗盖住其余浮窗，被盖的浮窗保持挂载——隐藏且 inert，于是一页在另一页盖住它时保留自己的状态——注册了 `keepMounted` 的正文在被盖住期间也保留。关掉栈顶剥掉这一层，焦点落到它露出的浮窗上；关掉最后一个浮窗画布随之消失。Escape 剥掉栈顶；已被处理、正由菜单或对话框持有，或始于输入框、textarea、contenteditable 的 Escape 则留给对应控件。画布开着时会把会话轨道停到一边腾出空间，关闭时恢复。存在 `FrameLayoutPolicy` 时，有效画布朝向与折叠由策略和全局折叠状态决定，成员换位及旧会话 `canvasSide`/`canvasParked` 都不能覆盖它们。`drawer: false` 会关闭 `SidebarPanel`、功能导航、自动全屏和呈现报告，但保留 `CanvasHost` 与页体挂载。此时画布认领独立决定轨道，不受已关闭的呈现报告影响；全局面板会隐藏画布并暂停轨道，但认领保留到返回会话时恢复。`preserveCanvasParked: true` 在 `openContent` 期间保持原有折叠；普通打开仍会解除旧的停靠态。声明 `selfChrome` 的 tab 类型在画布上画自己的顶栏；宿主的标题、换位与折叠控件会让位。替代顶栏仍要为打开的对象与工具保留可见导航，宿主右键菜单不是唯一允许的切换入口。
 
 <a id="the-expand-button"></a>
 ## 展开按钮
 
 快捷键速查包含右侧栏切换、分栏和面板全屏命令，对应控件显示同一份有效键位。分栏要求焦点位于可见的停靠分栏内；焦点在聊天区时不可用。文件、浏览器和终端提供者分别注册自己的命令。开始页按钮内以无背景文字显示有效快捷键，不额外弹出重复提示。
 
-面板隐藏时，会话 header 角落席位里的一个按钮（`conversation.session.header.corner`，在工具组右缘之外，与 Session 日志控件齐平）是回去的路。它的图形是左侧 sidebar 折叠图标的镜像。它使用公共紧凑 Button，与相邻更多操作按钮共用圆角和 hover 底色。它与面板共用一个存储（slot 运行时允许两个同作用域席位共用一个 handle）；面板显示时它什么也不渲染，角落席位随之收起。于是折叠的 Sidebar 不花会话区任何代价：没有轨条、没有宽度，转录的滚动条留在列的边缘。没有会话就没有按钮也没有面板。
+本包不占用 `conversation.session.header.corner`，该座位留给其他贡献方。面板的恢复由当前框架策略与产品导航控件负责，不再由本包另设一个展开按钮。
 
 面板取会话区的底色与正文字号，而不是自成一层浮起的表面：它是页面的一列，不是压在页面上的卡片。
 
@@ -94,11 +94,13 @@ tab 类型分两阶段注册，随包发布的引导类型走的正是别的包�
 <a id="ctxsidebarright"></a>
 ## `ctx.sidebarRight`
 
-`openResource(address, options?)` 与 `openTab(kind, options?)` 是导航控制器，进入该面的每条路都调用其中之一：会话区的文件链接与工具行的行号引用（`openResource(fileAddress, { params: { line } })`），功能入口行与引导入口框（`openTab`），文件树的行（`tab.actions.openResource`）。资源地址是 `dsh-resource://<type>/…` URI；不带 `options.kind` 时由注册表认领（glob 与 `canOpen`，最高档胜出），带它时由该 kind 生效的类型打开。页按 kind 命名；tab 记录在本包拼出、别处无人书写的地址下（`contract/seed.ts`）。两者以同一组步骤作为一条历史运行：已展示同一 (kind, contentId) 的资源 tab 被聚焦，不限所在分栏，除非 `revealIfOpened: false`；页 tab 在整个停靠面内去重——画布上的浮窗优先于停靠记录，因为画布是用户正在看的那块；否则新 tab 落到 `options.replaceTab` 所在的格与位置（并关掉那个 tab），再退而落到 `options.paneId`，再退而落到活跃停靠格；面板展开，因为用户看不到的内容不算打开——`expandColumn: false` 偏偏跳过这一步，图标栏的点选把页落到画布上、这列维持收起。落到停靠位的 tab 会在同一条历史里浮出——打开的内容在画布上呈现。随后 Tab 域记录这次导航——`params` 以 `navigation.params` 抵达正文，`revision` 递增——不进布局历史。`params` 按所开之物定型：某资源类型的查看器把自己那项并入 `SidebarRightResourceParamsMap`（文本预览声明 `{ line?: number }`）；接受参数的页类型按其 kind 并入 `SidebarRightTabParamsMap`；值约定为 JSON 形状，运行时不校验。`dsh-resource://` 之外的地址、无人认领的地址、或未注册的 kind 都会 throw：那是接线错误，不是用户错误。
+`openResource(address, options?)` 与 `openTab(kind, options?)` 是导航控制器，进入该面的每条路都调用其中之一：会话区的文件链接与工具行的行号引用（`openResource(fileAddress, { params: { line } })`），功能入口行与引导入口框（`openTab`），文件树的行（`tab.actions.openResource`）。资源地址是 `dsh-resource://<type>/…` URI；不带 `options.kind` 时由注册表认领（glob 与 `canOpen`，最高档胜出），带它时由该 kind 生效的类型打开。页按 kind 命名；tab 记录在本包拼出、别处无人书写的地址下（`contract/seed.ts`）。两者以同一组步骤作为一条历史运行：已展示同一 (kind, contentId) 的资源 tab 被聚焦，不限所在分栏，除非 `revealIfOpened: false`；页 tab 在整个停靠面内去重——画布上的浮窗优先于停靠记录，因为画布是用户正在看的那块；否则新 tab 落到 `options.replaceTab` 所在的格与位置（并关掉那个 tab），再退而落到 `options.paneId`，再退而落到活跃停靠格；面板展开，因为用户看不到的内容不算打开——`expandColumn: false` 偏偏跳过这一步，图标栏的点选把页落到画布上、这列维持收起。`preserveCanvasParked: true` 在打开内容时保持当前画布折叠；未指定时，打开内容会解除旧的停靠态。落到停靠位的 tab 会在同一条历史里浮出——打开的内容在画布上呈现。随后 Tab 域记录这次导航——`params` 以 `navigation.params` 抵达正文，`revision` 递增——不进布局历史。`params` 按所开之物定型：某资源类型的查看器把自己那项并入 `SidebarRightResourceParamsMap`（文本预览声明 `{ line?: number }`）；接受参数的页类型按其 kind 并入 `SidebarRightTabParamsMap`；值约定为 JSON 形状，运行时不校验。`dsh-resource://` 之外的地址、无人认领的地址、或未注册的 kind 都会 throw：那是接线错误，不是用户错误。
+
+`openTabIn(sessionId, kind, options?)` 把同一路由用于显式指定的已采用 Session，包括离屏保留的画布；如果该 Session 没有已采用的 surface，则不执行任何操作。`provideTabRouter(router)` 在宿主放置之前安装产品导航策略：返回 `true` 表示产品已接管该 kind，返回 `false` 则继续走宿主默认放置。后注册者优先，释放后恢复前一个提供者；路由器不得对同一 kind 递归调用 `openTab`。
 
 `preferNewPane: true` 会先按普通的两格上限与空间规则尝试分割目标停靠格，无法分栏时回退到该格。`replaceTab` 优先并会禁用这项偏好。
 
-`close(tabId)` 关闭一个 tab；`active()` 读取活动 tab。`isExpanded()` 与 `toggleExpanded()` 读取并驱动该列的展开；`toggleFullscreen(target)` 对任何捕获到的分栏——停靠格或画布浮窗——执行面板控件的显示模式操作，因为该模式属于面板而非分栏。布局操作供以编程方式安排该列的调用方使用，每个都像它替代的手势一样被记录：`focus(tabId)` 聚焦一个 tab 及其格；`split(paneId?)` 在格预算与空间规则下分栏一个停靠格（默认活跃格），返回新格的 id，做不到时返回 `undefined`——且不记录任何东西；`float(tabId, rect?)` 把停靠 tab 浮出为浮窗；`dock(paneId)` 把浮窗放回活跃停靠格。不存在的 tab 或格、或已处于调用目标状态的，都原样不动。该接口只暴露操作：没有布局快照、没有操作日志、没有按地址查找。`_undo()` / `_redo()` 步进已挂载停靠面的历史；它们是 `@internal`——序列没有面向用户的控件，这两个只为测试存在。命令需要一个已挂载的会话停靠面；没有时它们 throw，而不是写进一个没人绘制的面里。`mounted` 是「席位正在屏幕上的那个会话」的可观察值，全局面板替代 Conversation 或没有选中会话时为 `undefined`。要在自己的挂载 effect 里打开内容的组件通过绑定的 hook 读取它，并在它有值后再行动：框架把 Conversation 列挂载在这个席位之前，而席位在同一次提交的 passive effect 里才发布绑定，一个假定席位已绑定的 effect 会先运行并 throw。计划审阅的自动打开就是这样读取它的。
+`close(tabId)` 关闭一个 tab；`active()` 读取活动 tab。`isExpanded()` 与 `toggleExpanded()` 读取并驱动该列的展开；`toggleFullscreen(target)` 对任何捕获到的分栏——停靠格或画布浮窗——执行面板控件的显示模式操作，因为该模式属于面板而非分栏。布局操作供以编程方式安排该列的调用方使用，每个都像它替代的手势一样被记录：`focus(tabId)` 聚焦一个 tab 及其格；`split(paneId?)` 在格预算与空间规则下分栏一个停靠格（默认活跃格），返回新格的 id，做不到时返回 `undefined`——且不记录任何东西；`float(tabId, rect?)` 把停靠 tab 浮出为浮窗；`dock(paneId)` 把浮窗放回活跃停靠格。不存在的 tab 或格、或已处于调用目标状态的，都原样不动。该接口只暴露操作：没有布局快照、没有操作日志、没有按地址查找。`_undo()` / `_redo()` 步进已挂载停靠面的历史；它们是 `@internal`——序列没有面向用户的控件，这两个只为测试存在。命令需要一个已挂载的会话停靠面；没有时它们 throw，而不是写进一个没人绘制的面里。`mounted` 是「席位正在屏幕上的那个会话」的可观察值，全局面板替代 Conversation 或没有选中会话时为 `undefined`。只有真正的席位或会话生命周期变化才发布迁移，单纯的界面内容提交不会重复发布。要在自己的挂载 effect 里打开内容的组件通过绑定的 hook 读取它，并在它有值后再行动：框架把 Conversation 列挂载在这个席位之前，而席位在同一次提交的 passive effect 里才发布绑定，一个假定席位已绑定的 effect 会先运行并 throw。计划审阅的自动打开就是这样读取它的。
 
 `focusedTarget(element?)` 解析当前 DOM 分栏和标签页，也接受嵌入 iframe；焦点位于外部时不返回页面。`commandTarget(element?)` 另外允许外部打开动作使用已挂载会话的活动停靠分栏。捕获值包含 occurrence 和导航版本；`isTargetCurrent(target)` 拒绝会话变更、已移动或重新打开的标签页，以及期间发生的导航。焦点和指针激活独立于持久化的布局选择。
 

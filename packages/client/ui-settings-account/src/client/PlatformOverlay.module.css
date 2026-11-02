@@ -40,7 +40,7 @@
   flex: none;
 }
 
-:global(html[data-platform="darwin"]) .trafficLights {
+:global(html:is([data-platform="darwin"], [data-chrome-platform="darwin"])) .trafficLights {
   display: block;
 }
 

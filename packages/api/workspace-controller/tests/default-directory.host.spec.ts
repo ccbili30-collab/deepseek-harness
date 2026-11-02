@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { NativeCommandRunner } from '@deepseek-ai/dsh-native-command'
-import { defaultWorkspaceDirectory, validateDocumentsDirectory } from '../src/default-directory.ts'
+import { defaultWorkspaceDirectory, validateDefaultWorkspaceDirectory, validateDocumentsDirectory } from '../src/default-directory.ts'
 
 describe('system Documents directory', () => {
   it.each([
@@ -44,5 +44,10 @@ describe('system Documents directory', () => {
   it('accepts redirected UNC Documents directories', () => {
     expect(validateDocumentsDirectory('\\\\server\\share\\Documents', 'win32')).toBe('\\\\server\\share\\Documents')
     expect(() => validateDocumentsDirectory('relative', 'linux')).toThrow('fully qualified')
+  })
+
+  it('validates a complete deployment-owned default Workspace path', () => {
+    expect(validateDefaultWorkspaceDirectory('/isolated/杂项', 'linux')).toBe('/isolated/杂项')
+    expect(() => validateDefaultWorkspaceDirectory('杂项', 'linux')).toThrow('Default Workspace directory')
   })
 })

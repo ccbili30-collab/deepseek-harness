@@ -180,6 +180,12 @@ export class DesktopHostProcess {
   ) {}
 
   /**
+   * Read recent bounded Host stderr for local startup audits and failure reports.
+   * @returns Captured stderr up to the process diagnostic limit.
+   */
+  get hostDiagnostic(): string { return this.stderr }
+
+  /**
    * Start this child once and await its Web application URL.
    * @returns Ready facts supplied by the child after application startup.
    */

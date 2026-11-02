@@ -56,6 +56,7 @@ import { DesktopQuitConfirmation } from './quit-confirmation.ts'
 import { DesktopTray } from './tray.ts'
 import { DesktopBackgroundNotice } from './background-notice.ts'
 import { applyNovenIdentity, NOVEN_PRODUCT_NAME, NOVEN_PROTOCOL, novenHostEnvironment, resolveNovenPaths } from './noven-channel.ts'
+import { NOVEN_PROFILE_RESOURCE } from './noven-profile-resource.ts'
 
 let focusPrimaryWindow = (): void => {}
 let stopForRecovery = async (): Promise<void> => {}
@@ -332,6 +333,9 @@ async function main(): Promise<void> {
   const manager = new DesktopProjectManager(paths, resources)
   let quitting = false
   let startup: Promise<void> | undefined
+  const startupLog = (stage: string): void => {
+    if (process.env.NOVEN_STARTUP_DEBUG === '1') console.error('[DEBUG-noven-startup]', stage)
+  }
   let workspaceRecovery: Promise<void> | undefined
   let mainWindow: BrowserWindow | undefined
   let welcomeWindow: BrowserWindow | undefined
@@ -419,17 +423,21 @@ async function main(): Promise<void> {
   const backend = new DesktopBackendController((onFailure) => {
     const hostInspectPort = developmentHostInspectPort(development)
     const host = new DesktopHostProcess(resources.node, resources.dsh, activeProject,
-      hostInspectPort, novenHostEnvironment(novenPaths), onFailure,
+      hostInspectPort, novenHostEnvironment(novenPaths, process.env,
+        development ? undefined : join(process.resourcesPath, NOVEN_PROFILE_RESOURCE)), onFailure,
       primaryRuntime,
       resources, (next) => { platformView.setSession(next) })
     return {
       start: async () => {
         const ready = await host.start()
+        startupLog('host.ready')
         hostCookie = await authenticateWebHost(ready.url)
+        startupLog('host.authenticated')
         hostUrl = ready.url
         if (ready.injections === undefined) throw new Error('Desktop Host did not provide boot injections')
         injections = ready.injections
         welcomeBackend = await connectDesktopWelcome(ready.url, (input, init) => net.fetch(input, init), async () => (await session.defaultSession.cookies.get({ url: ready.url })).map(cookie => `${cookie.name}=${cookie.value}`).join('; '))
+        startupLog('welcome.connected')
         stopAccount?.()
         const accountBackend = welcomeBackend.account
         stopAccount = accountBackend.watch((state) => {
@@ -539,11 +547,15 @@ async function main(): Promise<void> {
 
   const reconcileBackend = (): Promise<void> => {
     startup ??= (async () => {
+      startupLog('reconcile.navigate')
       await navigateMain(applicationUrl)
+      startupLog('reconcile.backend-start')
       await backend.start(async () => {
         await manager.applyRelease()
       })
+      startupLog('reconcile.initial-window')
       if (backend.host !== undefined) await openInitialWindow()
+      startupLog('reconcile.complete')
       if (backend.host !== undefined) updateJournal?.action('workspace-ready')
       // The existing Web document resumes through the boot IPC response.
     })().catch((error: unknown) => {
@@ -650,7 +662,9 @@ async function main(): Promise<void> {
 
   ipcMain.handle(DESKTOP_IPC.boot, async (event) => {
     assertDesktopSender(event, ['app'])
+    startupLog('boot.called')
     await startup
+    startupLog('boot.startup-finished')
     if (backend.host === undefined || hostUrl === undefined) throw new Error('Desktop Host is unavailable')
     return { injections, streamBaseUrl: new URL(hostUrl).origin }
   })
@@ -1071,10 +1085,13 @@ async function main(): Promise<void> {
   const enterWorkspace = async ({ activate = true }: { activate?: boolean } = {}): Promise<void> => {
     if (quitting) return
     const window = mainWindow ?? createMainWindow()
+    startupLog('workspace.navigate')
     await navigateMain(applicationUrl)
+    startupLog('workspace.navigated')
     if (isQuitting() || recovery.active || window.isDestroyed()) return
     if (activate) window.show()
     else window.showInactive()
+    startupLog('workspace.shown')
     enteredWorkspace = true
     if (welcomeWindow !== undefined) {
       welcomeWindow.close()
@@ -1151,14 +1168,18 @@ async function main(): Promise<void> {
   }
   const openInitialWindow = async (): Promise<void> => {
     if (quitting || recovery.active) return
+    startupLog('initial.read-welcome')
     const state = await readWelcomeState()
+    startupLog('initial.welcome-read')
     if (isQuitting() || backend.state.phase !== 'ready') return
     locale = resolveDesktopStartupLocale(state.localePreference, systemLanguages)
     windowsLanguage = locale.id
     refreshApplicationMenu()
     // Noven is local-first: open the workspace directly and configure models in
     // Settings instead of routing through the DeepSeek account/API-key welcome.
+    startupLog('initial.enter-workspace')
     await enterWorkspace()
+    startupLog('initial.workspace-entered')
   }
   focusPrimaryWindow = () => {
     if (quitting) return

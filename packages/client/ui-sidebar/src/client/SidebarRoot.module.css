@@ -13,7 +13,7 @@
   height: 100%;
   padding: 6px var(--dsh-sidebar-inline-padding);
   box-sizing: border-box;
-  background: var(--dsw-specific-sidebar-fill);
+  background: var(--noven-sidebar-background, var(--dsw-specific-sidebar-fill));
   color: var(--dsw-alias-label-primary);
   font-size: 14px;
   /* The sidebar is elevated above the conversation surface, so a revealed
@@ -24,7 +24,7 @@
 
 /* macOS desktop: the AppFrame column owns the translucent sidebar tint; an
    opaque fill here would sit on top of it and block the window vibrancy. */
-:global([data-platform='darwin']) .root {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .root {
   background: transparent;
 }
 
@@ -240,6 +240,35 @@
   overflow: visible;
 }
 
+/* Fixed-topbar frame: the brand mark is the navigation toggle and stays at
+   the leading edge in both widths; the wordmark follows it when expanded. */
+.logoRow.brandLeading {
+  justify-content: flex-start;
+}
+
+.brandToggle {
+  color: var(--dsw-alias-label-primary);
+  -webkit-app-region: no-drag;
+}
+
+.iconButton.brandToggle {
+  width: 36px;
+  height: 36px;
+}
+
+/* The brand mark rests as the toggle; hovering swaps in the panel affordance. */
+.brandToggle .panelIcon {
+  display: none;
+}
+
+.collapsed .brandToggle:hover .panelIcon {
+  display: inline;
+}
+
+.collapsed .brandToggle:hover .railMark {
+  display: none;
+}
+
 /* Brand group (figma I133:7632): the full wordmark rides the text ink
    (figma flows: the main-screen instance is black; blue is brand
    emphasis only). A button only in behavior (New Session shortcut): the
@@ -259,7 +288,7 @@
 
 /* On macOS the brand is a window-drag surface, not a New Session button;
    a pointer cursor would promise a click that drags the window instead. */
-:global([data-platform='darwin']) .brand {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .brand {
   cursor: default;
 }
 
@@ -424,19 +453,19 @@
 /* macOS: the themed elevated fill reads as a foreign slab on the vibrancy
    sidebar; a white wash sits in the glass like native macOS sidebar
    controls. Dark keeps the same white ink at lower alpha. */
-:global([data-platform='darwin']) .newSession {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .newSession {
   background: rgb(255 255 255 / 0.55);
 }
 
-:global([data-platform='darwin']) .newSession:hover {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .newSession:hover {
   background: rgb(255 255 255 / 0.3);
 }
 
-:global([data-platform='darwin']) :global([data-ds-dark-theme]) .newSession {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) :global([data-ds-dark-theme]) .newSession {
   background: rgb(255 255 255 / 0.15);
 }
 
-:global([data-platform='darwin']) :global([data-ds-dark-theme]) .newSession:hover {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) :global([data-ds-dark-theme]) .newSession:hover {
   background: rgb(255 255 255 / 0.2);
 }
 

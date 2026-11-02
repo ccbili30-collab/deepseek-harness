@@ -1,0 +1,6 @@
+# Interactive isolated preview: use a catalog model without forcing an effort.
+- id: agent-default-model
+  name: "@deepseek-ai/dsh-agent-default-model"
+  config:
+    provider: gmn
+    model: deepseek-v4.1-flash

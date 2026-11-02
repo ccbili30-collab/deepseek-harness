@@ -4,7 +4,10 @@
   flex-direction: column;
   height: 100%;
   min-width: 0;
-  background: var(--dsw-alias-bg-base);
+  background-color: var(--noven-conversation-background-color, var(--dsw-alias-bg-base));
+  background-image: var(--noven-conversation-background-image, none);
+  background-position: var(--noven-conversation-background-position, center);
+  background-size: cover;
 }
 
 /* 76px with its rule: the height of the Sidebar's tab strip and header row
@@ -20,6 +23,7 @@
   min-height: 76px;
   padding: 10px 28px 0 20px;
   border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+  background: var(--noven-conversation-chrome-background, transparent);
 }
 
 .header:where(:not(:has(.tabs))) {
@@ -27,24 +31,29 @@
   padding-bottom: 10px;
 }
 
-/* Blank Sessions retain navigation controls without conversation title or tabs. */
+/* Blank Sessions retain visible navigation controls without reserving an
+   empty title row. Only native macOS needs a drag strip before a Session. */
 .headerBlank {
   min-height: 0;
+  padding-top: 0;
   padding-bottom: 0;
   border-bottom: none;
+}
+
+.headerBlank .titleRow {
+  min-height: 0;
 }
 
 .headerBlank .headerCorner {
   margin-left: auto;
 }
 
-/* Only the macOS titlebar needs reserved drag space before a Session exists. */
-:global(html:not([data-platform='darwin'])) .headerSessionless {
-  padding-top: 0;
+:global(html[data-platform='darwin']) .headerSessionless {
+  padding-top: 10px;
 }
 
-:global(html:not([data-platform='darwin'])) .headerSessionless .titleRow {
-  min-height: 0;
+:global(html[data-platform='darwin']) .headerSessionless .titleRow {
+  min-height: 30px;
 }
 
 /* macOS hiddenInset titlebar: the header block owns the window drag over its
@@ -364,6 +373,34 @@ button.crumb:hover {
   overflow: hidden;
 }
 
+:global(html[data-noven-conversation-appearance]) .root {
+  overflow: hidden;
+  border-radius: 14px;
+}
+
+/* A blank Session has no tab or title to protect; leave its chrome empty
+   instead of painting a detached white strip over the wallpaper. */
+:global(html[data-noven-conversation-appearance]) .headerBlank {
+  background: transparent;
+}
+
+/* Blur belongs to the image layer only; the transcript and composer stay sharp. */
+:global(html[data-noven-conversation-blur]) .root {
+  isolation: isolate;
+}
+
+:global(html[data-noven-conversation-blur]) .root::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: calc(-1 * var(--noven-conversation-background-blur, 0px));
+  pointer-events: none;
+  background-image: var(--noven-conversation-background-layer);
+  background-position: var(--noven-conversation-background-position, center);
+  background-size: cover;
+  filter: blur(var(--noven-conversation-background-blur));
+}
+
 .root[data-phase='active'] .header {
   flex: none;
 }
@@ -445,10 +482,13 @@ button.crumb:hover {
      region and the fade band never stretches. The 0px stop is bg-base at
      zero alpha (not white, which the figma export hardcodes) so both themes
      fade from their own base. */
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--dsw-alias-bg-base) 0%, transparent) 0px,
-    var(--dsw-alias-bg-base) 36px
+  background: var(
+    --noven-conversation-composer-background,
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--dsw-alias-bg-base) 0%, transparent) 0px,
+      var(--dsw-alias-bg-base) 36px
+    )
   );
 }
 

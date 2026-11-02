@@ -9,8 +9,34 @@
   grid-template-rows: 100%;
   height: 100%;
   overflow: hidden;
-  background: var(--dsw-alias-bg-base);
+  background-color: var(--noven-shell-background-color, var(--dsw-alias-bg-base));
+  background-image: var(--noven-shell-background-image, none);
+  background-position: var(--noven-shell-background-position, center);
+  background-size: cover;
 }
+
+/* Web's macOS mirror keeps the window-chrome landmarks without pretending to
+   own native close/minimize/fullscreen actions. Real Desktop draws no copies. */
+.mirrorLights {
+  position: absolute;
+  z-index: 40;
+  top: 20px;
+  left: 20px;
+  display: flex;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.mirrorLights span {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  corner-shape: round;
+  background: #ff5f57;
+}
+
+.mirrorLights span:nth-child(2) { background: #febc2e; }
+.mirrorLights span:nth-child(3) { background: #28c840; }
 
 /* The navigation track animates only for the user's own sidebar toggle; the
    work layer's 1fr share then concedes on the same curve. Work-layer geometry
@@ -25,10 +51,76 @@
    geometry instantly and only the content-face transition plays. */
 .work {
   position: relative;
+  grid-column: 2;
+  grid-row: 1;
   display: grid;
   grid-template-rows: 100%;
   min-width: 0;
   overflow: hidden;
+  --dsh-frame-mode-duration: var(--ds-transition-duration-slow);
+  --dsh-frame-mode-easing: var(--ds-ease-in-out);
+}
+
+/* A product policy adds one fixed upper frame. Its navigation seat is outside
+   the sidebar grid track, so rail collapse cannot move or remount the control. */
+.topbar {
+  position: relative;
+  z-index: 16;
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 12px;
+  overflow: hidden;
+  background: var(--noven-shell-child-background, var(--dsw-alias-bg-base));
+  border-bottom: 0.5px solid var(--dsw-alias-border-l3);
+}
+
+.topbarLeading,
+.topbarContent,
+.topbarNavigation {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.topbarLeading,
+.topbarNavigation {
+  flex: none;
+}
+
+.topbarContent {
+  flex: 1;
+}
+
+.frame[data-topbar] .sidebarCol,
+.frame[data-topbar] .work {
+  grid-row: 2;
+}
+
+.frame[data-canvas-fullscreen] .work {
+  grid-column: 1;
+}
+
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .topbar {
+  padding-left: 88px;
+}
+
+:global([data-platform='darwin'][data-fullscreen]) .topbar {
+  padding-left: 12px;
+}
+
+/* Explicit product-mode scenes own the moving columns; ordinary track easing
+   and stationary handles never fight the live FLIP or its fade fallback. */
+.work[data-mode-scene] {
+  transition: none;
+  background: var(--noven-shell-child-background, var(--dsw-alias-bg-base));
+}
+
+.work[data-mode-scene] .handle {
+  transition: none;
+  opacity: 0;
 }
 
 .work[data-animating] {
@@ -94,17 +186,133 @@
 }
 
 .sidebarCol {
+  grid-column: 1;
+  grid-row: 1;
   min-width: 0;
   overflow: hidden;
-  background: var(--dsw-specific-sidebar-fill);
+  background: var(--noven-shell-child-background, var(--dsw-specific-sidebar-fill));
   border-right: 0.5px solid var(--dsw-alias-border-l3);
 }
 
 .centerCol {
+  position: relative;
   min-width: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.centerContent {
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out), visibility 0s;
+}
+
+.rightbarContent {
+  position: absolute;
+  inset: 0;
+  opacity: 1;
+  visibility: visible;
+  transition: opacity var(--ds-transition-duration) var(--ds-ease-in-out), visibility 0s;
+}
+
+/* Folding disables interaction immediately, but the retained picture fades
+   with the track instead of disappearing before the column starts shrinking. */
+.centerCol[data-center-collapsed] .centerContent,
+.rightbarCol[data-auxiliary-collapsed] .rightbarContent {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity var(--ds-transition-duration-fast) var(--ds-ease-in-out), visibility 0s var(--ds-transition-duration-slow);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .centerContent,
+  .rightbarContent,
+  .centerCol[data-center-collapsed] .centerContent,
+  .rightbarCol[data-auxiliary-collapsed] .rightbarContent {
+    transition: none;
+  }
+}
+
+.centerFold {
+  position: absolute;
+  z-index: 12;
+  top: 50%;
+  right: 0;
+  width: 18px;
+  height: 44px;
+  padding: 0;
+  transform: translateY(-50%);
+  border: 0.5px solid var(--dsw-alias-border-l2);
+  border-right: 0;
+  border-radius: 8px 0 0 8px;
+  background: var(--dsw-alias-bg-layer-1);
+  color: var(--dsw-alias-label-secondary);
+  font: inherit;
+}
+
+.centerFold:hover {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-bg-layer-2);
+}
+
+.centerCol[data-center-collapsed] .centerFold,
+.rightbarCol[data-auxiliary-collapsed] .centerFold {
+  right: 0;
+  width: 100%;
+  border-right: 0.5px solid var(--dsw-alias-border-l2);
+  border-radius: 0;
+}
+
+/* A product frame owns one side fold at one fixed slot: a 28px panel button
+   at the side column's top-right, identical while expanded and collapsed. */
+.sideFoldGlyph {
+  display: inline-flex;
+  transform: scaleX(-1);
+}
+
+/* Product side chrome: one trailing row, parent then fold. The row owns the
+   geometry; the fold no longer positions itself against the column edge. */
+.sideTrailing {
+  position: absolute;
+  z-index: 12;
+  top: 11px;
+  right: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Width reserved in the side content header for the parent + gap + fold +
+   the column's right inset. Content headers pad by this one value. */
+.centerCol[data-side-chrome],
+.rightbarCol[data-side-chrome] {
+  --dsh-side-chrome-inset: 88px;
+}
+
+.frame[data-product-frame] .sideTrailing > .centerFold {
+  position: static;
+  top: auto;
+  right: auto;
+  left: auto;
+  width: 28px;
+  height: 28px;
+  transform: none;
+  border: 0;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 16px;
+}
+
+.frame[data-product-frame] .sideTrailing > .centerFold:hover {
+  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary);
 }
 
 /* macOS desktop: the frame goes transparent so window vibrancy reaches the
@@ -112,7 +320,7 @@
    base background itself to stay opaque. The sidebar/centre separator moves
    to the opaque centre: on the translucent sidebar the alpha border mixes
    with the wallpaper and reads as a dark seam. */
-:global([data-platform='darwin']) .frame {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .frame {
   background: transparent;
 }
 
@@ -123,11 +331,11 @@
    content clears the strip, and overlay primitives keep it as their top
    viewport margin. Declared on the root element rather than the frame so
    overlays portalled to document.body inherit it too. */
-:global(html[data-platform='darwin']) {
+:global(html:is([data-platform='darwin'], [data-chrome-platform='darwin'])) {
   --dsh-frame-top-clearance: 48px;
 }
 
-:global([data-platform='darwin']) .sidebarCol {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .sidebarCol {
   /* A blue wash over the top of the translucent tint, gone by a third of the
      column; a faint blue-grey-violet rises through the bottom third; and a
      faint blue cast is mixed into the tint itself. Every layer stays
@@ -146,7 +354,7 @@
 
 /* Dark drops the blue cast (the light-mode wash reads purple over dark fills)
    and thins the fill so more wallpaper shows; the washes stay. */
-:global([data-platform='darwin']) :global([data-ds-dark-theme]) .sidebarCol {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) :global([data-ds-dark-theme]) .sidebarCol {
   background:
     linear-gradient(
       to bottom,
@@ -163,13 +371,13 @@
    them with a 90%-opaque fill of the same token in both themes (the dark
    selector repeats so this outranks its thinner fill). */
 @media (prefers-reduced-transparency: reduce) {
-  :global([data-platform='darwin']) .sidebarCol,
-  :global([data-platform='darwin']) :global([data-ds-dark-theme]) .sidebarCol {
+  :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .sidebarCol,
+  :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) :global([data-ds-dark-theme]) .sidebarCol {
     background: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 90%, transparent);
   }
 }
 
-:global([data-platform='darwin']) .centerCol {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .centerCol {
   background: var(--dsw-alias-bg-base);
   border-left: 0.5px solid var(--dsw-alias-border-l3);
 }
@@ -179,13 +387,13 @@
    eases in layout and the transform on the compositor, so frames where they
    diverge would otherwise show vibrancy glass between the centre's right edge
    and the incoming panel. The occupant's opaque panel covers this at rest. */
-:global([data-platform='darwin']) .rightbarCol {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .rightbarCol {
   background: var(--dsw-alias-bg-base);
 }
 
 /* The darwin closed sidebar has no rail: the centre reaches the window edge,
    where a separator would draw a seam against nothing. */
-:global([data-platform='darwin']) [data-sidebar-collapsed] .centerCol {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) [data-sidebar-collapsed] .centerCol {
   border-left: none;
 }
 
@@ -195,7 +403,7 @@
    the frame's left edge — traffic lights to x 68, controls at x 88
    (28 + 8 + 28), then 8px of air. Main panels whose content reaches the
    top-left corner pad by this. */
-:global([data-platform='darwin']) .frame[data-sidebar-collapsed] {
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .frame[data-sidebar-collapsed] {
   --dsh-frame-leading-clearance: 160px;
 }
 
@@ -449,4 +657,39 @@
 
 .work[data-canvas-fullscreen] [data-center-col] {
   display: none;
+}
+
+/* A configured workspace scene covers the whole shell rectangle. The macOS
+   vibrancy rules above stay untouched until this attribute exists. */
+:global(html[data-noven-shell-appearance]) .frame {
+  background-color: var(--noven-shell-background-color, var(--dsw-alias-bg-base));
+  background-image: var(--noven-shell-background-image, none);
+  background-position: var(--noven-shell-background-position, center);
+  background-size: cover;
+}
+
+:global(html[data-noven-shell-appearance]) .sidebarCol {
+  background: var(--noven-shell-child-background, var(--dsw-specific-sidebar-fill));
+}
+
+:global(html[data-noven-shell-appearance]) .centerCol,
+:global(html[data-noven-shell-appearance]) .rightbarCol {
+  background: transparent;
+}
+
+/* The shell image may blur; navigation and content never inherit that filter. */
+:global(html[data-noven-shell-blur]) .frame {
+  isolation: isolate;
+}
+
+:global(html[data-noven-shell-blur]) .frame::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: calc(-1 * var(--noven-shell-background-blur, 0px));
+  pointer-events: none;
+  background-image: var(--noven-shell-background-layer);
+  background-position: var(--noven-shell-background-position, center);
+  background-size: cover;
+  filter: blur(var(--noven-shell-background-blur));
 }

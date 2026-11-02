@@ -35,10 +35,11 @@ type AttentionSnapshot = Parameters<Parameters<SidebarRootComponentProps['useSes
 const noAttention: AttentionSnapshot = new Map()
 const useSessionStatus: SidebarRootComponentProps['useSessionStatus'] = selector => selector(noAttention)
 
-function mountShell({ collapsed = false, width = 300, shortcuts = [] }: {
+function mountShell({ collapsed = false, width = 300, shortcuts = [], policy = 'legacy' }: {
   collapsed?: boolean
   width?: number
   shortcuts?: readonly ShortcutCatalogEntry[]
+  policy?: 'legacy' | 'topbar'
 } = {}) {
   const startSession = vi.fn()
   const toggleSidebar = vi.fn()
@@ -52,7 +53,8 @@ function mountShell({ collapsed = false, width = 300, shortcuts = [] }: {
     <SidebarRoot
       collapsed={current.collapsed} width={current.width}
       useSessions={neverHook} useSessionStatus={useSessionStatus} useSessionRetainInfo={neverHook}
-      usePanelInfo={usePanelInfo} selectPanel={() => {}} usePanels={selector => selector([])} useShortcuts={selector => selector(shortcuts)}
+      usePanelInfo={usePanelInfo} useFrameLayoutPolicy={selector => selector(policy === 'topbar' ? { primary: 'main' as const, canvasSide: 'right' as const } : null)}
+      selectPanel={() => {}} usePanels={selector => selector([])} useShortcuts={selector => selector(shortcuts)}
       useResource={useResource} useWorkspaces={neverHook}
       startSession={startSession} toggleSidebar={toggleSidebar} t={t}
       renderSlot={((
@@ -115,7 +117,7 @@ describe('SidebarRoot shell', () => {
     render(<HeaderLeadingControls toggleSidebar={vi.fn()} startSession={vi.fn()} selectPanel={vi.fn()} t={t}
       usePanelInfo={neverHook} useSessions={neverHook} useSessionStatus={neverHook}
       useSessionRetainInfo={neverHook} useResource={useResource} useWorkspaces={neverHook}
-      usePanels={select => select([])} useShortcuts={select => select([shortcut])} />)
+      usePanels={select => select([])} useShortcuts={select => select([shortcut])} renderSlot={() => null} />)
     const button = screen.getByRole('button', { name: 'New session' })
     expect(button.getAttribute('aria-keyshortcuts')).toBe('Control+N')
     fireEvent.focus(button)
@@ -246,6 +248,23 @@ describe('SidebarRoot shell', () => {
   })
 })
 
+it('keeps the navigation toggle in the brand row under a fixed topbar policy', () => {
+  const shell = mountShell({ policy: 'topbar' })
+  const toggle = screen.getByRole('button', { name: en['toggle.collapse'] })
+  expect(toggle.hasAttribute('data-sidebar-brand-toggle')).toBe(true)
+  fireEvent.click(toggle)
+  expect(shell.toggleSidebar).toHaveBeenCalledOnce()
+  // One toggle only: the legacy top-strip control is gone.
+  expect(screen.getAllByRole('button', { name: en['toggle.collapse'] })).toHaveLength(1)
+})
+
+it('fills the collapsed brand slot with the topbar navigation toggle', () => {
+  mountShell({ collapsed: true, policy: 'topbar' })
+  const toggle = screen.getByRole('button', { name: en['toggle.open'] })
+  expect(toggle.hasAttribute('data-sidebar-brand-toggle')).toBe(true)
+  expect(toggle.querySelector('[data-testid="custom-brand-mark"]')).toBeTruthy()
+})
+
 it('keeps the macOS sidebar toggle in its top strip', () => {
   document.documentElement.dataset.platform = 'darwin'
   const shell = mountShell()
@@ -262,7 +281,7 @@ it('wires the shell.leading controls to the shared sidebar actions', () => {
   const toggleSidebar = vi.fn()
   const startSession = vi.fn()
   // This occupant only consumes its two actions and locale, not Session hooks.
-  const props = { toggleSidebar, startSession, t, useShortcuts: select => select([{ id: 'sidebar.left.toggle' as ShortcutCommandId, label: 'Toggle sidebar', aliases: [], binding: null, modified: false, conflicts: [], issue: null, keys: ['⌘', 'B'], aria: 'Meta+B' }]) } as HeaderLeadingControlsProps
+  const props = { toggleSidebar, startSession, t, renderSlot: () => null, useShortcuts: select => select([{ id: 'sidebar.left.toggle' as ShortcutCommandId, label: 'Toggle sidebar', aliases: [], binding: null, modified: false, conflicts: [], issue: null, keys: ['⌘', 'B'], aria: 'Meta+B' }]) } as HeaderLeadingControlsProps
   render(<HeaderLeadingControls {...props} />)
   fireEvent.click(screen.getByRole('button', { name: en['toggle.open'] }))
   fireEvent.click(screen.getByRole('button', { name: en['session.new.label'] }))

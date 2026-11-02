@@ -1,23 +1,28 @@
 /**
- * 内容树 — 抽屉上区（设计稿 01/02/J05），挂在 `sidebar.right.pane.top`：
- * 项目头 + 搜索 + 卡/文稿/作品分组 + 「素材与文件」与「＋ 新建」底排。
- * `rail` 态画图标列。数据只读 `/api/noven-tree` 的轮询源；点击行由注入面
- * 落到画布标签。
+ * 内容树：搜索 + 卡/文稿/作品分组 + 「＋ 新建」与工具底排。`rail` 态只留
+ * 一个目录入口，以锚定小窗渲染同一份完整目录。数据只读 `/api/noven-tree`
+ * 的轮询源；点击行由注入面落到画布标签。
  * @module noven-shell/client/tree
  */
-import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
-import { Menu, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react'
+import { createPortal } from 'react-dom'
+import { Menu, MenuSurface, useAnchoredPosition, useDismissOnOutsidePointer, writeClipboard } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ProjectRow } from './library-api.ts'
 import type { NovenTree, TreeCardRow, TreeModuleRow, TreeSectionRow, TreeWorkRow } from './tree-api.ts'
 import type { ProjectFocus, SimRow } from './canvas.tsx'
+import { fileTabKind } from './canvas.tsx'
 import type { CreateKind } from './creation.tsx'
 import type { SidebarRightGuideBox } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { fmt, type ShellT } from './pages/Home.tsx'
 import { glyph } from './icons.tsx'
 import { askConfirm, InlineRename, useArmedMenu } from './ui/interact.tsx'
+
+/** Canvas tab key for one workspace file, matching openDoc's kind dispatch. */
+const fileTabKey = (path: string): string => `${fileTabKind(path)}:${path}`
 
 /** 内容树注入面：数据四源 + 打开/切换回调。 */
 export interface TreeInjected {
@@ -35,11 +40,13 @@ export interface TreeInjected {
     readonly studio: ObservableSnapshot<boolean>
     /** 本会话画布焦点叶的当前页签 key——树行据此点亮相映的"当前页"。 */
     readonly activeTab: ObservableSnapshot<string | undefined>
-    /** 本会话画布开态（有页且未停靠）——底排按钮据此换标签。 */
-    readonly canvas: ObservableSnapshot<boolean>
     /** 右栏功能页签清单（guide 注册表）——工具菜单的功能行按它枚举。 */
     readonly featureTabs: ObservableSnapshot<readonly SidebarRightGuideBox[]>
   }
+  /** 展开树与 rail 小窗共用的目录查询；快照由父级持有，实例切换不丢词。 */
+  readonly directoryQuery: ObservableSnapshot<string>
+  /** 写入共享目录查询。 */
+  readonly setDirectoryQuery: (value: string) => void
   /** 树挂在哪个会话的抽屉里——折叠/视图这类「怎么看」按它分域（契约 C9）。 */
   readonly sessionId: SessionId
   /** Studio 组行：把该会话挂进模拟器并切到画布手机屏。 */
@@ -92,8 +99,6 @@ export interface TreeInjected {
   readonly deleteSel: (items: readonly { readonly path: string; readonly cardId?: string; readonly workId?: string }[]) => void
   /** rail 态里把抽屉展开回来。 */
   readonly expandDrawer: () => void
-  /** 翻画布：开着就停靠，关着就抬回；无页时先开起点页。 */
-  readonly toggleCanvas: () => void
 }
 
 /** 模块行的类型图标：widget type → 线性图标（设计稿 02/03）。 */
@@ -794,7 +799,7 @@ function ShelfBranch({ node, depth, currentKey, fileView, selFor, t, onOpen, onA
           ))}
           {node.rows.map(row => (
             <FileRow key={row.path} path={row.path} title={row.title} dir={row.dir} hidden={row.hidden}
-              current={currentKey === `doc:${row.path}`}
+              current={currentKey === fileTabKey(row.path)}
               fileView={fileView}
               sel={selFor?.(scope, order, { key: `f:${row.path}`, path: row.path, kind: row.dir === true ? 'dir' : 'file' })}
               indent={depth + 1} t={t} onOpen={fileOps.open} embedTargets={fileOps.embedTargets}
@@ -859,42 +864,154 @@ function Group({ title, count, children, onAdd, addTitle, onDelete, deleteTitle,
   )
 }
 
-type TreeProps = PropsRuntime<'sidebar.right.pane.top'> & PropsLocale<'novenShell'> & InjectFace<TreeInjected>
+type TreeProps = {
+  readonly rail: boolean
+  /** rail 小窗挂载后聚焦共享查询框；展开实例本身不抢焦点。 */
+  readonly autoFocusSearch?: boolean
+} & PropsLocale<'novenShell'> & InjectFace<TreeInjected>
+type LeftTreeProps = PropsRuntime<'sidebar.workspaces.content'> & PropsLocale<'novenShell'> & InjectFace<TreeInjected>
 
 /**
  * 内容树组件：读树源 + 项目源，行点击全部经注入面回到画布。
  * @param props - 抽屉上区座标准 props（`rail` 报折叠态）+ 注入面。
  * @returns 抽屉导航。
  */
-/** One-shot intent the rail's search button passes to the expanded instance. */
-let focusSearchPending = false
 
-/** 轨上直点的画布抬起参数：保持轨态，不展开列。 */
-const RAIL = { expandColumn: false } as const
+/**
+ * Render the same content tree in the left navigation's current-Session seat.
+ * @param props - Sidebar width controls plus the shared content-tree injection.
+ * @returns Expanded or rail content navigation.
+ */
+export function LeftContentTree({ wide, expandSidebar, ...props }: LeftTreeProps) {
+  return <ContentTree {...props} rail={!wide} expandDrawer={expandSidebar} />
+}
+
+type DirectorySideEntryProps = PropsLocale<'novenShell'> & InjectFace<TreeInjected> & {
+  readonly revealSide: () => void
+}
+
+/** The directory as the collapsed parent of the side subject. */
+export function DirectorySideEntry({ revealSide, ...props }: DirectorySideEntryProps) {
+  const [open, setOpen] = useState(false)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
+  const position = useAnchoredPosition({ open, anchorRef: buttonRef, panelRef, gap: 4, margin: 12 })
+  useDismissOnOutsidePointer(buttonRef, open, () => { setOpen(false) }, panelRef)
+  useEffect(() => {
+    if (!open) return
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== 'Escape' || event.defaultPrevented || event.isComposing) return
+      event.preventDefault()
+      setOpen(false)
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('keydown', onKeyDown) }
+  }, [open])
+  const close = (): void => { setOpen(false) }
+  const run = (action: () => void): void => { revealSide(); action(); close() }
+  const title = props.t('nav.directory')
+  return (
+    <>
+      <button ref={buttonRef} type="button" className="nv-tree-railbtn nv-side-parent" title={title} aria-label={title}
+        data-workspace-side-directory aria-haspopup="dialog" aria-expanded={open}
+        onClick={() => { setOpen(value => !value) }}>
+        {glyph.folder(16)}
+      </button>
+      {open && createPortal(
+        <MenuSurface ref={panelRef} role="dialog" aria-label={title}
+          className="nv-float nv-tree-newmenu" data-noven-directory-popover=""
+          style={{
+            ...(position ?? {}),
+            visibility: position === null ? 'hidden' : undefined,
+            left: position?.left ?? 0,
+            top: position?.top ?? 0,
+            width: 320,
+            maxWidth: 'calc(100vw - 24px)',
+            maxHeight: 'min(560px, calc(100vh - 24px))',
+            height: 'auto',
+          }}>
+          <ContentTree {...props} rail={false} autoFocusSearch
+            openSim={id => run(() => props.openSim(id))}
+            createSim={() => run(props.createSim)}
+            openCard={(cardId, moduleId, name) => run(() => props.openCard(cardId, moduleId, name))}
+            addModule={cardId => run(() => props.addModule(cardId))}
+            openDoc={(path, name) => run(() => props.openDoc(path, name))}
+            openWork={(path, name) => run(() => props.openWork(path, name))}
+            openFiles={() => run(props.openFiles)}
+            openCreate={(kind, dir, opts) => run(() => props.openCreate(kind, dir,
+              opts === undefined ? { expandColumn: false } : { ...opts, expandColumn: false }))}
+            openModule={() => run(props.openModule)}
+            openFeatureTab={kind => run(() => props.openFeatureTab(kind))}
+            toggleDock={props.toggleDock === undefined ? undefined : () => run(() => props.toggleDock?.())}
+            toggleBottomPanel={props.toggleBottomPanel === undefined ? undefined : () => run(() => props.toggleBottomPanel?.())}
+            />
+        </MenuSurface>,
+        document.body,
+      )}
+    </>
+  )
+}
 
 export function ContentTree(props: TreeProps) {
   const { t, useTree, useProject } = props
   const tree = useTree(v => v)
   const project = useProject(v => v)
   const currentKey = props.useActiveTab(v => v)
-  const [query, setQuery] = useState('')
+  const query = useSyncExternalStore(props.directoryQuery.subscribe, props.directoryQuery.getSnapshot)
   const [menuOpen, setMenuOpen] = useState(false)
   const [toolsOpen, setToolsOpen] = useState(false)
   const searchRef = useRef<HTMLInputElement>(null)
+  const directoryButtonRef = useRef<HTMLButtonElement>(null)
+  const directoryPanelRef = useRef<HTMLDivElement>(null)
+  const [directoryOpen, setDirectoryOpen] = useState(false)
+  const directoryFocusReturn = useRef<'none' | 'always' | 'if-lost'>('none')
+  const closeDirectory = useCallback((focus: 'none' | 'always' | 'if-lost'): void => {
+    directoryFocusReturn.current = focus
+    setDirectoryOpen(false)
+  }, [])
+  const dismissDirectory = useCallback((): void => { closeDirectory('none') }, [closeDirectory])
+  const directoryPosition = useAnchoredPosition({
+    open: props.rail && directoryOpen,
+    anchorRef: directoryButtonRef,
+    panelRef: directoryPanelRef,
+    gap: 4,
+    margin: 12,
+  })
+  useDismissOnOutsidePointer(directoryButtonRef, props.rail && directoryOpen, dismissDirectory, directoryPanelRef)
 
-  /* 轨上点搜索 → 展开抽屉并聚焦输入框。rail 态与展开态经不同容器渲染，
-     是两个组件实例——useState 旗随 rail 实例销毁，意图用模块级一次旗
-     传递；展开实例挂载后消费它，rAF 再落一次抢回上游的面板焦点编排。 */
+  // Escape 只关闭最内层仍持有键盘的弹层；嵌套 Menu 已 preventDefault 时不关整窗。
   useEffect(() => {
-    if (props.rail || !focusSearchPending) return
+    if (!props.rail || !directoryOpen) return
+    const onKeyDown = (e: KeyboardEvent): void => {
+      if (e.key !== 'Escape' || e.defaultPrevented || e.isComposing || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return
+      e.preventDefault()
+      closeDirectory('always')
+    }
+    document.addEventListener('keydown', onKeyDown)
+    return () => { document.removeEventListener('keydown', onKeyDown) }
+  }, [props.rail, directoryOpen, closeDirectory])
+
+  // 取消时回目录按钮；打开对象后只有回调没有接管焦点才回，避免抢新页焦点。
+  useEffect(() => {
+    if (directoryOpen || directoryFocusReturn.current === 'none') return
+    const mode = directoryFocusReturn.current
+    directoryFocusReturn.current = 'none'
+    const active = document.activeElement
+    if (mode === 'always' || active === null || active === document.body) directoryButtonRef.current?.focus()
+  }, [directoryOpen])
+
+  // rail 与展开实例可能由不同容器重建；共享查询留在父级，本实例只接打开后的焦点。
+  useEffect(() => {
+    if (props.rail || props.autoFocusSearch !== true) return
     const input = searchRef.current
     if (input === null) return
-    focusSearchPending = false
-    const land = (): void => { input.focus(); input.select() }
-    land()
-    const id = requestAnimationFrame(land)
-    return () => cancelAnimationFrame(id)
-  }, [props.rail])
+    input.focus()
+    input.select()
+  }, [props.rail, props.autoFocusSearch])
+
+  useEffect(() => {
+    if (!props.rail && directoryOpen) closeDirectory('none')
+  }, [props.rail, directoryOpen, closeDirectory])
 
   // ⌘K 聚焦树内搜索（设计稿 01 搜索框的 ⌘K 角标是真的快捷键）。抽屉收成
   // rail 时输入框不存在，让出按键不拦截上游的会话搜索。
@@ -918,7 +1035,6 @@ export function ContentTree(props: TreeProps) {
   const dockOpen = props.useDock(v => v)
   const bottomOpen = props.useBottomPanel(v => v)
   const studioOn = props.useStudio(v => v)
-  const canvasOpen = props.useCanvas(v => v)
   const featureTabs = props.useFeatureTabs(v => v)
   const needle = query.trim().toLowerCase()
   const filtered = useMemo((): NovenTree | undefined => {
@@ -1016,7 +1132,6 @@ export function ContentTree(props: TreeProps) {
       writeGroupPrefsTo(undefined, treeSession, readGroupPrefs(root, treeSession, lastTreeSession))
     }
     lastTreeSession = treeSession
-  // eslint-disable-next-line react-hooks/exhaustive-deps -- 只在会话切换时落继承记录。
   }, [treeSession])
   const writeGroupPrefs = (next: GroupPrefs): void => {
     setPrefs(next)
@@ -1041,11 +1156,9 @@ export function ContentTree(props: TreeProps) {
         .map(s => ({ ...s, rows: s.rows.filter(r => keep(r.hidden)) })),
     }
   }, [filtered, hiddenMode])
-  /** 模块视图：散文件层（用户分组、卡架散件）整层不渲，只留成品实体。 */
-  const visible = useMemo((): NovenTree | undefined => {
-    if (display === undefined || viewFile) return display
-    return { ...display, sections: [] }
-  }, [display, viewFile])
+  /** 实体视图与文件视图共享同一对象全集；viewFile 只切换行名，不丢掉散文件层。
+      目录行与画布页签才能始终读同一份当前项。 */
+  const visible = display
   const hiddenCount = filtered === undefined ? 0
     : filtered.cards.filter(c => c.hidden === true).length
       + filtered.docs.filter(d => d.hidden === true).length
@@ -1173,53 +1286,78 @@ export function ContentTree(props: TreeProps) {
     if (id === 'module') { props.openModule(); return }
     props.openCreate(id as CreateKind)
   }
-  const toolMenuItems = [
+  const featureToolItems = [
     ...featureTabs.map(box => ({ id: box.kind, label: box.title(), icon: box.icon === undefined ? undefined : <box.icon size={14} /> })),
     ...(props.toggleDock === undefined ? [] : [{ type: 'separator' as const, id: 'tool-sep-dock' }, { id: 'dock', label: t('tree.tool.dock'), icon: glyph.floatWin(14) }]),
     ...(props.toggleBottomPanel === undefined ? [] : [{ id: 'bottom', label: t('tree.tool.bottom'), icon: glyph.panelBottom(14) }]),
   ]
+  const toolMenuItems = [
+    {
+      id: 'directory-view',
+      label: t(viewFile ? 'tree.view.entity' : 'tree.view.files'),
+      icon: viewFile ? glyph.folder(14) : glyph.layers(14),
+    },
+    ...(hiddenCount === 0 ? [] : [{
+      id: 'directory-hidden',
+      label: t(hiddenMode === 'hide' ? 'tree.showHidden' : hiddenMode === 'show' ? 'tree.onlyHidden' : 'tree.hideHidden'),
+      icon: glyph.eye(14),
+    }]),
+    ...(featureToolItems.length === 0 ? [] : [{ type: 'separator' as const, id: 'tool-sep-directory' }, ...featureToolItems]),
+  ]
   const toolMenuSelect = (id: string): void => {
     setToolsOpen(false)
+    if (id === 'directory-view') { writeGroupPrefs({ ...prefs, view: viewFile ? 'entity' : 'file' }); return }
+    if (id === 'directory-hidden') { setHiddenMode(m => m === 'hide' ? 'show' : m === 'show' ? 'only' : 'hide'); return }
     if (id === 'dock') { props.toggleDock?.(); return }
     if (id === 'bottom') { props.toggleBottomPanel?.(); return }
     props.openFeatureTab(id)
   }
 
   if (props.rail) {
-    // 折叠轨契约（设计理念 §14）：轨图标与展开态一级入口同源、平铺直点
-    // （同导航轨，不弹菜单）——新建组六个直建，分隔线后是工具组（挂窗/
-    // 底栏两个开关，下半区的功能图标接着续）。唯一例外搜索：需要列宽，
-    // 展开抽屉后聚焦输入框。方向归移动轨的锚定边，这里不管。
+    const openAndClose = (open: () => void): void => {
+      open()
+      closeDirectory('if-lost')
+    }
     return (
       <div className="nv-tree nv-tree-rail">
-        <button type="button" className="nv-tree-railbtn" title={title} aria-label={title}
-          onClick={() => props.openProject({ expandColumn: false })}>{glyph.book(15)}</button>
-        <button type="button" className="nv-tree-railbtn" title={t('tree.search')} aria-label={t('tree.search')}
+        <button ref={directoryButtonRef} type="button" className="nv-tree-railbtn" title={title} aria-label={title}
+          data-directory-trigger
+          aria-haspopup="dialog" aria-expanded={directoryOpen} data-active={directoryOpen || undefined}
           onClick={() => {
-            focusSearchPending = true
-            props.expandDrawer()
-          }}>{glyph.search(15)}</button>
-        {[
-          { key: 'group', label: t('create.group.title'), icon: glyph.folder(15), run: () => props.openCreate('group', undefined, RAIL) },
-          { key: 'card', label: t('create.card.title'), icon: glyph.layers(15), run: () => props.openCreate('card', undefined, RAIL) },
-          { key: 'studio', label: t('create.studio.title'), icon: glyph.phone(15), run: props.toggleStudio, on: studioOn },
-          { key: 'module', label: t('create.module.title'), icon: glyph.grid(15), run: props.openModule },
-          { key: 'import', label: t('canvas.start.import'), icon: glyph.upload(15), run: () => props.openCreate('import', undefined, RAIL) },
-        ].map(item => (
-          <button key={item.key} type="button" className="nv-tree-railbtn" title={item.label} aria-label={item.label}
-            data-active={item.on === true || undefined}
-            onClick={item.run}>{item.icon}</button>
-        ))}
-        <span className="nv-tree-rail-sep" aria-hidden="true" />
-        {props.toggleDock !== undefined && (
-          <button type="button" className="nv-tree-railbtn" title={t('tree.tool.dock')} aria-label={t('tree.tool.dock')}
-            data-active={dockOpen || undefined}
-            onClick={props.toggleDock}>{glyph.floatWin(15)}</button>
-        )}
-        {props.toggleBottomPanel !== undefined && (
-          <button type="button" className="nv-tree-railbtn" title={t('tree.tool.bottom')} aria-label={t('tree.tool.bottom')}
-            data-active={bottomOpen || undefined}
-            onClick={props.toggleBottomPanel}>{glyph.panelBottom(15)}</button>
+            if (directoryOpen) { closeDirectory('always'); return }
+            directoryFocusReturn.current = 'none'
+            setDirectoryOpen(true)
+          }}>{glyph.folder(18)}</button>
+        {directoryOpen && createPortal(
+          <MenuSurface ref={directoryPanelRef} role="dialog" aria-label={title}
+            className="nv-float nv-tree-newmenu" data-noven-directory-popover=""
+            style={{
+              ...(directoryPosition ?? {}),
+              visibility: directoryPosition === null ? 'hidden' : undefined,
+              left: directoryPosition?.left ?? 0,
+              top: directoryPosition?.top ?? 0,
+              width: 320,
+              maxWidth: 'calc(100vw - 24px)',
+              maxHeight: 'min(560px, calc(100vh - 24px))',
+              height: 'auto',
+            }}>
+            <ContentTree {...props} rail={false} autoFocusSearch
+              openSim={id => openAndClose(() => props.openSim(id))}
+              createSim={() => openAndClose(props.createSim)}
+              openCard={(cardId, moduleId, name) => openAndClose(() => props.openCard(cardId, moduleId, name))}
+              addModule={cardId => openAndClose(() => props.addModule(cardId))}
+              openDoc={(path, name) => openAndClose(() => props.openDoc(path, name))}
+              openWork={(path, name) => openAndClose(() => props.openWork(path, name))}
+              openFiles={() => openAndClose(props.openFiles)}
+              openCreate={(kind, dir, opts) => openAndClose(() => props.openCreate(kind, dir,
+                opts === undefined ? { expandColumn: false } : { ...opts, expandColumn: false }))}
+              openModule={() => openAndClose(props.openModule)}
+              openFeatureTab={kind => openAndClose(() => props.openFeatureTab(kind))}
+              toggleDock={props.toggleDock === undefined ? undefined : () => openAndClose(() => props.toggleDock?.())}
+              toggleBottomPanel={props.toggleBottomPanel === undefined ? undefined : () => openAndClose(() => props.toggleBottomPanel?.())}
+              />
+          </MenuSurface>,
+          document.body,
         )}
       </div>
     )
@@ -1227,27 +1365,6 @@ export function ContentTree(props: TreeProps) {
 
   return (
     <div className="nv-tree">
-      <div className="nv-tree-head">
-        {/* 项目名不再是切换器——单击开创作库的项目页；切换项目在库里做。 */}
-        <button type="button" className="nv-tree-project" title={t('tree.library.open')}
-          onClick={() => props.openProject()}>
-          <span className="nv-tree-projectname">{title}</span>
-          <span className="nv-tree-caret">›</span>
-        </button>
-        <button type="button" className={`nv-tree-eye${viewFile ? ' nv-tree-eye-on' : ''}`}
-          title={t(viewFile ? 'tree.view.entity' : 'tree.view.files')}
-          onClick={() => writeGroupPrefs({ ...prefs, view: viewFile ? 'entity' : 'file' })}>
-          {viewFile ? glyph.folder(13) : glyph.layers(13)}
-        </button>
-        {hiddenCount > 0 && (
-          <button type="button" className={`nv-tree-eye${hiddenMode !== 'hide' ? ' nv-tree-eye-on' : ''}`}
-            title={t(hiddenMode === 'hide' ? 'tree.showHidden' : hiddenMode === 'show' ? 'tree.onlyHidden' : 'tree.hideHidden')}
-            onClick={() => setHiddenMode(m => m === 'hide' ? 'show' : m === 'show' ? 'only' : 'hide')}>
-            {glyph.eye(13)}
-            <span className="nv-tree-eyecount">{hiddenCount}</span>
-          </button>
-        )}
-      </div>
       {sel !== null && (
         <div className="nv-tree-selbar">
           <span className="nv-tree-selcount">{t('tree.sel.count').replace('{n}', String(sel.items.size))}</span>
@@ -1262,22 +1379,9 @@ export function ContentTree(props: TreeProps) {
         <div className="nv-tree-searchwrap">
           <span className="nv-tree-searchicon" aria-hidden="true">{glyph.search(13)}</span>
           <input ref={searchRef} className="nv-tree-searchbox" value={query} placeholder={t('tree.search')}
-            onChange={e => setQuery(e.target.value)} />
+            onChange={e => props.setDirectoryQuery(e.target.value)} />
           {query === '' && <kbd className="nv-tree-kbd" aria-hidden="true">⌘K</kbd>}
         </div>
-      </div>
-      {/* 画布是一个固定位置的开关：开着/关着都在这，只换状态，不换入口。 */}
-      <div className="nv-tree-canvasrow">
-        <span className="nv-tree-canvaslabel">
-          <span className="nv-tree-toolicon">{glyph.floatWin(13)}</span>
-          {t('tree.canvas.label')}
-        </span>
-        <button type="button" role="switch" aria-checked={canvasOpen}
-          aria-label={t('tree.canvas.toggle')}
-          className="nv-tree-switch" data-canvas-on={canvasOpen || undefined}
-          onClick={props.toggleCanvas}>
-          <span className="nv-tree-switch-thumb" aria-hidden="true" />
-        </button>
       </div>
       <div className="nv-tree-scroll">
         {noProject && (
@@ -1319,7 +1423,7 @@ export function ContentTree(props: TreeProps) {
               ))}
               {shelfRoot.rows.map(row => (
                 <FileRow key={row.path} path={row.path} title={row.title} dir={row.dir} hidden={row.hidden} t={t}
-                  current={currentKey === `doc:${row.path}`}
+                  current={currentKey === fileTabKey(row.path)}
                   fileView={viewFile}
                   sel={selFor('cards', cardOrder, { key: `f:${row.path}`, path: row.path, kind: row.dir === true ? 'dir' : 'file' })}
                   onOpen={fileOps.open} embedTargets={embedTargets} onEmbed={id => embedFromId(id, row.path)}
@@ -1332,7 +1436,7 @@ export function ContentTree(props: TreeProps) {
               onAdd={() => props.openCreate('doc')} addTitle={t('create.doc.title')} {...shared}>
               {visible?.docs.map(doc => (
                 <FileRow key={doc.path} path={doc.path} title={doc.title} hidden={doc.hidden} t={t}
-                  current={currentKey === `doc:${doc.path}`}
+                  current={currentKey === fileTabKey(doc.path)}
                   fileView={viewFile}
                   sel={selFor('docs', docOrder, { key: `f:${doc.path}`, path: doc.path, kind: 'file', workId: doc.id ?? undefined })}
                   renameTitle={doc.id === null ? undefined : name => props.renameWork(doc.id ?? '', name)}
@@ -1385,6 +1489,7 @@ export function ContentTree(props: TreeProps) {
               deleteTitle={t('tree.group.delete')} {...shared}>
               {section.rows.map(row => (
                 <FileRow key={row.path} path={row.path} title={row.title} dir={row.dir} hidden={row.hidden} t={t}
+                  current={currentKey === fileTabKey(row.path)}
                   fileView={viewFile}
                   sel={selFor(key, secOrder, { key: `f:${row.path}`, path: row.path, kind: row.dir === true ? 'dir' : 'file' })}
                   onOpen={props.openDoc} embedTargets={embedTargets} onEmbed={id => embedFromId(id, row.path)}

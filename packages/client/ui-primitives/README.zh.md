@@ -33,6 +33,10 @@ kind: "package-library"
 
 只要 Web 客户端需要标准控件或 agent 输出渲染器，就用这些原子组件拼装功能 UI。它们只经 React 渲染，并从主题取得 `--dsw-*` 设计 token，因此无需导入主题或 slot 系统即可适配任意插件。
 
+### 平台呈现
+
+`isDarwinDesktop()` 只认真实 Electron 的 `data-platform='darwin'` 标记；原生桥、快捷键 runtime 和窗口拖拽行为都使用它。`isDarwinChrome()` 还接受产品持有的 `data-chrome-platform='darwin'` 呈现标记，使 Web 镜像可以共享普通窗口几何，而不改变这些原生事实。镜像不会创建 `data-fullscreen` 或 Electron bridge。
+
 <a id="component-catalog"></a>
 ### 组件目录
 
@@ -115,7 +119,7 @@ kind: "package-library"
 
 `Menu.listClassName` 独立控制菜单卡片样式，不影响入口容器，也适用于 portal 模式。前置图标使用 `--dsw-alias-menu-icon` 文本色；破坏性操作图标保留错误色。
 
-`Menu` 将卡片材质交给 `MenuSurface`，自定义菜单也使用该组件。`MenuSurface` 转发 div 属性和 ref，采用透明填充及模糊，`compact` 使用较小圆角。默认相对定位使材质层限制在容器内；调用方的类可以设置 fixed 或 absolute 定位。macOS 上，不接收交互的底层通过 CSS 锚点跟随卡片，并随卡片卸载；该底层要求 Web 外壳隔离 body 的层叠上下文。功能类控制布局和层级，组件负责材质和外圆角（[菜单规则](../../../docs/web-styling.zh.md#component-rules)）。 模态遮罩保留黑色半透明填充，不模糊背景。
+`Menu` 将卡片材质交给 `MenuSurface`，自定义菜单也使用该组件。`MenuSurface` 转发 div 属性和 ref，采用透明填充及模糊，`compact` 使用较小圆角。默认相对定位使材质层限制在容器内；调用方的类可以设置 fixed 或 absolute 定位。原生 macOS 上，不接收交互的底层通过 CSS 锚点跟随卡片，并随卡片卸载；该底层要求 Web 外壳隔离 body 的层叠上下文。带 `data-chrome-platform` 标记的 Web 镜像只使用半透明菜单材质，不显示这层原生背板。功能类控制布局和层级，组件负责材质和外圆角（[菜单规则](../../../docs/web-styling.zh.md#component-rules)）。 模态遮罩保留黑色半透明填充，不模糊背景。
 
 <details>
 <summary>实现细节——点击展开</summary>

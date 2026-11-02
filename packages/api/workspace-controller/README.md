@@ -29,7 +29,7 @@ The Client entry provides `ClientWorkspaceModel` and `createWorkspaceStateStream
 <a id="first-use-workspace"></a>
 ### First-use Workspace
 
-`workspace.initializeDefault()` returns the durable default Workspace; the Client service exposes it as `workspaces.initializeDefault(signal?)`. It takes no request: the Host owns the fixed `default-workspace` directory name, and the registry derives the initial title from that same segment, so one installation keeps one on-disk path and one stored title in every language. The Host places the directory under its account's `<Documents>/deepseek-harness`, including on remote Web hosts. OS filename restrictions apply. Linux system lookup requires `xdg-user-dir` with an enabled Documents directory; hosts without it must configure `documentsDirectory` or use the folder picker.
+`workspace.initializeDefault()` returns the durable default Workspace; the Client service exposes it as `workspaces.initializeDefault(signal?)`. It takes no request: the Host owns the fixed `default-workspace` directory name, and the registry derives the initial title from that same segment, so one installation keeps one on-disk path and one stored title in every language. By default, the Host places the directory under its account's `<Documents>/deepseek-harness`, including on remote Web hosts. A deployment can instead set `defaultWorkspaceDirectory` to a fully qualified complete path; this takes precedence over `documentsDirectory` and skips the Documents lookup. OS filename restrictions apply. Linux system lookup requires `xdg-user-dir` with an enabled Documents directory; hosts without it must configure `documentsDirectory` or use the folder picker.
 
 The [Workspace registry](../../workspace/workspace/README.md#first-use-workspace) owns eligibility, directory creation, and durable initialization. An existing default Workspace is returned without another Documents lookup and is never renamed or relocated. Ineligible first use returns `undefined`, so startup can leave directory selection to the user. Lookup and creation failures use standard Remote error handling. Initialization creates no Session and sends no message.
 
@@ -37,6 +37,7 @@ The [Workspace registry](../../workspace/workspace/README.md#first-use-workspace
 
 | Configuration | Default | Purpose |
 | --- | --- | --- |
+| `defaultWorkspaceDirectory` | Derived from Documents | Complete fully qualified first-use path; takes precedence over `documentsDirectory` |
 | `documentsDirectory` | System Documents directory | Fully qualified Host directory override |
 | `documentsLookupTimeoutMs` | `10000` | Positive maximum duration of OS directory lookup, in milliseconds |
 | `archivedSessionRetentionDays` | `15` | Days an archived Session stays recoverable before the Host deletes it permanently |

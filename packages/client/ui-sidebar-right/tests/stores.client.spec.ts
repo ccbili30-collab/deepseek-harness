@@ -217,6 +217,16 @@ describe('createSidebarRightStore — the sequence', () => {
     expect(layout().expanded).toBe(true)
   })
 
+  it('preserves a parked Canvas only when the open intent requests it', () => {
+    const { actions, surface } = harness()
+    actions.openContent(SESSION, { kind: 'text', contentId: 'file:a', title: 'a' }, () => {})
+    actions.setCanvasParked(SESSION, true)
+    actions.openContent(SESSION, { kind: 'text', contentId: 'file:b', title: 'b', preserveCanvasParked: true }, () => {})
+    expect(surface().canvasParked).toBe(true)
+    actions.openContent(SESSION, { kind: 'text', contentId: 'file:c', title: 'c' }, () => {})
+    expect(surface().canvasParked).toBe(false)
+  })
+
   it('closes a tab once: a second close of a record already gone records nothing and throws nothing', () => {
     const { actions, layout, entries } = harness()
     actions.openContent(SESSION, { kind: 'text', contentId: 'dsh-resource://file/session/s-test/a.txt', title: 'a' }, () => {})

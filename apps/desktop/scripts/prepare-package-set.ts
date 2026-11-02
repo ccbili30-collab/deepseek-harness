@@ -9,7 +9,6 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
-  statSync,
   writeFileSync,
 } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
@@ -28,7 +27,8 @@ import { tarballFiles } from '../../../scripts/release/tarball.ts'
 import { resolveDesktopTargetBuildPaths } from './desktop-build-paths.mjs'
 
 const DSH_PACKAGE = '@deepseek-ai/dsh'
-const ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE] as const
+/** Default roots of the Desktop core runtime closure. */
+export const DESKTOP_ROOT_PACKAGES = [DSH_PACKAGE, DESKTOP_HOST_PACKAGE] as const
 const APP_ROOT = resolve(import.meta.dirname, '..')
 const REPOSITORY_ROOT = resolve(APP_ROOT, '..', '..')
 
@@ -54,10 +54,12 @@ function dependencyNames(manifest: Readonly<Record<string, unknown>>, section: s
  * Select workspace dependencies rooted at dsh and its private Host; npm resolves external packages.
  * Reads the repository workspace manifest and package manifests to distinguish required local packages from npm-resolved externals.
  * @param available - Packed packages indexed by package name.
+ * @param roots - Packages whose complete dependency closures must be selected.
  * @returns Selected packages sorted by name.
  */
 export function selectDesktopPackageClosure(
   available: ReadonlyMap<string, PackedDesktopPackage>,
+  roots: readonly string[] = DESKTOP_ROOT_PACKAGES,
 ): PackedDesktopPackage[] {
   const workspace = yaml.load(readFileSync(join(REPOSITORY_ROOT, 'pnpm-workspace.yaml'), 'utf8')) as { packages: string[] }
   const workspaceNames = new Set(globSync(workspace.packages.map(pattern => `${pattern}/package.json`), { cwd: REPOSITORY_ROOT })
@@ -80,7 +82,7 @@ export function selectDesktopPackageClosure(
       if (available.has(dependency)) visit(dependency)
     }
   }
-  for (const name of ROOT_PACKAGES) {
+  for (const name of roots) {
     if (!available.has(name)) throw new Error(`desktop package set: packed inputs omit ${name}`)
     visit(name)
   }
@@ -95,7 +97,8 @@ function packedManifest(tarball: string): Record<string, unknown> {
   return value as Record<string, unknown>
 }
 
-function packedPackages(inputs: readonly string[]): Map<string, PackedDesktopPackage> {
+/** Read all packed package tarballs in the supplied directories. */
+export function readDesktopPackedPackages(inputs: readonly string[]): Map<string, PackedDesktopPackage> {
   const available = new Map<string, PackedDesktopPackage>()
   for (const input of inputs) {
     const tarballs = readdirSync(input).filter(file => file.endsWith('.tgz')).sort()
@@ -127,9 +130,30 @@ export function assertDesktopHostPackageFiles(files: readonly string[]): void {
   }
 }
 
+/**
+ * Describe one tarball with the identity and integrity used by local installs.
+ * @param packed - Tarball path and its parsed package manifest.
+ * @returns The package-set record for this tarball.
+ */
+export function desktopPackageRecord(packed: PackedDesktopPackage): DesktopCorePackageRecord {
+  const name = packed.manifest.name
+  const version = packed.manifest.version
+  if (typeof name !== 'string' || typeof version !== 'string') {
+    throw new Error(`desktop package set: ${packed.tarball} has no package identity`)
+  }
+  const body = readFileSync(packed.tarball)
+  return {
+    name,
+    version,
+    file: basename(packed.tarball),
+    bytes: body.byteLength,
+    integrity: `sha512-${createHash('sha512').update(body).digest('base64')}`,
+  }
+}
+
 /** Prepare a package set from release tarball directories. */
 export function prepareDesktopPackageSet(inputs: readonly string[], output: string): void {
-  const selected = selectDesktopPackageClosure(packedPackages(inputs))
+  const selected = selectDesktopPackageClosure(readDesktopPackedPackages(inputs))
   const host = selected.find(packed => packed.manifest.name === DESKTOP_HOST_PACKAGE)
   if (host === undefined) throw new Error(`desktop package set: selected closure omits ${DESKTOP_HOST_PACKAGE}`)
   assertDesktopHostPackageFiles(tarballFiles(host.tarball))
@@ -137,22 +161,9 @@ export function prepareDesktopPackageSet(inputs: readonly string[], output: stri
   const packageDir = join(output, DESKTOP_PACKAGES_DIR)
   mkdirSync(packageDir, { recursive: true })
   const records: DesktopCorePackageRecord[] = selected.map((packed) => {
-    const name = packed.manifest.name
-    const version = packed.manifest.version
-    if (typeof name !== 'string' || typeof version !== 'string') {
-      throw new Error(`desktop package set: ${packed.tarball} has no package identity`)
-    }
-    const file = basename(packed.tarball)
-    const destination = join(packageDir, file)
-    copyFileSync(packed.tarball, destination, constants.COPYFILE_EXCL)
-    const body = readFileSync(destination)
-    return {
-      name,
-      version,
-      file,
-      bytes: statSync(destination).size,
-      integrity: `sha512-${createHash('sha512').update(body).digest('base64')}`,
-    }
+    const record = desktopPackageRecord(packed)
+    copyFileSync(packed.tarball, join(packageDir, record.file), constants.COPYFILE_EXCL)
+    return record
   })
   const packageSet = parseDesktopCorePackageSet({ schemaVersion: 1, packages: records })
   writeFileSync(join(output, DESKTOP_PACKAGE_SET_FILE), `${JSON.stringify(packageSet, undefined, 2)}\n`, { mode: 0o600 })

@@ -50,6 +50,17 @@ export type {
   ConversationPromptSnapshot, RequestInspectionSnapshot, RequestPromptChange, RequestView,
 } from '@deepseek-ai/dsh-client-ui-conversation/client'
 
+export { createBlockRegistry, BlockRegistryProvider, useBlockRegistry, useBlockScope } from './blocks/registry.tsx'
+export type {
+  BlockCommitRequest, BlockCommitter, BlockRegistry, BlockScope, BlockSize, BlockSourceKind, BlockSourceResolver, BlockSpec,
+  DataBlockSpec, ReferenceBlockSpec,
+} from './blocks/registry.tsx'
+export { isJsonObject, isJsonValue, parseDirectiveLine, splitBlockSegments } from './blocks/directive.ts'
+export type { BlockDataRef, BlockRef, BlockSegment, BlockSourceRef, JsonObject, JsonValue } from './blocks/directive.ts'
+export { DEFAULT_BLOCK_RATIO, BlockSegments } from './blocks/Segments.tsx'
+export type { BlockSegmentsProps } from './blocks/Segments.tsx'
+export { BlockSurface, UnknownBlock } from './blocks/BlockSurface.tsx'
+export type { BlockSurfaceProps, UnknownBlockProps } from './blocks/BlockSurface.tsx'
 export { isRunningTool, isSettledTool } from './contract/chat-nodes.ts'
 export { EMPTY_CHAT_SNAPSHOT } from './contract/snapshot.ts'
 

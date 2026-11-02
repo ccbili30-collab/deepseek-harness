@@ -1,7 +1,7 @@
 /**
  * Layout plugin, browser half: one register() call contributes AppFrame into
  * the runtime's built-in 'root' slot and, in the same breath, declares the
- * five child slots (declaration = exclusive render authority), seats the
+ * seven child slots (declaration = exclusive render authority), seats the
  * layout store (panel geometry), and wires the panel-action service face.
  * ctx.layout selects the main panel and controls column geometry; Session
  * selection belongs to the Session Controller. A second effect seats the theme
@@ -20,6 +20,7 @@ import { LayoutController } from './service.ts'
 import type { ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
 import { en, zh } from './shortcut-locales.ts'
 import { ThemePresenter } from './theme-presenter.ts'
+import { createFrameFoldState } from './policy.ts'
 
 // Contract exports only (export-convergence rule: cross-package consumers
 // keep a symbol exported; test-only/package-internal symbols live off /src).
@@ -29,6 +30,7 @@ import { ThemePresenter } from './theme-presenter.ts'
 export { LayoutController } from './service.ts'
 export type { ILayout, LiveSessionGeometry, MainPanelId, PanelInfo, CanvasClaimSource, CanvasClaims } from './service.ts'
 export type { CanvasSide, UnitSide } from './arrangement.ts'
+export type { FrameFoldState, FrameLayoutPolicy, FrameLayoutPrimary } from './policy.ts'
 export type { SessionGeometry, SessionGeometryRecord } from './stores.ts'
 
 /** Selector hook over root-scoped panel selection. */
@@ -50,6 +52,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface GlobalStandardProps {
     /** Subscribe to the selected main panel independently of parent renders. */
     usePanelInfo: UsePanelInfo
+    /** Product-owned presentation; null keeps the legacy Session geometry. */
+    useFrameLayoutPolicy?: SnapshotSelectorHook<import('./policy.ts').FrameLayoutPolicy | null>
+    /** Global auxiliary-view folds, independent of Session navigation. */
+    useFrameFoldState?: SnapshotSelectorHook<import('./policy.ts').FrameFoldState>
   }
 
   interface SlotMap {
@@ -112,6 +118,27 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
      * the lights or the controls.
      */
     'shell.leading': { kind: 'single'; scope: 'root' }
+    /**
+     * Fixed application-topbar content, including product mode and workspace
+     * controls. Entries compose as an ordered list beside the stable trailing
+     * navigation seat. Mounted only while the active frame policy enables it.
+     */
+    'shell.topbar': { kind: 'list'; scope: 'root'; owner: TopbarOwnerProps }
+    /**
+     * Fixed trailing seat for the navigation open/close control. It lives
+     * outside the sidebar track and receives the same resolved collapse fact in
+     * both product arrangements.
+     */
+    'shell.topbar.navigation': { kind: 'single'; scope: 'root'; owner: TopbarOwnerProps }
+    /**
+     * Product side-subject chrome, rendered immediately before the frame's one
+     * side fold. The occupant supplies the side subject's parent entry (its
+     * Sessions or directory); the frame owns the fold and the row's position.
+     * Mounted only while a product frame policy is active and a side subject
+     * occupies the side column; the occupant returns null while that column is
+     * folded, leaving the fold as the only control.
+     */
+    'side.header.trailing': { kind: 'single'; scope: 'root'; owner: SideHeaderOwnerProps }
   }
 }
 
@@ -126,6 +153,18 @@ export interface SidebarOwnerProps {
   collapsed: boolean
   /** Rendered column width in px (SIDEBAR_COLLAPSED when collapsed). */
   width: number
+}
+
+/** Fixed-topbar owner share: resolved navigation presentation, independent of rail width. */
+export interface TopbarOwnerProps {
+  /** True while the navigation is collapsed, including the narrow-viewport override. */
+  collapsed: boolean
+}
+
+/** Side-header trailing share: whether the side column currently shows only its fold. */
+export interface SideHeaderOwnerProps {
+  /** True while the side subject is folded; the parent entry is not rendered. */
+  collapsed: boolean
 }
 
 /** Right column owner share: resolved normal geometry and opening eligibility. */
@@ -151,7 +190,7 @@ export const inject = ['slots', 'theme', 'locale', 'shortcuts']
 
 /**
  * Client plugin body: provide ctx.layout, then one register() call — AppFrame
- * into 'root' with the five child-slot declarations, the layout store seat,
+ * into 'root' with the seven child-slot declarations, the layout store seat,
  * and the shared root instance supplying commands and the panel-info source.
  * @param ctx - client root context.
  */
@@ -189,7 +228,10 @@ export function apply(ctx: ClientContext): void {
       ctx.slots.entries('main').some(entry => entry.options.key === id)
     const layout = new LayoutController(instance.actions, hasMainPanel, panelInfo, sessionGeometry,
       (from, to) => navGeometryDiffers(instance.getSnapshot(), from, to))
-    const disposePanelInfo = ctx.slots.provideRoot({ hooks: { panelInfo: layout.panelInfo } })
+    const frameFoldState = createFrameFoldState(instance)
+    const disposePanelInfo = ctx.slots.provideRoot({
+      hooks: { panelInfo: layout.panelInfo, frameFoldState, frameLayoutPolicy: layout.frameLayoutPolicy },
+    })
     const disposeService = ctx.reflect.provide('layout', layout)
     const disposeRegistration = ctx.slots.register({
       name: 'root',
@@ -200,11 +242,17 @@ export function apply(ctx: ClientContext): void {
         'rightbar': { kind: 'single', scope: 'root' },
         'shell.overlay': { kind: 'list', scope: 'root' },
         'shell.leading': { kind: 'single', scope: 'root' },
+        'shell.topbar': { kind: 'list', scope: 'root' },
+        'shell.topbar.navigation': { kind: 'single', scope: 'root' },
+        'side.header.trailing': { kind: 'single', scope: 'root' },
       },
       store,
       // The frame pulls the canvas claim from the seam the occupant provides;
       // pass the read face down so AppFrame stays free of service imports.
-      inject: () => ({ canvasClaims: layout.canvasClaims }),
+      inject: () => ({
+        canvasClaims: layout.canvasClaims,
+        provideFrameTransition: (runner: Parameters<LayoutController['provideFrameTransition']>[0]) => layout.provideFrameTransition(runner),
+      }),
     }, AppFrame)
     const disposeShortcut = ctx.shortcuts.register({
       id: 'sidebar.left.toggle' as ShortcutCommandId, label: () => t('toggle'), aliases: ['sidebar', 'toggle left sidebar'],

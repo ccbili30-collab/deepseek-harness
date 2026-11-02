@@ -31,6 +31,7 @@ export const AssistantNodeView = memo(function AssistantNodeView({
   const revealProcess = useCallback(() => { turnProcess?.setOpen(true) }, [turnProcess])
   return (
     <AssistantMarkdown
+      contentScope={`${turn?.turn ?? 0}:${data.step}`}
       blocks={data.blocks}
       groupPart={groupPart}
       useDisclosure={useDisclosure}

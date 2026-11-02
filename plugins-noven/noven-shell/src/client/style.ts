@@ -5,8 +5,10 @@
  * design tokens that mirror the approved design system.
  * @module noven-shell/client/style
  */
+import { CODE_CSS } from './code/code-style.ts'
 
-const CSS = `
+const CSS = `${CODE_CSS}
+
 /* 随包字体：标题思源黑体（650 子集）与输入框灵感句文楷。均为 OFL，
    许可证在 assets/fonts/；子集只保留当前用字，避免整包数十 MB。 */
 @font-face {
@@ -33,6 +35,8 @@ const CSS = `
   --nv-hover: rgba(22, 24, 26, 0.05);
   --nv-radius: 12px;
   --nv-badge-dark: rgba(20, 24, 22, 0.72);
+  --nv-inverse-surface: #16181A;
+  --nv-inverse-text: #FFFFFF;
 
   /* 语义色：危险（删除/出错）与提醒（草稿/冲突/待复核）各一族，不再散写色值。 */
   --nv-danger: #D64545;
@@ -51,6 +55,10 @@ const CSS = `
   --nv-ease-in: cubic-bezier(0.5, 0, 0.75, 0.4);
   --nv-ease-spring: cubic-bezier(0.18, 0.85, 0.3, 1.1);
 
+  /* 产品模式使用 scene 档；共享 ui-layout 在未覆盖时仍走 DSH 默认。 */
+  --dsh-frame-mode-duration: var(--nv-dur-scene);
+  --dsh-frame-mode-easing: var(--nv-ease-out);
+
 }
 
 /* 品牌重映射：上游 DSH 蓝的 alias 层 → 诺文薄荷绿。上游组件（工作区
@@ -68,6 +76,16 @@ body {
   --dsw-specific-bubble-highlight: rgba(52, 211, 153, 0.22) !important;
 }
 body[data-ds-dark-theme] {
+  --nv-canvas: var(--dsw-alias-bg-layer-2);
+  --nv-pane: var(--dsw-alias-bg-layer-2);
+  --nv-surface: var(--dsw-alias-bg-layer-1);
+  --nv-divider: var(--dsw-alias-border-l1);
+  --nv-primary-text: var(--dsw-alias-label-primary);
+  --nv-secondary-text: var(--dsw-alias-label-secondary);
+  --nv-hover: var(--dsw-alias-interactive-bg-hover, rgba(232, 235, 234, 0.06));
+  --nv-inverse-surface: #E8EBEA;
+  --nv-inverse-text: #131615;
+  --nv-warn-soft: rgba(180, 83, 9, 0.22);
   --dsw-alias-state-business-primary: var(--nv-accent) !important;
   --dsw-alias-state-business-tertiary: rgba(52, 211, 153, 0.18) !important;
   --dsw-alias-button-info-fill: var(--nv-accent) !important;
@@ -169,13 +187,13 @@ button:has(.nv-nav-soon-glyph):hover { opacity: 0.7; }
 .nv-h2 { font-size: 15px; font-weight: 700; }
 .nv-card { background: var(--nv-surface); border: 0.5px solid var(--nv-divider); border-radius: var(--nv-radius); }
 .nv-pill { display: inline-flex; align-items: center; gap: 5px; border: 0; border-radius: 999px; padding: 6px 16px; font-size: 13px; color: var(--nv-secondary-text); background: transparent; cursor: pointer; }
-.nv-pill[data-active='true'] { background: var(--nv-primary-text); color: #fff; }
+.nv-pill[data-active='true'] { background: var(--nv-inverse-surface); color: var(--nv-inverse-text); }
 .nv-btn-primary { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-radius: 999px; padding: 9px 20px; font-size: 13px; font-weight: 600; background: var(--nv-accent); color: #fff; cursor: pointer; }
 .nv-btn-primary:hover { background: var(--nv-accent-deep); }
 .nv-btn-primary:disabled { opacity: .5; cursor: default; }
 .nv-btn-ghost { display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 1px solid var(--nv-divider); border-radius: 999px; padding: 8px 18px; font-size: 13px; background: var(--nv-surface); color: var(--nv-primary-text); cursor: pointer; }
 .nv-btn-ghost:hover { border-color: var(--nv-secondary-text); }
-.nv-btn-dark { display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 999px; padding: 8px 20px; font-size: 13px; font-weight: 600; background: var(--nv-primary-text); color: #fff; cursor: pointer; }
+.nv-btn-dark { display: inline-flex; align-items: center; justify-content: center; border: 0; border-radius: 999px; padding: 8px 20px; font-size: 13px; font-weight: 600; background: var(--nv-inverse-surface); color: var(--nv-inverse-text); cursor: pointer; }
 .nv-search { display: flex; align-items: center; gap: 8px; background: var(--nv-surface); border: 0.5px solid var(--nv-divider); border-radius: 999px; padding: 9px 16px; color: var(--nv-secondary-text); }
 .nv-search input { border: 0; outline: none; background: none; font-size: 13px; flex: 1; color: var(--nv-primary-text); font-family: inherit; }
 .nv-search input::placeholder { color: var(--nv-secondary-text); }
@@ -282,7 +300,7 @@ html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: norm
 /* Creation ritual: one quiet thought field, then two explicit working paths.
    The page centers its column inside the center column (the session page's
    reference frame), so the hero→session morph never slides sideways. */
-.nv-create-page { overflow: hidden; box-sizing: border-box;
+.nv-create-page { overflow: hidden; box-sizing: border-box; display: flex; flex-direction: column;
   /* The page's own View Transition name lives here, not on one scene: every
      transition the page takes part in — entering, leaving for any Session,
      morphing into the conversation, dissolving into the IDE — captures it as
@@ -293,7 +311,8 @@ html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: norm
      white), fading out before the path cards so the fold stays clean. */
   background:
   radial-gradient(circle at 50% 30%, rgba(52,211,153,.12), transparent 42%), var(--nv-surface); }
-.nv-create-ritual { width: min(920px, calc(100% - 64px)); height: 100%; margin: 0 auto; padding: 0;
+html[data-noven-conversation-appearance] .nv-create-page { background: transparent; }
+.nv-create-ritual { width: min(920px, calc(100% - 64px)); flex: 1; min-height: 0; margin: 0 auto; padding: 0;
   box-sizing: border-box; display: flex; flex-direction: column; align-items: stretch; gap: 12px; overflow-y: auto; scrollbar-width: none; }
 /* The stack is the anchor, not any element in it: the leading spacer parks
    the column's center at 46% of the page (above center — the fold lands past
@@ -511,7 +530,7 @@ html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: norm
 /* 创作库 */
 .nv-proj-pills { display: flex; gap: 8px; }
 .nv-proj-pills .nv-pill { background: var(--nv-surface); border: 0.5px solid var(--nv-divider); color: var(--nv-primary-text); }
-.nv-proj-pills .nv-pill[data-active='true'] { background: var(--nv-primary-text); border-color: var(--nv-primary-text); color: #fff; }
+.nv-proj-pills .nv-pill[data-active='true'] { background: var(--nv-inverse-surface); border-color: var(--nv-inverse-surface); color: var(--nv-inverse-text); }
 .nv-wb-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 @media (max-width: 1400px) { .nv-wb-grid { grid-template-columns: repeat(3, 1fr); } }
 .nv-wb { overflow: hidden; text-align: left; padding: 0; cursor: pointer; display: flex; flex-direction: column; }
@@ -580,7 +599,7 @@ html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: norm
 .nv-doc-toolbar button { width: 30px; height: 28px; border: 0; border-radius: 6px; background: none; color: var(--nv-secondary-text); font-size: 13px; cursor: pointer; }
 .nv-doc-toolbar button:hover { background: rgba(128,128,128,.1); color: var(--nv-primary-text); }
 .nv-doc h3 { font-size: 16px; font-weight: 700; margin: 18px 0 8px; }
-.nv-doc p { font-size: 13.5px; line-height: 1.8; color: #3A3F3C; margin: 0 0 6px; }
+.nv-doc p { font-size: 13.5px; line-height: 1.8; color: var(--nv-primary-text); margin: 0 0 6px; }
 .nv-doc img { width: 100%; border-radius: 10px; margin: 14px 0; display: block; }
 .nv-side-tabs { display: flex; gap: 18px; padding: 14px 16px 0; }
 .nv-side-tab { border: 0; background: none; padding: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--nv-secondary-text); cursor: pointer; border-bottom: 2px solid transparent; }
@@ -630,7 +649,7 @@ html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: norm
 .nv-ed-pickempty { grid-column: 1 / -1; padding: 14px 8px; font-size: 12px; color: var(--nv-secondary-text); text-align: center; }
 .nv-ed-pickclear { margin-top: 8px; width: 100%; border: 0.5px solid var(--nv-divider); border-radius: 8px; background: none; padding: 6px; font-size: 12.5px; color: var(--nv-danger); cursor: pointer; }
 .nv-ed-facebtn { position: absolute; right: 12px; bottom: 12px; width: 30px; height: 30px; border: 0; border-radius: 8px; background: rgba(255,255,255,.92); color: var(--nv-primary-text); font-size: 13px; cursor: pointer; box-shadow: 0 2px 8px rgba(30,40,35,.18); }
-.nv-ed-facebtn:hover { background: #fff; }
+.nv-ed-facebtn:hover { background: var(--nv-surface); }
 
 /* —— 文档模式：卡即页面 —— */
 .nv-ed-docwrap { flex: 1; min-width: 0; position: relative; display: flex; }
@@ -860,7 +879,7 @@ html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: norm
 .nv-wb-doc { padding: 26px 30px 60px; max-width: 560px; }
 .nv-wb-doc h2 { margin: 0; font-size: 19px; }
 .nv-wb-doc-meta { font-size: 12px; color: var(--nv-secondary-text); margin: 6px 0 18px; }
-.nv-wb-doc p { font-size: 13.5px; line-height: 1.85; color: #3A3F3C; }
+.nv-wb-doc p { font-size: 13.5px; line-height: 1.85; color: var(--nv-primary-text); }
 
 /* ===== 会话顶栏卡片标签 ===== */
 .nv-hchips { position: relative; display: inline-flex; align-items: center; gap: 6px; margin-left: 8px; }
@@ -892,6 +911,13 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
    白字白图标落在透明底上等于整颗消失——这里把薄荷填充钉回来。 */
 nav[class*="panelList"] button[aria-label="创作"]:not(:hover),
 nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: var(--nv-accent); }
+/* 收轨后主按钮与其余导航条目同尺寸：36×36 的薄荷方块，不再缩成 20px 窄条。 */
+[data-sidebar-collapsed] nav[class*="panelList"] button[aria-label="创作"],
+[data-sidebar-collapsed] nav[class*="panelList"] button[aria-label="Create"] {
+  width: 36px;
+  margin: 0;
+  border-radius: var(--dsw-radius-md);
+}
 
 /* 设定 sidecar — 上半工件区 */
 .nv-sidecar { display: flex; flex-direction: column; gap: 4px; padding: 4px 10px 20px; }
@@ -931,7 +957,7 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
 .nv-sidecar-task .nv-sidecar-msgtext { color: var(--nv-secondary-text); font-size: 11.5px; letter-spacing: .02em; }
 .nv-sidecar-error { padding: 4px 14px 0; font-size: 11.5px; color: var(--nv-danger); }
 .nv-sidecar-composer { display: flex; align-items: flex-end; gap: 6px; padding: 4px 14px 12px; }
-.nv-sidecar-input { flex: 1; resize: none; border: 0; outline: none; background: #fff; border-radius: 10px; padding: 8px 11px; font-size: 12.5px; line-height: 1.5; font-family: inherit; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
+.nv-sidecar-input { flex: 1; resize: none; border: 0; outline: none; background: var(--nv-surface); border-radius: 10px; padding: 8px 11px; font-size: 12.5px; line-height: 1.5; font-family: inherit; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
 .nv-sidecar-input:focus { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--nv-accent) 45%, transparent); }
 .nv-sidecar-send { flex: none; width: 30px; height: 30px; border-radius: 9px; color: var(--nv-secondary-text); }
 .nv-sidecar-send:not(:disabled) { color: var(--nv-accent-deep); }
@@ -946,6 +972,22 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
 .nv-foot-name { font-size: 13px; font-weight: 500; color: var(--nv-primary-text); }
 .nv-foot-gear { flex: none; }
 .nv-foot-rail { display: block; margin: 4px auto; border: 0; background: transparent; padding: 3px; cursor: pointer; border-radius: 50%; }
+.nv-mode-switch { display: flex; align-items: center; justify-content: center; gap: 7px; width: calc(100% - 8px); min-height: 34px; margin: 4px; padding: 6px 10px; border: 0; border-radius: 9px; background: transparent; color: var(--nv-secondary-text); cursor: pointer; font-size: 13px;
+  transition: color var(--nv-dur-micro) var(--nv-ease-out), background var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-mode-switch:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-mode-switch[aria-pressed="true"] { color: var(--nv-select); }
+.nv-mode-switch-icon { display: inline-flex; align-items: center; justify-content: center; flex: none;
+  transition: transform var(--nv-dur-ui) var(--nv-ease-out); }
+.nv-mode-switch[aria-pressed="true"] .nv-mode-switch-icon { transform: translateX(2px); }
+.nv-mode-switch-label { font-weight: 500; }
+.nv-mode-switch-rail { width: 36px; height: 36px; margin: 4px auto; padding: 0; }
+.nv-mode-switch-topbar { width: auto; min-height: 30px; margin: 0; padding: 4px 8px; border-radius: 7px; }
+.nv-side-session-button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--nv-secondary-text); cursor: pointer; }
+.nv-side-session-button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-side-session-button:disabled { opacity: .45; cursor: default; }
+
+/* 侧边头部为框架的 [上级][折叠] 预留同一块宽度；会话头不再各自加 padding。 */
+[data-side-chrome] [class*='headerUtilities'] { padding-right: var(--dsh-side-chrome-inset); }
 
 /* 会话页：工具行 / 保存回执 / 斜杠胶囊 */
 .nv-toolrow { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 3px 10px; border-radius: 999px; background: var(--nv-surface); border: 0.5px solid var(--nv-divider); font-size: 12px; color: var(--nv-secondary-text); }
@@ -1022,7 +1064,7 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
 .nv-stagechips { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .nv-stagelabel { font-size: 12px; color: var(--nv-secondary-text); }
 .nv-stagechips .nv-pill { border: 0.5px solid var(--nv-divider); background: var(--nv-surface); color: var(--nv-primary-text); padding: 5px 13px; font-size: 12px; }
-.nv-stagechips .nv-pill[data-active='true'] { background: var(--nv-primary-text); border-color: var(--nv-primary-text); color: #fff; }
+.nv-stagechips .nv-pill[data-active='true'] { background: var(--nv-inverse-surface); border-color: var(--nv-inverse-surface); color: var(--nv-inverse-text); }
 .nv-archive-toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nv-secondary-text); cursor: pointer; }
 .nv-lib-h { margin: 0 0 10px; font-size: 12px; font-weight: 600; color: var(--nv-secondary-text); }
 .nv-work-grid { grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); }
@@ -1042,7 +1084,7 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
 .nv-wdrawer-scroll { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 150px; }
 .nv-wdrawer-preview { padding: 18px 20px; overflow-y: auto; border-right: 0.5px solid var(--nv-divider); }
 .nv-wdrawer-preview img { width: 100%; border-radius: 10px; display: block; }
-.nv-wdrawer-text { font-size: 13px; line-height: 1.8; color: #3A3F3C; white-space: pre-wrap; }
+.nv-wdrawer-text { font-size: 13px; line-height: 1.8; color: var(--nv-primary-text); white-space: pre-wrap; }
 .nv-wdrawer-side { padding: 16px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
 .nv-wdrawer-side h4 { margin: 6px 0 2px; font-size: 11.5px; font-weight: 600; color: var(--nv-secondary-text); }
 .nv-rev { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 9px; border: 0.5px solid var(--nv-divider); }
@@ -1225,12 +1267,9 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
 }
 .nv-pick-namer-cancel:hover { color: rgba(255, 255, 255, 0.8); }
 
-/* The top zone is the drawer's whole body — the host hairline under it would
-   draw a stray edge over the empty column, drop it. With the features zone
-   hidden the product tree also owns the column's full height (host caps it
-   at 50% for the old two-zone split), so the foot bar can pin to the bottom. */
-[data-zone='top']:not(:empty) { border-bottom: none; }
-[data-zone='top'] { flex: 1; max-height: none; }
+/* 内容树占满工具列表之外的剩余高度；功能入口恢复为真实的下方导航区。 */
+[data-zone='top'] { flex: 1; min-height: 0; max-height: none; }
+[data-zone='features'] { flex: none; max-height: 42%; }
 
 /* ---------- 新工作台外壳：左列内容树 / 中列画布标签页 / 右列对话 ---------- */
 
@@ -1253,19 +1292,16 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
    变换后的盒仍计入外层 scrollHeight，整页被顶出 225px 纵向滚动条——
    隐藏态直接 display:none（代价仅是开面板时少一次滑入动画）。 */
 [data-dsh-bottom-panel][class*='bottomPanelHidden'] { display: none; }
-/* 会话头压成与其他两列相同的 40px 单行——上游它是三态高度（空会话 40、
-   有标题 50、有视图 tabs 76），三态不齐正是顶线参差的来源。视图切换行
-   在 01 里没有对应物，先隐藏。 */
-[data-slot='conversation.header'] > header { height: 40px; min-height: 0; padding: 5px 28px 5px 20px; }
-[data-slot='conversation.header'] [data-conversation-tabs] { display: none; }
+/* 对话顶栏保留上游的三态高度：空会话、标题与视图切换各有真实内容，
+   不再把导航能力压没来凑三列顶线。 */
 
 /* 左列内容树 */
 .nv-tree { display: flex; flex-direction: column; height: 100%; min-height: 0; color: var(--nv-primary-text); }
 /* 行全是 width:100% + padding，不带 border-box 会顶出横向滚动条。 */
 .nv-tree * { box-sizing: border-box; }
-.nv-tree-rail { align-items: center; padding-top: 8px; gap: 6px; }
+.nv-tree-rail { align-items: center; gap: 0; }
 .nv-tree-railbtn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px;
-  border: 0; border-radius: 10px; background: none; color: var(--nv-primary-text);
+  border: 0; border-radius: var(--dsw-radius-md); background: none; color: var(--nv-primary-text);
   font-size: 13px; font-weight: 600; cursor: pointer; overflow: hidden; }
 .nv-tree-railbtn:hover { background: var(--nv-hover); }
 /* 开关态（Studio/挂窗/底栏）沿用"绿=状态"语义；新建组分隔线是工具组的开头。 */
@@ -1297,7 +1333,7 @@ div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !impo
   font-size: 12px; background: var(--nv-surface); color: var(--nv-primary-text); outline: none; }
 .nv-tree-searchbox:focus { border-color: var(--nv-accent); }
 .nv-tree-kbd { position: absolute; right: 7px; padding: 1px 5px; border: 0.5px solid var(--nv-divider); border-radius: 4px;
-  background: rgba(255, 255, 255, 0.8); color: var(--nv-secondary-text); font-size: 10px; font-family: inherit; pointer-events: none; }
+  background: var(--nv-surface); color: var(--nv-secondary-text); font-size: 10px; font-family: inherit; pointer-events: none; }
 .nv-tree-scroll { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px 8px; }
 .nv-tree-empty { padding: 56px 12px; text-align: center; color: var(--nv-secondary-text); font-size: 12px; }
 .nv-tree-newrowwrap { padding: 6px 10px 2px; }
@@ -1357,10 +1393,10 @@ div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !impo
 /* 底部分两半：「＋ 新建」开对象、「🔧 工具」开功能台（设计稿 01 变体——
    功能台从主面板挪回工作现场旁）。Menu anchor 根是 inline span——
    给 flex:1 让两半均分。画布开合不在这排，单独占搜索下方整行。 */
-.nv-tree-foot { display: flex; flex-wrap: wrap; gap: 8px; padding: 10px 12px 14px; }
-.nv-tree-foot > span { display: flex; flex: 1; min-width: 64px; }
+.nv-tree-foot { display: flex; flex-wrap: nowrap; gap: 6px; padding: 8px 10px 10px; }
+.nv-tree-foot > span { display: flex; flex: 1; min-width: 0; }
 .nv-tree-new { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%;
-  border: 1px solid var(--nv-divider); border-radius: 10px; padding: 9px 0; font-size: 13px;
+  border: 1px solid var(--nv-divider); border-radius: 8px; padding: 7px 0; font-size: 12px;
   background: var(--nv-surface); color: var(--nv-primary-text); cursor: pointer; white-space: nowrap; }
 .nv-tree-new:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); }
 /* 画布开关：固定一行，左标签右拨杆；开着薄荷、关着灰。 */
@@ -1374,7 +1410,7 @@ div:has(> .nv-tree-rail) { border-bottom: 0 !important; margin-bottom: 2px !impo
    自己的薄荷底，用元素+类+属性的特异性压过它。 */
 button.nv-tree-switch[data-canvas-on] { background: var(--nv-accent); }
 .nv-tree-switch-thumb { position: absolute; top: 2px; left: 2px; width: 16px; height: 16px;
-  border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,.18);
+  border-radius: 50%; background: var(--nv-surface); box-shadow: 0 1px 3px rgba(0,0,0,.18);
   transition: transform var(--nv-dur-micro) var(--nv-ease-out); }
 .nv-tree-switch[data-canvas-on] .nv-tree-switch-thumb { transform: translateX(16px); }
 .nv-tree-toolicon { display: inline-flex; color: var(--nv-secondary-text); }
@@ -1418,17 +1454,25 @@ button.nv-tree-switch[data-canvas-on] { background: var(--nv-accent); }
 
 /* 中列画布：标签条 + 体 */
 .nv-canvas { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--nv-surface); }
-.nv-canvas-strip { display: flex; align-items: center; gap: 2px; padding: 6px 10px 0; border-bottom: 1px solid var(--nv-divider); overflow-x: auto; flex: none; }
+.nv-canvas-strip { display: flex; align-items: center; gap: 2px; padding: 6px 10px 0; border-bottom: 0; overflow-x: auto; flex: none; }
+/* 侧边画布的页签条为框架的 [上级][折叠] 预留同一块宽度。 */
+[data-side-chrome] .nv-canvas-strip { padding-right: var(--dsh-side-chrome-inset); }
 .nv-canvas-tab { position: relative; display: flex; align-items: center; gap: 6px; padding: 7px 12px; font-size: 12.5px; cursor: pointer;
   color: var(--nv-secondary-text); border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent; white-space: nowrap; }
 .nv-canvas-tab:hover { color: var(--nv-primary-text); background: var(--nv-accent-soft); }
 /* 选中页签：绿字（统一规则）+ 底缘一字宽的圆头短绿线，无底色。 */
 .nv-canvas-tab-on::after { content: ''; position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
-  width: 1em; height: 2px; border-radius: 999px; background: var(--nv-select); }
+  width: 1em; height: 2px; border-radius: 999px; background: var(--nv-select);
+  animation: nv-tab-underline var(--nv-dur-ui) var(--nv-ease-out); }
+@keyframes nv-tab-underline {
+  from { opacity: .35; transform: translateX(-50%) scaleX(.4); }
+  to { opacity: 1; transform: translateX(-50%) scaleX(1); }
+}
 .nv-canvas-tabtitle { max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
 /* × 钮悬停/选中才现身，但一直占位——出现不收版。 */
-.nv-canvas-tabx { border: 0; background: none; padding: 0 2px; font-size: 13px; color: var(--nv-secondary-text); cursor: pointer; border-radius: 4px; opacity: 0; }
-.nv-canvas-tab:hover .nv-canvas-tabx, .nv-canvas-tab:focus-within .nv-canvas-tabx, .nv-canvas-tab-on .nv-canvas-tabx { opacity: 1; }
+.nv-canvas-tabx { border: 0; background: none; padding: 0 2px; font-size: 13px; color: var(--nv-secondary-text); cursor: pointer; border-radius: 4px;
+  opacity: 0; pointer-events: none; transition: opacity var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-canvas-tab:hover .nv-canvas-tabx, .nv-canvas-tab:focus-within .nv-canvas-tabx { opacity: 1; pointer-events: auto; }
 .nv-canvas-tabx:hover { color: var(--nv-primary-text); background: var(--nv-accent-soft); }
 /* 页签状态点：working 细呼吸、pending 绿、error 红、unsaved 灰（词汇见设计文档 §2）。 */
 .nv-canvas-dots { display: inline-flex; gap: 4px; align-items: center; flex: none; }
@@ -1466,12 +1510,16 @@ button.nv-tree-switch[data-canvas-on] { background: var(--nv-accent); }
   box-shadow: inset 0 0 0 1px rgba(14, 159, 110, .12); pointer-events: none; }
 @keyframes nv-ai-flow { from { background-position: 0% 50%; } to { background-position: 200% 50%; } }
 @media (prefers-reduced-motion: reduce) {
-  .nv-ai-pill, .nv-ai-pill::before, .nv-ai-tag, .nv-canvas-tab-ai,
+  .nv-ai-pill, .nv-ai-pill::before, .nv-ai-tag, .nv-canvas-tab-ai, .nv-canvas-tab-on::after,
   .nv-canvas[data-ai-editing]::after, .nv-cardpage-ai::before, .nv-cardpage-ai .nv-pagehead,
   .nv-ov-tile-ai::after, .nv-ai-locked::before { animation: none; }
+  .nv-mode-switch, .nv-mode-switch-icon, .nv-canvas-menubutton { transition: none; }
 }
-.nv-canvas-plus { border: 0; background: none; padding: 4px 8px; font-size: 15px; color: var(--nv-secondary-text); cursor: pointer; }
-.nv-canvas-plus:hover { color: var(--nv-accent-deep); }
+.nv-canvas-menubutton { display: inline-flex; align-items: center; justify-content: center; flex: none;
+  width: 24px; height: 26px; padding: 0; border: 0; border-radius: 6px; background: transparent;
+  color: var(--nv-secondary-text); cursor: pointer; transition: color var(--nv-dur-micro) var(--nv-ease-out), background var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-canvas-menubutton:hover { color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
+[data-noven-canvas-switch] svg { transform: rotate(90deg); }
 .nv-canvas-body { position: relative; flex: 1; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 /* Host 页面按页签常驻：切页签只切显隐，关页签才卸载（终端等长连接不会被切走杀掉）。 */
 .nv-canvas-page-slot { position: absolute; inset: 0; display: flex; flex-direction: column; min-height: 0; }
@@ -1656,6 +1704,11 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-doc-plain { flex: 1; min-height: 0; border: 0; resize: none; padding: 16px 28px 80px; box-sizing: border-box;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; line-height: 1.7;
   background: var(--nv-surface); color: var(--nv-primary-text); outline: none; white-space: pre; overflow: auto; }
+.nv-doc-plain-with-lines { flex: 1; min-width: 0; min-height: 0; display: flex; overflow: hidden; }
+.nv-doc-plain-with-lines .nv-doc-plain { min-width: 0; }
+.nv-doc-line-numbers { flex: 0 0 42px; margin: 0; padding: 16px 8px 80px 0; border-right: .5px solid var(--nv-divider);
+  background: var(--nv-surface); color: var(--nv-secondary-text); font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px; line-height: 1.7; text-align: right; list-style: none; user-select: none; overflow: hidden; }
 .nv-doc-bn .bn-container .bn-editor { width: 100%; max-width: none; }
 /* 标题字号收敛：满幅纸上 3em 的 H1 会一行只容五六字 */
 .nv-doc-bn .bn-block-content[data-content-type='heading'][data-level='1'] { font-size: 2em !important; }
@@ -1664,16 +1717,16 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 /* 选区高亮 = 薄荷绿（半透明，白底上不吞字）；块内所有行内元素共用 */
 .nv-doc-bn ::selection { background: rgba(52, 211, 153, .30); color: inherit; }
 .nv-doc-bn ::-moz-selection { background: rgba(52, 211, 153, .30); color: inherit; }
-/* BlockNote 浮层被 portal 到编辑器容器之外：主题变量挂全局根，浮窗按全局类改造。
-   浮窗（选中文字后的格式条）= 薄荷底 + 白图标；菜单/下拉保持白底、薄荷选中。 */
-:root {
+/* BlockNote 浮层被 portal 到编辑器容器之外：主题变量挂在 body，浮窗与页体继承同一表面色。
+   浮窗（选中文字后的格式条）= 薄荷底 + 白图标；菜单/下拉使用主题表面色、薄荷选中。 */
+body {
   --bn-font-family: inherit;
   --bn-colors-editor-text: var(--nv-primary-text);
   --bn-colors-editor-background: var(--nv-surface);
   --bn-colors-menu-text: var(--nv-primary-text);
   --bn-colors-menu-background: var(--nv-surface);
-  --bn-colors-tooltip-text: #fff;
-  --bn-colors-tooltip-background: var(--nv-primary-text);
+  --bn-colors-tooltip-text: var(--nv-inverse-text);
+  --bn-colors-tooltip-background: var(--nv-inverse-surface);
   --bn-colors-hovered-text: var(--nv-primary-text);
   --bn-colors-hovered-background: var(--nv-accent-soft);
   --bn-colors-selected-text: var(--nv-primary-text);
@@ -1727,6 +1780,8 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   padding: 3px 8px; font-size: 11.5px; font-family: inherit; color: var(--nv-secondary-text); cursor: pointer; }
 .nv-ed-outline-btn:hover { background: var(--nv-accent-soft); color: var(--nv-primary-text); }
 .nv-ed-outline-btn.on { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
+.nv-ed-save { right: 104px; }
+.nv-ed-save:disabled { cursor: default; opacity: .45; }
 .nv-ed-more { position: absolute; top: 18px; right: 22px; border: 0; background: none; padding: 2px 8px;
   font-size: 15px; color: var(--nv-secondary-text); cursor: pointer; border-radius: 6px; }
 .nv-ed-more:hover { color: var(--nv-primary-text); background: var(--nv-accent-soft); }
@@ -1775,7 +1830,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-modbox-map { display: flex; flex-direction: column; flex: 1; min-height: 0; }
 .nv-modbox-map > .nv-modbox-body { display: flex; flex: 1; min-height: 0; }
 .nv-modbox-map > .nv-fmg-host { flex: 1; min-height: 0; }
-.nv-fmg-host { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; background: var(--nv-canvas); }
+.nv-fmg-host { position: relative; display: flex; flex-direction: column; flex: 1; min-height: 0; min-width: 0; background: var(--nv-canvas); }
 .nv-fmg-frame { display: block; flex: 1; width: 100%; height: 100%; min-height: 0; border: 0; }
 /* 卡内全屏：覆盖整个应用窗口，不新开浏览器页；仍属于当前地图页签。 */
 .nv-fmg-host-full { position: fixed; inset: 0; z-index: 1000; background: var(--nv-canvas); }
@@ -1811,7 +1866,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-scene-toolbar > span:first-child { color: var(--nv-primary-text); font-weight: 500; }
 .nv-scene-hint { flex: 1; color: var(--faint); }
 .nv-scene-toolbar button { height: 28px; padding: 0 9px; border: 1px solid var(--nv-divider); border-radius: 7px;
-  background: #fff; color: var(--nv-secondary-text); font: inherit; font-size: 11px; cursor: pointer; }
+  background: var(--nv-surface); color: var(--nv-secondary-text); font: inherit; font-size: 11px; cursor: pointer; }
 .nv-scene-toolbar button:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); }
 .nv-scene-toolbar .nv-scene-add { border-color: var(--nv-accent); color: var(--nv-accent-deep); }
 .nv-scene-canvas { position: relative; min-height: 440px; overflow: hidden; border: 1px solid var(--nv-divider); border-radius: 16px;
@@ -1832,13 +1887,13 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-scene-inspector { padding: 14px; border: 1px solid var(--nv-divider); border-radius: 12px; background: #fbfcfb; }
 .nv-scene-inspectorhead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 10px; }
 .nv-scene-inspectorhead b { font-size: 13px; }
-.nv-scene-inspectorhead button { height: 26px; padding: 0 8px; border: 1px solid #e7c9c9; border-radius: 6px; background: #fff;
+.nv-scene-inspectorhead button { height: 26px; padding: 0 8px; border: 1px solid #e7c9c9; border-radius: 6px; background: var(--nv-surface);
   color: #b23a3a; font: inherit; font-size: 10.5px; cursor: pointer; }
 .nv-scene-fields { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .nv-scene-fields label, .nv-scene-desc { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .nv-scene-fields span, .nv-scene-desc span { font-size: 10px; color: var(--nv-secondary-text); }
 .nv-scene-fields .nv-wg-input { height: 28px; font-size: 11.5px; }
-.nv-scene-fields input[type="color"] { width: 100%; height: 28px; padding: 1px; border: 1px solid var(--nv-divider); border-radius: 6px; background: #fff; }
+.nv-scene-fields input[type="color"] { width: 100%; height: 28px; padding: 1px; border: 1px solid var(--nv-divider); border-radius: 6px; background: var(--nv-surface); }
 .nv-scene-desc { margin-top: 8px; }
 .nv-scene-desc .nv-wg-input { min-height: 56px; font-size: 12px; }
 @container (max-width: 560px) {
@@ -1850,10 +1905,19 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   border-radius: 9px; background: rgba(244,250,247,.9); color: var(--nv-accent-deep); font-size: 11px; }
 .nv-refbanner span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .nv-refbanner button { flex: none; height: 24px; padding: 0 8px; border: 1px solid rgba(14,159,110,.35); border-radius: 6px;
-  background: #fff; color: var(--nv-accent-deep); font: inherit; font-size: 10.5px; cursor: pointer; }
+  background: var(--nv-surface); color: var(--nv-accent-deep); font: inherit; font-size: 10.5px; cursor: pointer; }
 .nv-refmodule-snapshot { pointer-events: none; opacity: .94; }
-.nv-refnotice { padding: 5px 9px; border-radius: 7px; background: #fff6e8; color: #8a5a14; font-size: 11px; }
+.nv-refnotice { padding: 5px 9px; border-radius: 7px; background: var(--nv-warn-soft); color: #8a5a14; font-size: 11px; }
 .nv-modbox { position: relative; margin: 0; padding: 0; border: 0; background: transparent; }
+.nv-module-surface { width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: auto; background: var(--nv-surface); }
+.nv-module-surface > .nv-modbox { box-sizing: border-box; min-height: 100%; padding: 16px; }
+.nv-module-surface > .nv-modbox-map,
+.nv-module-surface > .nv-modbox-html { display: flex; flex-direction: column; min-height: 100%; padding: 0; }
+.nv-module-surface > .nv-modbox-map > .nv-modbox-body,
+.nv-module-surface > .nv-modbox-html > .nv-modbox-body { display: flex; flex: 1; flex-direction: column; min-height: 0; }
+.nv-module-surface > .nv-modbox-html .nv-htmlfile { height: 100%; }
+.nv-module-block-status { box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; width: 100%; height: 100%; padding: 16px; color: var(--nv-secondary-text); font-size: 12px; text-align: center; }
+.nv-module-block-status code { max-width: 100%; overflow-wrap: anywhere; color: var(--nv-secondary-text); }
 .nv-modbox-widget { font-size: 14px; color: var(--nv-secondary-text); padding: 8px 0; }
 .nv-modbox-html { min-height: 120px; font-family: ui-monospace, monospace; }
 
@@ -1942,7 +2006,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-modlib-refform { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; margin-top: 8px; }
 .nv-modlib-refform label { display: flex; flex-direction: column; gap: 3px; min-width: 0; font-size: 10.5px; color: var(--nv-secondary-text); }
 .nv-modlib-refform input, .nv-modlib-refform select { width: 100%; box-sizing: border-box; height: 30px; border: 1px solid var(--nv-divider);
-  border-radius: 7px; padding: 0 7px; background: #fff; color: var(--nv-primary-text); font: inherit; font-size: 11.5px; outline: none; }
+  border-radius: 7px; padding: 0 7px; background: var(--nv-surface); color: var(--nv-primary-text); font: inherit; font-size: 11.5px; outline: none; }
 .nv-modlib-refform input:focus, .nv-modlib-refform select:focus { border-color: var(--nv-accent); }
 .nv-modlib-refgo { grid-column: 1 / -1; justify-self: end; height: 30px; padding: 0 12px; border: 1px solid var(--nv-accent);
   border-radius: 7px; background: var(--nv-accent); color: #fff; font: inherit; font-size: 11.5px; cursor: pointer; }
@@ -2198,10 +2262,6 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   padding: 8px 20px; font-size: 13px; cursor: pointer; }
 .nv-create-ok:disabled { opacity: 0.45; cursor: not-allowed; }
 
-/* 抽屉不再展示功能台 zone（设计稿 01：底部只有「新建」；那几个功能图标是
-   图生图噪声）。条目仍注册着，隐藏纯视觉、可回退；上游类名带 CSS-module
-   哈希前缀，按后缀子串匹配。 */
-[data-zone='features'] { display: none; }
 
 /* ---------- 预制模块（时间线/关系图/地图） ---------- */
 .nv-wg { position: relative; border: 1px solid var(--nv-divider); border-radius: 12px;
@@ -2240,10 +2300,10 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   color: var(--nv-secondary-text); font: inherit; font-size: 11px; cursor: pointer; }
 .nv-tlset-button:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); }
 .nv-tlset-pop { position: absolute; left: 0; right: auto; top: calc(100% + 6px); z-index: 20; width: 230px; padding: 12px;
-  border: 1px solid var(--nv-divider); border-radius: 10px; background: #fff; box-shadow: 0 12px 30px rgba(22,24,26,.14); }
+  border: 1px solid var(--nv-divider); border-radius: 10px; background: var(--nv-surface); box-shadow: 0 12px 30px rgba(22,24,26,.14); }
 .nv-tlset-pop label { display: flex; flex-direction: column; gap: 3px; margin-bottom: 8px; font-size: 10.5px; color: var(--nv-secondary-text); }
 .nv-tlset-pop input { width: 100%; box-sizing: border-box; height: 28px; border: 1px solid #dfe4df; border-radius: 6px;
-  padding: 0 8px; background: #fff; color: var(--nv-primary-text); font: inherit; font-size: 12px; outline: none; }
+  padding: 0 8px; background: var(--nv-surface); color: var(--nv-primary-text); font: inherit; font-size: 12px; outline: none; }
 .nv-tlset-pop input:focus { border-color: var(--nv-accent); }
 .nv-tlset-range { display: flex; gap: 8px; }
 .nv-tlset-range label { flex: 1; min-width: 0; }
@@ -2251,12 +2311,12 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-tlset-actions { display: flex; justify-content: flex-end; gap: 6px; }
 .nv-tldiary-head .nv-tlset-pop { left: auto; right: 0; }
 .nv-tlset-actions button { height: 28px; padding: 0 10px; border: 1px solid var(--nv-divider); border-radius: 6px;
-  background: #fff; color: var(--nv-secondary-text); font: inherit; font-size: 11px; cursor: pointer; }
+  background: var(--nv-surface); color: var(--nv-secondary-text); font: inherit; font-size: 11px; cursor: pointer; }
 .nv-tlset-actions .nv-tlset-apply { border-color: var(--nv-accent); background: var(--nv-accent); color: #fff; }
 .nv-tld-place { display: inline-flex; align-items: center; gap: 3px; height: 22px; padding: 0 8px; border: 1px solid rgba(14,159,110,.25);
   border-radius: 999px; background: rgba(244,250,247,.9); color: var(--nv-accent-deep); font: inherit; font-size: 10.5px; cursor: pointer; }
 .nv-tld-place:hover { border-color: var(--nv-accent); }
-.nv-tld-placepick { height: 24px; max-width: 120px; border: 1px solid var(--nv-divider); border-radius: 6px; background: #fff;
+.nv-tld-placepick { height: 24px; max-width: 120px; border: 1px solid var(--nv-divider); border-radius: 6px; background: var(--nv-surface);
   color: var(--nv-primary-text); font: inherit; font-size: 11px; padding: 0 4px; }
 .nv-tldiary-place { height: 22px; padding: 0 8px; border: 1px solid rgba(14,159,110,.25); border-radius: 999px;
   background: rgba(244,250,247,.9); color: var(--nv-accent-deep); font: inherit; font-size: 10.5px; cursor: pointer; }
@@ -2729,10 +2789,10 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
   font: inherit; font-size: 14px; font-weight: 500; color: var(--nv-primary-text); text-align: left; cursor: text; }
 .nv-prof-value:hover { background: #f4f5f4; }
 .nv-prof-input { flex: 1; min-width: 0; height: 28px; border: 1px solid var(--nv-accent); border-radius: 6px;
-  padding: 0 7px; font: inherit; font-size: 14px; color: var(--nv-primary-text); outline: none; background: #fff; }
+  padding: 0 7px; font: inherit; font-size: 14px; color: var(--nv-primary-text); outline: none; background: var(--nv-surface); }
 .nv-coll-chipname { border: 0; background: none; padding: 0; font: inherit; color: inherit; cursor: text; }
 .nv-coll-chip-edit { width: 7.5em; height: 26px; border: 1px solid var(--nv-accent); border-radius: 7px; padding: 0 8px;
-  background: #fff; color: var(--nv-primary-text); font: inherit; font-size: 12px; outline: none; }
+  background: var(--nv-surface); color: var(--nv-primary-text); font: inherit; font-size: 12px; outline: none; }
 .nv-coll-chipadd { width: 24px; height: 24px; border: 1px dashed #d8d6cd; border-radius: 999px; background: transparent;
   color: var(--nv-secondary-text); font: inherit; font-size: 13px; line-height: 1; cursor: pointer; }
 .nv-coll-chipadd:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); }
@@ -2741,7 +2801,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-prof-chips:hover { background: #f4f5f4; }
 .nv-prof-chipsadd { color: var(--nv-secondary-text); font-size: 14px; padding: 0 4px; }
 .nv-prof-chipinput { width: 100%; height: 34px; margin-top: 10px; border: 1px solid var(--nv-accent); border-radius: 8px;
-  padding: 0 10px; font: inherit; font-size: 13px; color: var(--nv-primary-text); outline: none; background: #fff; }
+  padding: 0 10px; font: inherit; font-size: 13px; color: var(--nv-primary-text); outline: none; background: var(--nv-surface); }
 .nv-prof-facts { display: flex; flex-wrap: wrap; gap: 9px 18px; padding: 2px 0 0; }
 .nv-prof-facts .nv-prof-field { display: inline-flex; align-items: baseline; gap: 6px; padding: 0; border: 0; font-size: 14px; }
 .nv-prof-facts .nv-prof-field > span { flex: none; font-size: 12px; }
@@ -2809,7 +2869,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-graphview-picksel:focus { border-color: var(--nv-accent); }
 .nv-personpick { position: relative; min-width: 0; }
 .nv-personpick-menu { position: fixed; z-index: 80; max-height: 190px; overflow: auto;
-  padding: 4px; border: 1px solid var(--nv-divider); border-radius: 8px; background: #fff; box-shadow: 0 10px 28px rgba(22,24,26,.14); }
+  padding: 4px; border: 1px solid var(--nv-divider); border-radius: 8px; background: var(--nv-surface); box-shadow: 0 10px 28px rgba(22,24,26,.14); }
 .nv-personpick-option { display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%;
   padding: 6px 8px; border: 0; border-radius: 6px; background: none; color: var(--nv-primary-text);
   font: inherit; font-size: 12px; text-align: left; cursor: pointer; }
@@ -2818,12 +2878,12 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-graphview-dir { flex: none; margin-left: -3px; color: var(--faint); font-size: 11px; }
 .nv-rel-arrowshape { fill: #cfd3ca; }
 .nv-graphview-input input, .nv-graphview-input textarea { width: 100%; box-sizing: border-box; border: 1px solid #dfe4df; border-radius: 7px;
-  padding: 7px 9px; font: inherit; font-size: 12px; color: var(--nv-primary-text); background: #fff; outline: none; resize: vertical; }
+  padding: 7px 9px; font: inherit; font-size: 12px; color: var(--nv-primary-text); background: var(--nv-surface); outline: none; resize: vertical; }
 .nv-graphview-input input:focus, .nv-graphview-input textarea:focus { border-color: var(--nv-accent); }
 .nv-graphview-input:last-of-type { grid-column: 1 / -1; }
 .nv-graphview-tip { grid-column: 1 / -1; margin: 0; font-size: 10.5px; line-height: 1.6; color: var(--faint); }
 .nv-graphview-done { grid-column: 1 / -1; align-self: end; justify-self: end; min-height: 30px; padding: 0 12px; border: 1px solid var(--nv-divider);
-  border-radius: 7px; background: #fff; color: var(--nv-primary-text); font: inherit; font-size: 11px; cursor: pointer; }
+  border-radius: 7px; background: var(--nv-surface); color: var(--nv-primary-text); font: inherit; font-size: 11px; cursor: pointer; }
 .nv-graphview-done:hover { border-color: var(--nv-accent); color: var(--nv-accent-deep); }
 .nv-graphview-canvas { position: relative; min-height: 390px; border: 1px solid var(--nv-divider); border-radius: 16px; overflow: hidden;
   background: radial-gradient(circle at 50% 48%, rgba(14,159,110,.06), transparent 34%), linear-gradient(#f7f6f0, #fbfaf6); }
@@ -2849,7 +2909,7 @@ button.nv-start-layout:hover { border-color: rgba(14,159,110,.34); background: v
 .nv-graphview-arrowshape { fill: #b9c0b6; }
 .nv-graphview-edge.is-hot { stroke: var(--nv-accent); stroke-width: 2.2; }
 .nv-graphview-label { position: absolute; pointer-events: none; transform: translate(-50%, -50%); padding: 2px 8px; border-radius: 999px;
-  border: 1px solid #e4e2da; background: #fff; color: var(--nv-secondary-text); font-size: 10.5px; }
+  border: 1px solid #e4e2da; background: var(--nv-surface); color: var(--nv-secondary-text); font-size: 10.5px; }
 .nv-graphview-label.is-hot { color: var(--nv-accent-deep); border-color: rgba(14,159,110,.4); }
 .nv-graphview-node { position: absolute; transform: translate(-50%, -50%); width: 78px; z-index: 2;
   display: flex; flex-direction: column; align-items: center; padding: 9px 7px 8px; border: 1px solid #e3e1d9;
@@ -2970,7 +3030,7 @@ table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 16px; }
 .nv-coll-cell:hover { background: #f6f7f6; }
 .nv-coll-cell.is-ph { color: var(--nv-secondary-text); }
 .nv-coll-cellinput { width: 100%; box-sizing: border-box; border: 1px solid var(--nv-accent); border-radius: 6px;
-  padding: 3px 6px; background: #fff; color: var(--nv-primary-text); font: inherit; outline: none; }
+  padding: 3px 6px; background: var(--nv-surface); color: var(--nv-primary-text); font: inherit; outline: none; }
 .nv-coll-cellarea { resize: vertical; min-height: 44px; }
 .nv-coll-nameline { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .nv-coll-cellname { font-weight: 500; }
@@ -2983,7 +3043,7 @@ table.nv-coll-table { width: 100%; border-collapse: collapse; font-size: 16px; }
 .nv-coll-draftrow td { padding: 10px 0; }
 .nv-coll-draft { display: flex; align-items: center; gap: 8px; }
 .nv-coll-draft input { flex: 1; min-width: 0; height: 36px; border: 1px solid var(--nv-accent); border-radius: 8px;
-  padding: 0 10px; font: inherit; font-size: 13px; color: var(--nv-primary-text); outline: none; background: #fff; }
+  padding: 0 10px; font: inherit; font-size: 13px; color: var(--nv-primary-text); outline: none; background: var(--nv-surface); }
 .nv-coll-draft button { height: 32px; padding: 0 11px; border: 1px solid var(--nv-divider); border-radius: 8px;
   background: var(--nv-surface); color: var(--nv-secondary-text); font: inherit; font-size: 12px; cursor: pointer; }
 .nv-coll-draft .nv-coll-draftsave { border-color: var(--nv-accent); background: var(--nv-accent); color: #fff; }
@@ -3372,7 +3432,7 @@ table.nv-coll-table { display: block; font-size: 14px; }
 .nv-geo-banner-info b { overflow: hidden; color: var(--nv-primary-text); font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
 .nv-geo-banner-info small { color: var(--nv-secondary-text); font-size: 10.5px; }
 .nv-geo-banner-open { position: relative; flex: none; height: 28px; padding: 0 10px; border: 1px solid rgba(14,159,110,.22); border-radius: 999px; background: rgba(255,255,255,.68); color: var(--nv-accent-deep); font: inherit; font-size: 11px; cursor: pointer; }
-.nv-geo-banner-open:hover { background: #fff; border-color: var(--nv-accent); }
+.nv-geo-banner-open:hover { background: var(--nv-surface); border-color: var(--nv-accent); }
 .nv-atlas-grid .nv-read-add { aspect-ratio: 16 / 9; min-height: 0; }
 .nv-heraldry-grid .nv-read-add { aspect-ratio: 1 / 1; min-height: 0; }
 .nv-bestiary-grid .nv-read-add { aspect-ratio: 3 / 4; min-height: 0; }
@@ -3701,11 +3761,39 @@ table.nv-coll-table { display: block; font-size: 14px; }
 [data-work][data-canvas-fullscreen] { grid-template-columns: minmax(0px, 1fr) !important; }
 [data-canvas-fullscreen] [data-sidebar-right-panel] { display: none !important; }
 [data-canvas-fullscreen] [data-sidebar-right-canvas-host] { left: 0 !important; right: 0 !important; }
-/* 页签条上的画布全屏钮。 */
-.nv-canvas-fullscreentoggle { margin-left: auto; border: 0; background: none; padding: 4px 7px; color: var(--nv-secondary-text);
-  cursor: pointer; border-radius: 6px; display: inline-flex; align-items: center; }
+/* 窗口级全屏保留原 DOM；浮层菜单和对话框仍在更高的 portal 层。 */
+.nv-canvas[data-canvas-fullscreen] { position: fixed; inset: 0; z-index: 900; width: auto; height: auto; background: var(--nv-surface); }
+/* 页签条上的画布全屏钮：内容自己的视图动作，留在 leading 组。 */
+.nv-canvas-fullscreentoggle { border: 0; background: none; padding: 0; width: 28px; height: 28px; color: var(--nv-secondary-text);
+  cursor: pointer; border-radius: 7px; display: inline-flex; align-items: center; justify-content: center; flex: none; }
 .nv-canvas-fullscreentoggle:hover { color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
 .nv-canvas-fullscreentoggle[data-active] { color: var(--nv-accent-deep); }
+
+/* 侧边上级入口与折叠同一规格；位置和间距由框架的 trailing 行持有。 */
+.nv-side-parent {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nv-secondary-text);
+  background: none;
+}
+.nv-side-parent:hover { background: var(--nv-hover); color: var(--nv-primary-text); }
+
+/* 空白会话就是创作入口：恢复创作页的薄荷光晕，普通会话保持素底。 */
+html[data-noven-subject='conversation'] [data-center-col] [data-phase='hero'] {
+  background: radial-gradient(circle at 50% 30%, rgba(52, 211, 153, .12), transparent 42%), var(--nv-surface);
+}
+html[data-noven-conversation-appearance] [data-center-col] [data-phase='hero'] {
+  background-color: transparent;
+  background-image: var(--noven-conversation-background-image, none);
+  background-position: var(--noven-conversation-background-position, center);
+  background-size: cover;
+}
 
 /* 空白会话 hero：原生鱼标槽位改渲染创作页同一套 hero；旧品牌、标语和
    引导 dock 不再出现。headline 原本是鱼标 + 标题的横排，这里改成整块。 */
@@ -3814,7 +3902,7 @@ table.nv-coll-table { display: block; font-size: 14px; }
   font-size: 16px; line-height: 1; cursor: pointer; backdrop-filter: blur(8px);
 }
 .nv-me-more summary::-webkit-details-marker, .nv-me-libmore summary::-webkit-details-marker { display: none; }
-.nv-me-more[open] summary, .nv-me-libmore[open] summary { background: var(--nv-primary-text); }
+.nv-me-more[open] summary, .nv-me-libmore[open] summary { background: var(--nv-inverse-surface); color: var(--nv-inverse-text); }
 .nv-me-menu {
   position: absolute; right: 0; top: calc(100% + 6px); z-index: 30; min-width: 160px;
   padding: 5px; border-radius: 12px; background: var(--nv-surface);
@@ -4478,11 +4566,206 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
 .nv-upd-base button { border: 1px solid var(--nv-accent); border-radius: 8px; padding: 0 12px; background: var(--nv-surface);
   color: var(--nv-accent-deep); font: inherit; font-size: 12.5px; cursor: pointer; }
 
+/* 外观设置沿用通用设置的 14/12px 字阶、16px 行距、细分隔线和轻选择器。 */
+.nv-appearance { display: flex; flex-direction: column; width: 100%; max-width: 720px; color: var(--dsw-alias-label-primary); }
+.nv-ap-row { display: flex; align-items: center; gap: 24px; padding: 16px 0; border-bottom: .5px solid var(--dsw-alias-border-l2); }
+.nv-ap-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding-right: 24px; }
+.nv-ap-title { overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 400; line-height: 22px; color: var(--dsw-alias-label-primary); }
+.nv-ap-description { font-size: 12px; font-weight: 400; line-height: 18px; color: var(--dsw-alias-label-tertiary); }
+.nv-ap-control { flex: none; display: flex; align-items: center; justify-content: flex-end; max-width: 62%; }
+.nv-ap-head .nv-ap-title { white-space: nowrap; }
+.nv-ap-preview-row { padding: 0 0 16px; border-bottom: .5px solid var(--dsw-alias-border-l2); }
+.nv-ap-scope-controls, .nv-ap-background-control, .nv-ap-avatar-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 12px; }
+.nv-ap-select { min-width: 128px; max-width: 220px; height: 36px; padding: 0 12px; border: 0; border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; }
+.nv-ap-select:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.nv-ap-quiet { border: 0; padding: 0; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; }
+.nv-ap-quiet:hover { color: var(--nv-accent-deep); }
+.nv-ap-range-control { display: flex; align-items: center; gap: 12px; width: 240px; }
+.nv-ap-range-control output { width: 42px; flex: none; text-align: right; color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 22px; font-variant-numeric: tabular-nums; }
+.nv-ap-input { width: 240px; min-width: 0; height: 36px; padding: 0 12px; border: 0; border-radius: var(--dsw-radius-md);
+  background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; }
+.nv-ap-input::placeholder { color: var(--dsw-alias-label-caption); }
+.nv-ap-inline-actions { display: flex; gap: 12px; }
+.nv-ap-preset-list { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 0 0 16px; border-bottom: .5px solid var(--dsw-alias-border-l2); }
+.nv-ap-preset-list:empty { display: none; }
+.nv-ap-preset-list button { border: 0; padding: 0; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; }
+.nv-ap-preset-list button[aria-pressed='true'] { color: var(--nv-select); }
+.nv-ap-error { margin: 0; padding: 16px 0; color: var(--nv-danger); font-size: 12px; line-height: 18px; }
+
+/* 光缝：轨道只有一条细线，值的位置由短光晕表达，不画圆形滑块。 */
+.nv-ap-light-range { width: 100%; height: 30px; margin: 0; appearance: none; -webkit-appearance: none; background: transparent; accent-color: var(--nv-accent); cursor: pointer; }
+.nv-ap-light-range::-webkit-slider-runnable-track { height: 1px; background: linear-gradient(90deg, transparent, var(--nv-divider) 12%, var(--nv-divider) 88%, transparent); }
+.nv-ap-light-range::-webkit-slider-thumb { width: 34px; height: 34px; margin-top: -16.5px; appearance: none; -webkit-appearance: none; border: 0; border-radius: 0;
+  background: radial-gradient(ellipse at center, #f4fff9 0, var(--nv-accent) 2px, color-mix(in srgb, var(--nv-accent) 48%, transparent) 4px, color-mix(in srgb, var(--nv-accent) 12%, transparent) 9px, transparent 68%); }
+.nv-ap-light-range::-moz-range-track { height: 1px; background: linear-gradient(90deg, transparent, var(--nv-divider) 12%, var(--nv-divider) 88%, transparent); }
+.nv-ap-light-range::-moz-range-thumb { width: 34px; height: 34px; border: 0; border-radius: 0;
+  background: radial-gradient(ellipse at center, #f4fff9 0, var(--nv-accent) 2px, color-mix(in srgb, var(--nv-accent) 48%, transparent) 4px, color-mix(in srgb, var(--nv-accent) 12%, transparent) 9px, transparent 68%); }
+
+/* 当前效果：预览是辅助媒体，背景和模糊仍只作用于伪层。 */
+.nv-ap-preview { position: relative; isolation: isolate; min-height: 184px; overflow: hidden; border-radius: 10px;
+  background: var(--nv-canvas); color: var(--nv-primary-text); }
+.nv-ap-preview::before { content: ''; position: absolute; z-index: -1; inset: calc(-1 * var(--nv-ap-blur));
+  background-image: var(--nv-ap-image); background-position: var(--nv-ap-focus); background-size: cover; filter: blur(var(--nv-ap-blur)); }
+.nv-ap-preview-top { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px 4px; font-size: 12px; font-weight: 500; }
+.nv-ap-preview-body { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; padding: 8px 14px 12px; }
+.nv-ap-preview-nav { display: flex; flex-direction: column; gap: 6px; color: var(--nv-secondary-text); font-size: 11px; }
+.nv-ap-preview-nav span:first-child { color: var(--nv-select); }
+.nv-ap-preview-main { min-width: 0; }
+.nv-ap-preview-card, .nv-ap-preview-input { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; padding: 7px 10px; border-radius: 8px;
+  background: rgb(255 255 255 / var(--nv-ap-alpha)); box-shadow: 0 4px 14px rgb(0 0 0 / .08); backdrop-filter: blur(14px); }
+.nv-ap-preview[data-view='dark'] .nv-ap-preview-card, .nv-ap-preview[data-view='dark'] .nv-ap-preview-input { background: rgb(12 18 15 / var(--nv-ap-alpha)); }
+.nv-ap-preview-card strong { font-size: 12px; font-weight: 500; }
+.nv-ap-preview-card span, .nv-ap-preview-input { color: var(--nv-secondary-text); font-size: 11px; line-height: 16px; }
+.nv-ap-preview-input { flex-direction: row; align-items: center; justify-content: space-between; margin: 8px 0 0; }
+.nv-ap-preview-input b { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--nv-accent); color: #10251c; font-weight: 400; }
+@media (max-width: 560px) {
+  .nv-ap-row { align-items: flex-start; flex-direction: column; gap: 10px; }
+  .nv-ap-row-text { padding-right: 0; }
+  .nv-ap-control { justify-content: flex-start; max-width: none; width: 100%; }
+  .nv-ap-scope-controls, .nv-ap-background-control, .nv-ap-avatar-controls { justify-content: flex-start; }
+  .nv-ap-select { max-width: 100%; }
+  .nv-ap-range-control, .nv-ap-input { width: 100%; }
+  .nv-ap-preview-body { grid-template-columns: 48px minmax(0, 1fr); }
+}
+
+
+/* 外观：背景只替换容器底色，不再附加纸面；模糊只作用于背景层。 */
+.nv-canvas:has(.nv-leaf[data-noven-canvas-background]),
+[data-sidebar-right-canvas-host]:has(.nv-leaf[data-noven-canvas-background]),
+[data-sidebar-right-canvas]:has(.nv-leaf[data-noven-canvas-background]) { background: transparent; }
+.nv-leaf { box-sizing: border-box; border: .5px solid var(--nv-divider); border-radius: 14px; background: var(--nv-surface); }
+[data-conversation-root] { box-sizing: border-box; overflow: hidden; border: .5px solid var(--nv-divider); border-radius: 14px; }
+.nv-leaf[data-noven-canvas-background] { overflow: hidden; border-radius: 14px; }
+.nv-leaf[data-noven-canvas-background] { --bn-colors-editor-background: transparent; }
+.nv-leaf[data-noven-canvas-background] .nv-canvas-body,
+.nv-leaf[data-noven-canvas-background] .nv-canvas-cardbody,
+.nv-leaf[data-noven-canvas-background] .nv-doc-bn { background-color: transparent; }
+.nv-leaf[data-noven-canvas-background] .nv-doc-bn .bn-editor { background-color: transparent !important; }
+.nv-leaf[data-noven-canvas-blur] { position: relative; isolation: isolate; }
+.nv-leaf[data-noven-canvas-blur]::before {
+  content: ''; position: absolute; z-index: -1; inset: calc(-1 * var(--noven-canvas-background-blur, 0px));
+  pointer-events: none; background-image: var(--noven-canvas-background-layer);
+  background-position: var(--noven-canvas-background-position, center); background-size: cover;
+  filter: blur(var(--noven-canvas-background-blur));
+}
+
+/* 外观作用域：只换 token，不重写控件。选中态继续走唯一的 --nv-select 规则。 */
+html[data-noven-shell-skin] [data-product-frame] {
+  --nv-surface: var(--noven-shell-skin-surface);
+  --nv-pane: var(--noven-shell-skin-pane);
+  --nv-canvas: var(--noven-shell-skin-canvas);
+  --dsw-alias-bg-layer-1: var(--noven-shell-skin-bgLayer1);
+  --dsw-alias-bg-layer-2: var(--noven-shell-skin-bgLayer2);
+  --dsw-alias-button-floating-fill: var(--noven-shell-skin-floating);
+  --dsw-alias-markdown-code-block: var(--noven-shell-skin-codeBlock);
+  --dsl-code-block-background: var(--noven-shell-skin-codeBlockAlt);
+}
+html[data-noven-conversation-skin] [data-conversation-root] {
+  --nv-surface: var(--noven-conversation-skin-surface);
+  --nv-pane: var(--noven-conversation-skin-pane);
+  --nv-canvas: var(--noven-conversation-skin-canvas);
+  --dsw-alias-bg-layer-1: var(--noven-conversation-skin-bgLayer1);
+  --dsw-alias-bg-layer-2: var(--noven-conversation-skin-bgLayer2);
+  --dsw-alias-button-floating-fill: var(--noven-conversation-skin-floating);
+  --dsw-alias-markdown-code-block: var(--noven-conversation-skin-codeBlock);
+  --dsl-code-block-background: var(--noven-conversation-skin-codeBlockAlt);
+}
+html[data-noven-shell-skin] [data-product-frame] [data-center-col],
+html[data-noven-shell-skin] [data-product-frame] [data-rightbar-col],
+html[data-noven-shell-skin] [data-product-frame] [data-sidebar-right-canvas-host] {
+  background: transparent;
+  border-color: transparent;
+}
+html[data-noven-shell-foreground] [data-product-frame] {
+  --nv-hover: var(--noven-shell-skin-hover);
+  --nv-divider: var(--noven-shell-skin-divider);
+  --nv-primary-text: var(--noven-shell-skin-primary);
+  --nv-secondary-text: var(--noven-shell-skin-secondary);
+  --nv-select: var(--noven-shell-skin-select);
+  --nv-accent: var(--noven-shell-skin-accent);
+  --nv-accent-deep: var(--noven-shell-skin-accentDeep);
+  --nv-accent-soft: var(--noven-shell-skin-accentSoft);
+  --dsw-alias-label-primary: var(--noven-shell-skin-labelPrimary);
+  --dsw-alias-label-secondary: var(--noven-shell-skin-labelSecondary);
+  --dsw-alias-label-caption: var(--noven-shell-skin-labelCaption);
+  --dsw-alias-label-tertiary: var(--noven-shell-skin-labelTertiary);
+  --dsw-alias-menu-icon: var(--noven-shell-skin-menuIcon);
+  --dsw-alias-interactive-bg-hover: var(--noven-shell-skin-interactiveHover);
+  --dsw-alias-border-l3: var(--noven-shell-skin-border);
+  --dsw-focus-ring-color: var(--noven-shell-skin-focus);
+  --dsw-alias-state-business-primary: var(--noven-shell-skin-business);
+}
+html[data-noven-conversation-foreground] [data-conversation-root] {
+  --nv-hover: var(--noven-conversation-skin-hover);
+  --nv-divider: var(--noven-conversation-skin-divider);
+  --nv-primary-text: var(--noven-conversation-skin-primary);
+  --nv-secondary-text: var(--noven-conversation-skin-secondary);
+  --nv-select: var(--noven-conversation-skin-select);
+  --nv-accent: var(--noven-conversation-skin-accent);
+  --nv-accent-deep: var(--noven-conversation-skin-accentDeep);
+  --nv-accent-soft: var(--noven-conversation-skin-accentSoft);
+  --dsw-alias-label-primary: var(--noven-conversation-skin-labelPrimary);
+  --dsw-alias-label-secondary: var(--noven-conversation-skin-labelSecondary);
+  --dsw-alias-label-caption: var(--noven-conversation-skin-labelCaption);
+  --dsw-alias-label-tertiary: var(--noven-conversation-skin-labelTertiary);
+  --dsw-alias-menu-icon: var(--noven-conversation-skin-menuIcon);
+  --dsw-alias-interactive-bg-hover: var(--noven-conversation-skin-interactiveHover);
+  --dsw-alias-border-l3: var(--noven-conversation-skin-border);
+  --dsw-focus-ring-color: var(--noven-conversation-skin-focus);
+  --dsw-alias-state-business-primary: var(--noven-conversation-skin-business);
+}
+
+/* 外壳导航与顶栏共享连续背景；只有真实内容表面承担一次护化。 */
+html[data-noven-shell-skin] [data-product-frame] [data-sidebar-col] {
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+html[data-noven-shell-skin] [data-product-frame] [data-shell-topbar] {
+  background: transparent;
+  border-bottom-color: transparent;
+}
+html[data-noven-conversation-skin='frosted'] [data-conversation-root] [data-conversation-scroll] {
+  border-radius: 18px;
+  background: var(--noven-conversation-skin-island);
+  box-shadow: var(--noven-conversation-skin-islandShadow);
+  backdrop-filter: blur(20px) saturate(1.15);
+}
+html[data-noven-conversation-skin='frosted'] [data-conversation-root] [data-composer-card] {
+  background: var(--noven-conversation-skin-island);
+  box-shadow: var(--noven-conversation-skin-islandShadow);
+  backdrop-filter: blur(20px) saturate(1.15);
+}
+.nv-leaf[data-noven-canvas-skin='frosted'] .nv-desk-tile,
+.nv-leaf[data-noven-canvas-skin='frosted'] .nv-ed-main,
+.nv-leaf[data-noven-canvas-skin='frosted'] .nv-cardpage,
+.nv-leaf[data-noven-canvas-skin='frosted'] .nv-canvas-library,
+.nv-leaf[data-noven-canvas-skin='frosted'] .nv-code-root {
+  border-radius: 16px;
+  background: var(--noven-skin-island);
+  box-shadow: var(--noven-skin-island-shadow);
+  backdrop-filter: blur(20px) saturate(1.15);
+}
+.nv-leaf[data-noven-canvas-skin='frosted'] .nv-code-root { box-sizing: border-box; padding: 12px; }
+
+/* AI 头像只在配置后出现；默认不增加消息列宽或占位。 */
+html[data-noven-assistant-avatar] [data-noven-assistant-answer] { position: relative; padding-left: 38px; }
+html[data-noven-assistant-avatar] [data-noven-assistant-answer]::before {
+  content: ''; position: absolute; left: 0; top: 2px; width: 28px; height: 28px; border-radius: 50%;
+  background: var(--noven-assistant-avatar-image) center / cover no-repeat, var(--nv-surface);
+  box-shadow: 0 0 0 1px var(--nv-divider);
+}
+
 `
 
 /** Inject the Noven stylesheet once per document. */
 export function injectNovenStyles(): void {
   if (typeof document === 'undefined') return
+  if (document.documentElement.dataset.platform === undefined) {
+    document.documentElement.dataset.chromePlatform = 'darwin'
+  }
+  document.documentElement.dataset.novenShell = 'true'
   const el = document.getElementById('noven-shell-css') ?? document.head.appendChild(
     Object.assign(document.createElement('style'), { id: 'noven-shell-css' }),
   )

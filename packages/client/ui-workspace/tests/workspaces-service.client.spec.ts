@@ -302,8 +302,8 @@ function bench(options: BenchOptions = {}) {
     selectPanel: vi.fn(), retainMainPanels: vi.fn(),
     setSidebar: vi.fn(), toggleSidebar: vi.fn(), setSidebarCollapsed: vi.fn(), setViewportWidth: vi.fn(),
     setRightbar: vi.fn(), settleRightbar: vi.fn(),
-    setUnit: vi.fn(), openRightbar: vi.fn(), closeRightbar: vi.fn(),
-    setUnitSide: vi.fn(), enterSession: vi.fn(),
+    setUnit: vi.fn(), setAuxiliary: vi.fn(), openRightbar: vi.fn(), closeRightbar: vi.fn(),
+    setUnitSide: vi.fn(), setCenterCollapsed: vi.fn(), setAuxiliaryCollapsed: vi.fn(), enterSession: vi.fn(),
     seedSessionGeometry: vi.fn(), seedUnitShare: vi.fn(), setCanvasFullscreen: vi.fn(),
   }, () => true, createSnapshotStore({ activePanelId: null }), createSnapshotStore({
     sidebarCollapsed: false, narrowExpanded: false, unitSide: 'right', rightbarCollapsed: false, byId: {}, active: null,
@@ -440,11 +440,131 @@ describe('UiWorkspaceService', () => {
     expect(b.sessions.refreshProjections).not.toHaveBeenCalled()
   })
 
+  it('publishes temporary Session navigation and dismisses it on every explicit open path', async () => {
+    const b = bench()
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(false)
+    b.uiWorkspace.showSessionBrowser()
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(true)
+    b.uiWorkspace.hideSessionBrowser()
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(false)
+
+    b.uiWorkspace.showSessionBrowser()
+    b.uiWorkspace.openSession(sid('target'))
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(false)
+
+    b.uiWorkspace.showSessionBrowser()
+    b.uiWorkspace.startSession()
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(false)
+
+    b.uiWorkspace.showSessionBrowser()
+    await b.uiWorkspace.openWorkspace(wid('missing')).catch(() => undefined)
+    expect(b.uiWorkspace.sessionBrowser.getSnapshot()).toBe(false)
+  })
+
   it('retains the target without dismissing the active panel when the panel is preserved', () => {
     const b = bench()
     b.uiWorkspace.openSession(sid('target'), { panel: 'preserve' })
     expect(b.selectPanel).not.toHaveBeenCalled()
     expect(b.sessions.retain).toHaveBeenCalledWith(sid('target'), { source: 'mainView' })
+  })
+
+  it('switches to the most recent ordinary Workspace Session without creating a blank or dismissing the panel', async () => {
+    const b = bench({
+      workspaces: workspaceState([
+        workspace('a', [sid('older'), sid('recent'), sid('blank'), sid('archived'), sid('child'), sid('wrong-cwd')]),
+      ], [sid('archived')]),
+      sessions: sessionState([
+        summary('older', { cwd: '/w/a', updatedAt: 10 }),
+        summary('recent', { cwd: '/w/a', updatedAt: 20 }),
+        summary('blank', { cwd: '/w/a', blank: true, updatedAt: 100 }),
+        summary('archived', { cwd: '/w/a', updatedAt: 90 }),
+        summary('child', { cwd: '/w/a', origin: 'subagent', updatedAt: 80 }),
+        summary('wrong-cwd', { cwd: '/w/other', updatedAt: 70 }),
+        summary('stray', { cwd: '/w/a', updatedAt: 60 }),
+      ], 'pending'),
+    })
+    const panel = 'other-panel' as MainPanelId
+    const openSurface = vi.fn()
+    b.layout.selectPanel(panel)
+    b.uiWorkspace.registerNewSessionSurface(openSurface)
+
+    await b.uiWorkspace.switchWorkspace(wid('a'))
+
+    expect(b.sessions.retain).toHaveBeenCalledExactlyOnceWith(sid('recent'), { source: 'mainView' })
+    expect(b.sessions.create).not.toHaveBeenCalled()
+    expect(b.selectPanel.mock.calls).toEqual([[panel]])
+    expect(openSurface).not.toHaveBeenCalled()
+  })
+
+  it('remembers each Workspace selection through the ordinary openSession chain', async () => {
+    const b = bench({
+      workspaces: workspaceState([
+        workspace('a', [sid('latest-a'), sid('chosen-a')]),
+        workspace('b', [sid('current-b')]),
+      ]),
+      sessions: sessionState([
+        summary('latest-a', { cwd: '/w/a', updatedAt: 100 }),
+        summary('chosen-a', { cwd: '/w/a', updatedAt: 1 }),
+        summary('current-b', { cwd: '/w/b', updatedAt: 50 }),
+      ], 'pending'),
+    })
+    b.uiWorkspace.openSession(sid('chosen-a'))
+    b.uiWorkspace.openSession(sid('current-b'))
+    b.sessions.retain.mockClear()
+
+    await b.uiWorkspace.switchWorkspace(wid('a'))
+
+    expect(b.sessions.retain).toHaveBeenCalledExactlyOnceWith(sid('chosen-a'), { source: 'mainView' })
+    expect(b.sessions.create).not.toHaveBeenCalled()
+  })
+
+  it('uses the existing blank flow for a Workspace without ordinary Sessions while keeping the panel', async () => {
+    const b = bench({
+      workspaces: workspaceState([workspace('a', [sid('blank')])]),
+      sessions: sessionState([summary('blank', { cwd: '/w/a', blank: true })], 'pending'),
+    })
+    const panel = 'other-panel' as MainPanelId
+    const openSurface = vi.fn()
+    b.layout.selectPanel(panel)
+    b.uiWorkspace.registerNewSessionSurface(openSurface)
+
+    await b.uiWorkspace.switchWorkspace(wid('a'))
+
+    expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({ workspaceId: wid('a'), sessionId: sid('blank') })
+    expect(b.sessions.retain).toHaveBeenCalledExactlyOnceWith(sid('blank'), { source: 'mainView' })
+    expect(b.selectPanel.mock.calls).toEqual([[panel]])
+    expect(openSurface).not.toHaveBeenCalled()
+  })
+
+  it('supersedes rapid Workspace switches and coalesces blank creation', async () => {
+    const b = bench({
+      workspaces: workspaceState([workspace('a'), workspace('b', [sid('current-b')])]),
+      sessions: sessionState([summary('current-b', { cwd: '/w/b' })], 'pending'),
+    })
+    const created = Promise.withResolvers<SessionId>()
+    b.sessions.create.mockReturnValue(created.promise)
+
+    const first = b.uiWorkspace.switchWorkspace(wid('a'))
+    const middle = b.uiWorkspace.switchWorkspace(wid('b'))
+    const last = b.uiWorkspace.switchWorkspace(wid('a'))
+
+    expect(b.sessions.create).toHaveBeenCalledExactlyOnceWith({ workspaceId: wid('a') })
+    created.resolve(sid('created-a'))
+    await Promise.all([first, middle, last])
+    expect(b.sessions.retain.mock.calls.map(([target]) => target)).toEqual([sid('current-b'), sid('created-a')])
+  })
+
+  it('does not reopen a switched blank after later preserved Session navigation', async () => {
+    const b = bench({ workspaces: workspaceState([workspace('a')]), sessions: sessionState([], 'pending') })
+    const created = Promise.withResolvers<SessionId>()
+    b.sessions.create.mockReturnValueOnce(created.promise)
+
+    const opening = b.uiWorkspace.switchWorkspace(wid('a'))
+    b.uiWorkspace.openSession(sid('chosen'), { panel: 'preserve' })
+    created.resolve(sid('late'))
+    await opening
+
+    expect(b.sessions.retain.mock.calls.map(([target]) => target)).toEqual([sid('chosen')])
   })
 
   it('routes the New Session action to a registered surface and restores the default after disposal', () => {

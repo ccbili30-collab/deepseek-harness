@@ -23,6 +23,9 @@ interface SavedRecord {
   sidebar?: number | undefined
   rightbar?: number | null | undefined
   unit?: number | null | undefined
+  auxiliary?: number | null | undefined
+  centerCollapsed?: boolean | undefined
+  auxiliaryCollapsed?: boolean | undefined
   bySession?: Record<string, SavedGeometry> | undefined
 }
 
@@ -39,6 +42,8 @@ export interface PersistedLayout {
   sidebar: number
   rightbar: number | null
   unit: number | null
+  auxiliary: number | null
+  auxiliaryCollapsed: boolean
   byId: Record<string, SessionGeometryRecord>
 }
 
@@ -49,8 +54,10 @@ function toRecord(value: unknown): SavedRecord | undefined {
   if (typeof value !== 'object' || value === null) return undefined
   const raw = value as Record<string, unknown>
   const number = (field: 'sidebar'): number | undefined => typeof raw[field] === 'number' ? raw[field] : undefined
-  const nullable = (field: 'rightbar' | 'unit'): number | null | undefined =>
+  const nullable = (field: 'rightbar' | 'unit' | 'auxiliary'): number | null | undefined =>
     typeof raw[field] === 'number' ? raw[field] : raw[field] === null ? null : undefined
+  const bool = (field: 'centerCollapsed' | 'auxiliaryCollapsed'): boolean | undefined =>
+    typeof raw[field] === 'boolean' ? raw[field] : undefined
   const side = (value: unknown): UnitSide | undefined =>
     value === 'left' || value === 'right' ? value : undefined
   const sessions = raw['bySession']
@@ -67,7 +74,11 @@ function toRecord(value: unknown): SavedRecord | undefined {
       } satisfies SavedGeometry]] as [string, SavedGeometry][]
     }))
     : undefined
-  return { sidebar: number('sidebar'), rightbar: nullable('rightbar'), unit: nullable('unit'), bySession }
+  return {
+    sidebar: number('sidebar'), rightbar: nullable('rightbar'), unit: nullable('unit'),
+    auxiliary: nullable('auxiliary'), centerCollapsed: bool('centerCollapsed'),
+    auxiliaryCollapsed: bool('auxiliaryCollapsed'), bySession,
+  }
 }
 
 /**
@@ -91,6 +102,14 @@ export function readLayoutInfo(): PersistedLayout | undefined {
       sidebar: saved.sidebar === 0 || saved.sidebar === undefined ? SIDEBAR_DEFAULT : saved.sidebar,
       rightbar: saved.rightbar ?? null,
       unit: saved.unit ?? null,
+      // The old unit was the rightbar host (drawer + auxiliary Canvas). Migrate
+      // its content width once; an explicit new null remains a deliberate default.
+      auxiliary: saved.auxiliary === undefined
+        ? saved.unit === undefined || saved.unit === null ? null : Math.max(0, saved.unit - (saved.rightbar ?? 0))
+        : saved.auxiliary,
+      // The previous Canvas fold wins when both legacy fields exist. The old
+      // Conversation-only value is a fallback, never a second synchronized fact.
+      auxiliaryCollapsed: saved.auxiliaryCollapsed ?? saved.centerCollapsed ?? true,
       byId: Object.fromEntries(Object.entries(saved.bySession ?? {}).map(([id, record]) => [id, {
         sidebarCollapsed: record.sidebarCollapsed ?? false,
         narrowExpanded: record.narrowExpanded ?? false,
@@ -118,6 +137,8 @@ export function writeLayoutInfo(info: LayoutInfo, byId: Record<string, SessionGe
       sidebar: info.sidebar,
       rightbar: info.rightbar,
       unit: info.unit,
+      auxiliary: info.auxiliary,
+      auxiliaryCollapsed: info.auxiliaryCollapsed,
       bySession: Object.fromEntries(kept.map(([id, record]) => [id, {
         sidebarCollapsed: record.sidebarCollapsed,
         narrowExpanded: record.narrowExpanded,

@@ -105,6 +105,7 @@ beforeEach(() => {
 
 afterEach(() => {
   delete document.documentElement.dataset.platform
+  delete document.documentElement.dataset.chromePlatform
   document.body.innerHTML = ''
   vi.unstubAllGlobals()
 })
@@ -118,6 +119,22 @@ describe('window drag watcher installation', () => {
     })
     const element = row()
     place(element, [0, 10, 100, 52])
+    element.setAttribute('class', 'moved')
+    await flushMutations()
+    seams.runFrames()
+    expect(marked()).toBe(false)
+    expect(seams.watched()).toEqual([])
+    stop()
+  })
+
+  it('does not install the native watcher for a presentation-only macOS mirror', async () => {
+    delete document.documentElement.dataset.platform
+    document.documentElement.dataset.chromePlatform = 'darwin'
+    const seams = harness()
+    const stop = installWindowDragRecall({
+      document, scheduleFrame: seams.scheduleFrame, watchBox: seams.watchBox,
+    })
+    const element = row()
     element.setAttribute('class', 'moved')
     await flushMutations()
     seams.runFrames()

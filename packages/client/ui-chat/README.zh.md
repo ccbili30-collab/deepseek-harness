@@ -22,6 +22,7 @@ kind: "package-reference"
 - [轮次过程折叠](#turn-process-folding)
 - [分组渲染](#grouped-rendering)
 - [滚动归属](#scroll-ownership)
+- [内联块](#inline-blocks)
 - [模型体验](#model-experience)
 - [已知限制与暂缓事项](#known-limitations-and-deferred-work)
 - [开发备注](#dev-note)
@@ -139,6 +140,11 @@ Chat 会在历史前插与 renderer 重新挂载时恢复语义锚点，并且�
 </details>
 
 -----
+
+<a id="inline-blocks"></a>
+## 内联块
+
+assistant 正文可以携带封闭的 `::view{...}` 块，内容字段二选一：`src` 指向已有对象，`data` 携带属于消息的组件 JSON。引用类型预留声明比例，数据类型使用自然高度。分段按源偏移取键，流式追加不会重建已挂载块；焦点与 Esc 负责激活，不保存激活块状态。可订阅的注册表版本会在注册或注销后刷新已显示内容；来源解析失败显示受控提示，不进入类型渲染器。数据渲染器收到稳定的 Turn/step/文本块/偏移身份、工作区媒体解析和可选的当前会话提交回调。结构化选择在现有草稿里追加或替换 chip，发送时序列化成普通文字，不另建选择存储或模型状态通道。参见[内联块](../../../docs/subsystems/inline-blocks.zh.md)。
 
 <a id="model-experience"></a>
 ## 模型体验

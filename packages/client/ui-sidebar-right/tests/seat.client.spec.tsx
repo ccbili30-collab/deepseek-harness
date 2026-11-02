@@ -8,7 +8,7 @@ import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
 import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import type { ShortcutCatalogEntry, ShortcutCommandId } from '@deepseek-ai/dsh-client-shortcuts/client'
 import type { PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
-import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
+import type { FrameFoldState, FrameLayoutPolicy, MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type { PaneId, SplitId, TabId } from '@deepseek-ai/dsh-client-ui-dockkit'
 import { findTabPane, getPane } from '@deepseek-ai/dsh-client-ui-dockkit'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -71,10 +71,10 @@ function transition(property = 'transform') {
 async function mountSeat(viewportWidth = 1440, canShow = true, entryCount = 0, opener = false, keepMounted = false) {
   const runtime = await SlotTestRuntime.create()
   runtimes.push(runtime)
-  // The frame face carries no claim seam here: claims are read straight off
-  // the controller, the way AppFrame reads them off its provided source.
+  // The frame face supplies the claim seam; behavior still reads the controller's source.
   const frame = {
-    openRightbar: vi.fn(), closeRightbar: vi.fn(), toggleSidebar: vi.fn(),
+    openRightbar: vi.fn(), closeRightbar: vi.fn(), toggleSidebar: vi.fn(), setAuxiliaryCollapsed: vi.fn(),
+    canvasClaims: { provide: () => () => {}, claim: () => null, subscribe: () => () => {} },
   }
   const pin = vi.fn<(address: string, signal: AbortSignal) => void>()
   runtime.ctx.provide('layout', frame as never)
@@ -84,6 +84,9 @@ async function mountSeat(viewportWidth = 1440, canShow = true, entryCount = 0, o
   const catalog = createSnapshotStore<readonly ShortcutCatalogEntry[]>([])
   runtime.ctx.provide('shortcuts', { register: () => () => {}, catalog } as never)
   runtime.slots.installLocale(locale)
+  const policy = createSnapshotStore<FrameLayoutPolicy | null>(null)
+  const fold = createSnapshotStore<FrameFoldState>({ centerCollapsed: false, auxiliaryCollapsed: true })
+  runtime.slots.provideRoot({ hooks: { frameLayoutPolicy: policy, frameFoldState: fold } })
   await runtime.declare({
     'sidebar-right.test.opener': { kind: 'single', scope: 'session' },
     'rightbar': { kind: 'single', scope: 'root' },
@@ -165,7 +168,7 @@ async function mountSeat(viewportWidth = 1440, canShow = true, entryCount = 0, o
   }
   return {
     runtime, feature, controller, instance, actions: instance.actions, layout,
-    open, selectSession, frame, pin, bodies, titles, hooks, view, arm, opened, registerPage, catalog,
+    open, selectSession, frame, pin, bodies, titles, hooks, view, arm, opened, registerPage, catalog, policy, fold,
   }
 }
 
@@ -337,6 +340,27 @@ describe('RightbarSeat presentation', () => {
     expect(seen.at(-1)).toBe('text')
   })
 
+  it('keeps the canvas page open when an overlay owns Escape', async () => {
+    const h = await mountSeat()
+    const floating = h.open('floating.txt')
+    const menu = document.createElement('div')
+    menu.setAttribute('role', 'menu')
+    document.body.append(menu)
+    try {
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(h.layout().tabs[floating.id]).toBeDefined()
+
+      menu.remove()
+      const handled = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+      handled.preventDefault()
+      act(() => { document.dispatchEvent(handled) })
+      expect(h.layout().tabs[floating.id]).toBeDefined()
+
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(h.layout().tabs[floating.id]).toBeUndefined()
+    } finally { menu.remove() }
+  })
+
   it('offers one rail canvas toggle for both parking and reopening', async () => {
     const h = await mountSeat()
     h.open('kept.txt', { expandColumn: false })
@@ -373,6 +397,76 @@ describe('RightbarSeat presentation', () => {
     expect(h.controller.canvasClaims.claim(null)).toBeNull()
   })
 
+  it('lets product policy and global folds override legacy Canvas side and parking without remounting', async () => {
+    const h = await mountSeat(1440, true, 0, false, true)
+    const tab = h.open('policy.txt')
+    const body = element(h.view.container, `[data-tab-body="${tab.id}"]`)
+    act(() => { h.actions.setCanvasParked(SESSION, true) })
+    const policy = h.policy
+    const fold = h.fold
+    h.frame.setAuxiliaryCollapsed.mockImplementation((collapsed: boolean) => {
+      fold.set({ centerCollapsed: false, auxiliaryCollapsed: collapsed })
+    })
+    act(() => { policy.set({ primary: 'rightbar', canvasSide: 'right' }) })
+    const host = element(h.view.container, '[data-sidebar-right-canvas-host]')
+    expect(host.dataset.canvasSide).toBe('right')
+    expect(element(h.view.container, `[data-tab-body="${tab.id}"]`)).toBe(body)
+    expect(h.controller.canvasClaims.claim(SESSION, true)).toBe('left')
+
+    act(() => { h.actions.setCanvasSide(SESSION, 'left') })
+    expect(host.dataset.canvasSide).toBe('right')
+    act(() => { policy.set({ primary: 'main', canvasSide: 'left' }) })
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 340)) })
+    expect(host.hidden).toBe(true)
+    act(() => { h.open('folded.txt') })
+    expect(fold.getSnapshot().auxiliaryCollapsed).toBe(true)
+    expect(host.hidden).toBe(true)
+
+    act(() => { fold.set({ centerCollapsed: false, auxiliaryCollapsed: false }) })
+    expect(host.hidden).toBe(false)
+    expect(element(h.view.container, `[data-tab-body="${tab.id}"]`)).toBe(body)
+    fireEvent.click(element(h.view.container, '[data-sidebar-right-canvas-park]'))
+    expect(fold.getSnapshot().auxiliaryCollapsed).toBe(true)
+    expect(h.frame.setAuxiliaryCollapsed).toHaveBeenCalledWith(true)
+  })
+
+  it('suppresses the duplicate product tree in IDE while keeping the canvas host', async () => {
+    const h = await mountSeat()
+    h.open('canvas.txt')
+    await act(async () => {
+      h.runtime.slots.register({ name: 'sidebar.right.pane.top' }, () => <span data-top-zone />)
+      h.actions.setExpanded(SESSION, false)
+    })
+    expect(h.view.container.querySelector('[data-top-zone]')).not.toBeNull()
+    act(() => { h.policy.set({ primary: 'rightbar', canvasSide: 'right' }) })
+    expect(h.view.container.querySelector('[data-top-zone]')).toBeNull()
+    expect(h.view.container.querySelector('[data-sidebar-right-canvas-host]')).not.toBeNull()
+    act(() => { h.policy.set({ primary: 'main', canvasSide: 'right' }) })
+    expect(h.view.container.querySelector('[data-top-zone]')).not.toBeNull()
+    act(() => { h.policy.set({ primary: 'rightbar', canvasSide: 'right' }) })
+    expect(h.view.container.querySelector('[data-top-zone]')).toBeNull()
+  })
+
+  it('suppresses the legacy drawer and its track without unmounting the canvas', async () => {
+    const h = await mountSeat(1440, true, 0, false, true)
+    const tab = h.open('drawerless.txt')
+    const body = element(h.view.container, `[data-tab-body="${tab.id}"]`)
+    act(() => {
+      h.fold.set({ centerCollapsed: false, auxiliaryCollapsed: false })
+      h.policy.set({ primary: 'main', canvasSide: 'right', drawer: false })
+    })
+    expect(h.view.container.querySelector('[data-sidebar-right-panel]')).toBeNull()
+    expect(h.view.container.querySelector('[data-zone="features"]')).toBeNull()
+    expect(element(h.view.container, '[data-sidebar-right-canvas-host]')).not.toBeNull()
+    expect(element(h.view.container, `[data-tab-body="${tab.id}"]`)).toBe(body)
+
+    act(() => { h.policy.set({ primary: 'main', canvasSide: 'right', drawer: true }) })
+    expect(h.view.container.querySelector('[data-sidebar-right-panel]')).not.toBeNull()
+    act(() => { h.policy.set({ primary: 'main', canvasSide: 'right', drawer: false }) })
+    expect(h.view.container.querySelector('[data-sidebar-right-panel]')).toBeNull()
+    expect(element(h.view.container, `[data-tab-body="${tab.id}"]`)).toBe(body)
+  })
+
   it('publishes the mounted seat so a Conversation opener acts in the commit that returns from a global panel', async () => {
     const h = await mountSeat(1440, true, 0, true)
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
@@ -393,6 +487,25 @@ describe('RightbarSeat presentation', () => {
     expect(h.controller.active()?.contentId).toBe(h.opened[1])
     expect(errors.mock.calls.map(call => String(call[0])).filter(text => text.includes('slot entry crashed'))).toEqual([])
     expect(document.querySelector('[data-slot-error]')).toBeNull()
+  })
+
+  it('keeps direct mounted subscribers silent across surface-only commits', async () => {
+    const h = await mountSeat()
+    const seen: (string | undefined)[] = []
+    let openings = 0
+    const unsubscribe = h.controller.mounted.subscribe(() => {
+      const session = h.controller.mounted.getSnapshot()
+      seen.push(session)
+      if (session === undefined || openings >= 3) return
+      openings += 1
+      h.controller.openResource(`dsh-resource://file/session/s-test/rebind-${openings}.txt`)
+    })
+    try {
+      h.open('surface.txt')
+      expect(h.controller.mounted.getSnapshot()).toBe(SESSION)
+      expect(seen).toEqual([])
+      expect(openings).toBe(0)
+    } finally { unsubscribe() }
   })
 
   it.each([0, 1, 2])('selects the default from %i guide entries and protects only a sole guide', async (entryCount) => {

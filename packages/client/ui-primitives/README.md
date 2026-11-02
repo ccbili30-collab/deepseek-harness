@@ -33,6 +33,10 @@ This package is a Web-shell build input. Its static ESM retains third-party impo
 
 Compose feature UI from these atoms whenever the web client needs a standard control or an agent-output renderer. They render through React only and take `--dsw-*` design tokens from the theme, so they fit any plugin without importing the theme or the slot system.
 
+### Platform presentation
+
+`isDarwinDesktop()` is true only for the real Electron `data-platform='darwin'` marker; native bridges, keyboard runtime, and window-drag behavior use it. `isDarwinChrome()` also accepts the product-owned `data-chrome-platform='darwin'` presentation marker, so a Web mirror can share ordinary-window geometry without changing those native facts. The mirror never creates `data-fullscreen` or an Electron bridge.
+
 <a id="component-catalog"></a>
 ### Component catalog
 
@@ -115,7 +119,7 @@ The atoms cannot read the application locale, so every piece of user-facing copy
 
 `Menu.listClassName` styles the menu card independently of the anchor wrapper, including in portal mode. Leading icons use the `--dsw-alias-menu-icon` color; destructive icons retain their error color.
 
-`Menu` delegates its card material to `MenuSurface`; custom menus use the same component. `MenuSurface` forwards div props and refs, uses translucent fill and blur, and accepts `compact` for the smaller radius. Its default relative positioning contains the material layer; caller classes can supply fixed or absolute placement. On macOS, its non-interactive backing follows the card through CSS anchors and unmounts with it; the backing requires the Web shell’s isolated body. Feature classes control layout and elevation, while the component owns material and outer radius ([menu rules](../../../docs/web-styling.md#component-rules)). Modal masks retain their dark translucent fill without background blur.
+`Menu` delegates its card material to `MenuSurface`; custom menus use the same component. `MenuSurface` forwards div props and refs, uses translucent fill and blur, and accepts `compact` for the smaller radius. Its default relative positioning contains the material layer; caller classes can supply fixed or absolute placement. On native macOS, its non-interactive backing follows the card through CSS anchors and unmounts with it; the backing requires the Web shell’s isolated body. Web mirrors marked with `data-chrome-platform` use only the translucent menu material and never display this native backing. Feature classes control layout and elevation, while the component owns material and outer radius ([menu rules](../../../docs/web-styling.md#component-rules)). Modal masks retain their dark translucent fill without background blur.
 
 <details>
 <summary>Implementation internals — click to expand</summary>

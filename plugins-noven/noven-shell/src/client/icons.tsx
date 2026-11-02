@@ -88,6 +88,7 @@ export const glyph = {
   eye: (s = 16) => wrap(<g><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6-10-6-10-6z"/><circle cx="12" cy="12" r="2.5"/></g>, s),
   floatWin: (s = 16) => wrap(<g><rect x="4" y="5" width="16" height="13" rx="2"/><path d="M4 9h16"/></g>, s),
   panelBottom: (s = 16) => wrap(<g><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 15h18"/></g>, s),
+  panelRight: (s = 16) => wrap(<g><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M15 4v16"/><path d="m9 9 3 3-3 3"/></g>, s),
   cursor: (s = 16) => wrap(<path d="M5 3l14 7.5-6.2 1.7L10 19z"/>, s),
   brush: (s = 16) => wrap(<g><path d="M19 3l2 2-8.5 8.5-2-2z"/><path d="M10.5 11.5c-2.5-.3-4.5 1.2-4.5 3.5 0 1.6-1 2.6-2.5 3 2.5 1.5 7 1 7.8-2.2.3-1.4-.1-2.7-.8-3.3"/></g>, s),
   castle: (s = 16) => wrap(<g><path d="M4 21V9h3V5h2.5v4h5V5H17v4h3v12z"/><path d="M10 21v-5h4v5"/></g>, s),

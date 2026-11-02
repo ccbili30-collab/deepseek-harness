@@ -29,6 +29,8 @@ describe('createLayoutStore', () => {
         rightbarFullscreen: false,
         rightbarInstant: false,
         unitSide: 'right',
+        auxiliary: null,
+        auxiliaryCollapsed: true,
       },
       geometry: { active: null, byId: {} },
     })
@@ -59,6 +61,20 @@ describe('createLayoutStore', () => {
     const c = createLayoutStore().create()
     expect(c.store.getSnapshot().layoutInfo.sidebar).toBe(280)
     expect(c.store.getSnapshot().layoutInfo.rightbar).toBeNull()
+  })
+
+  it('keeps global fold preferences across Session changes and reloads', () => {
+    const a = createLayoutStore().create()
+    a.actions.enterSession('one')
+    a.actions.setCenterCollapsed(true)
+    a.actions.setAuxiliaryCollapsed(false)
+    a.actions.enterSession('two')
+    expect(a.store.getSnapshot().layoutInfo).toMatchObject({ auxiliaryCollapsed: false, unitSide: 'right' })
+
+    const b = createLayoutStore().create()
+    expect(b.store.getSnapshot().layoutInfo).toMatchObject({ auxiliaryCollapsed: false })
+    b.actions.enterSession('three')
+    expect(b.store.getSnapshot().layoutInfo).toMatchObject({ auxiliaryCollapsed: false })
   })
 
   it('clamps the sidebar to 264–420px', () => {

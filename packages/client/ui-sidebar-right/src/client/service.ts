@@ -146,6 +146,8 @@ export interface SidebarRightPlacement {
    * pass it so an icon switches the canvas page without unfolding the column.
    */
   readonly expandColumn?: boolean
+  /** Keep a folded Canvas folded while content changes; only an explicit fold control reveals it. */
+  readonly preserveCanvasParked?: boolean
 }
 
 /** How a caller wants a resource opened. */
@@ -168,12 +170,24 @@ const RESOURCE_SCHEME = 'dsh-resource://'
 /** Synchronous close/replacement hook; resource owners retain any background cleanup. */
 export type SidebarRightCloseHandler = (sessionId: SessionId, tab: TabRecord) => void
 
+/** Product-owned navigation policy applied before the host places a tab. */
+export interface SidebarRightTabRouter {
+  /**
+   * Route one page kind to a product-owned destination.
+   * @param sessionId - Session that owns the requested destination.
+   * @param kind - Requested page kind.
+   * @param options - Original placement and navigation parameters.
+   * @returns true when navigation was handled; false to use the host's normal placement.
+   */
+  route<K extends string>(sessionId: SessionId, kind: K, options: SidebarRightOpenTabOptions<K>): boolean
+}
+
 /** The outward right-Sidebar face (`ctx.sidebarRight`). */
 export interface ISidebarRight {
   /**
    * The session whose seat is mounted, or `undefined` while no seat is on
    * screen (a global panel is active, or no session is selected). Moves when a
-   * seat binds or releases, so a component that opens content from its own
+   * seat binds or releases; surface-only commits do not re-publish it, so a component that opens content from its own
    * mount effect reads it through a bound hook and acts once it is defined:
    * the frame mounts the Conversation column ahead of the seat, and the seat
    * publishes its binding from a passive effect of the same commit.
@@ -214,6 +228,19 @@ export interface ISidebarRight {
    * @param options - placement and that kind's navigation parameters.
    */
   openTab<K extends string>(kind: K, options?: SidebarRightOpenTabOptions<K>): void
+  /**
+   * Open a page type in a specific adopted Session, including a retained off-screen canvas.
+   * @param sessionId - Session that owns the destination.
+   * @param kind - Requested page kind.
+   * @param options - Placement and that kind's navigation parameters.
+   */
+  openTabIn<K extends string>(sessionId: SessionId, kind: K, options?: SidebarRightOpenTabOptions<K>): void
+  /**
+   * Provide the active product tab router; later providers take precedence and disposal restores the previous one.
+   * @param router - Product navigation policy.
+   * @returns an effect-scoped unregister callback.
+   */
+  provideTabRouter(router: SidebarRightTabRouter): () => void
   /**
    * Close one tab of the mounted session; the sole docked guide remains open.
    * @param tabId - the tab to close.
@@ -275,7 +302,7 @@ export class SidebarRightController implements ISidebarRight {
   private readonly claimListeners = new Set<() => void>()
   /** The frame's canvas-claim source; see {@link ISidebarRight.canvasClaims}. */
   readonly canvasClaims: CanvasClaimSource = {
-    claim: sessionId => this.claimFor(sessionId === null ? undefined : sessionId as SessionId),
+    claim: (sessionId, includeParked) => this.claimFor(sessionId === null ? undefined : sessionId as SessionId, includeParked),
     subscribe: (listener) => {
       this.claimListeners.add(listener)
       return () => { this.claimListeners.delete(listener) }
@@ -286,6 +313,16 @@ export class SidebarRightController implements ISidebarRight {
   readonly canvas: ObservableSnapshot<{ readonly kind: string; readonly contentId: string } | undefined> = this.canvasStore
   private binding: SidebarRightBinding | undefined
   private readonly closeHandlers = new Map<string, SidebarRightCloseHandler>()
+  private readonly tabRouters: SidebarRightTabRouter[] = []
+
+  /** Register a product router without changing the host's default placement. */
+  provideTabRouter(router: SidebarRightTabRouter): () => void {
+    this.tabRouters.push(router)
+    return () => {
+      const index = this.tabRouters.lastIndexOf(router)
+      if (index >= 0) this.tabRouters.splice(index, 1)
+    }
+  }
 
   /**
    * Register resource cleanup before explicit removal. Failure preserves the tab.
@@ -393,13 +430,14 @@ export class SidebarRightController implements ISidebarRight {
    * The session's canvas claim, derived from its surface alone: a presented
    * float (stack top holding an active tab) while the canvas is not parked.
    * @param sessionId - the session asked about; null asks for none.
+   * @param includeParked - true to include a folded Canvas with retained content.
    * @returns the canvas's composition side, or null with no open canvas.
    */
-  private claimFor(sessionId: SessionId | undefined): CanvasSide | null {
+  private claimFor(sessionId: SessionId | undefined, includeParked = false): CanvasSide | null {
     if (sessionId === undefined) return null
     const surface = this.adopted.get(sessionId)?.store.getSnapshot().bySession[sessionId]
       ?? (this.binding?.sessionId === sessionId ? this.binding.surfaces[sessionId] : undefined)
-    if (surface === undefined || surface.canvasParked) return null
+    if (surface === undefined || (!includeParked && surface.canvasParked)) return null
     const topId = surface.layout.floats[surface.layout.floats.length - 1]
     const top = topId === undefined ? undefined : surface.layout.nodes[topId]
     return top?.kind === 'pane' && top.activeTabId !== undefined ? surface.canvasSide : null
@@ -422,6 +460,7 @@ export class SidebarRightController implements ISidebarRight {
    */
   openTab<K extends string>(kind: K, options: SidebarRightOpenTabOptions<K> = {}): void {
     const { sessionId, actions } = this.require()
+    if (this.tabRouters.at(-1)?.route(sessionId, kind, options) === true) return
     this.placeTab(sessionId, actions, kind, options)
   }
 
@@ -441,14 +480,16 @@ export class SidebarRightController implements ISidebarRight {
   /**
    * Open a page type in one session, for a tab's own action; nothing happens
    * for a session whose store was never adopted or whose adoption was released.
-   * Not part of `ISidebarRight`: the Tab domain's path.
+   * Product features and the Tab domain share this Session-explicit path.
    * @param sessionId - the session the acting tab is in.
    * @param kind - the page type's kind.
    * @param options - placement and that kind's navigation parameters.
    */
   openTabIn<K extends string>(sessionId: SessionId, kind: K, options: SidebarRightOpenTabOptions<K> = {}): void {
     const actions = this.actionsFor(sessionId)
-    if (actions !== undefined) this.placeTab(sessionId, actions, kind, options)
+    if (actions === undefined) return
+    if (this.tabRouters.at(-1)?.route(sessionId, kind, options) === true) return
+    this.placeTab(sessionId, actions, kind, options)
   }
 
   /**
@@ -550,6 +591,7 @@ export class SidebarRightController implements ISidebarRight {
       ...placement.replaceTab === undefined ? {} : { replaceTab: placement.replaceTab },
       ...placement.revealIfOpened === undefined ? {} : { revealIfOpened: placement.revealIfOpened },
       ...placement.expandColumn === undefined ? {} : { expandColumn: placement.expandColumn },
+      ...placement.preserveCanvasParked === undefined ? {} : { preserveCanvasParked: placement.preserveCanvasParked },
     }, (tabId) => { landed = tabId; this.tabDomain.navigate(sessionId, tabId, { address, params }) }) }
     // An open raises its canvas float; the binding hands DOM focus to it once
     // the commit has rendered.
