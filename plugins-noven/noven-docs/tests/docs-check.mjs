@@ -54,7 +54,6 @@ for (const [i, file] of userFiles.entries()) {
 // 从各插件源码刮 `name: 'x'` / `registerEditTool(tools, 'x'` 真名
 const TOOL_SOURCES = [
   'noven-cards/src/tools.ts',
-  'noven-sidecar/src/entities.ts',
   'noven-workbench/src/index.ts',
   'noven-library/src/index.ts',
   'noven-image/src/index.ts',

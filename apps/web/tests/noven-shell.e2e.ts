@@ -15,7 +15,7 @@ const EXPECTED = fileURLToPath(new URL('./expected/noven-shell/layout.expected.m
 const OVERLAY = fileURLToPath(new URL('../../desktop/noven/profile/cordis.patch.yml', import.meta.url))
 const PLUGIN_ROOT = fileURLToPath(new URL('../../../plugins-noven', import.meta.url))
 const BUNDLES = [
-  'noven-study', 'noven-brand', 'noven-shell', 'noven-sidecar', 'noven-dock', 'noven-image',
+  'noven-study', 'noven-brand', 'noven-shell', 'noven-dock', 'noven-image',
   'noven-workbench', 'noven-draw-comic', 'noven-docs', 'noven-cards', 'noven-library', 'noven-skills', 'noven-explore',
 ] as const
 const DEPENDENCIES = ['noven-fmg', 'noven-ledger'] as const

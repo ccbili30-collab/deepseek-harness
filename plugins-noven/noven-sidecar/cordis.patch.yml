@@ -1,4 +1,0 @@
-# noven-sidecar bundle patch — mount the host plugin into the composed tree.
-- insert:
-    - id: noven-sidecar
-      name: 'noven-sidecar'

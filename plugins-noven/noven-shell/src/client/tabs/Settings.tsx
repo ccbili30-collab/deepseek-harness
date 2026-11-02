@@ -9,13 +9,10 @@
  * @module noven-shell/client/tabs/Settings
  */
 import type { ReactElement } from 'react'
-import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { UseSidebarRightTabInfo } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
 import type { SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ShellT } from '../pages/Home.tsx'
-import type { SidecarState } from './Sidecar.tsx'
-import type { SidecarOp } from '../sidecar-api.ts'
 import type { DocsHook } from '../canvas.tsx'
 import { useSessionSettings, type SessionSettings } from '../session-settings.tsx'
 
@@ -58,17 +55,13 @@ interface Props {
   readonly t: ShellT
   readonly useTabInfo: UseSidebarRightTabInfo
   readonly sessionId: SessionId
-  readonly useSidecar: SnapshotSelectorHook<SidecarState>
-  readonly run: (op: SidecarOp) => Promise<void>
   readonly useDocs: DocsHook
   readonly ensureDoc: (sessionId: SessionId, path: string) => void
   readonly saveDoc: (sessionId: SessionId, path: string, content: string, base: string | null) => Promise<'ok' | 'conflict' | 'error'>
 }
 
-export function SettingsTab({ t, useTabInfo, sessionId, useSidecar, run, useDocs, ensureDoc, saveDoc }: Props) {
+export function SettingsTab({ t, useTabInfo, sessionId, useDocs, ensureDoc, saveDoc }: Props) {
   useTabInfo()
-  const sidecar = useSidecar(s => s)
-  const paused = sidecar.payload?.paused === true
   const { settings, save } = useSessionSettings(sessionId, useDocs, ensureDoc, saveDoc)
 
   const edit = (key: FieldKey, text: string): void => save({ ...settings, [key]: text })
@@ -90,20 +83,6 @@ export function SettingsTab({ t, useTabInfo, sessionId, useSidecar, run, useDocs
       <section className="nv-sesset-group">
         <h4>{t('session.set.group.settings')}</h4>
         {SETTING_FIELDS.map(fieldRow)}
-      </section>
-      <section className="nv-sesset-group">
-        <h4>{t('session.set.group.tools')}</h4>
-        <div className="nv-sesset-row">
-          <div className="nv-sesset-rowtext">
-            <span className="nv-sesset-rowtitle">{t('session.set.autodigest')}</span>
-            <span className="nv-sesset-rowhint">{t('session.set.autodigest.hint')}</span>
-          </div>
-          <Switch
-            checked={!paused}
-            label={t('session.set.autodigest')}
-            onChange={next => { void run({ op: 'paused', paused: !next }) }}
-          />
-        </div>
       </section>
       <div className="nv-sesset-foot">{t('session.set.foot')}</div>
     </div>

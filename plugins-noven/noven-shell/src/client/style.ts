@@ -900,49 +900,12 @@ nav[class*="panelList"] button[aria-label="Create"] span { color: #fff !importan
 nav[class*="panelList"] button[aria-label="创作"]:not(:hover),
 nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: var(--nv-accent); }
 
-/* 设定 sidecar — 上半工件区 */
-.nv-sidecar { display: flex; flex-direction: column; gap: 4px; padding: 4px 10px 20px; }
-.nv-sidecar-status { display: flex; align-items: center; gap: 6px; padding: 8px 10px; font-size: 11.5px; color: var(--nv-secondary-text); }
-.nv-sidecar-status[data-live] { color: var(--nv-accent); }
-.nv-sidecar-touched { opacity: .75; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nv-sidecar-empty { padding: 18px 10px; font-size: 12px; line-height: 1.7; color: var(--nv-secondary-text); }
-.nv-sidecar-section h4 { display: flex; align-items: baseline; gap: 6px; margin: 10px 0 4px; padding: 0 2px; font-size: 11.5px; font-weight: 600; color: var(--nv-secondary-text); }
-.nv-sidecar-count { font-weight: 400; opacity: .6; }
-.nv-sidecar-entity { padding: 7px 10px; border-radius: 8px; }
-.nv-sidecar-entity[data-draft] { background: color-mix(in srgb, var(--nv-accent) 7%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--nv-accent) 22%, transparent); }
-.nv-sidecar-entityhead { display: flex; align-items: center; gap: 8px; }
-.nv-sidecar-name { font-size: 12.5px; font-weight: 600; }
-.nv-sidecar-actions { margin-left: auto; display: flex; gap: 2px; }
-.nv-sidecar-act { padding: 1px 8px; font-size: 11px; }
-.nv-sidecar-note { margin-top: 2px; font-size: 11.5px; line-height: 1.55; color: var(--nv-secondary-text); }
-.nv-sidecar-rel { padding: 3px 10px; font-size: 11.5px; color: var(--nv-secondary-text); }
-.nv-sidecar-rel em { font-style: normal; margin: 0 4px; color: var(--nv-accent); }
 
 /* 上下两段：实体区淡出，雾化过渡缝，下面就是平铺对话 */
-.nv-sidecar { height: 100%; padding: 0; }
-.nv-sidecar-topbar { display: flex; align-items: center; justify-content: space-between; padding: 2px 0 6px; }
-.nv-sidecar-topbar-label { font-size: 11px; color: var(--nv-secondary-text); }
-.nv-sidecar-top { flex: 0 1 auto; max-height: 54%; overflow-y: auto; padding: 4px 14px 40px;
   -webkit-mask-image: linear-gradient(#000 82%, transparent);
   mask-image: linear-gradient(#000 82%, transparent); }
-.nv-sidecar-seam { flex: none; height: 30px; margin: -30px 0 0; position: relative; z-index: 2;
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
   background: linear-gradient(rgba(249,250,251,0), rgba(249,250,251,.92) 55%, rgba(249,250,251,0)); }
-.nv-sidecar-stream { flex: 1; min-height: 0; overflow-y: auto; padding: 6px 14px; display: flex; flex-direction: column; }
-.nv-sidecar-msg { display: flex; align-items: baseline; gap: 6px; padding: 5px 0; }
-.nv-sidecar-msgmark { color: var(--nv-accent); flex: none; transform: translateY(1.5px); }
-.nv-sidecar-msgtext { font-size: 12.5px; line-height: 1.7; white-space: pre-wrap; color: var(--nv-primary-text); }
-.nv-sidecar-msg[data-role="user"] { justify-content: flex-end; }
-.nv-sidecar-msg[data-role="user"] .nv-sidecar-msgtext { color: var(--nv-secondary-text); font-size: 12px; }
-.nv-sidecar-task { justify-content: flex-start; }
-.nv-sidecar-task .nv-sidecar-msgtext { color: var(--nv-secondary-text); font-size: 11.5px; letter-spacing: .02em; }
-.nv-sidecar-error { padding: 4px 14px 0; font-size: 11.5px; color: var(--nv-danger); }
-.nv-sidecar-composer { display: flex; align-items: flex-end; gap: 6px; padding: 4px 14px 12px; }
-.nv-sidecar-input { flex: 1; resize: none; border: 0; outline: none; background: #fff; border-radius: 10px; padding: 8px 11px; font-size: 12.5px; line-height: 1.5; font-family: inherit; box-shadow: 0 1px 3px rgba(0,0,0,.05); }
-.nv-sidecar-input:focus { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--nv-accent) 45%, transparent); }
-.nv-sidecar-send { flex: none; width: 30px; height: 30px; border-radius: 9px; color: var(--nv-secondary-text); }
-.nv-sidecar-send:not(:disabled) { color: var(--nv-accent-deep); }
-.nv-sidecar-send:disabled { opacity: .4; }
 .nv-side-railbtn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; margin: 6px auto; border: 0; border-radius: 9px; background: transparent; color: var(--nv-secondary-text); cursor: pointer; }
 .nv-side-railbtn:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 .nv-foot { display: flex; align-items: center; gap: 6px; width: 100%; padding: 2px 4px; }
