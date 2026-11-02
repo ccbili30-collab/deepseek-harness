@@ -1,5 +1,4 @@
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
+import { mkdtemp, mkdir, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -14,13 +13,11 @@ const PLUGIN_ROOT = fileURLToPath(new URL('../../../plugins-noven', import.meta.
 const PRODUCT_OVERLAY = fileURLToPath(new URL('../../desktop/noven/profile/cordis.patch.yml', import.meta.url))
 const PREVIEW_OVERLAY = fileURLToPath(new URL('./noven-preview.overlay.yml', import.meta.url))
 const BUNDLES = [
-  'noven-study', 'noven-brand', 'noven-shell', 'noven-sidecar', 'noven-dock', 'noven-image',
+  'noven-study', 'noven-brand', 'noven-shell', 'noven-dock', 'noven-image',
   'noven-workbench', 'noven-draw-comic', 'noven-docs', 'noven-cards', 'noven-library', 'noven-skills', 'noven-explore',
 ] as const
 const SESSION_ID = 'noven-inline-code'
 const ISOLATED_ENV = ['NOVEN_HOME', 'NOVEN_PROJECTS_ROOT', 'NOVEN_CHANNEL'] as const
-const sidecarRequire = createRequire(new URL('../../../plugins-noven/noven-sidecar/package.json', import.meta.url))
-const { ledgerDirSync } = sidecarRequire('noven-ledger') as { readonly ledgerDirSync: (root: string) => string }
 
 const SHOT_REGIONS = [
   ['dialogue', '.nv-code-dialogue'],
@@ -44,6 +41,15 @@ async function captureRegions(page: Page, directory: string, prefix: string): Pr
   }
 }
 
+async function appearanceView(scaffold: WebScaffold, view: 'light' | 'dark'): Promise<void> {
+  const response = await scaffold.hostFetch(`/api/noven-appearance?session=${SESSION_ID}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'visual', view }),
+  })
+  if (!response.ok) throw new Error(`appearance view write failed: ${await response.text()}`)
+}
+
 describe('web e2e: Noven inline code components', () => {
   let scaffold: WebScaffold
   let browser: Browser
@@ -63,6 +69,7 @@ describe('web e2e: Noven inline code components', () => {
     scaffold = await launchWebScaffold({
       harnessHome: join(isolatedRoot, 'harness'),
       profile: { packages: BUNDLES.map(name => ({ dir: join(PLUGIN_ROOT, name), enabled: true })) },
+      agentPresets: { default: 'create' },
       extraInstallAnchors: ['noven-fmg', 'noven-ledger'].map(name => join(PLUGIN_ROOT, name, 'package.json')),
       extraOverlayPath: [PRODUCT_OVERLAY, PREVIEW_OVERLAY],
     })
@@ -116,10 +123,10 @@ describe('web e2e: Noven inline code components', () => {
     }
 
     const lightColor = await page.locator('.nv-code-root').first().evaluate(element => getComputedStyle(element).color)
-    await page.emulateMedia({ colorScheme: 'dark' })
+    await appearanceView(scaffold, 'dark')
     await expect.poll(async () => page.locator('.nv-code-root').first().evaluate(element => getComputedStyle(element).color), { timeout: 10_000 }).not.toBe(lightColor)
     if (shots !== undefined) await captureRegions(page, shots, 'dark')
-    await page.emulateMedia({ colorScheme: 'light' })
+    await appearanceView(scaffold, 'light')
     await page.setViewportSize({ width: 600, height: 800 })
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
     if (shots !== undefined) await captureRegions(page, shots, 'narrow')
@@ -150,15 +157,6 @@ describe('web e2e: Noven inline code components', () => {
     await flow.getByText(/我选了《剧情分支》|I chose 相信阿七/).first().waitFor({ timeout: 15_000 })
     await expect.poll(() => flow.textContent()).toContain('继续写这一段。')
     expect((await readdir(scaffold.workspaceCwd)).sort()).toEqual(filesBefore)
-    const adminFile = join(ledgerDirSync(scaffold.workspaceCwd), 'sidecar', 'admin.json')
-    await expect.poll(async () => {
-      try {
-        await readFile(adminFile, 'utf8')
-        return true
-      } catch {
-        return false
-      }
-    }).toBe(true)
     expect(tripwire.pageErrors).toEqual([])
   }, 120_000)
 })

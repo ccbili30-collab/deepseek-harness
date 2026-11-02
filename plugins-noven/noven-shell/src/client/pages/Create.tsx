@@ -7,7 +7,7 @@
  * conversation as it engages.
  * @module noven-shell/client/pages/Create
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { ShellT } from './Home.tsx'
 import { CreateHero } from '../create-hero.tsx'
 import type { RenderFactorySlot, SnapshotSelectorHook } from '@deepseek-ai/dsh-client-ui-slots'
@@ -19,6 +19,8 @@ import { enterConversationScene } from '../creation-transition.ts'
 
 interface Props {
   readonly t: ShellT
+  /** The same persistent Session-list navigation used by the resident Conversation. */
+  readonly sessionNavigation: ReactNode
   readonly useWorkspaces: SnapshotSelectorHook<WorkspaceSnapshot>
   readonly useSessions: SnapshotSelectorHook<SessionListState>
   readonly renderFactorySlot: RenderFactorySlot
@@ -37,7 +39,7 @@ function mainSessionId(list: SessionListState): SessionId | undefined {
   return Object.values(list.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)?.id
 }
 
-export function Create({ t, useWorkspaces, useSessions, renderFactorySlot, ensureBlankHost, revealSession, onStartHandcraft, onImportCard }: Props) {
+export function Create({ t, sessionNavigation, useWorkspaces, useSessions, renderFactorySlot, ensureBlankHost, revealSession, onStartHandcraft, onImportCard }: Props) {
   const [handcraftFailed, setHandcraftFailed] = useState(false)
   const importRef = useRef<HTMLInputElement | null>(null)
 
@@ -96,7 +98,7 @@ export function Create({ t, useWorkspaces, useSessions, renderFactorySlot, ensur
     // to the harness cwd, and a blank outside every workspace leaves the
     // composer in its read-only "choose a workspace" state.
     if (workspacesState === 'loading') return
-    if ((hostBlank === true && hostPreset === 'explore') || hostEngaged || revealedRef.current || ensuringRef.current) return
+    if ((hostBlank === true && hostPreset === 'create') || hostEngaged || revealedRef.current || ensuringRef.current) return
     ensuringRef.current = true
     void ensureBlankHost(workspace?.workspaceId).catch((reason: unknown) => {
       console.warn('noven-shell: blank host ensure failed:', reason)
@@ -106,6 +108,7 @@ export function Create({ t, useWorkspaces, useSessions, renderFactorySlot, ensur
 
   return (
     <div className="nv-page nv-create-page">
+      <div className="nv-create-topbar" data-window-drag>{sessionNavigation}</div>
       <div className="nv-create-ritual">
         <CreateHero t={t} />
 

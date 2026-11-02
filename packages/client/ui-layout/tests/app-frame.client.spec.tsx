@@ -560,14 +560,10 @@ describe('AppFrame product layout policy', () => {
   it('folds Conversation into a retained rail and restores it without remounting', () => {
     const b = mountFrame(1920, { primary: 'rightbar', canvasSide: 'right' })
     const { instance, frame, mounts, getByTestId, getByRole } = b
-    act(() => {
-      instance.actions.openRightbar(true, false, false)
-      instance.actions.setAuxiliaryCollapsed(false)
-      setClaim('right')
-    })
+    act(() => { instance.actions.openRightbar(true, false, false); setClaim('right') })
     const main = getByTestId('main-content')
-    act(() => { instance.actions.setAuxiliaryCollapsed(true) })
-    expect(workEl(frame).style.gridTemplateColumns).toBe('minmax(0px, 1fr) 0px')
+    act(() => { getByRole('button', { name: 'collapse' }).click() })
+    expect(workEl(frame).style.gridTemplateColumns).toBe('minmax(0px, 1fr) minmax(0px, 56px)')
     expect(getByTestId('main-content').parentElement?.getAttribute('aria-hidden')).toBe('true')
     expect(getByTestId('main-content').parentElement?.inert).toBe(true)
     expect(mounts).toEqual({ main: 1, rightbar: 1 })
@@ -581,19 +577,19 @@ describe('AppFrame product layout policy', () => {
 
   it('keeps a header-height fold before a Session exists', () => {
     selectedSession = undefined
-    const b = mountFrame(1920, { primary: 'rightbar', canvasSide: 'right' })
+    const b = mountFrame(1920, { primary: 'rightbar', canvasSide: 'right', foldMode: 'shared' })
     const { instance, frame, getByRole } = b
     act(() => {
       instance.actions.openRightbar(true, false, false)
       instance.actions.setAuxiliaryCollapsed(false)
     })
     act(() => { getByRole('button', { name: 'collapse' }).click() })
-    expect(workEl(frame).style.gridTemplateColumns).toBe('minmax(0px, 1fr) 0px')
+    expect(workEl(frame).style.gridTemplateColumns).toBe('minmax(0px, 1fr) minmax(0px, 56px)')
     expect(getByRole('button', { name: 'expand' })).toBeTruthy()
   })
 
   it('folds the auxiliary Canvas in Agent and carries the same fold through mode switches', () => {
-    const b = mountFrame(1920, { primary: 'main', canvasSide: 'right', drawer: false })
+    const b = mountFrame(1920, { primary: 'main', canvasSide: 'right', drawer: false, foldMode: 'shared' })
     const { instance, frame, mounts, setPolicy, getByTestId, getByRole, rightOwner } = b
     act(() => {
       instance.actions.setAuxiliaryCollapsed(false)
@@ -610,14 +606,14 @@ describe('AppFrame product layout policy', () => {
     expect(rightbar.parentElement?.inert).toBe(true)
     expect(mounts).toEqual({ main: 1, rightbar: 1 })
 
-    act(() => { setPolicy({ primary: 'rightbar', canvasSide: 'right', drawer: false }) })
+    act(() => { setPolicy({ primary: 'rightbar', canvasSide: 'right', drawer: false, foldMode: 'shared' }) })
     expect(getByTestId('main-content')).toBe(main)
     expect(getByTestId('rightbar-content')).toBe(rightbar)
     expect(main.parentElement?.getAttribute('aria-hidden')).toBe('true')
     expect(rightbar.parentElement?.getAttribute('aria-hidden')).toBeNull()
     expect(mounts).toEqual({ main: 1, rightbar: 1 })
 
-    act(() => { setPolicy({ primary: 'main', canvasSide: 'right', drawer: false }) })
+    act(() => { setPolicy({ primary: 'main', canvasSide: 'right', drawer: false, foldMode: 'shared' }) })
     act(() => { getByRole('button', { name: 'expand' }).click() })
     expect(rightbar.parentElement?.getAttribute('aria-hidden')).toBeNull()
     expect(rightbar.parentElement?.inert).toBe(false)
@@ -629,10 +625,10 @@ describe('AppFrame product layout policy', () => {
   it('never folds a global panel with the Conversation', () => {
     const b = mountFrame(1920, { primary: 'rightbar', canvasSide: 'right' })
     const { instance, frame, getByTestId, queryByRole } = b
-    act(() => { instance.actions.setAuxiliaryCollapsed(true); instance.actions.selectPanel('settings' as MainPanelId) })
+    act(() => { instance.actions.setCenterCollapsed(true); instance.actions.selectPanel('settings' as MainPanelId) })
     expect(getByTestId('main-content').getAttribute('data-entry-key')).toBe('settings')
     expect(getByTestId('main-content').parentElement?.hidden).toBe(false)
-    expect(workEl(frame).style.gridTemplateColumns).not.toBe('minmax(0px, 1fr) 0px')
+    expect(workEl(frame).style.gridTemplateColumns).not.toBe('minmax(0px, 1fr) minmax(0px, 56px)')
     expect(queryByRole('button', { name: 'collapse' })).toBeNull()
   })
 

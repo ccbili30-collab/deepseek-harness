@@ -30,6 +30,7 @@ describe('createLayoutStore', () => {
         rightbarInstant: false,
         unitSide: 'right',
         auxiliary: null,
+        centerCollapsed: false,
         auxiliaryCollapsed: true,
       },
       geometry: { active: null, byId: {} },
@@ -69,12 +70,12 @@ describe('createLayoutStore', () => {
     a.actions.setCenterCollapsed(true)
     a.actions.setAuxiliaryCollapsed(false)
     a.actions.enterSession('two')
-    expect(a.store.getSnapshot().layoutInfo).toMatchObject({ auxiliaryCollapsed: false, unitSide: 'right' })
+    expect(a.store.getSnapshot().layoutInfo).toMatchObject({ centerCollapsed: true, auxiliaryCollapsed: false, unitSide: 'right' })
 
     const b = createLayoutStore().create()
-    expect(b.store.getSnapshot().layoutInfo).toMatchObject({ auxiliaryCollapsed: false })
+    expect(b.store.getSnapshot().layoutInfo).toMatchObject({ centerCollapsed: true, auxiliaryCollapsed: false })
     b.actions.enterSession('three')
-    expect(b.store.getSnapshot().layoutInfo).toMatchObject({ auxiliaryCollapsed: false })
+    expect(b.store.getSnapshot().layoutInfo).toMatchObject({ centerCollapsed: true, auxiliaryCollapsed: false })
   })
 
   it('clamps the sidebar to 264–420px', () => {

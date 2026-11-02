@@ -13,7 +13,7 @@ const PLUGIN_ROOT = fileURLToPath(new URL('../../../plugins-noven', import.meta.
 const PRODUCT_OVERLAY = fileURLToPath(new URL('../../desktop/noven/profile/cordis.patch.yml', import.meta.url))
 const PREVIEW_OVERLAY = fileURLToPath(new URL('./noven-preview.overlay.yml', import.meta.url))
 const bundles = [
-  'noven-study', 'noven-brand', 'noven-shell', 'noven-sidecar', 'noven-dock', 'noven-image',
+  'noven-study', 'noven-brand', 'noven-shell', 'noven-dock', 'noven-image',
   'noven-workbench', 'noven-draw-comic', 'noven-docs', 'noven-cards', 'noven-library', 'noven-skills', 'noven-explore',
 ]
 let scaffold: WebScaffold
@@ -385,6 +385,7 @@ beforeAll(async () => {
   scaffold = await launchWebScaffold({
     harnessHome: join(root, 'harness'),
     profile: { packages: bundles.map(name => ({ dir: join(PLUGIN_ROOT, name), enabled: true })) },
+    agentPresets: { default: 'create' },
     extraInstallAnchors: ['noven-fmg', 'noven-ledger'].map(name => join(PLUGIN_ROOT, name, 'package.json')),
     extraOverlayPath: [PRODUCT_OVERLAY, PREVIEW_OVERLAY],
   })

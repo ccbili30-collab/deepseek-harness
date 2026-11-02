@@ -43,6 +43,7 @@ export interface PersistedLayout {
   rightbar: number | null
   unit: number | null
   auxiliary: number | null
+  centerCollapsed: boolean
   auxiliaryCollapsed: boolean
   byId: Record<string, SessionGeometryRecord>
 }
@@ -107,9 +108,8 @@ export function readLayoutInfo(): PersistedLayout | undefined {
       auxiliary: saved.auxiliary === undefined
         ? saved.unit === undefined || saved.unit === null ? null : Math.max(0, saved.unit - (saved.rightbar ?? 0))
         : saved.auxiliary,
-      // The previous Canvas fold wins when both legacy fields exist. The old
-      // Conversation-only value is a fallback, never a second synchronized fact.
-      auxiliaryCollapsed: saved.auxiliaryCollapsed ?? saved.centerCollapsed ?? true,
+      centerCollapsed: saved.centerCollapsed ?? false,
+      auxiliaryCollapsed: saved.auxiliaryCollapsed ?? true,
       byId: Object.fromEntries(Object.entries(saved.bySession ?? {}).map(([id, record]) => [id, {
         sidebarCollapsed: record.sidebarCollapsed ?? false,
         narrowExpanded: record.narrowExpanded ?? false,
@@ -138,6 +138,7 @@ export function writeLayoutInfo(info: LayoutInfo, byId: Record<string, SessionGe
       rightbar: info.rightbar,
       unit: info.unit,
       auxiliary: info.auxiliary,
+      centerCollapsed: info.centerCollapsed,
       auxiliaryCollapsed: info.auxiliaryCollapsed,
       bySession: Object.fromEntries(kept.map(([id, record]) => [id, {
         sidebarCollapsed: record.sidebarCollapsed,

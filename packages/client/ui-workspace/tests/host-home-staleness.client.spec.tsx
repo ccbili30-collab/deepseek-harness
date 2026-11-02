@@ -4,6 +4,7 @@ import { createSnapshotStore } from '@deepseek-ai/dsh-client-store'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, fireEvent, screen } from '@testing-library/react'
 import type { WorkspaceId } from '@deepseek-ai/dsh-api-workspace-controller/client'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { PropsRenderSlots } from '@deepseek-ai/dsh-client-ui-slots'
 import { SlotTestRuntime, usePinnedBrowserLanguages } from '@deepseek-ai/dsh-client-test-runtime'
 import { LocaleRuntime } from '@deepseek-ai/dsh-client-locale/client'
@@ -19,7 +20,7 @@ function SidebarFrame({ renderSlot }: FrameProps) {
   return <>{renderSlot('sidebar.workspaces', { wide: true, expandSidebar: () => {} })}</>
 }
 
-async function bench() {
+async function bench(mainSession = true) {
   const runtime = await SlotTestRuntime.create()
   runtime.ctx.provide('shortcuts', { register: () => () => {}, catalog: createSnapshotStore([]) })
   runtime.ctx.provide('uiConversation', {})
@@ -34,19 +35,23 @@ async function bench() {
   await runtime.workspaces.update((draft) => {
     draft.items = [{
       workspaceId: 'w1' as WorkspaceId, title: 'Project', path: '/home/u/Documents/project',
-      sessionIds: [], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
+      sessionIds: ['s1'], createdAt: '2026-01-01T00:00:00.000Z', updatedAt: '2026-01-01T00:00:00.000Z',
     }] as never
   })
   await runtime.root.declare(
     { 'sidebar.workspaces': { kind: 'single', scope: 'root' } } as never,
     SidebarFrame as never,
   )
+  if (mainSession) {
+    await runtime.sessions.add({ id: 's1' })
+    await runtime.sessions.retainFor(runtime.ctx, 's1' as SessionId, { source: 'mainView' }).ready
+  }
   await runtime.mount({ inject: [...inject], apply })
   return { runtime, remote }
 }
 
 function openPicker(): void {
-  fireEvent.click(screen.getByRole('button', { name: '工作区' }))
+  fireEvent.click(screen.getByRole('button', { name: 'Project' }))
 }
 
 describe('Host home in the assembled browsing region', () => {
@@ -64,5 +69,12 @@ describe('Host home in the assembled browsing region', () => {
     openPicker()
     expect(screen.getByRole('menuitem', { name: 'Project' })).toBeTruthy()
     expect(screen.queryByText('~/Documents/project')).toBeNull()
+  })
+
+  it('keeps the complete Session browser available without a main Session', async () => {
+    const { runtime } = await bench(false)
+    runtime.renderRoot()
+    expect(screen.getByRole('button', { name: '视图选项' })).toBeTruthy()
+    expect(screen.getByRole('treeitem', { name: 'Project' })).toBeTruthy()
   })
 })

@@ -6,8 +6,10 @@
  * and drains started calls.
  *
  * Abort records synthetic error results for skipped calls so replay stays
- * valid. A terminal scheduler failure preserves already-recorded `tool/call`
- * events without fabricating results.
+ * valid. A terminal scheduler failure records an error result for every
+ * started call that never committed, so the step boundary never closes over a
+ * `tool/call` without its `tool/result`; an unresolved call makes the whole
+ * stored log unreadable.
  * @module dsh-agent-loop/tool-calls
  */
 
@@ -232,6 +234,7 @@ async function runGroup(
   } catch (error: unknown) {
     schedulerFailure ??= { error }
     await Promise.allSettled(inFlight.values())
+    appendUncommittedFailures(session, turn, step, group, callSeqs, committed, started, schedulerFailure.error)
     throw schedulerFailure.error
   }
 
@@ -257,6 +260,38 @@ function appendSkippedToolCall(session: Session, turn: number, step: number, blo
       info: { name: 'AbortError', code: TOOL_ABORTED_BEFORE_DISPATCH },
     },
   }, callSeq)
+}
+
+/** Durable failure code for a started call whose scheduler failed before any result existed. */
+const TOOL_SCHEDULER_FAILED = 'TOOL_SCHEDULER_FAILED'
+
+/**
+ * Record an error result for every started call that never committed. The
+ * scheduler failure ends the turn anyway; without these results the log keeps a
+ * `tool/call` with no `tool/result`, and every later load rejects the session as
+ * corrupt.
+ */
+function appendUncommittedFailures(
+  session: Session,
+  turn: number,
+  step: number,
+  group: readonly PlannedCall[],
+  callSeqs: readonly (SessionSeq | undefined)[],
+  committed: number,
+  started: number,
+  error: unknown,
+): void {
+  const message = error instanceof Error ? error.message : String(error)
+  for (let index = committed; index < started; index++) {
+    const callSeq = callSeqs[index]
+    const block = group[index]?.block
+    if (callSeq === undefined || block === undefined) continue
+    appendToolResult(session, turn, step, block, {
+      content: [{ type: 'text', text: `Error: ${message}` }],
+      isError: true,
+      error: { message, info: { name: 'Error', code: TOOL_SCHEDULER_FAILED } },
+    }, callSeq)
+  }
 }
 
 /** Append a started call and return the event seq that its result must cite. */

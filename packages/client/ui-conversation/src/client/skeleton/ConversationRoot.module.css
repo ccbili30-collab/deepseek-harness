@@ -56,6 +56,14 @@
   min-height: 30px;
 }
 
+:global(html[data-chrome-platform='darwin']:not([data-noven-subject])) .headerSessionless {
+  padding-top: 10px;
+}
+
+:global(html[data-chrome-platform='darwin']:not([data-noven-subject])) .headerSessionless .titleRow {
+  min-height: 30px;
+}
+
 /* macOS hiddenInset titlebar: the header block owns the window drag over its
    own box — title row plus the view tab strip, so the draggable geometry is the
    header's geometry and no frame band has to match its height. The header marks

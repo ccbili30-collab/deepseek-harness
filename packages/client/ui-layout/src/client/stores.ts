@@ -134,7 +134,9 @@ type LayoutInfo = {
   rightbarInstant: boolean
   /** Live structural unit side of the visible session (geometry.active). */
   unitSide: UnitSide
-  /** One global fold for the auxiliary region, whichever content the product mode assigns to it. */
+  /** Conversation fold used when an independent-fold policy makes Canvas primary. */
+  centerCollapsed: boolean
+  /** Canvas fold, or the shared auxiliary fold under a shared-fold policy. */
   auxiliaryCollapsed: boolean
 }
 
@@ -228,6 +230,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
         rightbarFullscreen: false,
         rightbarInstant: false,
         unitSide: DEFAULT_GEOMETRY.unitSide,
+        centerCollapsed: false,
         auxiliaryCollapsed: true,
         sidebarCollapsed: DEFAULT_GEOMETRY.sidebarCollapsed,
       },
@@ -263,7 +266,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
       },
       setCenterCollapsed: (d, collapsed: boolean) => {
         d.layoutInfo.rightbarInstant = false
-        d.layoutInfo.auxiliaryCollapsed = collapsed
+        d.layoutInfo.centerCollapsed = collapsed
       },
       setAuxiliaryCollapsed: (d, collapsed: boolean) => {
         d.layoutInfo.rightbarInstant = false
@@ -384,6 +387,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
               rightbar: saved.rightbar,
               unit: saved.unit,
               auxiliary: saved.auxiliary,
+              centerCollapsed: saved.centerCollapsed,
               auxiliaryCollapsed: saved.auxiliaryCollapsed,
             }
             : {
@@ -392,6 +396,7 @@ export function createLayoutStore(): EngineStoreHandle<LayoutState, LayoutAction
               rightbar: saved.rightbar,
               unit: saved.unit,
               auxiliary: saved.auxiliary,
+              centerCollapsed: saved.centerCollapsed,
               auxiliaryCollapsed: saved.auxiliaryCollapsed,
               sidebarCollapsed: latest.sidebarCollapsed,
               narrowExpanded: latest.narrowExpanded,

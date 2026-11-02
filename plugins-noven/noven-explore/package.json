@@ -1,7 +1,7 @@
 {
   "name": "noven-explore",
   "version": "0.1.0",
-  "description": "Noven 探索模式：一个新会话默认进入的创作预设——内置共创方法、每轮以选项工具收口、探索期锁写；用户下令落笔后按授权执行。",
+  "description": "Noven 探索模式：只读共创、按需提问；需要动手时提示切换到创作模式。",
   "type": "module",
   "main": "lib/index.js",
   "types": "lib/index.d.ts",
@@ -22,7 +22,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "test": "node --test tests/state.test.mjs"
+    "test": "node --test tests/*.test.mjs"
   },
   "engines": {
     "node": ">=20"

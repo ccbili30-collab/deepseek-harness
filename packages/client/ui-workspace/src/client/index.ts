@@ -1,16 +1,14 @@
 /**
- * Workspace plugin, browser half. Two registrations: WorkspaceNavigator fills
- * the sidebar shell's `sidebar.workspaces` hole with a fixed Workspace picker
- * above current-Workspace Sessions or product content, and WorkspacePicker
- * fills the conversation hero's picker hole (`conversation.hero.workspace`).
- * Both read real Host Workspaces through the global useWorkspaces hook, and
- * each declares its own `single` directory-flow child hole for the composed
- * picker package's client half. WorkspaceNavigator declares the strict-Session
- * `sidebar.workspaces.content` seat and the Session row action lists; this
- * apply registers the shipped actions — pin, rename, fork, archive, and the
- * archived-only permanent deletion — plus their dialogs and row-action notice.
- * The legacy WorkspaceBrowser stays in its own module without a production
- * registration. Export discipline: packages/client/AGENTS.md.
+ * Workspace plugin, browser half. WorkspaceNavigation fills the sidebar shell's
+ * `sidebar.workspaces` hole with the fixed Workspace navigator for an active
+ * Session and the complete Session browser when no main Session exists or
+ * temporary Session navigation is open. WorkspacePicker fills the conversation
+ * hero's picker hole (`conversation.hero.workspace`). Both read real Host
+ * Workspaces through the global useWorkspaces hook and declare their own
+ * `single` directory-flow child hole. The navigation entry declares the
+ * strict-Session `sidebar.workspaces.content` seat and row action lists; this
+ * apply registers the shipped actions and their dialogs and notices.
+ * Export discipline: packages/client/AGENTS.md.
  */
 import type { Context } from '@deepseek-ai/cordis'
 import type { RemoteHostFacts } from '@deepseek-ai/dsh-api-remotes/client'
@@ -32,7 +30,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 // Type-only: pulls the Session root standard-hook merge.
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import {
-  type ArchiveSessionInjected, type ForkSessionInjected, menuOpenStateFactory, type PinSessionInjected,
+  type ArchiveSessionInjected, type ForkSessionInjected, menuOpenStateFactory, workspaceMenuOpenStateFactory, type PinSessionInjected,
   type SessionArchiveConfirmInjected, type SessionArchiveConfirmRequest,
   type DeleteSessionMenuInjected, type RenameSessionInjected, type RowToast, type RowToastInjected, type RowToastState,
   type SessionDeleteInjected, type SessionRenameDialogInjected,
@@ -41,7 +39,7 @@ import {
 import { createWorkspaceShortcutControls, installWorkspaceShortcuts } from './shortcuts.ts'
 import { UiWorkspaceService } from './navigation.ts'
 import { createWorkspaceViewStore } from './stores.ts'
-import { WorkspaceNavigator } from './rows/WorkspaceNavigator.tsx'
+import { WorkspaceNavigation } from './rows/WorkspaceNavigation.tsx'
 import { ArchiveSessionMenuItem, ArchiveSessionRowButton, SessionArchiveConfirmDialog } from './session-actions/ArchiveSession.tsx'
 import { derive } from './session-actions/derived.ts'
 import { DeleteSessionMenuItem, SessionDeleteDialog } from './session-actions/DeleteSession.tsx'
@@ -378,6 +376,9 @@ export function apply(ctx: Context): void {
         'sidebar.workspaces.session.menu.item': {
           kind: 'list', scope: 'root', inject: { hooks: { menuOpenState: menuOpenStateFactory, shortcuts: ctx.shortcuts.catalog } },
         },
+        'sidebar.workspaces.workspace.menu.item': {
+          kind: 'list', scope: 'root', inject: { hooks: { menuOpenState: workspaceMenuOpenStateFactory } },
+        },
         'sidebar.workspaces.session.row.action': { kind: 'list', scope: 'root' },
         'sidebar.session.row.leading': { kind: 'list', scope: 'root' },
         'sidebar.session.row.hover': { kind: 'list', scope: 'root' },
@@ -386,7 +387,7 @@ export function apply(ctx: Context): void {
       inject: navigatorInjected,
       locale: NS,
     },
-    WorkspaceNavigator,
+    WorkspaceNavigation,
   ))
   // The shipped row actions take the same route as a plugin's: `slots.inject`
   // waits for the browser registration above to declare each list, and the

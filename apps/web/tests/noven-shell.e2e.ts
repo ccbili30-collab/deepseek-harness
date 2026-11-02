@@ -15,7 +15,7 @@ const EXPECTED = fileURLToPath(new URL('./expected/noven-shell/layout.expected.m
 const OVERLAY = fileURLToPath(new URL('../../desktop/noven/profile/cordis.patch.yml', import.meta.url))
 const PLUGIN_ROOT = fileURLToPath(new URL('../../../plugins-noven', import.meta.url))
 const BUNDLES = [
-  'noven-study', 'noven-brand', 'noven-shell', 'noven-sidecar', 'noven-dock', 'noven-image',
+  'noven-study', 'noven-brand', 'noven-shell', 'noven-dock', 'noven-image',
   'noven-workbench', 'noven-draw-comic', 'noven-docs', 'noven-cards', 'noven-library', 'noven-skills', 'noven-explore',
 ] as const
 const DEPENDENCIES = ['noven-fmg', 'noven-ledger'] as const
@@ -42,13 +42,14 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
     scaffold = await launchWebScaffold({
       harnessHome: join(isolatedRoot, 'harness'),
       profile: { packages: BUNDLES.map(name => ({ dir: join(PLUGIN_ROOT, name), enabled: true })) },
+      agentPresets: { default: 'create' },
       extraInstallAnchors: DEPENDENCIES.map(name => join(PLUGIN_ROOT, name, 'package.json')),
       extraOverlayPath: OVERLAY,
     })
     await mkdir(dirname(EXPECTED), { recursive: true })
     const raw = await readFile(SEED, 'utf8')
     await scaffold.ctx.workspaceRegistry.create(scaffold.workspaceCwd, 'Noven验收工作区')
-    await seedSession(scaffold, raw, 'noven-shell-layout', undefined, { createdAt: Date.UTC(2026, 0, 1) })
+    await seedSession(scaffold, raw, 'noven-shell-layout', 'create', { createdAt: Date.UTC(2026, 0, 1) })
     browser = await chromium.launch()
   }, 180_000)
 
@@ -121,6 +122,14 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
     await page.getByRole('menu').waitFor()
     await page.keyboard.press('Escape')
 
+    if (await page.locator('[data-side-session-menu]:visible').count() === 0) {
+      await page.locator('[data-center-col] [data-side-fold]').click()
+    }
+    await page.locator('[data-noven-session-navigation]:visible').first().click()
+    await page.getByRole('menuitem', { name: '会话列表', exact: true }).click()
+    await page.getByRole('button', { name: '返回内容导航', exact: true }).click()
+    await page.locator('.nv-tree').first().waitFor()
+
     await page.getByRole('button', { name: '切换到Agent', exact: true }).click()
     await page.getByRole('button', { name: '切换到手作', exact: true }).waitFor()
 
@@ -153,7 +162,7 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
 
   it('creates objects in the current Workspace and retains their canvas across Sessions', async () => {
     onTestFailed(() => saveFailureShot(page, 'noven-shell-workspace-canvas'))
-    const second = await seedSession(scaffold, await readFile(SEED, 'utf8'), 'noven-shell-second')
+    const second = await seedSession(scaffold, await readFile(SEED, 'utf8'), 'noven-shell-second', 'create')
     await scaffold.ctx.sessionController.rename({ sessionId: second, title: '第二会话' })
 
     await page.getByRole('button', { name: '切换到手作', exact: true }).click()

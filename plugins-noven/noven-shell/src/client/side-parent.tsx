@@ -27,6 +27,8 @@ export interface SideParentInjected {
   readonly sessions: ObservableSnapshot<SideSessions>
   /** Open a Session and reveal the side conversation. */
   readonly openSession: (id: SessionId) => void
+  /** Open the complete Session browser without replacing the current Session. */
+  readonly showBrowser: () => void
   /** Hold one Client reference for the directory child's Session scope. */
   readonly retainSession: (id: SessionId) => SessionReference
 }
@@ -67,7 +69,7 @@ export function SideParent(props: SideParentProps) {
   const reference = useSessionReference(subject === 'conversation' ? sessionId : undefined, props.retainSession)
   if (props.collapsed) return null
   if (subject === 'canvas') {
-    return <NovenSideSessionMenu t={props.t} sessions={props.sessions} open={props.openSession} />
+    return <NovenSideSessionMenu t={props.t} sessions={props.sessions} open={props.openSession} showBrowser={props.showBrowser} />
   }
   if (reference === undefined) return null
   return (

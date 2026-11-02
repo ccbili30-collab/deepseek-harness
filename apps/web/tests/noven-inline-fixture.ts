@@ -94,7 +94,7 @@ export function snapshotSessionFixture(): string {
   const third = '完整组件示例。\n' + `::view${JSON.stringify({ block: 'code', data: DOCUMENT })}` + '\n组件只表达当前消息。'
   const contents = [first, second, third]
   const events = [
-    { type: 'session', version: 4, id: '{{session:1}}', createdAt: 0, cwd: '{{cwd}}', isSeeded: false, delegationDepth: 0, agentPreset: 'standard' },
+    { type: 'session', version: 4, id: '{{session:1}}', createdAt: 0, cwd: '{{cwd}}', isSeeded: false, delegationDepth: 0, agentPreset: 'create' },
     { type: 'permission/preset', data: { preset: 'workspace-write' } },
     { type: 'sandbox/mode', data: { mode: 'workspace-write' } },
     { type: 'approval/policy', data: { policy: 'ask' } },

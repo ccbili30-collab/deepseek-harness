@@ -1,9 +1,9 @@
 /**
  * ui-workspace contracts. Two registrations share this package:
  *
- * - WorkspaceNavigator fills the sidebar shell's `sidebar.workspaces` hole:
- *   a fixed Workspace selector above either current-Workspace Sessions or the
- *   product content seat. WorkspaceBrowser remains as the legacy full browser.
+ * - WorkspaceNavigation fills the sidebar shell's `sidebar.workspaces` hole:
+ *   the fixed Workspace selector above current-Workspace Sessions or product
+ *   content, switching to WorkspaceBrowser for temporary or Session-less browsing.
  * - WorkspacePicker fills the conversation empty-state hole (menu + error
  *   dialog shared with the navigator).
  *

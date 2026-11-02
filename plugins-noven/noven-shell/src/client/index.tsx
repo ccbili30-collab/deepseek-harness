@@ -54,15 +54,13 @@ import { bindingOp, fetchBinding } from './bindings-api.ts'
 import type { BindingOp, BindingState } from './bindings-api.ts'
 import { ContextTab } from './tabs/Context.tsx'
 import { LibraryTab } from './tabs/Library.tsx'
-import { SidecarTab, type SidecarMessage, type SidecarState } from './tabs/Sidecar.tsx'
 import { SettingsTab } from './tabs/Settings.tsx'
 import { UpdatesSection } from './settings/UpdatesSection.tsx'
 import { WorkbenchSection } from './settings/WorkbenchSection.tsx'
 import { AppearanceSettingsSection } from './settings/AppearanceSettingsSection.tsx'
 import { bindNovenEditorTheme } from './doc-editor.tsx'
 import { createNovenWorkbenchStore } from './workbench.ts'
-import { fetchSidecar, sidecarOp, type SidecarOp } from './sidecar-api.ts'
-import type { SessionEventLikeEntry, SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { SessionReference } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { HeroBrandMarkOwnerProps } from '@deepseek-ai/dsh-client-ui-conversation/client'
 import { HeaderChips } from './tabs/HeaderChips.tsx'
 import type { HeaderChipsInjected } from './tabs/HeaderChips.tsx'
@@ -108,11 +106,9 @@ export const CARD_PREVIEW_ID = 'noven-card-preview' as MainPanelId
 export const WORKBENCH_ID = 'noven-workbench' as MainPanelId
 export const CONTEXT_TAB_ID = 'noven:context'
 export const LIBRARY_TAB_ID = 'noven:library'
-export const SIDECAR_TAB_ID = 'noven:sidecar'
 export const SETTINGS_TAB_ID = 'noven:session-settings'
 const CONTEXT_DEF_ID = 'noven-shell.context'
 const LIBRARY_DEF_ID = 'noven-shell.library'
-const SIDECAR_DEF_ID = 'noven-shell.sidecar'
 const SETTINGS_DEF_ID = 'noven-shell.session-settings'
 /** The canvas's tab type: `kind` is what `openTab` names, `id` keys its body under `sidebar.right.pane.tab`. */
 const CANVAS_KIND = 'noven.canvas'
@@ -173,21 +169,12 @@ export interface LibraryTabInjected {
   readonly openCard: (id: string) => void
 }
 
-/** Injected face for the 设定 sidecar tab: the workspace entity store plus the admin session's live stream and prompt channel. */
-export interface SidecarTabInjected {
-  readonly hooks: { readonly sidecar: ObservableSnapshot<SidecarState> }
-  readonly run: (op: SidecarOp) => Promise<void>
-  readonly send: (text: string) => Promise<{ ok: boolean; error?: string }>
-}
-
-/** 会话设置页签注入：侧车实况只用于自动整理开关；设置走会话文档温层。 */
+/** 会话设置页签注入：设置与外观走会话文档温层。 */
 export interface SettingsTabInjected {
   readonly sessionId: SessionId
   readonly hooks: {
-    readonly sidecar: ObservableSnapshot<SidecarState>
     readonly docs: ObservableSnapshot<Readonly<Record<string, DocEntry>>>
   }
-  readonly run: (op: SidecarOp) => Promise<void>
   readonly ensureDoc: CanvasInjected['ensureDoc']
   readonly saveDoc: CanvasInjected['saveDoc']
 }
@@ -359,7 +346,6 @@ function FeatureMenuItems({ useGuide, useMenuOpenState, openTab }: FeatureMenuPr
 /** Guide-picker glyphs for the rail tabs. */
 function ContextTabIcon({ size }: { size?: number }) { return glyph.chat(size ?? 16) }
 function LibraryTabIcon({ size }: { size?: number }) { return glyph.book(size ?? 16) }
-function SidecarTabIcon({ size }: { size?: number }) { return glyph.sparkle(size ?? 16) }
 function SettingsTabIcon({ size }: { size?: number }) { return glyph.gear(size ?? 16) }
 
 /** Required browser services: slots, panel selection, theme, copy, right rail, session navigation, command and skill catalogs. */
@@ -915,123 +901,6 @@ function bindingCache(sessions: ClientContext['sessions']) {
   return { get, refreshAll: () => { for (const source of sources.values()) source.refresh() } }
 }
 
-/**
- * Per-session sidecar state: the workspace entity store plus the admin
- * session's live stream. The store is polled (entities are materialized
- * state shared across sessions); the admin session is retained while the
- * pane is subscribed and its event feed folds into the bottom stream —
- * digest-task messages carry the `noven-sidecar` source kind, context
- * injections stay out of the visible stream, and each settled admin turn
- * re-pulls the store it may have written.
- */
-function sidecarSource(sessions: ClientContext['sessions'], sessionId: SessionId): ObservableSnapshot<SidecarState> & { readonly refresh: () => void; readonly send: (text: string) => Promise<{ ok: boolean; error?: string }> } {
-  let snapshot: SidecarState = { payload: undefined, admin: { messages: [], busy: false } }
-  const listeners = new Set<() => void>()
-  let started = false
-  let boundId: SessionId | undefined
-  let adminRef: { release(): void } | undefined
-  let disposeFeed: (() => void) | undefined
-  let seen = 0
-  let messages: SidecarMessage[] = []
-  let busy = false
-  const textOf = (content: readonly { type: string; text?: string }[]): string =>
-    content.filter(b => b.type === 'text' && b.text !== undefined).map(b => b.text!).join('\n').trim()
-  const set = (next: SidecarState) => {
-    snapshot = next
-    for (const listener of listeners) listener()
-  }
-  const fold = (entries: readonly SessionEventLikeEntry[]) => {
-    for (const entry of entries) {
-      if (entry.type !== 'event') continue
-      const ev = entry.event
-      if (ev.type === 'user/message') {
-        const source = ev.data.source
-        // 整理任务按来源标记；上下文注入（noven-cards 等）不进可见流。
-        // source.kind 是合并扩展联合——宽成 string 再比，插件来源客户端不认识。
-        const kind: string = source.kind
-        const task = kind === 'noven-sidecar'
-        const human = kind === 'user'
-        if (!task && !human) continue
-        const text = textOf(ev.data.content)
-        if (text.length === 0) continue
-        messages = [...messages, { key: `u${ev.seq}`, role: 'user', ...(task ? { task: true } : {}), text }]
-      } else if (ev.type === 'assistant/message') {
-        const text = textOf(ev.data.message.content)
-        if (text.length > 0) messages = [...messages, { key: `a${ev.seq}`, role: 'assistant', text }]
-      } else if (ev.type === 'turn/start') {
-        busy = true
-      } else if (ev.type === 'turn/end') {
-        busy = false
-        // 管理员一轮落地可能动过实体库——结账时重拉。
-        void pull()
-      }
-    }
-  }
-  const bindAdmin = (adminId: SessionId | undefined) => {
-    if (adminId === boundId) return
-    boundId = adminId
-    disposeFeed?.()
-    disposeFeed = undefined
-    adminRef?.release()
-    adminRef = undefined
-    messages = []
-    busy = false
-    seen = 0
-    if (adminId === undefined) { set({ ...snapshot, admin: { messages, busy } }); return }
-    const reference = sessions.retain(adminId, { source: 'novenShell' })
-    adminRef = reference
-    const feed = reference.binding.eventSource
-    fold(feed.getSnapshot().entries)
-    seen = feed.getSnapshot().entries.length
-    disposeFeed = feed.subscribe(() => {
-      const entries = feed.getSnapshot().entries
-      if (feed.getSnapshot().change.kind === 'replace') { messages = []; busy = false; seen = 0 }
-      fold(entries.slice(seen))
-      seen = entries.length
-      set({ ...snapshot, admin: { messages, busy } })
-    })
-    set({ ...snapshot, admin: { messages, busy } })
-  }
-  const pull = async () => {
-    const payload = await fetchSidecar(sessionId)
-    set({ ...snapshot, payload })
-    bindAdmin(payload?.adminSessionId)
-  }
-  let sweep: ReturnType<typeof setInterval> | undefined
-  return {
-    getSnapshot: () => snapshot,
-    refresh: () => { void pull() },
-    send: async (text: string) => {
-      // 首拉还没带回管理员编号时先等它——pane 打开就说第一句话不该掉。
-      if (boundId === undefined) await pull()
-      if (boundId === undefined) return { ok: false, error: 'no admin session' }
-      try {
-        return await sessions.using(boundId, { source: 'novenShell' }, async reference => {
-          const result = await reference.binding.session.prompt([{ type: 'text', text }], 'queue')
-          return result.ok ? { ok: true } : { ok: false, error: result.error.message }
-        })
-      } catch (error) {
-        return { ok: false, error: error instanceof Error ? error.message : 'send failed' }
-      }
-    },
-    subscribe: (listener: () => void) => {
-      listeners.add(listener)
-      if (!started) {
-        started = true; void pull()
-        // 同项目别的会话也在喂同一个实体库——慢速兜底刷新补跨会话盲区。
-        sweep = setInterval(() => { void pull() }, 30_000)
-      }
-      return () => {
-        listeners.delete(listener)
-        if (listeners.size === 0) {
-          bindAdmin(undefined)
-          clearInterval(sweep); sweep = undefined
-          started = false
-        }
-      }
-    },
-  }
-}
 function bindingsCatalog(bindings: ReturnType<typeof bindingCache>, sessions: ClientContext['sessions']) {
   let snapshot: Readonly<Record<string, BindingState | undefined>> = {}
   const listeners = new Set<() => void>()
@@ -1223,7 +1092,6 @@ export function apply(ctx: ClientContext): void {
   const cards = cardCatalog(ctx.sessions, projects, ctx.workspaces)
   const bindings = bindingCache(ctx.sessions)
   const allBindings = bindingsCatalog(bindings, ctx.sessions)
-  const sidecars = new Map<SessionId, ReturnType<typeof sidecarSource>>()
   /** The most recently active session, optionally restricted to one workspace root. */
   const recentSession = (root?: string): { id: SessionId; cwd: string } | undefined => {
     const state = ctx.sessions.list.getSnapshot()
@@ -1406,12 +1274,12 @@ export function apply(ctx: ClientContext): void {
     // reads an unregistered cwd as "choose a workspace" and goes read-only.
     // A blank from another preset cannot host it either — the workspace layer
     // filters reuse by preset, so a standard blank is left for other flows and
-    // an explore blank is reused or created here.
+    // A create-preset blank is reused or created here.
     const sameRoot = root === undefined || current?.cwd === root
-    if (current?.blank === true && sameRoot && current.projectionValues?.agentPreset === 'explore') return
+    if (current?.blank === true && sameRoot && current.projectionValues?.agentPreset === 'create') return
     const sessionId = workspaceId !== undefined
-      ? await ctx.uiWorkspace.connectWorkspace(workspaceId, { agentPreset: 'explore' })
-      : await createSessionIn(recentSession()?.cwd, 'explore')
+      ? await ctx.uiWorkspace.connectWorkspace(workspaceId, { agentPreset: 'create' })
+      : await createSessionIn(recentSession()?.cwd, 'create')
     // preserve 保住面板：普通 reveal 会在 replaceMain 里 selectPanel(null)，
     // 之后的任何面板重激活都输给晚到的提交。发布版 openSession 类型未带
     // options 参数（ui-workspace 源码与产物已带 preserve），走局部窄化。
@@ -2073,9 +1941,9 @@ export function apply(ctx: ClientContext): void {
       }
       const current = Object.values(ctx.sessions.list.getSnapshot().byId)
         .find(row => (row.retainedBy.mainView ?? 0) > 0)
-      const host = current?.blank === true && current.projectionValues?.agentPreset === 'explore'
+      const host = current?.blank === true && current.projectionValues?.agentPreset === 'create'
         ? current.id
-        : seam.reusableBlank?.(undefined, { agentPreset: 'explore' })
+        : seam.reusableBlank?.(undefined, { agentPreset: 'create' })
       if (host !== undefined) seam.openSession?.(host, { panel: 'preserve', transition: 'none' })
       ctx.layout.selectPanel(null)
     } finally {
@@ -2456,6 +2324,10 @@ export function apply(ctx: ClientContext): void {
         ctx.uiWorkspace.openSession(id)
         ctx.layout.setAuxiliaryCollapsed(false)
       },
+      showBrowser: () => {
+        ctx.uiWorkspace.showSessionBrowser()
+        ctx.layout.setSidebarCollapsed(false)
+      },
       retainSession: retainSideSession,
     }),
   }, SideParent)), 'noven-shell: side parent')
@@ -2773,29 +2645,6 @@ export function apply(ctx: ClientContext): void {
     <LibraryTab t={p.t} useOutputs={p.useOutputs} openCard={p.openCard} />
   ))), 'noven-shell: 创作库 body')
   ctx.effect(() => ctx.sidebarRightTabs.register({
-    id: SIDECAR_DEF_ID,
-    kind: SIDECAR_TAB_ID,
-    title: () => t('tab.sidecar'),
-    guide: [{ id: 'sidecar', order: 8, title: () => t('tab.sidecar'), description: () => t('tab.sidecar.hint'), icon: SidecarTabIcon }],
-  }), 'noven-shell: 设定 type')
-  ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
-    name: 'sidebar.right.pane.tab', key: SIDECAR_DEF_ID, locale: NS,
-    inject: (sessionId: Parameters<typeof ctx.remote.commands.list>[0]): SidecarTabInjected => {
-      let source = sidecars.get(sessionId)
-      if (source === undefined) sidecars.set(sessionId, source = sidecarSource(ctx.sessions, sessionId))
-      return {
-        hooks: { sidecar: source },
-        run: async (op: SidecarOp) => {
-          await sidecarOp(sessionId, op)
-          source.refresh()
-        },
-        send: (text: string) => source.send(text),
-      }
-    },
-  }, (p: TabBodyProps & InjectFace<SidecarTabInjected>) => (
-    <SidecarTab t={p.t} useTabInfo={p.useTabInfo} useSidecar={p.useSidecar} run={p.run} send={p.send} />
-  ))), 'noven-shell: 设定 body')
-  ctx.effect(() => ctx.sidebarRightTabs.register({
     id: SETTINGS_DEF_ID,
     kind: SETTINGS_TAB_ID,
     title: () => t('tab.settings'),
@@ -2803,27 +2652,18 @@ export function apply(ctx: ClientContext): void {
   }), 'noven-shell: 会话设置 type')
   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register({
     name: 'sidebar.right.pane.tab', key: SETTINGS_DEF_ID, locale: NS,
-    inject: (sessionId: Parameters<typeof ctx.remote.commands.list>[0]): SettingsTabInjected => {
-      let source = sidecars.get(sessionId)
-      if (source === undefined) sidecars.set(sessionId, source = sidecarSource(ctx.sessions, sessionId))
-      return {
-        sessionId,
-        hooks: { sidecar: source, docs: docCache.snapshot },
-        run: async (op: SidecarOp) => {
-          await sidecarOp(sessionId, op)
-          source.refresh()
-        },
-        ensureDoc,
-        saveDoc: async (sid, path, content, base) => {
-          const res = await saveDoc(sid, path, content, base)
-          if (res === 'ok') docCache.put(docKey(sid, path), { state: 'ready', content })
-          return res
-        },
-      }
-    },
+    inject: (sessionId: Parameters<typeof ctx.remote.commands.list>[0]): SettingsTabInjected => ({
+      sessionId,
+      hooks: { docs: docCache.snapshot },
+      ensureDoc,
+      saveDoc: async (sid, path, content, base) => {
+        const res = await saveDoc(sid, path, content, base)
+        if (res === 'ok') docCache.put(docKey(sid, path), { state: 'ready', content })
+        return res
+      },
+    }),
   }, (p: TabBodyProps & InjectFace<SettingsTabInjected>) => (
     <SettingsTab t={p.t} useTabInfo={p.useTabInfo} sessionId={p.sessionId}
-      useSidecar={p.useSidecar} run={p.run}
       useDocs={p.useDocs} ensureDoc={p.ensureDoc} saveDoc={p.saveDoc} />
   ))), 'noven-shell: 会话设置 body')
   // The dedicated appearance page is the only visible view switch. The

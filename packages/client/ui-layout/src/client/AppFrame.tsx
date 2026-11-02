@@ -69,6 +69,7 @@ interface PendingFrameTransition {
   readonly primary: 'main' | 'rightbar' | null
   readonly sessionId: string | null
   readonly centerCollapsed: boolean
+  readonly rightbarAuxiliaryCollapsed: boolean
   readonly generation: number
   timer?: ReturnType<typeof setTimeout>
 }
@@ -267,12 +268,18 @@ export function AppFrame({
   // A product policy outranks legacy Session geometry without being persisted here.
   const unitLeft = framePolicy === null ? layoutInfo.unitSide === 'left' : framePolicy.primary === 'rightbar'
   const centerCollapsible = framePolicy?.primary === 'rightbar' && !panelActive
-  const centerCollapsed = centerCollapsible && layoutInfo.auxiliaryCollapsed
+  const sharedFold = framePolicy?.foldMode === 'shared'
+  const centerCollapsed = centerCollapsible
+    && (sharedFold ? layoutInfo.auxiliaryCollapsed : layoutInfo.centerCollapsed)
   const onUnitSwap = useCallback(() => {
     actions.setUnitSide(unitLeft ? 'right' : 'left')
   }, [actions, unitLeft])
   useRegionSort(frameRef, !panelActive && framePolicy === null, onUnitSwap)
   const toggleCenter = useCallback(() => {
+    if (sharedFold) actions.setAuxiliaryCollapsed(!layoutInfo.auxiliaryCollapsed)
+    else actions.setCenterCollapsed(!layoutInfo.centerCollapsed)
+  }, [actions, sharedFold, layoutInfo.auxiliaryCollapsed, layoutInfo.centerCollapsed])
+  const toggleAuxiliary = useCallback(() => {
     actions.setAuxiliaryCollapsed(!layoutInfo.auxiliaryCollapsed)
   }, [actions, layoutInfo.auxiliaryCollapsed])
 
@@ -444,6 +451,7 @@ export function AppFrame({
       primary: framePolicy?.primary ?? null,
       sessionId: currentSessionId,
       centerCollapsed,
+      rightbarAuxiliaryCollapsed,
       generation: modeGeneration.current,
     }
     pendingFrameTransition.current = pending
@@ -461,7 +469,7 @@ export function AppFrame({
       }, 0)
     }
   }, [
-    cancelModeMotion, canvasFullscreen, centerCollapsed, currentSessionId, framePolicy,
+    cancelModeMotion, canvasFullscreen, centerCollapsed, rightbarAuxiliaryCollapsed, currentSessionId, framePolicy,
     layoutInfo.rightbarFullscreen, narrow, panelActive, snapshotRegion,
   ])
 
@@ -491,6 +499,7 @@ export function AppFrame({
     const mirror = pairs.every(pair => Math.abs(pair.before.width - pair.after.width) < 1
       && Math.abs(pair.before.height - pair.after.height) < 1)
       && !pending.centerCollapsed && !centerCollapsed
+      && !pending.rightbarAuxiliaryCollapsed && !rightbarAuxiliaryCollapsed
     const swaps = mirror
       ? pairs.map(pair => ({ ...pair, dx: pair.before.left - pair.after.left })).filter(pair => Math.abs(pair.dx) >= 1)
       : []
@@ -723,7 +732,7 @@ export function AppFrame({
   const rightTrackMax = policyRightbarWidth ?? (canvas === null
     ? rightbarMax
     : Math.min(unitCeiling, Math.max(unitFloor, presetUnit ?? layoutInfo.unit ?? halveUnit ?? (workWidth - centerCap))))
-  const drawerWidth = policyRegions?.drawer ?? normal.rightbar
+  const drawerWidth = policyRegions?.drawer ?? policyDrawerWidth
   rightbarWidth.current = drawerWidth
   const onRightbarStart = useCallback(() => {
     rightbarBase.current = rightbarWidth.current
@@ -858,22 +867,24 @@ export function AppFrame({
           viewTransitionName: 'noven-work',
           gridTemplateColumns: canvasFullscreen
             ? 'minmax(0px, 1fr)'
-            : centerCollapsed || rightbarAuxiliaryCollapsed
-              ? 'minmax(0px, 1fr) 0px'
-              : policyRegions !== null
-                ? unitLeft
-                  ? `minmax(${Math.min(CENTER_MIN, policyRegions.primary)}px, 1fr) minmax(0px, ${policyRegions.auxiliary}px)`
-                  : `minmax(${Math.min(CENTER_MIN, policyRegions.primary)}px, 1fr) minmax(0px, ${policyRegions.auxiliary + policyRegions.drawer}px)`
-                : unitLeft
-                  ? `minmax(0px, ${rightTrackMax}px) minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr)`
-                  : `minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightTrackMax}px)`,
+            : centerCollapsed
+              ? `minmax(0px, 1fr) minmax(0px, ${SIDEBAR_COLLAPSED}px)`
+              : rightbarAuxiliaryCollapsed
+                ? 'minmax(0px, 1fr) 0px'
+                : policyRegions !== null
+                  ? unitLeft
+                    ? `minmax(${Math.min(CENTER_MIN, policyRegions.primary)}px, 1fr) minmax(0px, ${policyRegions.auxiliary}px)`
+                    : `minmax(${Math.min(CENTER_MIN, policyRegions.primary)}px, 1fr) minmax(0px, ${policyRegions.auxiliary + policyRegions.drawer}px)`
+                  : unitLeft
+                    ? `minmax(0px, ${rightTrackMax}px) minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr)`
+                    : `minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightTrackMax}px)`,
         }}
       >
         <CenterColumn order={unitLeft ? 2 : 1} collapsible={centerCollapsible} collapsed={centerCollapsed}
           productFold={framePolicy !== null} sideChrome={sideColumn === 'center' ? sideChrome : null} toggle={toggleCenter}
           collapseLabel={t('collapse')} expandLabel={t('expand')}>{main}</CenterColumn>
         <RightbarColumn order={unitLeft ? 1 : 2} collapsible={canvasAuxiliary} collapsed={rightbarAuxiliaryCollapsed}
-          productFold={framePolicy !== null} sideChrome={sideColumn === 'rightbar' ? sideChrome : null} toggle={toggleCenter}
+          productFold={framePolicy !== null} sideChrome={sideColumn === 'rightbar' ? sideChrome : null} toggle={toggleAuxiliary}
           collapseLabel={t('collapse')} expandLabel={t('expand')}>
           {renderSlot('rightbar', { width: drawerWidth, viewportWidth: viewport, canShow: drawerWidth > 0, collapsePreview: layoutInfo.rightbarCollapsePreview })}
         </RightbarColumn>

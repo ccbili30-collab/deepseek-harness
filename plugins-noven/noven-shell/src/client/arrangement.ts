@@ -8,8 +8,8 @@ export type NovenMode = 'agent' | 'ide'
 /** The centre is always exactly one of the two workbench subjects. */
 export type NovenSubject = 'conversation' | 'canvas'
 
-const AGENT_POLICY: FrameLayoutPolicy = { primary: 'main', canvasSide: 'right', drawer: false }
-const IDE_POLICY: FrameLayoutPolicy = { primary: 'rightbar', canvasSide: 'right', drawer: false }
+const AGENT_POLICY: FrameLayoutPolicy = { primary: 'main', canvasSide: 'right', drawer: false, foldMode: 'shared' }
+const IDE_POLICY: FrameLayoutPolicy = { primary: 'rightbar', canvasSide: 'right', drawer: false, foldMode: 'shared' }
 
 /**
  * Project the subject into the user-facing mode label.

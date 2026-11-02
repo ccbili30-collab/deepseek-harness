@@ -1,5 +1,5 @@
 /** Fixed topbar controls, current-mode labeling, and Noven selection styling. */
-import { existsSync, readFileSync } from 'node:fs'
+import { readFileSync } from 'node:fs'
 
 let failures = 0
 const check = (ok, what) => {
@@ -23,7 +23,7 @@ check(frame.includes('--dsh-frame-leading-clearance: 84px'), '默认 DSH 全屏�
 check(!style.includes('--dsh-frame-leading-clearance: 196px') && !style.includes('--dsh-frame-leading-clearance: 120px'), 'Noven 不再为废弃的第三个 leading 控件增加安全区')
 check(shell.includes("ctx.slots.inject('shell.topbar'") && !shell.includes("ctx.slots.inject('shell.topbar.navigation'"), '模式注册到固定顶栏，导航开合回到导航自身')
 check(!shell.includes('NovenLeadingModeSwitch') && !shell.includes("ctx.slots.inject('shell.leading.action'"), '不再存在旧的 leading 模式注册')
-check(!existsSync(new URL('../src/client/session-navigation.tsx', import.meta.url)), 'IDE 临时历史组件已删除')
+check(!shell.includes('SessionNavigationButton') && mode.includes('showBrowser'), '完整会话浏览器并入现有会话菜单，不恢复旧导航注册')
 check(!tree.includes('SessionNavigationButton'), '目录树不再包含历史按钮')
 check(mode.includes("PropsRuntime<'shell.topbar'>") && mode.includes('createNovenSubjectStore'), '模式按钮读主体 store，不再有独立 mode store')
 check(mode.includes("t(mode === 'agent' ? 'mode.toAgent' : 'mode.toIde')"), '模式按钮显示当前模式而不是另一套目标文案')

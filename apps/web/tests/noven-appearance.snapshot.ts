@@ -26,7 +26,7 @@ const SESSION_ID = 'noven-appearance-snapshot'
 const MODE = webSnapshotMode()
 const ISOLATED_ENV = ['NOVEN_HOME', 'NOVEN_PROJECTS_ROOT', 'NOVEN_CHANNEL'] as const
 const BUNDLES = [
-  'noven-study', 'noven-brand', 'noven-shell', 'noven-sidecar', 'noven-dock', 'noven-image',
+  'noven-study', 'noven-brand', 'noven-shell', 'noven-dock', 'noven-image',
   'noven-workbench', 'noven-draw-comic', 'noven-docs', 'noven-cards', 'noven-library', 'noven-skills', 'noven-explore',
 ] as const
 
@@ -69,6 +69,7 @@ beforeAll(async () => {
   scaffold = await launchWebScaffold({
     harnessHome: join(isolatedRoot, 'harness'),
     profile: { packages: BUNDLES.map(name => ({ dir: join(PLUGIN_ROOT, name), enabled: true })) },
+    agentPresets: { default: 'create' },
     extraInstallAnchors: ['noven-fmg', 'noven-ledger'].map(name => join(PLUGIN_ROOT, name, 'package.json')),
     extraOverlayPath: [PRODUCT_OVERLAY],
   })

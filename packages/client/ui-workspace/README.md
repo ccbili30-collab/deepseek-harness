@@ -25,7 +25,7 @@ This package lets users choose the current Workspace, browse that Workspace's Se
 <a id="use-this-package"></a>
 ## Use this package
 
-Use the sidebar to choose the current Workspace and browse its Sessions, or use the picker in the Session Intent hero to choose a Workspace for a new session. The registered `WorkspaceNavigator` keeps the Workspace selector fixed above `sidebar.workspaces.content`: Agent renders only the current Workspace's Session rows, while IDE can replace that content with its directory tree without moving the selector. Expanded Sessions reuse `SessionNodeItem` and the established row actions; collapsed Sessions use the same ordered rows in a `Menu` popover, and Workspace selection uses the same `WorkspacePickFlow` in both presentations. The content seat still mounts only with a current Session and does not own or infer the product's page mode.
+Use the sidebar to choose the current Workspace and browse its Sessions, or use the picker in the Session Intent hero to choose a Workspace for a new session. The registered `WorkspaceNavigation` selects `WorkspaceNavigator` while a main Session exists: its Workspace selector stays fixed above `sidebar.workspaces.content`, Agent renders only the current Workspace's Session rows, and IDE can replace that content with its directory tree without moving the selector. Expanded Sessions reuse `SessionNodeItem` and the established row actions; collapsed Sessions use the same ordered rows in a `Menu` popover, and Workspace selection uses the same `WorkspacePickFlow` in both presentations. With no main Session or while temporary Session navigation is open, the same entry renders the complete `WorkspaceBrowser`, including its grouped search, ordering, and row management. The content seat still mounts only with a current Session and does not own or infer the product's page mode.
 
 ### Reordering and view options
 
@@ -85,7 +85,7 @@ The first-use directory name and its stored title are fixed, so neither follows 
 <details>
 <summary>Implementation internals — click to expand</summary>
 
-The package is one composition: both target slots are declared by other plugins, so `apply` uses `slots.inject()` to register for each declaration lifetime and re-register after a declaring slot is restored. `sidebar.workspaces.content` is a `single` strict-Session child: its occupant receives the current binding only while it exists, and the browser keeps its own Session-list behavior whenever the seat is empty.
+The package is one composition: both target slots are declared by other plugins, so `apply` uses `slots.inject()` to register for each declaration lifetime and re-register after a declaring slot is restored. One `WorkspaceNavigation` entry selects the fixed navigator or complete browser from main-Session retention and the transient `sessionBrowser` flag, so the two navigation surfaces never mount as competing registrations. `sidebar.workspaces.content` is a `single` strict-Session child: its occupant receives the current binding only while it exists.
 
 The browser entry also declares two root-scoped `list` child seats on each Session row: `sidebar.session.row.leading`, rendered only while that row's primary status is idle and left blank on an archived row, and `sidebar.session.row.hover`, mounted only while that row's hover card is open. Both take the row's Session identity and nothing else, so an occupant reads its own data by that id; a Session-scoped seat would force a Session binding, which would activate and retain every listed Session.
 

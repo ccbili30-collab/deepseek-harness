@@ -90,6 +90,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     'shell.topbar': { kind: 'list'; scope: 'root'; owner: { readonly collapsed: boolean } }
     /** Fixed navigation toggle outside the sidebar track. */
     'shell.topbar.navigation': { kind: 'single'; scope: 'root'; owner: { readonly collapsed: boolean } }
+    /** Legacy drawer upper-zone seat retained for composition compatibility. */
+    'sidebar.right.pane.top': { kind: 'single'; scope: 'session'; owner: { readonly rail: boolean } }
+    /** Additional actions in the macOS hidden-sidebar recovery seat. */
+    'shell.leading.action': { kind: 'list'; scope: 'root'; owner: Record<never, never> }
     /** Product content navigation replacing the Session browser in IDE mode. */
     'sidebar.workspaces.content': {
       kind: 'single'
@@ -169,7 +173,9 @@ declare module '@deepseek-ai/dsh-client-ui-layout/client' {
   interface FrameLayoutPolicy {
     readonly primary: 'main' | 'rightbar'
     readonly canvasSide: 'left' | 'right'
+    readonly topbar?: boolean
     readonly drawer?: boolean
+    readonly foldMode?: 'shared' | 'independent'
   }
   interface FrameFoldState {
     readonly centerCollapsed: boolean

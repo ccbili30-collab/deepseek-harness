@@ -167,9 +167,18 @@ describe('LayoutController', () => {
     expect(panels.setUnitSide).toHaveBeenNthCalledWith(1, 'left')
     expect(panels.seedSessionGeometry).toHaveBeenNthCalledWith(1, 's-a', { sidebarCollapsed: true })
     expect(panels.seedUnitShare).toHaveBeenNthCalledWith(1, 0.7)
+    expect(panels.setCenterCollapsed).toHaveBeenNthCalledWith(1, true)
+    expect(panels.setAuxiliaryCollapsed).toHaveBeenNthCalledWith(1, false)
+  })
+
+  it('routes the center fold to the shared auxiliary state only under a shared-fold policy', () => {
+    const { service, panels } = buildService()
+    service.provideFrameLayoutPolicy(createSnapshotStore<FrameLayoutPolicy>({
+      primary: 'rightbar', canvasSide: 'right', drawer: false, foldMode: 'shared',
+    }))
+    service.setCenterCollapsed(true)
     expect(panels.setCenterCollapsed).not.toHaveBeenCalled()
-    expect(panels.setAuxiliaryCollapsed).toHaveBeenNthCalledWith(1, true)
-    expect(panels.setAuxiliaryCollapsed).toHaveBeenNthCalledWith(2, false)
+    expect(panels.setAuxiliaryCollapsed).toHaveBeenCalledWith(true)
   })
 
   it('answers nav-geometry comparisons through the constructor-supplied reader', () => {

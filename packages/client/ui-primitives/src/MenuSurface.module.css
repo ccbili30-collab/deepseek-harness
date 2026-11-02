@@ -32,12 +32,13 @@
   display: none;
 }
 
-/* Native Chromium needs opaque pixels behind page content to blur it over
- * native vibrancy. The Web mirror has no native window beneath it, so its
- * macOS presentation marker must not add a second menu surface. Body isolation
- * keeps this backing above the native window and below the page; CSS anchors
- * limit it to this menu without a layout observer. */
-:global(html[data-platform='darwin']) .backing {
+/* Native Chromium and the ordinary Web macOS mirror need opaque pixels behind
+ * page content. Noven's appearance-owned mirror already supplies its material,
+ * so it must not add a second menu surface. Body isolation keeps this backing
+ * above the native window and below the page; CSS anchors limit it to this menu
+ * without a layout observer. */
+:global(html[data-platform='darwin']) .backing,
+:global(html[data-chrome-platform='darwin']:not([data-noven-subject])) .backing {
   display: block;
   position: fixed;
   position-anchor: var(--dsh-menu-anchor);

@@ -125,9 +125,9 @@ export interface ILayout {
    */
   setUnitSide(side: UnitSide): void
   /**
-   * @deprecated Compatibility alias for `setAuxiliaryCollapsed`; both names
-   * write the same fold and no separate Conversation fold is retained.
-   * @param collapsed - true to fold the auxiliary region, false to restore it.
+   * Fold or restore Conversation under an independent-fold policy. A shared-fold
+   * product treats this as a compatibility alias for `setAuxiliaryCollapsed`.
+   * @param collapsed - true to fold the center or shared auxiliary region, false to restore it.
    */
   setCenterCollapsed(collapsed: boolean): void
   /**
@@ -319,9 +319,10 @@ export class LayoutController implements ILayout {
     this.panels.setUnitSide(side)
   }
 
-  /** Compatibility alias for the one auxiliary fold. */
+  /** Fold the center independently, or the shared auxiliary region when the product policy requests it. */
   setCenterCollapsed(collapsed: boolean): void {
-    this.panels.setAuxiliaryCollapsed(collapsed)
+    if (this.policy?.foldMode === 'shared') this.panels.setAuxiliaryCollapsed(collapsed)
+    else this.panels.setCenterCollapsed(collapsed)
   }
 
   /** Fold or restore the auxiliary region without changing the product mode. */

@@ -12,7 +12,7 @@ describe('createFrameFoldState', () => {
     source.subscribe(first)
     source.subscribe(second)
     const initial = source.getSnapshot()
-    expect(initial).toEqual({ centerCollapsed: true, auxiliaryCollapsed: true })
+    expect(initial).toEqual({ centerCollapsed: false, auxiliaryCollapsed: true })
 
     instance.actions.setAuxiliaryCollapsed(false)
     expect(first).toHaveBeenCalledTimes(1)
@@ -27,6 +27,6 @@ describe('createFrameFoldState', () => {
     instance.actions.setCenterCollapsed(true)
     expect(first).toHaveBeenCalledTimes(2)
     expect(second).toHaveBeenCalledTimes(2)
-    expect(source.getSnapshot()).toEqual({ centerCollapsed: true, auxiliaryCollapsed: true })
+    expect(source.getSnapshot()).toEqual({ centerCollapsed: true, auxiliaryCollapsed: false })
   })
 })

@@ -18,6 +18,7 @@ export interface SideSessions {
 export type NovenSideSessionMenuProps = PropsLocale<'novenShell'> & {
   readonly sessions: ObservableSnapshot<SideSessions>
   readonly open: (id: SessionId) => void
+  readonly showBrowser: () => void
 }
 
 /**
@@ -25,21 +26,28 @@ export type NovenSideSessionMenuProps = PropsLocale<'novenShell'> & {
  * @param props - Current-Workspace summaries, open callback, and locale.
  * @returns The header session menu.
  */
-export function NovenSideSessionMenu({ sessions, open, t }: NovenSideSessionMenuProps) {
+export function NovenSideSessionMenu({ sessions, open, showBrowser, t }: NovenSideSessionMenuProps) {
   const snapshot = useSyncExternalStore(sessions.subscribe, sessions.getSnapshot)
   const [menuOpen, setMenuOpen] = useState(false)
   const label = t('nav.sessions')
   return (
     <Menu
-      open={menuOpen && snapshot.rows.length > 0}
+      open={menuOpen}
       onClose={() => { setMenuOpen(false) }}
-      items={snapshot.rows.map(row => ({
-        id: row.id,
-        label: row.blank && row.title === '' ? t('nav.newSession') : row.title,
-        icon: <IconClockOutlineRegular size={16} />,
-      }))}
+      items={[
+        { id: 'noven:all-sessions', label, icon: <IconClockOutlineRegular size={16} /> },
+        ...snapshot.rows.map(row => ({
+          id: row.id,
+          label: row.blank && row.title === '' ? t('nav.newSession') : row.title,
+          icon: <IconClockOutlineRegular size={16} />,
+        })),
+      ]}
       selectedId={snapshot.currentId}
-      onSelect={(id) => { open(id as SessionId); setMenuOpen(false) }}
+      onSelect={(id) => {
+        if (id === 'noven:all-sessions') showBrowser()
+        else open(id as SessionId)
+        setMenuOpen(false)
+      }}
       side="bottom"
       align="end"
       portal
@@ -47,7 +55,7 @@ export function NovenSideSessionMenu({ sessions, open, t }: NovenSideSessionMenu
       anchor={(
         <Tooltip label={label} side="bottom" delayMs={400}>
           <button type="button" className="nv-side-session-button" aria-label={label} aria-expanded={menuOpen}
-            data-side-session-menu disabled={snapshot.rows.length === 0}
+            data-side-session-menu data-noven-session-navigation
             onClick={() => { setMenuOpen(value => !value) }}>
             <IconClockOutlineRegular size={16} />
           </button>

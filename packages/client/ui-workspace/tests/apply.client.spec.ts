@@ -17,7 +17,7 @@ import {
   type RenameSessionInjected, type RowToastInjected, type SessionArchiveConfirmInjected, type SessionRenameDialogInjected,
   type SessionDeleteInjected, type WorkspaceNavigatorInjected, type WorkspaceViewStoreHandle,
 } from '../src/client/contract/slots.ts'
-import { WorkspaceNavigator } from '../src/client/rows/WorkspaceNavigator.tsx'
+import { WorkspaceNavigation } from '../src/client/rows/WorkspaceNavigation.tsx'
 import { ArchiveSessionMenuItem, ArchiveSessionRowButton, SessionArchiveConfirmDialog } from '../src/client/session-actions/ArchiveSession.tsx'
 import { DeleteSessionMenuItem, SessionDeleteDialog } from '../src/client/session-actions/DeleteSession.tsx'
 import { ForkSessionMenuItem } from '../src/client/session-actions/ForkSession.tsx'
@@ -217,8 +217,9 @@ describe('ui-workspace apply', () => {
     const before = await bench()
     declare(before.slots, 'sidebar.workspaces')
     await before.ctx.plugin({ inject: [...inject], apply }).await()
-    expect(before.slots.entries('sidebar.workspaces')[0]!.component).toBe(WorkspaceNavigator)
+    expect(before.slots.entries('sidebar.workspaces')[0]!.component).toBe(WorkspaceNavigation)
     expect(before.slots.spec('sidebar.workspaces.content')).toEqual({ kind: 'single', scope: 'session' })
+    expect(before.slots.spec('sidebar.workspaces.workspace.menu.item')).toMatchObject({ kind: 'list', scope: 'root' })
     // Copy rides the standard locale seat: the entry declares the namespace
     // and apply registered both dictionaries.
     expect(before.slots.entries('sidebar.workspaces')[0]!.locale).toBe('workspace')

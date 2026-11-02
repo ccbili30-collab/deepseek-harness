@@ -16,13 +16,15 @@ export interface FrameLayoutPolicy {
   readonly topbar?: boolean
   /** Render the legacy right-side drawer and reserve its track; defaults to true. */
   readonly drawer?: boolean
+  /** Share one auxiliary fold across product modes, or keep Conversation and Canvas folds independent; defaults to independent. */
+  readonly foldMode?: 'shared' | 'independent'
 }
 
-/** The single global auxiliary fold; it follows the auxiliary content across product modes. */
+/** Global auxiliary-view folds; these are layout state, never a second product mode. */
 export interface FrameFoldState {
-  /** @deprecated Compatibility projection of `auxiliaryCollapsed`, not independent state. */
+  /** Stored Conversation fold used when Canvas is primary under an independent-fold policy. */
   readonly centerCollapsed: boolean
-  /** True folds the auxiliary region in either product arrangement. */
+  /** Canvas fold while Conversation is primary, or the shared auxiliary fold under a shared-fold policy. */
   readonly auxiliaryCollapsed: boolean
 }
 
@@ -36,14 +38,14 @@ export function createFrameFoldState(source: {
   subscribe(listener: () => void): () => void
 }): HostObservable<FrameFoldState> {
   let snapshot = {
-    centerCollapsed: source.getSnapshot().layoutInfo.auxiliaryCollapsed,
+    centerCollapsed: source.getSnapshot().layoutInfo.centerCollapsed,
     auxiliaryCollapsed: source.getSnapshot().layoutInfo.auxiliaryCollapsed,
   }
   const listeners = new Set<() => void>()
   const publish = (): void => {
-    const { auxiliaryCollapsed } = source.getSnapshot().layoutInfo
-    if (snapshot.auxiliaryCollapsed === auxiliaryCollapsed) return
-    snapshot = { centerCollapsed: auxiliaryCollapsed, auxiliaryCollapsed }
+    const { centerCollapsed, auxiliaryCollapsed } = source.getSnapshot().layoutInfo
+    if (snapshot.centerCollapsed === centerCollapsed && snapshot.auxiliaryCollapsed === auxiliaryCollapsed) return
+    snapshot = { centerCollapsed, auxiliaryCollapsed }
     for (const listener of [...listeners]) listener()
   }
   source.subscribe(publish)

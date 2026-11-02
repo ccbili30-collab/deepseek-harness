@@ -25,7 +25,7 @@ kind: "package-reference"
 <a id="use-this-package"></a>
 ## 使用本包
 
-用侧边栏选择当前 Workspace 并浏览该工作区的 Session，或在 Session Intent 主视觉区用选择器为新会话选择 Workspace。注册的 `WorkspaceNavigator` 将工作区选择器固定在 `sidebar.workspaces.content` 之外：Agent 只渲染当前工作区的 Session 行，IDE 则可以把下部内容替换为目录树，而选择器保持不动。展开态复用 `SessionNodeItem` 与既有行操作；折叠态把同一组有序 Session 放进 `Menu` 小窗，工作区选择在两种呈现中都走同一个 `WorkspacePickFlow`。这个内容 slot 仍仅在存在当前会话时挂载，不持有也不推断产品页面模式。
+用侧边栏选择当前 Workspace 并浏览该工作区的 Session，或在 Session Intent 主视觉区用选择器为新会话选择 Workspace。注册的 `WorkspaceNavigation` 在存在主 Session 时选择 `WorkspaceNavigator`：工作区选择器固定在 `sidebar.workspaces.content` 之外，Agent 只渲染当前工作区的 Session 行，IDE 则可以把下部内容替换为目录树，而选择器保持不动。展开态复用 `SessionNodeItem` 与既有行操作；折叠态把同一组有序 Session 放进 `Menu` 小窗，工作区选择在两种呈现中都走同一个 `WorkspacePickFlow`。没有主 Session 或临时会话导航打开时，同一注册项渲染完整的 `WorkspaceBrowser`，保留分组搜索、排序与行管理。这个内容 slot 仍仅在存在当前会话时挂载，不持有也不推断产品页面模式。
 
 ### 重排序与视图选项
 
@@ -85,7 +85,7 @@ Workspace 和 Session 的启动基线均就绪后，空安装环境调用 `works
 <details>
 <summary>实现细节——点击展开</summary>
 
-本包是一条组合：两个目标 slot 都由其他插件声明，因此 `apply` 使用 `slots.inject()` 在各自的声明生命周期内完成注册，并在目标 slot 的声明恢复后重新注册。`sidebar.workspaces.content` 是 `single` 严格 Session 子座：仅在当前会话存在时为占用方提供绑定；座位为空时，浏览器继续保持自己的会话列表行为。
+本包是一条组合：两个目标 slot 都由其他插件声明，因此 `apply` 使用 `slots.inject()` 在各自的声明生命周期内完成注册，并在目标 slot 的声明恢复后重新注册。同一个 `WorkspaceNavigation` 注册项根据主 Session 的 retain 状态与暂态 `sessionBrowser` 标记选择固定导航器或完整浏览器，两套导航不会作为竞争注册同时挂载。`sidebar.workspaces.content` 是 `single` 严格 Session 子座，仅在当前会话存在时为占用方提供绑定。
 
 浏览器入口还为每个 Session 行声明两个 root 作用域的 `list` 子 slot：`sidebar.session.row.leading` 仅在该行主状态为 idle 时渲染、归档行留空，`sidebar.session.row.hover` 仅在该行的悬浮卡片打开时挂载。两者只接收行的 Session 身份，占用方据此读取自己的数据；Session 作用域的 slot 会强制建立 Session 绑定，从而激活并保留列表中每个 Session。
 

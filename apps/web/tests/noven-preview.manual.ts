@@ -14,7 +14,7 @@ const SEED = fileURLToPath(new URL('../../../snapshots/web/navigation-panes/sess
 const ASSETS = fileURLToPath(new URL('../../../plugins-noven/noven-shell/assets', import.meta.url))
 const SESSION_ID = 'noven-reform-preview'
 const bundles = [
-  'noven-study', 'noven-brand', 'noven-shell', 'noven-sidecar', 'noven-dock', 'noven-image',
+  'noven-study', 'noven-brand', 'noven-shell', 'noven-dock', 'noven-image',
   'noven-workbench', 'noven-draw-comic', 'noven-docs', 'noven-cards', 'noven-library', 'noven-skills', 'noven-explore',
 ]
 let scaffold: WebScaffold
@@ -51,6 +51,7 @@ beforeAll(async () => {
   scaffold = await launchWebScaffold({
     harnessHome: join(root, 'harness'),
     profile: { packages: bundles.map(name => ({ dir: join(PLUGIN_ROOT, name), enabled: true })) },
+    agentPresets: { default: 'create' },
     extraInstallAnchors: ['noven-fmg', 'noven-ledger'].map(name => join(PLUGIN_ROOT, name, 'package.json')),
     extraOverlayPath: [PRODUCT_OVERLAY, PREVIEW_OVERLAY],
   })

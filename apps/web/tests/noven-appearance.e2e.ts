@@ -5,16 +5,18 @@ import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
 import { chromium } from 'playwright'
 import { afterAll, beforeAll, describe, expect, it, onTestFailed } from 'vitest'
+import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { createScaffoldWorkspace, launchWebScaffold, seedSession, watchConsole, type WebScaffold } from './scaffold.ts'
 import { AQI, SCENE, sessionFixture } from './noven-inline-fixture.ts'
 import { newEnglishPage, saveFailureShot } from './support.ts'
 
 const PLUGIN_ROOT = fileURLToPath(new URL('../../../plugins-noven', import.meta.url))
 const PRODUCT_OVERLAY = fileURLToPath(new URL('../../desktop/noven/profile/cordis.patch.yml', import.meta.url))
+const BROWSE_OVERLAY = fileURLToPath(new URL('./pin-browse-picker.overlay.yml', import.meta.url))
 const ASSETS = fileURLToPath(new URL('../../../plugins-noven/noven-shell/assets', import.meta.url))
 const SHOTS = join(tmpdir(), `noven-appearance-shots-${process.pid}`)
 const BUNDLES = [
-  'noven-study', 'noven-brand', 'noven-shell', 'noven-sidecar', 'noven-dock', 'noven-image',
+  'noven-study', 'noven-brand', 'noven-shell', 'noven-dock', 'noven-image',
   'noven-workbench', 'noven-draw-comic', 'noven-docs', 'noven-cards', 'noven-library', 'noven-skills', 'noven-explore',
 ] as const
 const SESSION_ID = 'noven-appearance'
@@ -94,8 +96,9 @@ beforeAll(async () => {
   scaffold = await launchWebScaffold({
     harnessHome: join(isolatedRoot, 'harness'),
     profile: { packages: BUNDLES.map(name => ({ dir: join(PLUGIN_ROOT, name), enabled: true })) },
+    agentPresets: { default: 'create' },
     extraInstallAnchors: ['noven-fmg', 'noven-ledger'].map(name => join(PLUGIN_ROOT, name, 'package.json')),
-    extraOverlayPath: [PRODUCT_OVERLAY],
+    extraOverlayPath: [PRODUCT_OVERLAY, BROWSE_OVERLAY],
   })
   await createScaffoldWorkspace(scaffold, '外观验收')
   await writeFile(join(scaffold.workspaceCwd, '外观说明.md'), '# 外观验收\n\n背景属于容器，正文、按钮和状态仍由 Noven 渲染。\n')
@@ -108,7 +111,7 @@ beforeAll(async () => {
     ['cover-yueban.webp', 'conversation.webp'], ['cover-new-world.webp', 'session.webp'],
     ['avatar-yunhe.webp', 'avatar-default.webp'], ['avatar-shenyan.webp', 'avatar-session.webp'],
   ] as const) await copyFile(join(ASSETS, source), join(assets, target))
-  await seedSession(scaffold, sessionFixture(), SESSION_ID, undefined, { createdAt: Date.UTC(2026, 0, 1) })
+  await seedSession(scaffold, sessionFixture(), SESSION_ID, 'create', { createdAt: Date.UTC(2026, 0, 1) })
   await mkdir(SHOTS, { recursive: true })
   browser = await chromium.launch()
   page = await newEnglishPage(browser)
@@ -379,11 +382,23 @@ describe('web e2e: scoped Noven appearance', () => {
     await page.locator('.nv-ed-title').waitFor({ timeout: 15_000 })
     await brandToggle.click()
 
+    const heroSession = await scaffold.ctx.sessionController.create({
+      sessionId: SessionId('noven-appearance-hero'), cwd: scaffold.workspaceCwd, agentPreset: 'create',
+    })
     const heroPage = await newEnglishPage(browser)
     const heroConsole = watchConsole(heroPage)
     try {
+      await heroPage.addInitScript((id) => {
+        localStorage.setItem('dsh.sessions.current', JSON.stringify({ sessionId: id }))
+      }, heroSession.sessionId)
       await heroPage.goto(scaffold.authenticatedUrl, { waitUntil: 'load' })
       await heroPage.locator('.nv-create-novel').waitFor({ timeout: 30_000 })
+      const workspacePicker = heroPage.locator('[data-composer-input][aria-label="选择工作区"]')
+      if (await workspacePicker.count() > 0) {
+        await workspacePicker.click()
+        await heroPage.getByRole('menuitem', { name: /外观验收/ }).click()
+        await heroPage.locator('[data-composer-input][contenteditable="true"]').waitFor({ timeout: 15_000 })
+      }
       const blankHeader = heroPage.locator('[data-slot="conversation.header"] > header')
       await expect.poll(() => blankHeader.evaluate(element => element.getBoundingClientRect().height), { timeout: 15_000 }).toBe(0)
       expect(await heroPage.locator('.nv-create-novel').evaluate(element => ({
@@ -407,7 +422,7 @@ describe('web e2e: scoped Noven appearance', () => {
         return {
           option: option === undefined ? undefined : getComputedStyle(option).color,
           alias: alias === undefined ? undefined : getComputedStyle(alias).color,
-          icon: icon === undefined ? undefined : getComputedStyle(icon).color,
+          icon: icon == null ? undefined : getComputedStyle(icon).color,
         }
       })
       expect(menuColors).toEqual({ option: 'rgb(244, 247, 245)', alias: 'rgba(244, 247, 245, 0.68)', icon: 'rgb(244, 247, 245)' })
