@@ -1,8 +1,9 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { Browser, Page } from 'playwright'
+import { SessionId } from '@deepseek-ai/dsh-session/types'
 import { chromium } from 'playwright'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, onTestFailed } from 'vitest'
 import {
@@ -21,6 +22,27 @@ const BUNDLES = [
 const DEPENDENCIES = ['noven-fmg', 'noven-ledger'] as const
 const MODE = webSnapshotMode()
 const ISOLATED_ENV = ['NOVEN_HOME', 'NOVEN_PROJECTS_ROOT', 'NOVEN_CHANNEL'] as const
+
+async function inspectMainSession(
+  page: Page,
+  scaffold: WebScaffold,
+): Promise<{ readonly cwd?: string; readonly blank?: boolean; readonly preset?: string }> {
+  const raw = await page.evaluate(() => localStorage.getItem('dsh.sessions.current'))
+  if (raw === null) throw new Error('current Session pointer missing')
+  const parsed = JSON.parse(raw) as { sessionId?: unknown }
+  if (typeof parsed.sessionId !== 'string') throw new Error('current Session id missing')
+  const id = SessionId(parsed.sessionId)
+  const [list, inspection] = await Promise.all([
+    scaffold.ctx.sessionController.list({}, new AbortController().signal),
+    scaffold.ctx.sessionController.inspect(id),
+  ])
+  const blank = list.items.find(row => row.sessionId === id)?.blank
+  return {
+    ...(inspection.meta.cwd === undefined ? {} : { cwd: inspection.meta.cwd }),
+    ...(blank === undefined ? {} : { blank }),
+    ...(inspection.meta.agentPreset === undefined ? {} : { preset: inspection.meta.agentPreset }),
+  }
+}
 
 describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => {
   let scaffold: WebScaffold
@@ -109,7 +131,26 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
     await page.getByRole('tab', { name: '执行记录', exact: true }).click()
     await page.getByRole('tab', { name: '对话', exact: true }).click()
 
-    await page.locator('[data-shell-topbar]').waitFor()
+    expect(await page.locator('[data-shell-topbar]').count()).toBe(0)
+    const brandHeader = page.locator('[data-integrated-brand]')
+    await brandHeader.waitFor()
+    const brandMode = brandHeader.getByRole('button', { name: '切换到手作', exact: true })
+    await brandMode.waitFor()
+    expect(await brandHeader.evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)')
+    const lightsBox = await page.locator('[data-chrome-mirror-lights]').boundingBox()
+    const brandToggleBox = await page.locator('[data-sidebar-brand-toggle]').boundingBox()
+    const brandModeBox = await brandMode.boundingBox()
+    expect((brandToggleBox?.x ?? 0) >= (lightsBox?.x ?? 0) + (lightsBox?.width ?? 0)).toBe(true)
+    const brandCenterY = (brandToggleBox?.y ?? 0) + (brandToggleBox?.height ?? 0) / 2
+    const modeCenterY = (brandModeBox?.y ?? 0) + (brandModeBox?.height ?? 0) / 2
+    expect(Math.abs(brandCenterY - modeCenterY)).toBeLessThanOrEqual(1)
+    const chineseName = page.locator('[data-noven-chinese-name]')
+    const chineseNameBox = await chineseName.boundingBox()
+    expect(chineseNameBox?.height).toBe(24)
+    expect((chineseNameBox?.x ?? 0) + (chineseNameBox?.width ?? 0) <= (brandModeBox?.x ?? 0)).toBe(true)
+    await expect.poll(() => page.locator('[data-noven-latin-name]').isVisible()).toBe(false)
+    expect(await brandHeader.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true)
+    expect((await page.locator('[data-work]').boundingBox())?.y).toBe(0)
     await page.locator('[data-workspace-trigger]').waitFor()
     expect(await page.locator('[data-sidebar-right-panel]').count()).toBe(0)
 
@@ -157,6 +198,11 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
     await page.locator('[data-sidebar-collapsed]').waitFor()
     await page.waitForFunction(() => document.querySelector('[data-sidebar-col]')?.getBoundingClientRect().width === 56)
     expect(await page.locator('[data-sidebar-col]').evaluate(element => element.getBoundingClientRect().width)).toBe(56)
+    await expect.poll(async () => {
+      const brand = await navigation.boundingBox()
+      const lights = await page.locator('[data-chrome-mirror-lights]').boundingBox()
+      return (brand?.y ?? 0) >= (lights?.y ?? 0) + (lights?.height ?? 0)
+    }).toBe(true)
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
   }, 120_000)
 
@@ -300,9 +346,87 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
     await brand.click()
     await page.locator('[data-workspace-trigger]').waitFor()
 
-    // Creation is a command, never a third main subject.
+    // Creation is an independent main panel; New Session remains a separate command.
     await page.locator('nav[class*="panelList"] button[aria-label="创作"]').click()
-    await page.waitForTimeout(500)
-    expect(await page.locator('.nv-create-page').count()).toBe(0)
+    await page.locator('.nv-create-page').waitFor({ timeout: 30_000 })
+    expect(await page.locator('.nv-create-page').count()).toBe(1)
+    await page.locator('.nv-create-hero [data-composer-input]').waitFor({ timeout: 30_000 })
+    await page.waitForFunction(() => document.querySelector('[data-animating]') === null
+      && !document.documentElement.hasAttribute('data-page-turn')
+      && !document.documentElement.hasAttribute('data-create-scene')
+      && !document.documentElement.hasAttribute('data-panel-handoff'))
+    const createShot = join(tmpdir(), `noven-create-panel-${process.pid}.png`)
+    await page.screenshot({ path: createShot, fullPage: true })
+    console.log(`NOVEN_CREATE_SHOT=${createShot}`)
+    expect(await page.getByRole('button', { name: /^(手作|Handcraft)/ }).count()).toBe(1)
+    expect(await page.getByRole('button', { name: /^(导入|Import)/ }).count()).toBe(1)
+    await page.keyboard.press('Alt+Meta+N')
+    await expect.poll(() => page.locator('.nv-create-page').count(), { timeout: 15_000 }).toBe(0)
+    await page.locator('[data-composer-input]').first().waitFor({ timeout: 30_000 })
+    expect((await inspectMainSession(page, scaffold)).blank).toBe(true)
+    expect((await inspectMainSession(page, scaffold)).preset).toBe('create')
+
+    await page.locator('nav[class*="panelList"] button[aria-label="创作"]').click()
+    await page.locator('.nv-create-page').waitFor({ timeout: 30_000 })
+    await page.locator('.nv-create-hero [data-composer-input]').waitFor({ timeout: 30_000 })
+    await writeFile(join(scaffold.workspaceCwd, '导入说明.md'), '# 导入说明\n\n来自创作页。\n')
+    await page.locator('.nv-create-paths input[type="file"]').setInputFiles(join(scaffold.workspaceCwd, '导入说明.md'))
+    const importDialog = page.getByRole('dialog')
+    await importDialog.waitFor({ timeout: 30_000 })
+    await importDialog.getByRole('button', { name: /^(导入|Import)$/, exact: true }).click()
+    await expect.poll(() => page.locator('.nv-create-page').count(), { timeout: 30_000 }).toBe(0)
+    await page.locator('.nv-canvas-tabtitle').filter({ hasText: '导入说明' }).waitFor({ timeout: 30_000 })
+
+    await page.locator('nav[class*="panelList"] button[aria-label="创作"]').click()
+    await page.locator('.nv-create-page').waitFor({ timeout: 30_000 })
+    await page.locator('.nv-create-hero [data-composer-input]').waitFor({ timeout: 30_000 })
+    await page.getByRole('button', { name: /^(手作|Handcraft)/ }).click()
+    await expect.poll(() => page.locator('.nv-create-page').count(), { timeout: 30_000 }).toBe(0)
+    await page.locator('.nv-canvas').waitFor({ timeout: 30_000 })
+    expect((await inspectMainSession(page, scaffold)).blank).not.toBe(true)
+  }, 120_000)
+
+  it('rehosts the creation composer across workspaces without duplicating blank hosts', async () => {
+    onTestFailed(() => saveFailureShot(page, 'noven-create-workspaces'))
+    await mkdir(join(isolatedRoot, 'create-second'), { recursive: true })
+    const other = await realpath(join(isolatedRoot, 'create-second'))
+    const registry = scaffold.ctx.workspaceRegistry as {
+      create(path: string, title: string): Promise<Awaited<ReturnType<WebScaffold['ctx']['workspaceRegistry']['create']>>>
+    }
+    await registry.create(other, '第二创作工作区')
+    const chooseWorkspace = async (title: string): Promise<void> => {
+      const picker = page.locator('[data-composer-input][aria-label="选择工作区"]')
+      if (await picker.count() > 0) await picker.click()
+      else await page.locator('[data-workspace-trigger]').click()
+      await page.getByRole('menuitem', { name: title, exact: true }).click()
+    }
+    const createBlankCount = async (): Promise<number> => {
+      const { items } = await scaffold.ctx.sessionController.list({}, new AbortController().signal)
+      let count = 0
+      for (const row of items.filter(item => item.blank)) {
+        if ((await scaffold.ctx.sessionController.inspect(row.sessionId)).meta.agentPreset === 'create') count += 1
+      }
+      return count
+    }
+
+    await page.locator('nav[class*="panelList"] button[aria-label="创作"]').click()
+    await page.locator('.nv-create-hero [data-composer-input]').waitFor({ timeout: 30_000 })
+    await chooseWorkspace('第二创作工作区')
+    await expect.poll(async () => {
+      const current = await inspectMainSession(page, scaffold)
+      return current.blank === true && current.preset === 'create' ? current.cwd : undefined
+    }, { timeout: 30_000 }).toBe(other)
+    expect(await page.locator('.nv-create-page').count()).toBe(1)
+    const blankCount = await createBlankCount()
+
+    await chooseWorkspace('Noven验收工作区')
+    await expect.poll(async () => {
+      const current = await inspectMainSession(page, scaffold)
+      return current.blank === true && current.preset === 'create' ? current.cwd : undefined
+    }, { timeout: 30_000 }).toBe(scaffold.workspaceCwd)
+    await page.locator('.nv-create-hero [data-composer-input]').waitFor({ timeout: 30_000 })
+    expect(await page.locator('.nv-create-page').count()).toBe(1)
+    expect(await createBlankCount()).toBe(blankCount)
+    expect(tripwire.pageErrors).toEqual([])
   }, 120_000)
 })

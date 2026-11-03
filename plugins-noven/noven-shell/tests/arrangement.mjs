@@ -15,6 +15,9 @@ globalThis.localStorage = {
 
 check(frameLayoutPolicy('conversation').primary === 'main' && frameLayoutPolicy('conversation').canvasSide === 'right', '会话主体：对话主区、画布最右侧')
 check(frameLayoutPolicy('canvas').primary === 'rightbar' && frameLayoutPolicy('canvas').canvasSide === 'right', '画布主体：画布主区、对话右侧')
+check(frameLayoutPolicy('conversation').topbar === false && frameLayoutPolicy('canvas').topbar === false, '两种主体都使用品牌行，不挂独立顶栏')
+check(frameLayoutPolicy('conversation').contentInset === 4 && frameLayoutPolicy('canvas').contentInset === 4, '内容列 4px 外框缝与窗口安全区分离')
+check(frameLayoutPolicy('conversation').sideChrome === 'content' && frameLayoutPolicy('canvas').sideChrome === 'content', '辅助画布 chrome 归活动叶所有')
 check(modeOfSubject('canvas') === 'ide' && subjectOfMode('ide') === 'canvas', '模式只是主体位置的投影')
 
 const first = createNovenSubjectStore().create()

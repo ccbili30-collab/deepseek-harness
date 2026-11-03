@@ -8,11 +8,12 @@ import { randomUUID } from 'node:crypto'
 import { mkdir, readFile, realpath, stat, writeFile } from 'node:fs/promises'
 import { extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { APP_HOME } from 'noven-ledger'
 import type {
-  AppearanceAvatar, AppearanceBackground, AppearanceDocument, AppearanceFocus, AppearanceForeground, AppearanceMaterial, AppearanceView, AppearanceViewMode, AppearanceVisualState,
+  AppearanceAvatar, AppearanceBackground, AppearanceDocument, AppearanceFocus, AppearanceForeground, AppearanceMaterial, AppearanceUnifiedBackground, AppearanceView, AppearanceViewMode, AppearanceVisualState,
 } from './model.ts'
 import { appearanceUsesSharedBackground } from './model.ts'
-import { updateAppearance } from './store.ts'
+import { updateAppearance, updateGlobalAppearance } from './store.ts'
 
 /** A background instruction accepted from a user surface or model tool. */
 export interface BackgroundChoice {
@@ -28,6 +29,9 @@ export interface BackgroundChoice {
   /** Semantic foreground family for embedded content. */
   readonly foreground?: AppearanceForeground
 }
+
+/** A workspace or application default, including an explicit built-in white exception. */
+export type UnifiedBackgroundChoice = BackgroundChoice | (Omit<BackgroundChoice, 'kind'> & { readonly kind: 'builtin' })
 
 /** The workspace shared-image slot; it always names one image when enabled. */
 export interface SharedBackgroundChoice {
@@ -143,7 +147,7 @@ function treatment(choice: BackgroundChoice): {
   }
 }
 
-function hasTreatment(choice: BackgroundChoice): boolean {
+function hasTreatment(choice: Pick<BackgroundChoice, 'dim' | 'blur' | 'focus'>): boolean {
   return choice.dim !== undefined || choice.blur !== undefined || choice.focus !== undefined
 }
 
@@ -161,7 +165,7 @@ function surfaceChoice(choice: BackgroundChoice): { readonly material?: Appearan
   }
 }
 
-function hasSurface(choice: BackgroundChoice): boolean {
+function hasSurface(choice: Pick<BackgroundChoice, 'material' | 'foreground'>): boolean {
   return choice.material !== undefined || choice.foreground !== undefined
 }
 
@@ -182,7 +186,7 @@ async function background(root: string, choice: BackgroundChoice): Promise<Appea
   return { kind: 'asset', path: await projectPath(root, choice.imagePath, true), ...treatment(choice), ...surfaceChoice(choice) }
 }
 
-function requireShared(document: AppearanceDocument, value: AppearanceBackground | null): void {
+function requireShared(document: AppearanceDocument, value: AppearanceUnifiedBackground | null): void {
   if (value?.kind === 'shared' && document.workspace.shared === undefined) {
     throw new AppearanceInvalidError('set the shared background image first')
   }
@@ -324,8 +328,14 @@ export async function setSharedAppearance(root: string, sessionId: string, choic
  * @param expectedRevision - Optional optimistic revision.
  * @returns The persisted resolved view with scope overrides preserved.
  */
-export async function setUnifiedAppearance(root: string, sessionId: string, choice: BackgroundChoice, expectedRevision?: number): Promise<AppearanceView> {
-  const value = await background(root, choice)
+export async function setUnifiedAppearance(root: string, sessionId: string, choice: UnifiedBackgroundChoice, expectedRevision?: number): Promise<AppearanceView> {
+  let value: AppearanceUnifiedBackground | null
+  if (choice.kind === 'builtin') {
+    if (choice.imagePath !== undefined || hasTreatment(choice) || hasSurface(choice)) throw new AppearanceInvalidError('built-in background takes no image, treatment, or surface')
+    value = { kind: 'builtin' }
+  } else {
+    value = await background(root, choice)
+  }
   return updateAppearance(root, expectedRevision, (document) => {
     requireShared(document, value)
     return {
@@ -333,6 +343,26 @@ export async function setUnifiedAppearance(root: string, sessionId: string, choi
       workspace: value === null ? without(document.workspace, 'unified') : { ...document.workspace, unified: value },
     }
   }, sessionId)
+}
+
+/**
+ * Set the application-wide default without changing any workspace document.
+ * @param root - Workspace whose resolved view is returned.
+ * @param sessionId - Session whose returned view resolves.
+ * @param choice - Global default to set, clear to built-in, or make transparent.
+ * @param expectedGlobalRevision - Optional optimistic global revision.
+ * @returns The current workspace view with the new global default.
+ */
+export async function setGlobalUnifiedAppearance(
+  root: string,
+  sessionId: string,
+  choice: UnifiedBackgroundChoice,
+  expectedGlobalRevision?: number,
+): Promise<AppearanceView> {
+  const value = await globalBackground(choice)
+  return updateGlobalAppearance(root, sessionId, expectedGlobalRevision, document => value === null
+    ? without(document, 'unified')
+    : { ...document, unified: value })
 }
 
 /**
@@ -433,7 +463,10 @@ export async function resetAppearance(root: string, sessionId: string, expectedR
     const reset = without(without(without(without(document, 'view'), 'surface'), 'foreground'), 'backgroundVisibility')
     return {
       ...reset,
-      workspace: document.workspace.shared === undefined ? {} : { shared: document.workspace.shared },
+      workspace: {
+        ...(document.workspace.shared === undefined ? {} : { shared: document.workspace.shared }),
+        unified: { kind: 'builtin' },
+      },
       files: {},
       sessions: {},
     }
@@ -470,4 +503,63 @@ export async function saveAppearanceAsset(root: string, bytes: Uint8Array): Prom
   const name = `${randomUUID()}${media.ext}`
   await writeFile(join(dir, name), bytes, { flag: 'wx' })
   return `.noven/appearance/${name}`
+}
+
+const GLOBAL_ASSET_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.(?:png|jpe?g|webp|gif)$/u
+
+async function globalAssetPath(value: string): Promise<string> {
+  if (!GLOBAL_ASSET_ID.test(value)) throw new AppearanceInvalidError('global asset id is invalid')
+  const root = join(APP_HOME, 'appearance', 'assets')
+  const rootReal = await realpath(root).catch(() => undefined)
+  if (rootReal === undefined) throw new AppearanceInvalidError('global asset library is unavailable')
+  const target = await realpath(join(rootReal, value)).catch(() => undefined)
+  if (target === undefined || !target.startsWith(`${rootReal}${sep}`)) throw new AppearanceInvalidError('global asset is unavailable')
+  if (!(await stat(target)).isFile()) throw new AppearanceInvalidError('global asset is not a file')
+  const media = mediaFor(await readFile(target))
+  if (media === undefined) throw new AppearanceInvalidError('global asset bytes are not a supported image')
+  return target
+}
+
+async function globalBackground(choice: UnifiedBackgroundChoice): Promise<AppearanceUnifiedBackground | null> {
+  if (choice.kind === 'default' || choice.kind === 'builtin') {
+    if (choice.imagePath !== undefined || hasTreatment(choice) || hasSurface(choice)) throw new AppearanceInvalidError('default background takes no image, treatment, or surface')
+    return null
+  }
+  if (choice.kind === 'shared') throw new AppearanceInvalidError('global background cannot use a workspace shared image')
+  if (choice.kind === 'transparent') {
+    if (choice.imagePath !== undefined || hasTreatment(choice)) throw new AppearanceInvalidError('transparent background takes no image or treatment')
+    return { kind: 'transparent', ...surfaceChoice(choice) }
+  }
+  if (choice.imagePath === undefined) throw new AppearanceInvalidError('global image background requires imagePath')
+  await globalAssetPath(choice.imagePath)
+  return { kind: 'asset', path: choice.imagePath, ...treatment(choice), ...surfaceChoice(choice) }
+}
+
+/**
+ * Read one image from the application-wide asset library.
+ * @param assetId - Generated asset ID, never a project or filesystem path.
+ * @returns Image bytes and their sniffed media type.
+ */
+export async function readGlobalAppearanceAsset(assetId: string): Promise<{ readonly bytes: Buffer; readonly type: string }> {
+  const path = await globalAssetPath(assetId)
+  const bytes = await readFile(path)
+  const media = mediaFor(bytes)
+  if (media === undefined) throw new AppearanceInvalidError('global asset bytes changed to an unsupported image')
+  return { bytes, type: media.type }
+}
+
+/**
+ * Save one uploaded image in the application-wide asset library.
+ * @param bytes - Uploaded image bytes.
+ * @returns The generated global asset ID.
+ */
+export async function saveGlobalAppearanceAsset(bytes: Uint8Array): Promise<string> {
+  if (bytes.length === 0 || bytes.length > MAX_ASSET_BYTES) throw new AppearanceInvalidError('asset must be between 1 byte and 8 MiB')
+  const media = mediaFor(bytes)
+  if (media === undefined) throw new AppearanceInvalidError('asset is not a supported raster image')
+  const dir = join(APP_HOME, 'appearance', 'assets')
+  await mkdir(dir, { recursive: true })
+  const name = `${randomUUID()}${media.ext}`
+  await writeFile(join(dir, name), bytes, { flag: 'wx' })
+  return name
 }

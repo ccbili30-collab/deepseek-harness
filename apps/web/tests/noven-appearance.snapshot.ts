@@ -1,6 +1,6 @@
 // Keyless committed-session snapshot for the appearance settings model. The
 // authored V4 log is replay input; no model request is issued. The golden
-// records the scoped editor, shared image, advanced effects, and light-seam controls.
+// records the integrated brand header, default/+ home, scoped editor, shared image, advanced effects, and light-seam controls.
 import { copyFile, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -18,6 +18,8 @@ import { newEnglishPage, saveFailureShot } from './support.ts'
 const SNAPSHOT_DIR = fileURLToPath(new URL('../../../snapshots/web/noven-appearance', import.meta.url))
 const SEED = join(SNAPSHOT_DIR, 'session.v4.jsonl')
 const EXPECTED = join(SNAPSHOT_DIR, 'ui.expected.md')
+const SHELL_EXPECTED = join(SNAPSHOT_DIR, 'shell.expected.md')
+const HOME_EXPECTED = join(SNAPSHOT_DIR, 'home.expected.md')
 const CANVAS_EXPECTED = join(SNAPSHOT_DIR, 'canvas.expected.md')
 const PLUGIN_ROOT = fileURLToPath(new URL('../../../plugins-noven', import.meta.url))
 const PRODUCT_OVERLAY = fileURLToPath(new URL('../../desktop/noven/profile/cordis.patch.yml', import.meta.url))
@@ -113,6 +115,8 @@ afterAll(async () => { await close() })
 describe('web snapshot: Noven appearance settings', () => {
   it('records the scoped editor and treatment controls without a model call', async () => {
     onTestFailed(() => saveFailureShot(page, 'noven-appearance-snapshot'))
+    const shellAria = await captureStableAria(page, '[data-integrated-brand]', scaffold.workspaceCwd)
+    await compareOrRefreshGolden(SHELL_EXPECTED, shellAria, MODE)
     const manual = page.getByRole('button', { name: '切换到手作', exact: true })
     if (await manual.count() > 0) await manual.click()
     await page.locator('.nv-canvas').waitFor({ timeout: 30_000 })
@@ -121,6 +125,8 @@ describe('web snapshot: Noven appearance settings', () => {
     await page.getByRole('button', { name: '设置', exact: true }).click()
     await page.getByRole('dialog').getByRole('button', { name: /^外观$|^Appearance$/ }).click()
     await page.locator('.nv-ap-preview').waitFor({ timeout: 30_000 })
+    const homeAria = await captureStableAria(page, '.nv-appearance', scaffold.workspaceCwd)
+    await compareOrRefreshGolden(HOME_EXPECTED, homeAria, MODE)
     await page.getByRole('button', { name: /^(分别设置|Customize scopes)$/ }).click()
     await page.locator('.nv-ap-target').selectOption('conversation')
     await expect.poll(() => page.getByLabel(/^(背景|Background)$/, { exact: true }).inputValue()).toBe('shared')
@@ -130,6 +136,6 @@ describe('web snapshot: Noven appearance settings', () => {
     expect(tripwire.pageErrors).toEqual([])
     const aria = await captureStableAria(page, '.nv-appearance', scaffold.workspaceCwd)
     await compareOrRefreshGolden(EXPECTED, aria, MODE)
-    await assertFixtureInventory(SNAPSHOT_DIR, ['session.v4.jsonl', 'canvas.expected.md', 'ui.expected.md'])
+    await assertFixtureInventory(SNAPSHOT_DIR, ['session.v4.jsonl', 'canvas.expected.md', 'shell.expected.md', 'home.expected.md', 'ui.expected.md'])
   }, 120_000)
 })

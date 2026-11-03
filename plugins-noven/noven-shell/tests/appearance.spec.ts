@@ -14,13 +14,13 @@ await writeFile(join(root, 'project', '图片', '纸面.png'), png)
 await writeFile(join(root, 'project', '正文.md'), '# 正文\n')
 await writeFile(join(root, 'project', '不是图片.png'), 'not an image')
 
-const { emptyAppearanceDocument, parseAppearanceDocument, resolveAppearance } = await import('../lib/appearance/model.js')
+const { emptyAppearanceDocument, emptyGlobalAppearanceDocument, parseAppearanceDocument, parseGlobalAppearanceDocument, resolveAppearance } = await import('../lib/appearance/model.js')
 const { ledgerDir } = await import('noven-ledger')
 const {
   readAppearance, updateAppearance, AppearanceConflictError, AppearanceStoreError,
 } = await import('../lib/appearance/store.js')
 const {
-  applyAppearancePreset, readAppearanceAsset, resetAppearance, saveAppearanceAsset, saveAppearancePreset, setCanvasAppearance, setConversationAppearance, setSharedAppearance, setShellAppearance, setUnifiedAppearance, setVisualAppearance,
+  applyAppearancePreset, readAppearanceAsset, readGlobalAppearanceAsset, resetAppearance, saveAppearanceAsset, saveAppearancePreset, saveGlobalAppearanceAsset, setCanvasAppearance, setConversationAppearance, setGlobalUnifiedAppearance, setSharedAppearance, setShellAppearance, setUnifiedAppearance, setVisualAppearance,
 } = await import('../lib/appearance/service.js')
 const { createAppearanceTools } = await import('../lib/appearance/tools.js')
 
@@ -104,6 +104,37 @@ describe('appearance document', () => {
     })
     assert.ok(legacy !== undefined)
     assert.deepEqual(resolveAppearance(legacy, 'sess-a').resolved.canvas, { kind: 'asset', path: 'a.png' })
+  })
+
+  test('resolves global defaults, explicit workspace white, and local exceptions without sharing revisions', () => {
+    const global = { version: 1 as const, revision: 9, unified: { kind: 'asset' as const, path: 'global.png', blur: 4 } }
+    const document = { ...emptyAppearanceDocument(), revision: 2 }
+    const inherited = resolveAppearance(document, 'sess-a', undefined, global)
+    assert.equal(inherited.revision, 2)
+    assert.equal(inherited.globalRevision, 9)
+    assert.deepEqual(inherited.resolved.shell, { kind: 'asset', path: 'global.png', blur: 4, source: 'global' })
+    assert.deepEqual(inherited.resolved.canvas, { kind: 'asset', path: 'global.png', blur: 4, source: 'global' })
+    assert.deepEqual(inherited.resolved.conversation, { kind: 'asset', path: 'global.png', blur: 4, source: 'global' })
+
+    const white = resolveAppearance({ ...document, workspace: { unified: { kind: 'builtin' } } }, 'sess-a', undefined, global)
+    assert.deepEqual(white.resolved, { shell: null, canvas: null, conversation: null, assistantAvatar: null })
+    assert.deepEqual(white.global.unified, global.unified)
+    const local = resolveAppearance({ ...document, workspace: { unified: { kind: 'asset', path: 'local.png' } } }, 'sess-a', undefined, global)
+    assert.deepEqual(local.resolved.canvas, { kind: 'asset', path: 'local.png' })
+    const exception = resolveAppearance({
+      ...document,
+      workspace: { canvas: { kind: 'transparent' } },
+      files: { '正文.md': { canvas: { kind: 'asset', path: 'file.png' } } },
+      sessions: { 'sess-a': { conversation: { kind: 'transparent' } } },
+    }, 'sess-a', '正文.md', global)
+    assert.deepEqual(exception.resolved.canvas, { kind: 'asset', path: 'file.png' })
+    assert.deepEqual(exception.resolved.conversation, { kind: 'transparent' })
+    assert.deepEqual(exception.resolved.shell, { kind: 'asset', path: 'global.png', blur: 4, source: 'global' })
+
+    assert.deepEqual(parseGlobalAppearanceDocument(global), global)
+    assert.equal(parseGlobalAppearanceDocument({ ...global, unified: { kind: 'shared' } }), undefined)
+    assert.equal(parseGlobalAppearanceDocument({ ...global, extra: true }), undefined)
+    assert.deepEqual(emptyGlobalAppearanceDocument(), { version: 1, revision: 0 })
   })
 })
 
@@ -334,5 +365,62 @@ describe('appearance persistence', () => {
     assert.equal(image.type, 'image/png')
     assert.deepEqual(image.bytes, png)
     await assert.rejects(saveAppearanceAsset(project, Buffer.from('not an image')))
+  })
+
+  test('persists one global default and asset library with independent revisions and fences', async () => {
+    const other = join(root, 'other-project')
+    await mkdir(other, { recursive: true })
+    const initial = await readAppearance(other, 'sess-b')
+    assert.equal(initial.revision, 0)
+    assert.equal(initial.globalRevision, 0)
+    assert.equal(initial.resolved.canvas, null)
+
+    const assetId = await saveGlobalAppearanceAsset(png)
+    assert.match(assetId, /^[a-f0-9-]+\.png$/u)
+    assert.deepEqual((await readGlobalAppearanceAsset(assetId)).bytes, png)
+    await assert.rejects(readGlobalAppearanceAsset('../outside.png'))
+    await assert.rejects(readGlobalAppearanceAsset(join(project, '图片', '纸面.png')))
+
+    const inherited = await setGlobalUnifiedAppearance(other, 'sess-b', { kind: 'image', imagePath: assetId, blur: 3 }, 0)
+    assert.equal(inherited.revision, 0)
+    assert.equal(inherited.globalRevision, 1)
+    assert.deepEqual(inherited.resolved.shell, { kind: 'asset', path: assetId, blur: 3, source: 'global' })
+    assert.deepEqual(inherited.resolved.canvas, { kind: 'asset', path: assetId, blur: 3, source: 'global' })
+    await assert.rejects(setGlobalUnifiedAppearance(other, 'sess-b', { kind: 'default' }, 0), AppearanceConflictError)
+    await assert.rejects(setGlobalUnifiedAppearance(other, 'sess-b', { kind: 'shared' }, 1))
+    await assert.rejects(setGlobalUnifiedAppearance(other, 'sess-b', { kind: 'image', imagePath: '图片/纸面.png' }, 1))
+
+    const white = await setUnifiedAppearance(other, 'sess-b', { kind: 'builtin' }, 0)
+    assert.equal(white.revision, 1)
+    assert.equal(white.globalRevision, 1)
+    assert.equal(white.resolved.canvas, null)
+    assert.deepEqual(white.global.unified, { kind: 'asset', path: assetId, blur: 3 })
+    const reset = await resetAppearance(other, 'sess-b', 1)
+    assert.deepEqual(reset.workspace.unified, { kind: 'builtin' })
+    assert.equal(reset.globalRevision, 1)
+    const following = await setUnifiedAppearance(other, 'sess-b', { kind: 'default' }, reset.revision)
+    assert.equal(following.revision, 2)
+    assert.deepEqual(following.resolved.canvas, { kind: 'asset', path: assetId, blur: 3, source: 'global' })
+    const exception = await setCanvasAppearance(other, 'sess-b', {
+      scope: 'workspace', background: { kind: 'transparent' }, expectedRevision: following.revision,
+    })
+    assert.equal(exception.revision, 3)
+    assert.equal(exception.globalRevision, 1)
+    assert.deepEqual(exception.resolved.canvas, { kind: 'transparent' })
+    assert.deepEqual(exception.resolved.shell, { kind: 'asset', path: assetId, blur: 3, source: 'global' })
+
+    const cleared = await setGlobalUnifiedAppearance(other, 'sess-b', { kind: 'default' }, 1)
+    assert.equal(cleared.revision, 3)
+    assert.equal(cleared.globalRevision, 2)
+    assert.equal(cleared.resolved.shell, null)
+    assert.deepEqual(cleared.resolved.canvas, { kind: 'transparent' })
+    const noop = await setGlobalUnifiedAppearance(other, 'sess-b', { kind: 'builtin' }, 2)
+    assert.equal(noop.globalRevision, 2)
+
+    const globalPath = join(root, 'home', 'appearance', 'global.json')
+    await writeFile(globalPath, '{"version":1,"revision":2,"extra":true}\n')
+    await assert.rejects(readAppearance(other, 'sess-b'), AppearanceStoreError)
+    assert.match(await readFile(globalPath, 'utf8'), /extra/)
+    await rm(globalPath)
   })
 })

@@ -48,14 +48,14 @@
 - button "访问模式，当前：工作区内修改": 工作区内修改
 - button "选择模型，当前 DeepSeek-V4-Flash": DeepSeek-V4-Flash
 - button "发送消息" [disabled]
-- button "目录":
-  - img
-- button "收起"
 - tablist:
   - button "画布工具":
     - img
   - button "画布全屏":
     - img
+  - button "目录":
+    - img
+  - button "折叠"
 - paragraph: 这里是你的案头：拿一张预设开工，或者从一页白纸开始。
 - heading "预设" [level=3]
 - button "世界卡 规则、地理、势力——一个世界一张卡":

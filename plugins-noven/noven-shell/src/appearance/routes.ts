@@ -10,9 +10,9 @@ import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { readAppearance, AppearanceConflictError, AppearanceStoreError } from './store.ts'
 import {
-  AppearanceInvalidError, applyAppearancePreset, readAppearanceAsset, resetAppearance, saveAppearanceAsset, saveAppearancePreset, sessionAppearanceRoot,
-  setCanvasAppearance, setConversationAppearance, setSharedAppearance, setShellAppearance, setUnifiedAppearance, setVisualAppearance,
-  type AvatarChoice, type BackgroundChoice, type SharedBackgroundChoice, type VisualAppearanceInput,
+  AppearanceInvalidError, applyAppearancePreset, readAppearanceAsset, readGlobalAppearanceAsset, resetAppearance, saveAppearanceAsset, saveAppearancePreset, saveGlobalAppearanceAsset, sessionAppearanceRoot,
+  setCanvasAppearance, setConversationAppearance, setGlobalUnifiedAppearance, setSharedAppearance, setShellAppearance, setUnifiedAppearance, setVisualAppearance,
+  type AvatarChoice, type BackgroundChoice, type SharedBackgroundChoice, type UnifiedBackgroundChoice, type VisualAppearanceInput,
 } from './service.ts'
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
@@ -63,6 +63,13 @@ function background(value: unknown): BackgroundChoice {
     ...(material === undefined ? {} : { material: material as BackgroundChoice['material'] }),
     ...(foreground === undefined ? {} : { foreground: foreground as BackgroundChoice['foreground'] }),
   }
+}
+
+function unifiedBackground(value: unknown): UnifiedBackgroundChoice {
+  if (isRecord(value) && value['kind'] === 'builtin') {
+    return { ...background({ ...value, kind: 'default' }), kind: 'builtin' }
+  }
+  return background(value)
 }
 
 function shared(value: unknown): SharedBackgroundChoice {
@@ -179,7 +186,16 @@ async function mutate(request: Request, ctx: Context): Promise<Response> {
       return Response.json(view, { headers: JSON_HEADERS })
     }
     case 'unified': {
-      const view = await setUnifiedAppearance(resolved.root, resolved.sessionId, background(raw['background']), expectedRevision)
+      const view = await setUnifiedAppearance(resolved.root, resolved.sessionId, unifiedBackground(raw['background']), expectedRevision)
+      return Response.json(view, { headers: JSON_HEADERS })
+    }
+    case 'global_unified': {
+      const view = await setGlobalUnifiedAppearance(
+        resolved.root,
+        resolved.sessionId,
+        unifiedBackground(raw['background']),
+        revision(raw['expectedGlobalRevision']),
+      )
       return Response.json(view, { headers: JSON_HEADERS })
     }
     case 'preset_save': {
@@ -219,6 +235,24 @@ async function asset(request: Request, ctx: Context): Promise<Response> {
   })
 }
 
+async function globalAsset(request: Request, ctx: Context): Promise<Response> {
+  const resolved = await rootFor(ctx, request)
+  if (resolved instanceof Response) return resolved
+  if (request.method === 'POST') {
+    const length = Number(request.headers.get('content-length') ?? '0')
+    if (!Number.isFinite(length) || length > MAX_BODY) return Response.json({ error: 'asset exceeds 8 MiB' }, { status: 413, headers: JSON_HEADERS })
+    const bytes = new Uint8Array(await request.arrayBuffer())
+    if (bytes.byteLength > MAX_BODY) return Response.json({ error: 'asset exceeds 8 MiB' }, { status: 413, headers: JSON_HEADERS })
+    const path = await saveGlobalAppearanceAsset(bytes)
+    return Response.json({ path }, { headers: JSON_HEADERS })
+  }
+  const assetId = new URL(request.url).searchParams.get('id') ?? ''
+  const image = await readGlobalAppearanceAsset(assetId)
+  return new Response(request.method === 'HEAD' ? null : new Uint8Array(image.bytes), {
+    headers: { 'content-type': image.type, 'cache-control': 'private, max-age=60' },
+  })
+}
+
 /**
  * Register the appearance view, mutation, and asset routes.
  * @param ctx - Host context with the Session controller and authenticated fetch.
@@ -242,4 +276,13 @@ export function registerAppearanceRoutes(ctx: Context): void {
       catch (error: unknown) { return failure(error) }
     },
   }), 'noven-shell: /api/noven-appearance/asset')
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/noven-appearance/global-asset',
+    methods: ['GET', 'HEAD', 'POST'],
+    requestBody: 'buffered',
+    fetch: async request => {
+      try { return await globalAsset(request, ctx) }
+      catch (error: unknown) { return failure(error) }
+    },
+  }), 'noven-shell: /api/noven-appearance/global-asset')
 }

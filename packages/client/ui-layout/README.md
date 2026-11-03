@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-This package provides the Web GUI's three-column AppFrame, edge-column widths, and `ctx.layout` presentation control. The theme presenter owns color scheme, alias tokens, content font size, and document metadata. Width preferences are global drag memory; structural geometry persists per Session. A product can instead supply a read-only `FrameLayoutPolicy`: the frame executes its primary region, Canvas side, fixed topbar, and optional legacy drawer without persisting another mode, while global `FrameFoldState` controls the one auxiliary fold. The canvas claim is pulled from the occupant's registered source.
+This package provides the Web GUI's three-column AppFrame, edge-column widths, and `ctx.layout` presentation control. The theme presenter owns color scheme, alias tokens, content font size, and document metadata. Width preferences are global drag memory; structural geometry persists per Session. A product can instead supply a read-only `FrameLayoutPolicy`: the frame executes its primary region, Canvas side, optional fixed topbar, and optional legacy drawer without persisting another mode, while global `FrameFoldState` controls the one auxiliary fold. `contentInset` sets the content-column gutter independently of window and overlay clearance; on macOS a product frame paints the navigation material once across the whole scene while its sidebar and work hosts remain transparent. `sideChrome: 'content'` places the auxiliary Canvas controls in its active leaf and leaves only the collapsed recovery control in the frame. The canvas claim is pulled from the occupant's registered source.
 
 ## Table of Contents
 

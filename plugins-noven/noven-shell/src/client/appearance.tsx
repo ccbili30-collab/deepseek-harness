@@ -45,6 +45,7 @@ function publish(key: string, snapshot: AppearanceSnapshot): void {
   const current = snapshots.get(key)
   if (current?.loading === snapshot.loading
     && current.view?.revision === snapshot.view?.revision
+    && current.view?.globalRevision === snapshot.view?.globalRevision
     && current.error === snapshot.error) return
   snapshots.set(key, snapshot)
   for (const listener of listeners.get(key) ?? []) listener()
@@ -107,7 +108,7 @@ function load(sessionId: SessionId, filePath?: string): Promise<void> {
       })
       return
     }
-    if (previous?.view !== undefined && previous.view.revision > view.revision) return
+    if (previous?.view !== undefined && (previous.view.revision > view.revision || previous.view.globalRevision > view.globalRevision)) return
     publishVisual(sessionId, view)
     publish(key, { loading: false, view })
   }).finally(() => { inflight.delete(key) })
@@ -132,7 +133,8 @@ export async function updateAppearance(sessionId: SessionId, action: Record<stri
   const view = await response.json().catch(() => undefined) as AppearanceView | undefined
   if (view !== undefined) {
     publishVisual(sessionId, view)
-    invalidateAppearance(sessionId)
+    if (action['action'] === 'global_unified') invalidateAllAppearances()
+    else invalidateAppearance(sessionId)
   }
   return view
 }
@@ -146,6 +148,24 @@ export async function updateAppearance(sessionId: SessionId, action: Record<stri
 export async function uploadAppearanceImage(sessionId: SessionId, file: File): Promise<string | undefined> {
   const query = new URLSearchParams({ session: sessionId })
   const response = await fetch(new URL(`api/noven-appearance/asset?${query.toString()}`, document.baseURI), {
+    method: 'POST',
+    headers: { 'content-type': file.type || 'application/octet-stream' },
+    body: await file.arrayBuffer(),
+  }).catch(() => undefined)
+  if (response === undefined || !response.ok) return undefined
+  const payload = await response.json().catch(() => undefined) as { readonly path?: string } | undefined
+  return payload?.path
+}
+
+/**
+ * Upload one image into the application-wide asset library.
+ * @param sessionId - Session authorizing the user request.
+ * @param file - Browser image file.
+ * @returns The generated global asset ID, or undefined on failure.
+ */
+export async function uploadGlobalAppearanceImage(sessionId: SessionId, file: File): Promise<string | undefined> {
+  const query = new URLSearchParams({ session: sessionId })
+  const response = await fetch(new URL(`api/noven-appearance/global-asset?${query.toString()}`, document.baseURI), {
     method: 'POST',
     headers: { 'content-type': file.type || 'application/octet-stream' },
     body: await file.arrayBuffer(),
@@ -228,15 +248,18 @@ export function useFocusedCanvasFile(): ActiveFile | undefined {
 }
 
 /**
- * Build a browser URL for one project image.
- * @param sessionId - Session authorizing workspace access.
- * @param path - Workspace-relative image path.
- * @param revision - Appearance revision used as a cache-busting token.
+ * Build a browser URL for one project or application-wide image.
+ * @param sessionId - Session authorizing the user request.
+ * @param path - Workspace-relative path or generated global asset ID.
+ * @param revision - Owning document revision used as a cache-busting token.
+ * @param source - Global selects the restricted application asset endpoint.
  * @returns The authenticated asset URL.
  */
-export function appearanceAssetUrl(sessionId: SessionId, path: string, revision: number): string {
-  const query = new URLSearchParams({ session: sessionId, path, revision: String(revision) })
-  return `api/noven-appearance/asset?${query.toString()}`
+export function appearanceAssetUrl(sessionId: SessionId, path: string, revision: number, source?: 'global'): string {
+  const query = new URLSearchParams(source === 'global'
+    ? { session: sessionId, id: path, revision: String(revision) }
+    : { session: sessionId, path, revision: String(revision) })
+  return `api/noven-appearance/${source === 'global' ? 'global-asset' : 'asset'}?${query.toString()}`
 }
 
 const FOCUS_POSITION: Record<AppearanceFocus, string> = {
@@ -244,14 +267,24 @@ const FOCUS_POSITION: Record<AppearanceFocus, string> = {
 }
 
 /** @returns The background image layers, with optional user-requested fade. */
-function imageLayers(sessionId: SessionId, background: AppearanceAssetBackground, revision: number): string {
+function imageLayers(
+  sessionId: SessionId,
+  background: AppearanceAssetBackground & { readonly source?: 'global' },
+  revision: number,
+  globalRevision = revision,
+): string {
   const layers: string[] = []
   const dim = background.dim ?? 0
   if (dim > 0) {
     const paper = `color-mix(in srgb, var(--dsw-alias-bg-base) ${String(Math.round(dim * 100))}%, transparent)`
     layers.push(`linear-gradient(${paper}, ${paper})`)
   }
-  layers.push(`url(${JSON.stringify(appearanceAssetUrl(sessionId, background.path, revision))})`)
+  layers.push(`url(${JSON.stringify(appearanceAssetUrl(
+    sessionId,
+    background.path,
+    background.source === 'global' ? globalRevision : revision,
+    background.source,
+  ))})`)
   return layers.join(', ')
 }
 
@@ -420,15 +453,20 @@ interface CanvasBackgroundStyle extends CSSProperties {
  * @param sessionId - Canvas owner Session.
  * @param background - Resolved canvas background.
  * @param revision - Appearance revision for asset caching.
- * @returns Inline background style, or undefined for the built-in surface.
+ * @param visual - Global material and foreground state.
+ * @param globalRevision - Global document revision for application-wide assets.
+ * @returns Inline background style for the resolved leaf.
  */
 export function canvasBackgroundStyle(
   sessionId: SessionId,
   background: ResolvedAppearanceBackground | null,
   revision: number,
   visual: AppearanceVisualState = defaultAppearanceVisual(),
-): CanvasBackgroundStyle | undefined {
-  if (background === null && isDefaultVisual(visual)) return undefined
+  globalRevision = revision,
+): CanvasBackgroundStyle {
+  if (background === null && isDefaultVisual(visual)) {
+    return { backgroundColor: 'var(--nv-surface)', backgroundImage: 'none' }
+  }
   const skin: Record<string, string> = {}
   const values = skinValues(background, visual)
   for (const [key, property] of Object.entries(SKIN_VARIABLES)) {
@@ -441,14 +479,14 @@ export function canvasBackgroundStyle(
   if (background === null) {
     return {
       ...skin,
-      backgroundColor: visual.surface === 'clear' ? 'transparent' : visual.view === 'dark' ? '#101412' : undefined,
+      backgroundColor: visual.surface === 'clear' ? 'transparent' : visual.view === 'dark' ? '#101412' : 'var(--nv-surface)',
       backgroundImage: 'none',
     }
   }
   if (background.kind === 'transparent') {
     return { ...skin, backgroundColor: 'transparent', backgroundImage: 'none' }
   }
-  const layers = imageLayers(sessionId, background, revision)
+  const layers = imageLayers(sessionId, background, revision, globalRevision)
   const position = FOCUS_POSITION[background.focus ?? 'center']
   const blur = background.blur ?? 0
   if (blur > 0) {
@@ -467,7 +505,7 @@ export function canvasBackgroundStyle(
     backgroundImage: layers,
     backgroundSize: 'cover',
     backgroundPosition: position,
-    backgroundClip: 'padding-box',
+    backgroundClip: 'border-box',
   }
 }
 
@@ -480,6 +518,17 @@ export function invalidateAppearance(sessionId: SessionId): void {
   for (const key of snapshots.keys()) {
     if (!key.startsWith(prefix)) continue
     const filePath = key.slice(prefix.length)
+    void load(sessionId, filePath === '' ? undefined : filePath)
+  }
+}
+
+/** Refresh every workspace after an application-wide default changes. */
+function invalidateAllAppearances(): void {
+  for (const key of snapshots.keys()) {
+    const separator = key.indexOf('\u0000')
+    if (separator < 0) continue
+    const sessionId = key.slice(0, separator) as SessionId
+    const filePath = key.slice(separator + 1)
     void load(sessionId, filePath === '' ? undefined : filePath)
   }
 }
@@ -518,6 +567,7 @@ function clearAppearance(): void {
   document.documentElement.removeAttribute('data-noven-shell-skin')
   document.documentElement.removeAttribute('data-noven-shell-foreground')
   document.documentElement.removeAttribute('data-noven-conversation-appearance')
+  document.documentElement.removeAttribute('data-noven-conversation-image')
   document.documentElement.removeAttribute('data-noven-conversation-blur')
   document.documentElement.removeAttribute('data-noven-conversation-skin')
   document.documentElement.removeAttribute('data-noven-conversation-foreground')
@@ -540,12 +590,19 @@ function clearAppearance(): void {
   ]) setVariable(name, undefined)
 }
 
-function backgroundVariables(prefix: 'shell' | 'conversation', sessionId: SessionId, background: ResolvedAppearanceBackground | null, revision: number, visual: AppearanceVisualState): void {
+function backgroundVariables(
+  prefix: 'shell' | 'conversation',
+  sessionId: SessionId,
+  background: ResolvedAppearanceBackground | null,
+  revision: number,
+  visual: AppearanceVisualState,
+  globalRevision = revision,
+): void {
   if (background === null) {
     setVariable(`--noven-${prefix}-background-image`, undefined)
     setVariable(`--noven-${prefix}-background-color`, visual.surface === 'clear'
       ? 'transparent'
-      : visual.view === 'dark' ? '#101412' : undefined)
+      : visual.view === 'dark' ? '#101412' : prefix === 'conversation' ? 'var(--nv-surface)' : undefined)
     setVariable(`--noven-${prefix}-background-position`, undefined)
     setVariable(`--noven-${prefix}-background-layer`, undefined)
     setVariable(`--noven-${prefix}-background-blur`, undefined)
@@ -555,13 +612,13 @@ function backgroundVariables(prefix: 'shell' | 'conversation', sessionId: Sessio
   const blur = background.kind === 'asset' ? background.blur ?? 0 : 0
   setVariable(`--noven-${prefix}-background-image`, background.kind === 'transparent' || blur > 0
     ? 'none'
-    : imageLayers(sessionId, background, revision))
+    : imageLayers(sessionId, background, revision, globalRevision))
   setVariable(`--noven-${prefix}-background-position`, background.kind === 'transparent'
     ? undefined
     : FOCUS_POSITION[background.focus ?? 'center'])
   setVariable(`--noven-${prefix}-background-layer`, background.kind === 'transparent' || blur === 0
     ? undefined
-    : imageLayers(sessionId, background, revision))
+    : imageLayers(sessionId, background, revision, globalRevision))
   setVariable(`--noven-${prefix}-background-blur`, blur === 0 ? undefined : `${String(blur)}px`)
 }
 
@@ -621,7 +678,7 @@ export function AppearanceEffects({ current, scheme, theme }: AppearanceEffectsI
     }
     const disposeTheme = theme.overrideTokens('noven-appearance', overrides)
     document.documentElement.toggleAttribute('data-noven-shell-appearance', view.resolved.shell !== null)
-    backgroundVariables('shell', sessionId, view.resolved.shell, view.revision, visual)
+    backgroundVariables('shell', sessionId, view.resolved.shell, view.revision, visual, view.globalRevision)
     setSkinVariables('shell', view.resolved.shell, visual)
     document.documentElement.toggleAttribute('data-noven-shell-blur', view.resolved.shell?.kind === 'asset' && (view.resolved.shell.blur ?? 0) > 0)
     const shellMaterial = appearanceMaterial(view.resolved.shell, visual)
@@ -631,10 +688,11 @@ export function AppearanceEffects({ current, scheme, theme }: AppearanceEffectsI
     else document.documentElement.setAttribute('data-noven-shell-foreground', foregroundOf(view.resolved.shell, visual))
     setVariable('--noven-sidebar-background', view.resolved.shell === null ? undefined : 'transparent')
     setVariable('--noven-shell-child-background', view.resolved.shell === null ? undefined : 'transparent')
-    backgroundVariables('conversation', sessionId, view.resolved.conversation, view.revision, visual)
+    backgroundVariables('conversation', sessionId, view.resolved.conversation, view.revision, visual, view.globalRevision)
     setSkinVariables('conversation', view.resolved.conversation, visual)
     const conversation = view.resolved.conversation
     document.documentElement.toggleAttribute('data-noven-conversation-appearance', conversation !== null)
+    document.documentElement.toggleAttribute('data-noven-conversation-image', conversation?.kind === 'asset')
     document.documentElement.toggleAttribute('data-noven-conversation-blur', conversation?.kind === 'asset' && (conversation.blur ?? 0) > 0)
     const conversationMaterial = appearanceMaterial(conversation, visual)
     if (conversationMaterial === undefined) document.documentElement.removeAttribute('data-noven-conversation-skin')

@@ -4,12 +4,15 @@ import assert from 'node:assert/strict'
 import { act, createElement } from '../node_modules/react/index.js'
 import { createRoot } from '../node_modules/react-dom/client.js'
 import { afterEach, describe, test, vi } from 'vitest'
+import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { AppearanceView } from '../lib/appearance/model.js'
 import { AppearanceEffects, appearanceMaterial, canvasBackgroundStyle, updateAppearance, useAppearance, useAppearanceVisual } from '../lib/client/appearance.js'
 
 const view: AppearanceView = {
   version: 1,
   revision: 7,
+  globalRevision: 0,
+  global: {},
   workspace: {},
   session: {},
   resolved: {
@@ -85,6 +88,7 @@ describe('appearance effects', () => {
     assert.equal(document.documentElement.hasAttribute('data-noven-shell-appearance'), true)
     assert.equal(document.documentElement.hasAttribute('data-noven-assistant-avatar'), true)
     assert.equal(document.documentElement.getAttribute('data-noven-conversation-skin'), 'frosted')
+    assert.equal(document.documentElement.hasAttribute('data-noven-conversation-image'), false)
     assert.notEqual(document.body.style.getPropertyValue('--noven-conversation-skin-surface'), '')
     assert.equal(document.body.style.getPropertyValue('--noven-conversation-reading-surface'), 'transparent')
     assert.match(document.body.style.getPropertyValue('--noven-assistant-avatar-image'), /avatar\.webp/u)
@@ -98,6 +102,7 @@ describe('appearance effects', () => {
     assert.equal(document.body.style.getPropertyValue('--noven-conversation-reading-surface'), '')
     assert.equal(document.body.style.getPropertyValue('--noven-conversation-skin-surface'), '')
     assert.equal(document.documentElement.hasAttribute('data-noven-conversation-skin'), false)
+    assert.equal(document.documentElement.hasAttribute('data-noven-conversation-image'), false)
     assert.equal(document.documentElement.hasAttribute('data-noven-assistant-avatar'), false)
     mountedView.unmount()
   })
@@ -122,7 +127,7 @@ describe('appearance effects', () => {
     assert.equal(Reflect.get(style ?? {}, '--noven-canvas-paper'), undefined)
     const sharp = canvasBackgroundStyle('sess-1', { kind: 'asset', path: 'a.png', dim: 0.2 }, 4)
     assert.match(String(sharp?.backgroundImage), /20%/u)
-    assert.equal(sharp?.backgroundClip, 'padding-box')
+    assert.equal(sharp?.backgroundClip, 'border-box')
     const dark = canvasBackgroundStyle('sess-1', null, 1, {
       view: 'dark', surface: 'frosted', foreground: 'system', backgroundVisibility: 0.9,
     })
@@ -136,11 +141,13 @@ describe('appearance effects', () => {
     const rawView: AppearanceView = {
       ...view,
       revision: 8,
+      globalRevision: 9,
+      global: { unified: { kind: 'asset', path: 'global-conversation.webp', blur: 6 } },
       visual: { view: 'dark', surface: 'frosted', foreground: 'system', backgroundVisibility: 0.75 },
       resolved: {
         ...view.resolved,
         conversation: {
-          kind: 'asset', path: '外观/conversation.webp', focus: 'bottom', blur: 6, dim: 0.2,
+          kind: 'asset', path: '外观/conversation.webp', source: 'global', focus: 'bottom', blur: 6, dim: 0.2,
           material: 'frosted',
         },
       },
@@ -157,6 +164,7 @@ describe('appearance effects', () => {
     assert.equal(document.documentElement.hasAttribute('data-noven-conversation-surface'), false)
     assert.equal(document.documentElement.getAttribute('data-noven-conversation-skin'), 'frosted')
     assert.equal(document.documentElement.getAttribute('data-noven-conversation-foreground'), 'light')
+    assert.equal(document.documentElement.hasAttribute('data-noven-conversation-image'), true)
     assert.equal(document.body.style.getPropertyValue('--noven-conversation-skin-primary'), '#F4F7F5')
     assert.equal(document.body.style.getPropertyValue('--noven-conversation-skin-select'), '#6EE7B7')
     assert.equal(document.body.style.getPropertyValue('--noven-conversation-reading-surface'), 'transparent')
@@ -165,6 +173,8 @@ describe('appearance effects', () => {
     assert.equal(document.body.style.getPropertyValue('--noven-conversation-background-position'), 'center bottom')
     assert.equal(document.body.style.getPropertyValue('--noven-conversation-background-blur'), '6px')
     assert.match(document.body.style.getPropertyValue('--noven-conversation-background-layer'), /20%/u)
+    assert.match(document.body.style.getPropertyValue('--noven-conversation-background-layer'), /global-asset/u)
+    assert.match(document.body.style.getPropertyValue('--noven-conversation-background-layer'), /revision=9/u)
     assert.equal(theme.active, true)
     assert.equal(theme.scheme, 'dark')
     assert.equal(theme.overrides['--dsw-menu-surface-fill'].light, 'rgba(14, 19, 17, 0.21)')
@@ -229,7 +239,9 @@ describe('appearance effects', () => {
   })
 
   test('projects resolved canvas backgrounds into actual container styles', () => {
-    assert.equal(canvasBackgroundStyle('sess-1', null, 1), undefined)
+    const defaultPaper = { backgroundColor: 'var(--nv-surface)', backgroundImage: 'none' }
+    assert.deepEqual(canvasBackgroundStyle('sess-1', null, 1), defaultPaper)
+    assert.deepEqual(canvasBackgroundStyle('sess-desk', null, 1), defaultPaper)
     const transparent = canvasBackgroundStyle('sess-1', { kind: 'transparent' }, 2)
     assert.equal(transparent?.backgroundColor, 'transparent')
     assert.equal(transparent?.backgroundImage, 'none')
@@ -237,5 +249,37 @@ describe('appearance effects', () => {
     const style = canvasBackgroundStyle('sess-1', { kind: 'asset', path: '外观/canvas.webp' }, 3)
     assert.equal(style?.backgroundColor, 'transparent')
     assert.match(String(style?.backgroundImage), /canvas\.webp/u)
+    const globalStyle = canvasBackgroundStyle('sess-1', { kind: 'asset', path: 'global.png', source: 'global' }, 3, undefined, 9)
+    assert.match(String(globalStyle?.backgroundImage), /global-asset/u)
+    assert.match(String(globalStyle?.backgroundImage), /revision=9/u)
+    assert.doesNotMatch(String(globalStyle?.backgroundImage), /revision=3/u)
+  })
+
+  test('invalidates every Session after a global default write', async () => {
+    let stored: AppearanceView = { ...view, globalRevision: 0, global: {} }
+    vi.stubGlobal('fetch', vi.fn(async (_input, init) => {
+      if (init?.method === 'POST') stored = { ...stored, globalRevision: stored.globalRevision + 1 }
+      return { ok: true, json: async () => stored }
+    }))
+    function Probe({ sessionId }: { readonly sessionId: SessionId }) {
+      const current = useAppearance(sessionId)
+      return createElement('output', { 'data-session': sessionId }, current?.globalRevision ?? -1)
+    }
+    const mountedView = await mount(createElement('div', {},
+      createElement(Probe, { sessionId: 'sess-global-a' }),
+      createElement(Probe, { sessionId: 'sess-global-b' }),
+    ))
+    await act(async () => {
+      await vi.waitFor(() => {
+        assert.equal(document.querySelector('[data-session="sess-global-a"]')?.textContent, '0')
+        assert.equal(document.querySelector('[data-session="sess-global-b"]')?.textContent, '0')
+      })
+    })
+    await act(async () => { await updateAppearance('sess-global-a', { action: 'global_unified', background: { kind: 'default' } }) })
+    await vi.waitFor(() => {
+      assert.equal(document.querySelector('[data-session="sess-global-a"]')?.textContent, '1')
+      assert.equal(document.querySelector('[data-session="sess-global-b"]')?.textContent, '1')
+    })
+    mountedView.unmount()
   })
 })

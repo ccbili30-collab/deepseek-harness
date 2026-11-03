@@ -81,6 +81,8 @@ interface InlineBlockRegistry {
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
   interface SlotMap {
+    /** Product navigation beside the expanded brand; absent from older published types. */
+    'sidebar.brand.trailing': { kind: 'single'; scope: 'root'; owner: Record<never, never> }
     /** Side-subject trailing seat before the frame's one fold. */
     'side.header.trailing': { kind: 'single'; scope: 'root'; owner: { readonly collapsed: boolean } }
     /** Directory provider bound to the side parent's current Session. */
@@ -174,6 +176,8 @@ declare module '@deepseek-ai/dsh-client-ui-layout/client' {
     readonly primary: 'main' | 'rightbar'
     readonly canvasSide: 'left' | 'right'
     readonly topbar?: boolean
+    readonly contentInset?: number
+    readonly sideChrome?: 'frame' | 'content'
     readonly drawer?: boolean
     readonly foldMode?: 'shared' | 'independent'
   }

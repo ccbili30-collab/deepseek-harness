@@ -1,4 +1,4 @@
-/** Fixed topbar mode control and the auxiliary header/terminal actions. */
+/** Brand-row mode control and the auxiliary header/terminal actions. */
 import { useState, useSyncExternalStore } from 'react'
 import { IconClockOutlineRegular, Menu, Tooltip } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { PropsLocale, PropsRuntime, PropsStore } from '@deepseek-ai/dsh-client-ui-slots'
@@ -65,8 +65,8 @@ export function NovenSideSessionMenu({ sessions, open, showBrowser, t }: NovenSi
   )
 }
 
-/** Props supplied by the fixed topbar seat and the application-wide subject store. */
-export type NovenModeSwitchProps = PropsRuntime<'shell.topbar'>
+/** Props supplied by the brand trailing seat and the application-wide subject store. */
+export type NovenModeSwitchProps = PropsRuntime<'sidebar.brand.trailing'>
   & PropsLocale<'novenShell'>
   & PropsStore<ReturnType<typeof createNovenSubjectStore>>
   & { readonly side?: 'right' | 'bottom'; readonly onMode: (mode: import('./arrangement.ts').NovenMode) => void }
@@ -83,7 +83,7 @@ export function NovenModeSwitch({ useStore, onMode, t, side = 'bottom' }: NovenM
   const actionLabel = t('mode.toggle', { mode: targetLabel })
   return (
     <Tooltip label={actionLabel} side={side} delayMs={400}>
-      <button type="button" className="nv-mode-switch nv-mode-switch-topbar"
+      <button type="button" className="nv-mode-switch nv-mode-switch-brand"
         aria-label={actionLabel} aria-pressed={mode === 'ide'}
         onClick={() => { onMode(mode === 'agent' ? 'ide' : 'agent') }}>
         <span className="nv-mode-switch-icon" aria-hidden="true">{mode === 'agent' ? glyph.layers(16) : glyph.sparkle(16)}</span>

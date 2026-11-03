@@ -68,7 +68,15 @@ export type AppearanceBackground =
 /** An effective background after shared references have been resolved. */
 export type ResolvedAppearanceBackground =
   | ({ readonly kind: 'transparent' } & AppearanceSurfaceChoice)
-  | AppearanceAssetBackground
+  | (AppearanceAssetBackground & { readonly source?: 'global' })
+
+/** Explicit built-in white for a workspace that would otherwise inherit the global image. */
+export interface AppearanceBuiltinBackground {
+  readonly kind: 'builtin'
+}
+
+/** A workspace or global default, which may explicitly override inheritance with built-in white. */
+export type AppearanceUnifiedBackground = AppearanceBackground | AppearanceBuiltinBackground
 
 /** The one workspace image that canvas, conversation, and shell may share. */
 export interface AppearanceSharedBackground {
@@ -85,7 +93,7 @@ export interface AppearanceAvatar {
 export interface WorkspaceAppearance {
   readonly shared?: AppearanceSharedBackground
   /** Unified default for scopes without their own background; absent means built-in mint and white. */
-  readonly unified?: AppearanceBackground
+  readonly unified?: AppearanceUnifiedBackground
   readonly shell?: AppearanceBackground
   readonly canvas?: AppearanceBackground
   readonly conversation?: AppearanceBackground
@@ -124,10 +132,21 @@ export interface AppearanceDocument {
   readonly sessions: Readonly<Record<string, SessionAppearance>>
 }
 
+/** One application-wide default with independent persistence and revision. */
+export interface GlobalAppearanceDocument {
+  readonly version: 1
+  readonly revision: number
+  readonly unified?: AppearanceUnifiedBackground
+}
+
 /** Raw overrides at each scope, plus the resolved values a view consumes. */
 export interface AppearanceView {
   readonly version: 1
   readonly revision: number
+  readonly globalRevision: number
+  readonly global: {
+    readonly unified?: AppearanceUnifiedBackground
+  }
   readonly workspace: WorkspaceAppearance
   readonly filePath?: string
   readonly file?: FileAppearance
@@ -211,6 +230,11 @@ function parseBackground(value: unknown): AppearanceBackground | undefined | nul
   return null
 }
 
+function parseUnifiedBackground(value: unknown): AppearanceUnifiedBackground | undefined | null {
+  if (isRecord(value) && value['kind'] === 'builtin') return Object.keys(value).length === 1 ? { kind: 'builtin' } : null
+  return parseBackground(value)
+}
+
 function parseShared(value: unknown): AppearanceSharedBackground | undefined | null {
   if (value === undefined) return undefined
   if (!isRecord(value) || typeof value['path'] !== 'string' || value['path'] === '') return null
@@ -226,7 +250,7 @@ function parseAvatar(value: unknown): AppearanceAvatar | undefined | null {
 function parseWorkspace(value: unknown): WorkspaceAppearance | undefined {
   if (!isRecord(value) || !onlyKeys(value, ['shared', 'unified', 'shell', 'canvas', 'conversation', 'assistantAvatar'])) return undefined
   const shared = parseShared(value['shared'])
-  const unified = parseBackground(value['unified'])
+  const unified = parseUnifiedBackground(value['unified'])
   const shell = parseBackground(value['shell'])
   const canvas = parseBackground(value['canvas'])
   const conversation = parseBackground(value['conversation'])
@@ -292,7 +316,7 @@ function sparseRecord<T>(value: unknown, parse: (entry: unknown) => T | undefine
   return result
 }
 
-function usesShared(background: AppearanceBackground | undefined): boolean {
+function usesShared(background: AppearanceUnifiedBackground | undefined): boolean {
   return background?.kind === 'shared'
 }
 
@@ -352,12 +376,31 @@ export function emptyAppearanceDocument(): AppearanceDocument {
   return { version: 1, revision: 0, workspace: {}, files: {}, sessions: {} }
 }
 
+/**
+ * Parse the application-wide default without accepting project-local shared references.
+ * @param value - Parsed global JSON value.
+ * @returns The validated global document, or undefined for unsupported fields.
+ */
+export function parseGlobalAppearanceDocument(value: unknown): GlobalAppearanceDocument | undefined {
+  if (!isRecord(value) || !onlyKeys(value, ['version', 'revision', 'unified'])) return undefined
+  if (value['version'] !== 1 || !Number.isSafeInteger(value['revision']) || (value['revision'] as number) < 0) return undefined
+  const unified = parseUnifiedBackground(value['unified'])
+  if (unified === null || unified?.kind === 'shared') return undefined
+  return { version: 1, revision: value['revision'] as number, ...(unified === undefined ? {} : { unified }) }
+}
+
+/** @returns An empty global default at revision zero. */
+export function emptyGlobalAppearanceDocument(): GlobalAppearanceDocument {
+  return { version: 1, revision: 0 }
+}
+
 function resolveBackground(
-  value: AppearanceBackground | undefined,
+  value: AppearanceUnifiedBackground | undefined,
   shared: AppearanceSharedBackground | undefined,
+  globalSource = false,
 ): ResolvedAppearanceBackground | null {
-  if (value === undefined) return null
-  if (value.kind !== 'shared') return value
+  if (value === undefined || value.kind === 'builtin') return null
+  if (value.kind !== 'shared') return globalSource && value.kind === 'asset' ? { ...value, source: 'global' } : value
   if (shared === undefined) return null
   const { dim, blur, focus, material, foreground } = value
   return {
@@ -372,19 +415,29 @@ function resolveBackground(
 }
 
 /**
- * Resolve built-in → workspace → file/session without mutating the document.
+ * Resolve built-in → global → workspace → file/session without mutating either document.
  * @param document - Stored sparse overrides.
  * @param sessionId - Session whose conversation and avatar resolve.
  * @param filePath - Canonical workspace-relative file path, when a file is shown.
+ * @param global - Application-wide default inherited when the workspace has none.
  * @returns The raw scopes and resolved values for one view.
  */
-export function resolveAppearance(document: AppearanceDocument, sessionId: string, filePath?: string): AppearanceView {
+export function resolveAppearance(
+  document: AppearanceDocument,
+  sessionId: string,
+  filePath?: string,
+  global: GlobalAppearanceDocument = emptyGlobalAppearanceDocument(),
+): AppearanceView {
   const file = filePath === undefined ? undefined : document.files[filePath]
   const session = document.sessions[sessionId] ?? {}
   const shared = document.workspace.shared
+  const inherited = document.workspace.unified ?? global.unified
+  const globalSource = document.workspace.unified === undefined && global.unified !== undefined
   return {
     version: 1,
     revision: document.revision,
+    globalRevision: global.revision,
+    global: { ...(global.unified === undefined ? {} : { unified: global.unified }) },
     workspace: document.workspace,
     ...(filePath === undefined ? {} : { filePath }),
     ...(file === undefined ? {} : { file }),
@@ -397,9 +450,9 @@ export function resolveAppearance(document: AppearanceDocument, sessionId: strin
     },
     ...(document.presets === undefined ? {} : { presets: document.presets }),
     resolved: {
-      shell: resolveBackground(document.workspace.shell ?? document.workspace.unified, shared),
-      canvas: resolveBackground(file?.canvas ?? document.workspace.canvas ?? document.workspace.unified, shared),
-      conversation: resolveBackground(session.conversation ?? document.workspace.conversation ?? document.workspace.unified, shared),
+      shell: resolveBackground(document.workspace.shell ?? inherited, shared, document.workspace.shell === undefined && globalSource),
+      canvas: resolveBackground(file?.canvas ?? document.workspace.canvas ?? inherited, shared, file?.canvas === undefined && document.workspace.canvas === undefined && globalSource),
+      conversation: resolveBackground(session.conversation ?? document.workspace.conversation ?? inherited, shared, session.conversation === undefined && document.workspace.conversation === undefined && globalSource),
       assistantAvatar: session.assistantAvatar ?? document.workspace.assistantAvatar ?? null,
     },
   }

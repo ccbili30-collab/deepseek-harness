@@ -938,7 +938,11 @@ nav[class*="panelList"] button[aria-label="Create"]:not(:hover) { background: va
 .nv-mode-switch[aria-pressed="true"] .nv-mode-switch-icon { transform: translateX(2px); }
 .nv-mode-switch-label { font-weight: 500; }
 .nv-mode-switch-rail { width: 36px; height: 36px; margin: 4px auto; padding: 0; }
-.nv-mode-switch-topbar { width: auto; min-height: 30px; margin: 0; padding: 4px 8px; border-radius: 7px; }
+.nv-mode-switch-brand { flex: none; width: auto; min-height: 30px; margin: 0; padding: 4px 6px; border-radius: 7px; }
+/* 红绿灯占去品牌行左侧后，窄侧栏只收起次级拉丁字标；主品牌与 Agent 永不换行。 */
+@container (max-width: 304px) {
+  [data-integrated-brand] [data-noven-latin-name] { display: none; }
+}
 .nv-side-session-button { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--nv-secondary-text); cursor: pointer; }
 .nv-side-session-button:hover { background: var(--nv-accent-soft); color: var(--nv-accent-deep); }
 .nv-side-session-button:disabled { opacity: .45; cursor: default; }
@@ -1412,6 +1416,8 @@ button.nv-tree-switch[data-canvas-on] { background: var(--nv-accent); }
 /* 中列画布：标签条 + 体 */
 .nv-canvas { position: relative; display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--nv-surface); }
 .nv-canvas-strip { display: flex; align-items: center; gap: 2px; padding: 6px 10px 0; border-bottom: 0; overflow-x: auto; flex: none; }
+.nv-canvas-chrome-trailing { display: flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
+.nv-canvas-chrome-trailing .nv-canvas-menubutton { width: 28px; height: 28px; }
 /* 侧边画布的页签条为框架的 [上级][折叠] 预留同一块宽度。 */
 [data-side-chrome] .nv-canvas-strip { padding-right: var(--dsh-side-chrome-inset); }
 .nv-canvas-tab { position: relative; display: flex; align-items: center; gap: 6px; padding: 7px 12px; font-size: 12.5px; cursor: pointer;
@@ -4536,6 +4542,13 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
 .nv-ap-scope-controls, .nv-ap-background-control, .nv-ap-avatar-controls { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 12px; }
 .nv-ap-select { min-width: 128px; max-width: 220px; height: 36px; padding: 0 12px; border: 0; border-radius: var(--dsw-radius-md);
   background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; }
+.nv-ap-background-scope { min-width: 132px; }
+.nv-ap-choice-list { display: flex; flex: none; gap: 10px; }
+.nv-ap-choice { box-sizing: border-box; display: grid; place-items: center; width: 56px; height: 56px; padding: 0; border: .5px solid var(--nv-divider); border-radius: 12px; background: var(--nv-surface); color: var(--nv-primary-text); font: inherit; cursor: pointer; }
+.nv-ap-choice[aria-pressed='true'] { background: var(--nv-surface); color: var(--nv-select); }
+.nv-ap-default { background: #FFFFFF; color: #16181A; font-size: 12px; }
+.nv-ap-default[aria-pressed='true'] { background: #FFFFFF; color: var(--nv-select); }
+.nv-ap-add { font-size: 24px; line-height: 1; }
 .nv-ap-select:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .nv-ap-quiet { border: 0; padding: 0; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; }
 .nv-ap-quiet:hover { color: var(--nv-accent-deep); }
@@ -4588,13 +4601,84 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
 }
 
 
-/* 外观：背景只替换容器底色，不再附加纸面；模糊只作用于背景层。 */
-.nv-canvas:has(.nv-leaf[data-noven-canvas-background]),
-[data-sidebar-right-canvas-host]:has(.nv-leaf[data-noven-canvas-background]),
-[data-sidebar-right-canvas]:has(.nv-leaf[data-noven-canvas-background]) { background: transparent; }
-.nv-leaf { box-sizing: border-box; border: .5px solid var(--nv-divider); border-radius: 14px; background: var(--nv-surface); }
-[data-conversation-root] { box-sizing: border-box; overflow: hidden; border: .5px solid var(--nv-divider); border-radius: 14px; }
-.nv-leaf[data-noven-canvas-background] { overflow: hidden; border-radius: 14px; }
+/* WindowScene 独占外框材质；导航、品牌头、工作层和列宿主只暴露这一场景。
+   内容列拥有唯一的圆角、细描边与裁切，叶只负责自己的文件背景。 */
+html[data-noven-shell] [data-product-frame] { border-radius: 16px; }
+html[data-noven-shell]:not(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) [data-product-frame],
+html[data-noven-shell][data-noven-shell-foreground] [data-product-frame] {
+  background-color: var(--noven-shell-background-color, var(--dsw-specific-sidebar-fill));
+}
+html[data-noven-shell][data-noven-shell-foreground]:not([data-noven-shell-appearance]) [data-product-frame] {
+  background-image: none;
+}
+html[data-noven-shell]:not(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) [data-product-frame] [data-sidebar-col],
+html[data-noven-shell]:not(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) [data-product-frame] [data-work][data-mode-scene],
+html[data-noven-shell][data-noven-shell-foreground] [data-product-frame] [data-sidebar-col],
+html[data-noven-shell][data-noven-shell-foreground] [data-product-frame] [data-work][data-mode-scene] { background-color: transparent; }
+html[data-noven-shell] [data-product-frame] [data-work],
+html[data-noven-shell] [data-product-frame] [data-center-col],
+html[data-noven-shell] [data-product-frame] [data-rightbar-col] { background-color: transparent; }
+html[data-noven-shell]:is([data-platform='darwin'], [data-chrome-platform='darwin']):not([data-noven-shell-appearance], [data-noven-shell-foreground]) [data-product-frame] {
+  background-color: var(--dsh-window-material-tint);
+}
+html[data-noven-shell]:not(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) [data-product-frame] [data-sidebar-col],
+html[data-noven-shell][data-noven-shell-foreground] [data-product-frame] [data-sidebar-col] {
+  background-image: none;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+html[data-noven-shell] [data-product-frame] [data-work],
+html[data-noven-shell] [data-product-frame] [data-sidebar-right-canvas-host],
+html[data-noven-shell] [data-product-frame] [data-sidebar-right-canvas],
+html[data-noven-shell] [data-product-frame] [data-sidebar-right-panel],
+html[data-noven-shell] [data-product-frame] .nv-canvas { background-color: transparent; }
+html[data-noven-shell] [data-product-frame] [data-work],
+html[data-noven-shell] [data-product-frame] [data-sidebar-right-canvas-host],
+html[data-noven-shell] [data-product-frame] [data-sidebar-right-canvas],
+html[data-noven-shell] [data-product-frame] [data-sidebar-right-panel],
+html[data-noven-shell] [data-product-frame] [data-sidebar-col],
+html[data-noven-shell] [data-product-frame] [data-center-col],
+html[data-noven-shell] [data-product-frame] [data-rightbar-col] { border: 0; }
+html[data-noven-shell] [data-product-frame] .nv-leaf { background-color: var(--nv-surface); }
+html[data-noven-shell] [data-product-frame] [data-conversation-root] {
+  background-color: var(--noven-conversation-background-color, var(--nv-surface));
+}
+html[data-noven-shell] [data-product-frame] [data-conversation-root] header { border-bottom-color: transparent; }
+/* 4px 外框缝与 4px 列间缝只计算一次；工具行和正文同属完整内容列。 */
+html[data-noven-shell] [data-product-frame] [data-conversation-root],
+html[data-noven-shell] [data-product-frame] .nv-create-page {
+  box-sizing: border-box;
+  overflow: hidden;
+  margin: var(--dsh-product-content-inset, 4px);
+  width: calc(100% - var(--dsh-product-content-inset, 4px) - var(--dsh-product-content-inset, 4px));
+  height: calc(100% - var(--dsh-product-content-inset, 4px) - var(--dsh-product-content-inset, 4px));
+  border: .5px solid var(--nv-divider);
+  border-radius: 12px;
+}
+html[data-noven-shell] [data-product-frame] [data-unit-side='left'] [data-conversation-root],
+html[data-noven-shell] [data-product-frame] [data-unit-side='left'] .nv-create-page {
+  margin-left: 0;
+  width: calc(100% - var(--dsh-product-content-inset, 4px));
+}
+html[data-noven-shell] [data-product-frame] .nv-canvas:not([data-canvas-fullscreen]) {
+  box-sizing: border-box;
+  overflow: hidden;
+  margin: 0 var(--dsh-product-content-inset, 4px) var(--dsh-product-content-inset, 4px) 0;
+  width: calc(100% - var(--dsh-product-content-inset, 4px));
+  height: calc(100% - var(--dsh-product-content-inset, 4px));
+  border: .5px solid var(--nv-divider);
+  border-radius: 12px;
+}
+html[data-noven-shell] [data-product-frame] [data-unit-side='left'] .nv-canvas:not([data-canvas-fullscreen]) {
+  margin-left: var(--dsh-product-content-inset, 4px);
+  width: calc(100% - var(--dsh-product-content-inset, 4px) - var(--dsh-product-content-inset, 4px));
+}
+html[data-noven-shell] [data-product-frame] .nv-canvas[data-canvas-fullscreen] { border: 0; border-radius: 0; }
+html[data-noven-shell] [data-product-frame] .nv-canvas:has(> .nv-leaf[data-noven-canvas-background='asset']),
+html[data-noven-shell][data-noven-conversation-image] [data-product-frame] [data-conversation-root] { border-color: transparent; }
+.nv-leaf { box-sizing: border-box; overflow: hidden; border: 0; border-radius: 0; }
+.nv-split-bar { background: transparent; }
+.nv-split-bar:hover { background: var(--nv-accent); }
 .nv-leaf[data-noven-canvas-background] { --bn-colors-editor-background: transparent; }
 .nv-leaf[data-noven-canvas-background] .nv-canvas-body,
 .nv-leaf[data-noven-canvas-background] .nv-canvas-cardbody,
@@ -4674,15 +4758,11 @@ html[data-noven-conversation-foreground] [data-conversation-root] {
   --dsw-alias-state-business-primary: var(--noven-conversation-skin-business);
 }
 
-/* 外壳导航与顶栏共享连续背景；只有真实内容表面承担一次护化。 */
+/* 外壳导航与品牌头共享连续背景；只有真实内容表面承担一次护化。 */
 html[data-noven-shell-skin] [data-product-frame] [data-sidebar-col] {
   background: transparent;
   box-shadow: none;
   backdrop-filter: none;
-}
-html[data-noven-shell-skin] [data-product-frame] [data-shell-topbar] {
-  background: transparent;
-  border-bottom-color: transparent;
 }
 html[data-noven-conversation-skin='frosted'] [data-conversation-root] [data-conversation-scroll] {
   border-radius: 18px;

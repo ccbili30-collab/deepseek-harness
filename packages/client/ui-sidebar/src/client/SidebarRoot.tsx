@@ -104,13 +104,13 @@ export function SidebarRoot({
 }: SidebarRootComponentProps) {
   const framePolicy = useFrameLayoutPolicy?.(policy => policy) ?? null
   const windowsTitlebar = document.documentElement.hasAttribute('data-windows-titlebar')
-  // A fixed topbar is the window's global strip, not a replacement for the
-  // sidebar's own brand control: the brand mark stays at the navigation's
-  // leading top and is the one navigation toggle. Windows keeps its caption
-  // toggle (the native titlebar owns that row).
-  const topbarFrame = framePolicy !== null && framePolicy.topbar !== false
-  const brandToggleVisible = topbarFrame && !windowsTitlebar
-  const legacyToggleVisible = !topbarFrame || windowsTitlebar
+  // A product frame keeps navigation in the brand row whether or not it also
+  // mounts the optional application topbar. Windows keeps its caption toggle.
+  const productFrame = framePolicy !== null
+  const topbarFrame = productFrame && framePolicy.topbar !== false
+  const brandToggleVisible = productFrame && !windowsTitlebar
+  const legacyToggleVisible = !productFrame || windowsTitlebar
+  const integratedBrand = productFrame && !topbarFrame
   const panels = usePanels(snapshot => snapshot)
   const shortcut = useShortcuts(rows => rows.find(row => row.id === 'sidebar.left.toggle'))
   const newShortcut = useShortcuts(rows => rows.find(row => row.id === 'session.new'))
@@ -232,7 +232,7 @@ export function SidebarRoot({
     <div
       ref={column}
       className={clsx(
-        css.root, !wide && css.collapsed, !wide && everWide.current && css.railIn,
+        css.root, productFrame && css.productRoot, !wide && css.collapsed, !wide && everWide.current && css.railIn,
         collapsed && wide && css.fading, !pointerInside && css.quietBars,
       )}
       style={wide ? { width: collapsed ? lastWideWidth.current : width } : undefined}
@@ -245,11 +245,12 @@ export function SidebarRoot({
       {/* macOS hiddenInset titlebar: the strip shares the row with the
           traffic lights and keeps the toggle at the sidebar's top-right. */}
       {darwinChrome && legacyToggleVisible && <div className={css.topStrip} data-window-drag>{toggle}</div>}
-      <div className={clsx(css.logoRow, brandToggleVisible && css.brandLeading)} data-window-drag>
+      <div className={clsx(css.logoRow, brandToggleVisible && css.brandLeading, integratedBrand && css.integratedBrand)}
+        data-window-drag data-integrated-brand={integratedBrand || undefined}>
         {/* Expanded, the brand doubles as a New Session shortcut — except on
             macOS, where it stays part of the logo row's window-drag surface
             (a button would subtract itself through the global no-drag rule).
-            Under a fixed topbar the mark itself is the navigation toggle, so
+            A product frame makes the mark itself the navigation toggle, so
             the identity renders only the wordmark and the toggle fills the
             rail's leading slot. */}
         {brandToggle}
@@ -291,6 +292,7 @@ export function SidebarRoot({
               </Tooltip>
             )
         })()}
+        {wide && renderSlot('sidebar.brand.trailing', {})}
         {!darwinChrome && toggle}
       </div>
 

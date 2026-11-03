@@ -344,7 +344,8 @@ export function AppFrame({
   // in handcraft, the right column holds the side Canvas in Agent. The slot
   // renders the side parent once; the frame owns the fold beside it.
   const sideColumn = centerCollapsible ? 'center' : canvasAuxiliary ? 'rightbar' : null
-  const sideChrome = framePolicy === null || sideColumn === null ? null : renderSlot('side.header.trailing', {
+  const contentSideChrome = framePolicy?.sideChrome === 'content' && sideColumn === 'rightbar'
+  const sideChrome = framePolicy === null || sideColumn === null || contentSideChrome ? null : renderSlot('side.header.trailing', {
     collapsed: sideColumn === 'center' ? centerCollapsed : rightbarAuxiliaryCollapsed,
   })
   // The panel's anchored edge inside the unit column: opposite the canvas when
@@ -355,7 +356,7 @@ export function AppFrame({
   // the Windows caption row; neither platform keeps an icon rail.
   const darwin = isDarwinChrome()
   const mirrorLights = darwin && !isDarwinDesktop()
-  const collapsedWidth = (framePolicy === null || framePolicy.topbar === false)
+  const collapsedWidth = framePolicy === null
     && (darwin || document.documentElement.hasAttribute('data-windows-titlebar')) ? 0 : SIDEBAR_COLLAPSED
   // Opening on a narrow frame collapses the left sidebar. Eligibility must
   // include that space before the occupant's first shown report arrives.
@@ -802,7 +803,7 @@ export function AppFrame({
   // row (ui-sidebar). AppFrame.module.css publishes the matching
   // --dsh-frame-leading-clearance under the same collapsed condition.
   const leading = useMemo(() => renderSlot('shell.leading', {}), [renderSlot])
-  const leadingMounted = darwin && sidebarCollapsed && (framePolicy === null || framePolicy.topbar === false)
+  const leadingMounted = darwin && sidebarCollapsed && framePolicy === null
   const topbarMounted = framePolicy !== null && framePolicy.topbar !== false && !canvasFullscreen
 
   return (
@@ -812,6 +813,9 @@ export function AppFrame({
       style={{
         ...(document.documentElement.hasAttribute('data-windows-titlebar')
           ? { '--dsh-windows-sidebar-width': `${cols.sidebar}px` } : {}),
+        ...(framePolicy?.contentInset === undefined
+          ? {}
+          : { '--dsh-product-content-inset': `${framePolicy.contentInset}px` }),
         // Fullscreen hides the navigation column, so the frame template must
         // drop that track too: a hidden first child would otherwise leave the
         // work layer auto-placed in the zero-width track.
@@ -880,10 +884,16 @@ export function AppFrame({
                     : `minmax(${cols.rightbar === 0 && canvas === null ? 0 : CENTER_MIN}px, 1fr) minmax(0px, ${rightTrackMax}px)`,
         }}
       >
-        <CenterColumn order={unitLeft ? 2 : 1} collapsible={centerCollapsible} collapsed={centerCollapsed}
+        <CenterColumn
+          order={unitLeft ? 2 : 1}
+          collapsible={contentSideChrome ? centerCollapsed : centerCollapsible}
+          collapsed={centerCollapsed}
           productFold={framePolicy !== null} sideChrome={sideColumn === 'center' ? sideChrome : null} toggle={toggleCenter}
           collapseLabel={t('collapse')} expandLabel={t('expand')}>{main}</CenterColumn>
-        <RightbarColumn order={unitLeft ? 1 : 2} collapsible={canvasAuxiliary} collapsed={rightbarAuxiliaryCollapsed}
+        <RightbarColumn
+          order={unitLeft ? 1 : 2}
+          collapsible={contentSideChrome ? rightbarAuxiliaryCollapsed : canvasAuxiliary}
+          collapsed={rightbarAuxiliaryCollapsed}
           productFold={framePolicy !== null} sideChrome={sideColumn === 'rightbar' ? sideChrome : null} toggle={toggleAuxiliary}
           collapseLabel={t('collapse')} expandLabel={t('expand')}>
           {renderSlot('rightbar', { width: drawerWidth, viewportWidth: viewport, canShow: drawerWidth > 0, collapsePreview: layoutInfo.rightbarCollapsePreview })}

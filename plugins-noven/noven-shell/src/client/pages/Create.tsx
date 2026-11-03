@@ -76,8 +76,8 @@ export function Create({ t, sessionNavigation, useWorkspaces, useSessions, rende
   useEffect(() => {
     // A workspace switch re-hosts the page on another blank: follow it until
     // one engages, then keep the engaged id as the handoff target.
-    if (hostBlank === true && hostId !== undefined && !hostEngaged) setHostedId(hostId)
-  }, [hostBlank, hostId, hostEngaged])
+    if (hostBlank === true && hostPreset === 'create' && hostId !== undefined && !hostEngaged) setHostedId(hostId)
+  }, [hostBlank, hostPreset, hostId, hostEngaged])
   const revealedRef = useRef(false)
   useEffect(() => {
     if (!hostEngaged || revealedRef.current) return
@@ -92,17 +92,22 @@ export function Create({ t, sessionNavigation, useWorkspaces, useSessions, rende
   // The composer needs a blank host: acquire one when the current main view
   // holds a real Session (or nothing). It stands down once the hosted Session
   // engages — re-homing then would fight the handoff — and it never repeats.
-  const ensuringRef = useRef(false)
+  const ensuringRef = useRef<string | null>(null)
+  const ensureGeneration = useRef(0)
   useEffect(() => {
     // Wait for the workspace list: creating the host before it loads falls back
     // to the harness cwd, and a blank outside every workspace leaves the
     // composer in its read-only "choose a workspace" state.
     if (workspacesState === 'loading') return
-    if ((hostBlank === true && hostPreset === 'create') || hostEngaged || revealedRef.current || ensuringRef.current) return
-    ensuringRef.current = true
+    if ((hostBlank === true && hostPreset === 'create') || hostEngaged || revealedRef.current) return
+    const workspaceId = workspace?.workspaceId ?? ''
+    if (ensuringRef.current === workspaceId) return
+    const generation = ++ensureGeneration.current
+    ensuringRef.current = workspaceId
     void ensureBlankHost(workspace?.workspaceId).catch((reason: unknown) => {
       console.warn('noven-shell: blank host ensure failed:', reason)
-      ensuringRef.current = false
+    }).finally(() => {
+      if (ensureGeneration.current === generation) ensuringRef.current = null
     })
   }, [hostBlank, hostPreset, hostEngaged, ensureBlankHost, workspace?.workspaceId, workspacesState])
 
@@ -117,7 +122,7 @@ export function Create({ t, sessionNavigation, useWorkspaces, useSessions, rende
             the engage→reveal handoff (hostEngaged): unmounting it on the same
             render that fires the handoff would rob the morph of its old
             anchor — the capture needs the hero composer still on the page. */}
-        {(hostBlank === true || hostEngaged) && (
+        {((hostBlank === true && hostPreset === 'create') || hostEngaged) && (
           <div className="nv-create-hero">
             {renderFactorySlot('conversation.content', { variant: 'embedded', phase: 'hero', hero: true })}
           </div>

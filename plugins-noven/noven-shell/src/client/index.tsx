@@ -1,9 +1,9 @@
 /**
  * noven-shell browser half — the product IA on top of DSH's public seams:
  *
- * - `sidebar.panellist` rows (首页 / 创作 / 消息 / 我的): 创作 is the New
- *   Session command; the rest select keyed `main` panels, and the conversation
- *   stays the default main key.
+ * - `sidebar.panellist` rows (首页 / 创作 / 消息 / 我的): 创作 selects the
+ *   independent creation panel; the separate New Session command opens a blank
+ *   conversation, which remains the default main key.
  * - `main` panels: the community feed (with its landing drawer), the creator
  *   profile with 世界/角色/创作库 tabs, a messages placeholder, and the
  *   three-pane card editor reached from 我的.
@@ -22,6 +22,7 @@ import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+import { bindSnapshotSelector } from './directory-hooks.ts'
 import type {} from '@deepseek-ai/dsh-client-ui-session/client'
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
@@ -69,13 +70,14 @@ import type { FootLauncherInjected, FootLauncherProps } from './sidebar.tsx'
 import { CardReceiptTail, CardToolView, CARD_READ_TOOLS, CARD_WRITE_TOOLS, type CardReceiptInjected } from './toolviews.tsx'
 import { cardSavedDefinition, savedMeta } from './card-receipt.ts'
 import { CreateHero } from './create-hero.tsx'
+import { Create } from './pages/Create.tsx'
 import { InputQuote } from './input-quote.tsx'
 import { applyQuote } from './quote.tsx'
 import { applyBranches } from './branches.tsx'
 import { HomeIcon, CreateIcon, BellIcon, MeIcon, glyph } from './icons.tsx'
 import { showComingSoon } from './coming-soon.ts'
 import { createNovenSubjectStore, frameLayoutPolicy, subjectOfMode, type NovenMode, type NovenSubject } from './arrangement.ts'
-import { NovenModeSwitch, type SideSessions } from './mode.tsx'
+import { NovenModeSwitch, NovenSideSessionMenu, type NovenModeSwitchProps, type SideSessions } from './mode.tsx'
 import { SideParent, type SideParentInjected } from './side-parent.tsx'
 import { enterHandcraftScene } from './creation-transition.ts'
 import { injectNovenStyles } from './style.ts'
@@ -228,7 +230,14 @@ interface PreviewPageInjected {
   readonly deleteCard: (cardId: string, addr: CardAddr, name: string) => void
 }
 
-/** Injected face for 创作: blank-host ensure, conversation reveal, card creation, and the drafts catalog. */
+/** Injected face for the independent creation panel and its blank-Session composer. */
+interface CreatePageInjected {
+  readonly ensureBlankHost: (workspaceId: WorkspaceId | undefined) => Promise<void>
+  readonly revealSession: (sessionId: SessionId) => void
+  readonly onStartHandcraft: (workspaceId: WorkspaceId | undefined, source: HTMLElement) => Promise<boolean>
+  readonly onImportCard: (file: File, workspaceId?: WorkspaceId) => void
+}
+
 
 type PageProps = PropsRuntime<'main'> & PropsLocale<'novenShell'> & PropsRenderFactories
 type TabBodyProps = PropsRuntime<'sidebar.right.pane.tab'> & PropsLocale<'novenShell'>
@@ -1070,10 +1079,10 @@ export function apply(ctx: ClientContext): void {
     })
   }
   ctx.effect(() => ctx.layout.provideFrameLayoutPolicy(modePolicySource), 'noven-shell: frame layout policy')
-  ctx.slots.inject('shell.topbar', () => ctx.slots.register({
-    name: 'shell.topbar', id: 'noven-mode', order: -100, locale: NS, store: subjectStore,
-    inject: () => ({ onMode: changeMode }),
-  }, NovenModeSwitch))
+  const BrandModeSwitch = (props: Omit<NovenModeSwitchProps, 'onMode'>) => <NovenModeSwitch {...props} onMode={changeMode} />
+  ctx.slots.inject('sidebar.brand.trailing', () => ctx.slots.register({
+    name: 'sidebar.brand.trailing', locale: NS, store: subjectStore,
+  }, BrandModeSwitch))
   const projects = projectsCatalog(ctx.sessions)
   // 杂项项目是永久兜底（设计理念 §15）：注册表自举后只补登记一次上游工作区，
   // 复用同一份项目快照，不再另发一次请求。浏览器没有 HOME，不能本地拼路径。
@@ -1919,9 +1928,7 @@ export function apply(ctx: ClientContext): void {
     })().catch((reason: unknown) => { console.warn('noven-shell: create failed:', reason) })
   }
 
-  /**
-   * 创作行只触发新建会话命令；它不再是 main 面板目的地。
-   */
+  /** 创作是独立主面板；新建会话仍是另一条空白对话命令。 */
   const sidebarPanels = ctx.get('sidebarPanels') as {
     registerActivation(id: MainPanelId, activate: (target: HTMLElement) => void): () => void
   }
@@ -1950,8 +1957,6 @@ export function apply(ctx: ClientContext): void {
       openingCreateSurface = false
     }
   }
-  ctx.effect(() => sidebarPanels.registerActivation(CREATE_ID, () => { onCreateSurface() }),
-    'noven-shell: create surface activation')
   ctx.effect(() => {
     const surface = ctx.uiWorkspace as { registerNewSessionSurface?: (open: () => void) => () => void }
     const dispose = surface.registerNewSessionSurface?.(() => { onCreateSurface() })
@@ -2451,6 +2456,25 @@ export function apply(ctx: ClientContext): void {
       embedFile: (cardId, moduleId, path) => {
         void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'embed_file', path, moduleId }))
       },
+      auxiliaryCanvas: {
+        getSnapshot: () => subjectInstance.getSnapshot().subject === 'conversation',
+        subscribe: listener => subjectInstance.subscribe(listener),
+      },
+      setAuxiliaryCollapsed: collapsed => { ctx.layout.setAuxiliaryCollapsed(collapsed) },
+      directory: (() => {
+        const injected = treeInjected(sessionId)
+        return <DirectorySideEntry {...injected} t={t}
+          useTree={bindSnapshotSelector(injected.hooks.tree)}
+          useProject={bindSnapshotSelector(injected.hooks.project)}
+          useProjects={bindSnapshotSelector(injected.hooks.projects)}
+          useSims={bindSnapshotSelector(injected.hooks.sims)}
+          useDock={bindSnapshotSelector(injected.hooks.dock)}
+          useBottomPanel={bindSnapshotSelector(injected.hooks.bottomPanel)}
+          useStudio={bindSnapshotSelector(injected.hooks.studio)}
+          useActiveTab={bindSnapshotSelector(injected.hooks.activeTab)}
+          useFeatureTabs={bindSnapshotSelector(injected.hooks.featureTabs)}
+          revealSide={() => { ctx.layout.setAuxiliaryCollapsed(false) }} />
+      })(),
       // The client compiles against the published ui-layout types; the local
       // frame adds this method. Narrow locally, and fall back to the frame
       // attributes so a release bundle without the API still collapses.
@@ -2504,6 +2528,35 @@ export function apply(ctx: ClientContext): void {
   })
 
   ctx.slots.inject('main', function* () {
+    yield ctx.slots.register({
+      name: 'main', key: CREATE_ID, locale: NS,
+      inject: (): CreatePageInjected => ({
+        ensureBlankHost,
+        revealSession,
+        onStartHandcraft: startHandcraft,
+        onImportCard: importCard,
+      }),
+    }, (p: PageProps & InjectFace<CreatePageInjected>) => (
+      <Create
+        t={p.t}
+        sessionNavigation={<NovenSideSessionMenu
+          t={p.t}
+          sessions={sideSessionsSource}
+          open={revealSession}
+          showBrowser={() => {
+            ctx.uiWorkspace.showSessionBrowser()
+            ctx.layout.setSidebarCollapsed(false)
+          }}
+        />}
+        useWorkspaces={p.useWorkspaces}
+        useSessions={p.useSessions}
+        renderFactorySlot={p.renderFactorySlot}
+        ensureBlankHost={p.ensureBlankHost}
+        revealSession={p.revealSession}
+        onStartHandcraft={p.onStartHandcraft}
+        onImportCard={p.onImportCard}
+      />
+    ))
     yield ctx.slots.register({ name: 'main', key: HOME_ID, locale: NS },
       (p: PageProps) => <Home t={p.t} />)
     yield ctx.slots.register({ name: 'main', key: MESSAGES_ID, locale: NS },

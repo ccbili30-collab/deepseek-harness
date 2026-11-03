@@ -22,6 +22,11 @@
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
 }
 
+/* Product navigation lives directly on the frame's continuous scene. */
+.root.productRoot {
+  background: transparent;
+}
+
 /* macOS desktop: the AppFrame column owns the translucent sidebar tint; an
    opaque fill here would sit on top of it and block the window vibrancy. */
 :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .root {
@@ -33,6 +38,14 @@
    the whale's box (24px to the 24-wide whale glyph itself). */
 .root.collapsed {
   padding: 18px 10px 6px;
+}
+
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .root.collapsed {
+  padding-top: 52px;
+}
+
+:global([data-platform='darwin'][data-fullscreen]) .root.collapsed {
+  padding-top: 18px;
 }
 
 /* The brand stays in the sidebar; fixed caption controls survive zero-width collapse. */
@@ -246,6 +259,24 @@
   justify-content: flex-start;
 }
 
+/* Without the optional application topbar, the expanded brand row is part of
+   the same navigation scene, never a separate header surface. */
+.root:not(.collapsed) .logoRow.integratedBrand {
+  gap: 6px;
+  container-type: inline-size;
+  background: transparent;
+}
+
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .root:not(.collapsed) .logoRow.integratedBrand {
+  height: 52px;
+  margin: -6px calc(-1 * var(--dsh-sidebar-inline-padding)) 4px;
+  padding: 0 12px 2px 88px;
+}
+
+:global([data-platform='darwin'][data-fullscreen]) .root:not(.collapsed) .logoRow.integratedBrand {
+  padding-left: 12px;
+}
+
 .brandToggle {
   color: var(--dsw-alias-label-primary);
   -webkit-app-region: no-drag;
@@ -319,6 +350,7 @@
   font-weight: 600;
   line-height: 24px;
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
 .fallbackBrandName {

@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 概述
 
-本包提供 Web GUI 的三栏 AppFrame、左右栏宽度与 `ctx.layout` 呈现控制。主题呈现器负责配色、别名 token、正文字号与 document 元数据。列宽是全局拖拽记忆，结构几何按会话持久化。产品也可以提供只读 `FrameLayoutPolicy`：框架执行其主区域、画布朝向、固定顶栏与可选旧抽屉，不再保存第二份模式；全局 `FrameFoldState` 管理同一个辅助区折叠。画布认领由框架从占用方注册的认领源拉取。
+本包提供 Web GUI 的三栏 AppFrame、左右栏宽度与 `ctx.layout` 呈现控制。主题呈现器负责配色、别名 token、正文字号与 document 元数据。列宽是全局拖拽记忆，结构几何按会话持久化。产品也可以提供只读 `FrameLayoutPolicy`：框架执行其主区域、画布朝向、可选固定顶栏与可选旧抽屉，不再保存第二份模式；全局 `FrameFoldState` 管理同一个辅助区折叠。`contentInset` 独立于窗口与浮层安全区设置内容列外框缝；macOS 产品框架在整个场景中只绘制一次导航材质，侧栏与工作列宿主保持透明。`sideChrome: 'content'` 把辅助画布控件放进活动叶，框架只保留折叠后的恢复控件。画布认领由框架从占用方注册的认领源拉取。
 
 ## 目录
 

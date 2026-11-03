@@ -403,7 +403,7 @@
    claimed side and the panel's width decide its box. */
 .canvas {
   position: absolute;
-  top: var(--dsh-frame-top-clearance, 0px);
+  top: var(--dsh-product-content-inset, var(--dsh-frame-top-clearance, 0px));
   bottom: 0;
   display: flex;
   flex-direction: column;
