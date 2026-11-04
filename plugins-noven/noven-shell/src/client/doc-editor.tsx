@@ -12,6 +12,7 @@ import { wordCount } from './editor.tsx'
 import { applyImageWidths, extractImageWidths, percentToPx, pxToPercent } from './doc-image-width.ts'
 import { BLOCKNOTE_CSS } from './doc-blocknote-css.ts'
 import { TextSaveBuffer, type TextWriteResult } from './text-save-buffer.ts'
+import { useDocumentProtocols } from './document-protocols.ts'
 
 export type NovenColorScheme = 'light' | 'dark'
 let colorScheme: NovenColorScheme = 'light'
@@ -155,7 +156,8 @@ export function BlockNoteDocEditor({ markdown, onChange, onDraft, autoSave = tru
 }) {
   useBlockNoteStyles()
   const colorScheme = useNovenColorScheme()
-  const editor = useCreateBlockNote({ dictionary: zh })
+  const protocols = useDocumentProtocols()
+  const editor = useCreateBlockNote({ dictionary: zh, links: protocols.links, resolveFileUrl: protocols.resolveFileUrl })
   const itemsRef = useRef<readonly OutlineItem[]>([])
   const scroller = useRef<HTMLDivElement | null>(null)
   const zoomRef = useRef(zoom)
@@ -235,7 +237,7 @@ export function BlockNoteDocEditor({ markdown, onChange, onDraft, autoSave = tru
     reportMarks()
   }, [editor, markdown, onOutline, onWordCount, reportMarks])
   return (
-    <div className="nv-doc-bn" ref={scroller} onScroll={trackActive}
+    <div className="nv-doc-bn" ref={scroller} onScroll={trackActive} onClickCapture={protocols.onClickCapture}
       style={{ ['--nv-doc-zoom' as string]: String(zoom) }}>
       <BlockNoteView
         editor={editor}
@@ -326,18 +328,23 @@ export function PlainTextDocEditor({ text, onChange, onDraft, autoSave = true, l
  * @param onSave - 防抖后的整模块 markdown 快照。
  * @param locked - AI 正在写这个模块：只读展示，不接管输入。
  */
-export function CardMarkdownEditor({ markdown, onSave, locked = false }: {
+export function CardMarkdownEditor({ markdown, onSave, imageUrl, locked = false, readOnly = false }: {
   readonly markdown: string
-  readonly onSave: (markdown: string, expectedText?: string) => TextWriteResult | Promise<TextWriteResult>
+  readonly onSave?: (markdown: string, expectedText?: string) => TextWriteResult | Promise<TextWriteResult>
+  /** The owning card resolves authored resource references only for display. */
+  readonly imageUrl?: (resourceId: string) => string
   readonly locked?: boolean
+  /** Reading never submits pending input, including on disposal. */
+  readonly readOnly?: boolean
 }) {
   useBlockNoteStyles()
   const colorScheme = useNovenColorScheme()
-  const editor = useCreateBlockNote({ dictionary: zh })
+  const protocols = useDocumentProtocols(imageUrl)
+  const editor = useCreateBlockNote({ dictionary: zh, links: protocols.links, resolveFileUrl: protocols.resolveFileUrl })
   const loaded = useRef(false)
   const buffer = useRef(new TextSaveBuffer(markdown))
-  const save = useRef(onSave)
-  save.current = onSave
+  const save = useRef({ onSave, readOnly })
+  save.current = { onSave, readOnly }
   const timer = useRef<number | undefined>(undefined)
   const box = useRef<HTMLDivElement | null>(null)
   const ready = useRef(false)
@@ -371,10 +378,10 @@ export function CardMarkdownEditor({ markdown, onSave, locked = false }: {
   }, [editor, markdown])
   useEffect(() => () => {
     if (timer.current !== undefined) window.clearTimeout(timer.current)
-    void buffer.current.flush((text, expected) => save.current(text, expected))
+    if (!save.current.readOnly) void buffer.current.flush((text, expected) => save.current.onSave?.(text, expected) ?? false)
   }, [])
   const commit = useCallback((): void => {
-    if (!ready.current) return
+    if (!ready.current || save.current.readOnly) return
     const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
     const widths = imageBlocksOf(editor.document).map(block => {
       const width = previewWidthOf(block)
@@ -382,24 +389,29 @@ export function CardMarkdownEditor({ markdown, onSave, locked = false }: {
     })
     const text = applyImageWidths(editor.blocksToMarkdownLossy(), widths)
     buffer.current.stage(text)
-    void buffer.current.flush((value, expected) => save.current(value, expected))
+    void buffer.current.flush((value, expected) => save.current.onSave?.(value, expected) ?? false)
   }, [editor])
   // AI 接手前把已经敲下的内容先提交：锁定发生在 800ms 防抖窗内时，
   // 不能把用户最后几下输入静默丢掉。
   useEffect(() => {
+    if (readOnly) {
+      if (timer.current !== undefined) window.clearTimeout(timer.current)
+      timer.current = undefined
+      return
+    }
     if (!locked || timer.current === undefined) return
     window.clearTimeout(timer.current)
     timer.current = undefined
     commit()
-  }, [commit, locked])
+  }, [commit, locked, readOnly])
   return (
-    <div className="nv-card-bn" ref={box}>
+    <div className="nv-card-bn" ref={box} onClickCapture={protocols.onClickCapture}>
       <BlockNoteView
         editor={editor}
         theme={colorScheme}
-        editable={!locked}
+        editable={!locked && !readOnly && onSave !== undefined}
         onChange={() => {
-          if (locked) return
+          if (locked || readOnly || onSave === undefined) return
           if (!ready.current) return
           const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
           const widths = imageBlocksOf(editor.document).map(block => {

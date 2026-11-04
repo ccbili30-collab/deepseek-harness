@@ -52,12 +52,10 @@ export interface SettingPageProps {
   readonly onSaveTags?: (tags: readonly string[]) => Promise<boolean>
 }
 
-const noop = (): void => undefined
-
 /** Module blocks → markdown helper's output is already the editor's input. */
-function SettingText({ module }: { readonly module: CardModuleDoc }) {
+function SettingText({ module, imageUrl }: { readonly module: CardModuleDoc; readonly imageUrl: (resourceId: string) => string }) {
   const markdown = useMemo(() => moduleMarkdown(module.blocks), [module.blocks])
-  return <div className="nv-set-text"><CardMarkdownEditor markdown={markdown} onSave={noop} locked /></div>
+  return <div className="nv-set-text"><CardMarkdownEditor markdown={markdown} imageUrl={imageUrl} readOnly /></div>
 }
 
 /** Read-only timeline: era chips + events, never the timeline's event form. */
@@ -584,7 +582,7 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
                       : (
                         <div className="nv-set-field nv-set-field-body">
                           <span className="nv-set-label">{homeModule.name}</span>
-                          <SettingText module={homeModule} />
+                          <SettingText module={homeModule} imageUrl={imageUrl} />
                         </div>
                       )}
                   </div>
@@ -602,7 +600,7 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
                   {moduleIsText(active.module)
                     ? (
                       <div className="nv-set-field nv-set-field-body">
-                        <SettingText module={active.module} />
+                        <SettingText module={active.module} imageUrl={imageUrl} />
                       </div>
                     )
                     : active.template === 'timeline'

@@ -12,7 +12,6 @@ import type { CardAddr, CardBlockView, CardDocView, CardModuleDoc, CardOpResult,
 import { CardConflict, cardContentUrl, deleteUserModule, fetchUserModules, postCardDiagnostics, type CardDiagnosticEntry, type UserModuleDefinition } from './card-api.ts'
 import { avatarImageId, coverImageId } from './card-images.ts'
 import { findModule } from './pages/card-tree.ts'
-import type { EditorSaveResult } from './editor.tsx'
 import type { TextWriteResult } from './text-save-buffer.ts'
 import { CardMarkdownEditor } from './doc-editor.tsx'
 import { CollectionWidget, RelationWidget, SceneWidget, TimelineWidget, coll, collText, rel, tl, type RefBacklink, type RefTarget, type TlPlace, type WidgetSend } from './widgets.tsx'
@@ -31,6 +30,8 @@ import { useAiEdits } from './ai-edits.ts'
 import { useSurfaceView } from './surface-view.ts'
 import { isOverviewModule, moduleMarkdown } from './module-text.ts'
 import { SettingPage } from './setting-page.tsx'
+import { novenLink } from './document-protocols.ts'
+import { mapResultChannel } from './map-result-channel.ts'
 
 /** 卡页认领的深链协议：noven://card/<id>[/module/<id>] 与 noven://file/<路径>。 */
 const NOVEN_LINK_PROTOCOLS = ['noven:']
@@ -376,8 +377,18 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
   )
 }
 
-/** 模块盒的显示数据，以及只有完整卡片页才提供的可选命令能力。 */
-export interface ModuleBoxProps {
+/** Editing capabilities omitted by reading surfaces. */
+export interface ModuleWriteCapabilities {
+  readonly saveMarkdown?: (module: CardModuleDoc, text: string, expectedText?: string) => Promise<TextWriteResult>
+  readonly send?: WidgetSend
+  readonly op?: (addr: CardAddr, op: import('./card-api.ts').CardOp) => Promise<CardOpResult>
+  readonly ask?: (text: string) => Promise<void>
+  readonly seedComposer?: (text: string) => void
+  readonly reportDiagnostics?: (moduleId: string, entries: readonly CardDiagnosticEntry[]) => void
+}
+
+/** Module display data with optional editing capabilities supplied by the owning page. */
+export interface ModuleBoxProps extends ModuleWriteCapabilities {
   readonly module: CardModuleDoc
   readonly t: ShellT
   /** AI 正在写这个模块：内容只读，子模块入口仍可点。 */
@@ -389,9 +400,6 @@ export interface ModuleBoxProps {
   readonly imageUrl: (resourceId: string) => string
   /** 本卡可用的图片资源（地图选底图用）。 */
   readonly imageResources: readonly { readonly id: string, readonly mediaType?: string }[]
-  readonly saveMarkdown?: (module: CardModuleDoc, text: string, expectedText?: string) => Promise<TextWriteResult>
-  /** 预制模块的编辑命令直发（apply + 刷新由宿主负责）；缺席时统一拒绝写入。 */
-  readonly send?: WidgetSend
   /** Only an authorized map-generation result channel may override the display-only sender. */
   readonly mapSend?: WidgetSend
   /** 打开另一个模块的页签；内联显示没有此页面能力。 */
@@ -402,14 +410,9 @@ export interface ModuleBoxProps {
   readonly siblings?: readonly CardModuleDoc[]
   /** 同卡引用派生的关系边（渲染用，不落盘）。 */
   readonly refEdges?: readonly { readonly from: string, readonly to: string, readonly label: string }[]
-  /** 模块向本会话排一句话（AI 任务入口）。 */
-  readonly ask?: (text: string) => Promise<void>
-  /** 把 AI 编辑指令填进会话输入框（自由界面/自由 3D）。 */
-  readonly seedComposer?: (text: string) => void
   /** 跨卡引用需要的源卡加载与命令入口。 */
   readonly addr: CardAddr
   readonly loadCard: (addr: CardAddr, cardId: string) => Promise<CardState | undefined>
-  readonly op?: (addr: CardAddr, op: import('./card-api.ts').CardOp) => Promise<CardOpResult>
   readonly onOpenCard?: (cardId: string, moduleId?: string) => void
   /** 读项目内文件文本（html 模块的活引用渲染）。 */
   readonly readFile?: (path: string) => Promise<string | undefined>
@@ -419,14 +422,13 @@ export interface ModuleBoxProps {
   readonly fill?: boolean
   /** Project-relative asset bytes resolved by the host (glb/texture/audio/json). */
   readonly resolveProjectAsset?: (path: string, base?: string) => Promise<Blob | null>
-  /** Console tail reporter: the AI reads it back with surface_diagnostics. */
-  readonly reportDiagnostics?: (moduleId: string, entries: readonly CardDiagnosticEntry[]) => void
 }
 
 /** 一个模块盒：标题（点击即改名）+ 正文（模块内富文本 / 预制模块渲染器）。
     子模块不再在盒内堆叠——它们是独立页面，盒尾给跳转行。 */
 export function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, imageUrl, imageResources, saveMarkdown, send: sendCommand, mapSend, onOpenModule, ask, seedComposer, readFile, onOpenFile, refTargets, siblings, refEdges, locked = false, readOnly = false, fill = false, resolveProjectAsset, reportDiagnostics }: ModuleBoxProps) {
-  const send = useCallback<WidgetSend>(async command => sendCommand?.(command) ?? false, [sendCommand])
+  const writable = !readOnly && !locked
+  const send = useCallback<WidgetSend>(async command => writable ? sendCommand?.(command) ?? false : false, [sendCommand, writable])
   const widget = module.widget?.type
   const mapPlaces: TlPlace[] = (siblings ?? []).flatMap(candidate => {
     if (candidate.widget?.type !== 'map') return []
@@ -474,7 +476,7 @@ export function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, ima
     <section className={`nv-modbox${widget === 'map' ? ' nv-modbox-map' : ''}${widget === 'html' ? ' nv-modbox-html' : ''}${locked ? ' nv-ai-locked' : ''}${readOnly ? ' nv-readonly' : ''}`} data-ai-locked={locked ? '' : undefined} data-readonly={readOnly ? '' : undefined} aria-busy={locked || undefined}>
       <div className="nv-modbox-body" ref={bodyRef}>
         {widget === 'ref' && (
-          <RefModule module={module} t={t} addr={addr} loadCard={loadCard} op={op}
+          <RefModule module={module} t={t} addr={addr} loadCard={loadCard} op={writable ? op : undefined}
             onOpenCard={onOpenCard} refTargets={refTargets} />
         )}
         {widget === 'timeline' && <TimelineWidget module={module} t={t} send={send} cardId={card.id}
@@ -497,14 +499,14 @@ export function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, ima
         )}
         {widget === 'html' && (
           <HtmlModule module={module} t={t} cardId={card.id} readFile={readFile} onOpenFile={onOpenFile}
-            card={card} imageUrl={imageUrl} imageResources={imageResources} send={send} ask={ask} seedComposer={seedComposer}
+            card={card} imageUrl={imageUrl} imageResources={imageResources} send={send} ask={writable ? ask : undefined} seedComposer={writable ? seedComposer : undefined}
             onOpenCard={onOpenCard} onOpenModule={onOpenModule} fill={fill} readOnly={readOnly} resolveProjectAsset={resolveProjectAsset}
-            reportDiagnostics={reportDiagnostics}
+            reportDiagnostics={writable ? reportDiagnostics : undefined}
             cardData={{ name: card.name, kind: card.kind, modules: siblings ?? [] }} />
         )}
         {(widget === undefined || widget === 'document') && (
-          <CardMarkdownEditor markdown={moduleMarkdown(module.blocks)} locked={locked || readOnly}
-            onSave={(text: string, expected?: string) => saveMarkdown?.(module, text, expected) ?? false} />
+          <CardMarkdownEditor markdown={moduleMarkdown(module.blocks)} locked={locked} readOnly={readOnly} imageUrl={imageUrl}
+            onSave={readOnly ? undefined : (text: string, expected?: string) => saveMarkdown?.(module, text, expected) ?? false} />
         )}
       </div>
       {module.children.length > 0 && !readOnly && (
@@ -1080,7 +1082,7 @@ function OverviewPage({ cardId, target, overviewModule, isCharacter, cardKind, t
       {worldCover !== undefined && <img className="nv-ov-cover" src={imageUrl(worldCover)} alt="" />}
       {overviewModule !== undefined && (overviewModule.blocks?.length ?? 0) > 0 && (
         <div className={`nv-ov-intro${overviewLocked ? ' nv-ai-locked' : ''}`} data-ai-locked={overviewLocked ? '' : undefined} aria-busy={overviewLocked || undefined}>
-          <CardMarkdownEditor markdown={introMarkdown} locked={overviewLocked}
+          <CardMarkdownEditor markdown={introMarkdown} locked={overviewLocked} imageUrl={imageUrl}
             onSave={(text: string, expected?: string) => saveMarkdown(overviewModule, text, expected)} />
         </div>
       )}
@@ -1283,15 +1285,9 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
 
   /** noven:// 深链：card/<id>[/module/<id>] 开对应页签，file/<路径> 开文件页签。 */
   const openLink = useCallback((href: string) => {
-    const url = new URL(href)
-    const parts = url.pathname.split('/').filter(part => part !== '').map(part => decodeURIComponent(part))
-    if (url.hostname === 'card') {
-      const [linkedCard, segment, linkedModule] = parts
-      if (linkedCard === undefined) return
-      onOpenCard?.(linkedCard, segment === 'module' ? linkedModule : undefined)
-      return
-    }
-    if (url.hostname === 'file' && parts.length > 0) onOpenFile?.(parts.join('/'))
+    const link = novenLink(href)
+    if (link?.kind === 'card') onOpenCard?.(link.cardId, link.moduleId)
+    else if (link?.kind === 'file') onOpenFile?.(link.path)
   }, [onOpenCard, onOpenFile])
 
   const saveMarkdown = useCallback(async (module: CardModuleDoc, text: string, expectedText?: string): Promise<TextWriteResult> => {
@@ -1476,11 +1472,11 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     <ModuleBox module={module} t={t} readOnly
       locked={aiModules?.has(module.id) === true}
       card={{ id: cardId, name: doc.name, kind: doc.kind }}
-      addr={addr} loadCard={loadCard} op={op} onOpenCard={onOpenCard}
+      addr={addr} loadCard={loadCard} onOpenCard={onOpenCard}
       imageUrl={imageUrl} imageResources={imageResources}
-      saveMarkdown={saveMarkdown} send={send}
-      onOpenModule={id => onOpenCard?.(cardId, id)} ask={ask} seedComposer={seedComposer} readFile={readFile} onOpenFile={onOpenFile}
-      resolveProjectAsset={resolveProjectAsset} reportDiagnostics={reportDiagnostics}
+      mapSend={module.widget?.type === 'map' ? mapResultChannel(module.id, send) : undefined}
+      onOpenModule={id => onOpenCard?.(cardId, id)} readFile={readFile} onOpenFile={onOpenFile}
+      resolveProjectAsset={resolveProjectAsset}
       refTargets={refIndex?.targets} siblings={target.modules} refEdges={refDerived.edges} />
   )
   const cardMenuControl = (
@@ -1816,11 +1812,8 @@ export function CardPreview({ addr, cardId, t, loadCard, onBack, onEdit, onExpor
   }, [current.addr.root, current.addr.sessionId])
 
   const openLink = useCallback((href: string): void => {
-    const url = new URL(href)
-    const parts = url.pathname.split('/').filter(part => part !== '').map(part => decodeURIComponent(part))
-    if (url.hostname !== 'card') return
-    const [linkedCard] = parts
-    if (linkedCard !== undefined) pushCard(linkedCard)
+    const link = novenLink(href)
+    if (link?.kind === 'card') pushCard(link.cardId)
   }, [pushCard])
 
   const scrollToSection = useCallback((section: string): void => {
@@ -1838,11 +1831,6 @@ export function CardPreview({ addr, cardId, t, loadCard, onBack, onEdit, onExpor
     if (stack.length > 1) { setStack(frames => frames.slice(0, -1)); setActiveSection(undefined); return }
     onBack()
   }
-
-  const readOnlyOp = async (): Promise<CardOpResult> => { throw new Error('read only preview') }
-  const saveOk = async (): Promise<EditorSaveResult> => 'ok'
-  const noSend: WidgetSend = async () => false
-  const noAsk = async (): Promise<void> => {}
 
   useEffect(() => {
     const scroller = scrollRef.current
@@ -1985,10 +1973,9 @@ export function CardPreview({ addr, cardId, t, loadCard, onBack, onEdit, onExpor
                     <h2>{section.module.name}</h2>
                     <ModuleBox readOnly module={section.module} t={t}
                       card={{ id: current.cardId, name: doc.name, kind: doc.kind }}
-                      addr={current.addr} loadCard={loadCard} op={readOnlyOp} onOpenCard={id => { pushCard(id) }}
+                      addr={current.addr} loadCard={loadCard} onOpenCard={id => { pushCard(id) }}
                       imageUrl={imageUrl} imageResources={imageResources}
-                      saveMarkdown={saveOk} send={noSend}
-                      onOpenModule={id => { scrollToSection(id) }} ask={noAsk}
+                      onOpenModule={id => { scrollToSection(id) }}
                       readFile={undefined} onOpenFile={undefined}
                       refTargets={refIndex?.targets} siblings={target.modules} refEdges={refEdges}
                       resolveProjectAsset={undefined} reportDiagnostics={undefined} />

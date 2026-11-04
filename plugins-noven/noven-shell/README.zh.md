@@ -19,3 +19,5 @@ Noven 设置注册提供可选 metadata，同时保留当前齿轮图标与顺�
 构建共享包、Session Controller、store/util 库、ledger 和 fmg 后，在仓库根运行 `node plugins-noven/noven-shell/tests/packed-runtime.mjs`。它打包实际 `files` 载荷，在隔离消费者内安装并检查包路径仅落在该安装内，使用已安装声明构建两个 Noven 客户端，解析真实 factory，验证 Cordis 注册与卸载，并检查已发布 rc.2 核心对 metadata 的回退。候选包只是暂存验收输入，不是对已发布 rc.2 的替换。此 smoke 不替代桌面或完整 Loader 验收。
 
 外观保留 version-one 文件、默认值和继承规则。读取只向 HTTP 视图添加可选的规范 `workspaceRoot`，不重写存储字节。旧 Host 不返回此字段，播放器按 Session 隔离项目资源。播放器暂停时保留元素与进度，更新音量和循环时不因外观 revision 重启，并在卸载时释放音频和渐出定时器。自动启动与切歌渐出保留原规则。外观订阅取消被取代的读取，失败时保留已接受内容。回滚只恢复旧播放时序，不需要数据迁移；回归在 `tests/appearance.spec.ts`、`tests/appearance.client.spec.ts` 与 `tests/soundtrack.client.spec.ts` 中执行。
+
+阅读表面不提供 `ModuleWriteCapabilities`；ModuleBox 也会在阅读态或 AI 锁定时拒绝透传的编辑命令。正文阅读不会在卸载时提交输入。显式请求的地图生成结果保留独立通道，仅接受所属模块的地形和地图文档命令；地图宿主还要求已消费的生成请求。当前预览布局和查看手势限制保持不变。两种富文本编辑器将 `card-image:` 解析为显示地址，通过最近的 Markdown owner 导航有效 `noven:` 链接，同时保留 Markdown 中作者写入的 URL。primitives 运行时须提供 `useMarkdownDelegate`；缺此导出的旧运行时无法加载本客户端。共享导出与 Noven 消费方按一组回滚。卡片、外观、设置与 Session 格式均不变；`tests/read-protocol.client.spec.ts` 挂载真实编辑器，`tests/inline-modules.spec.ts` 验证地图结果授权和注册时机。

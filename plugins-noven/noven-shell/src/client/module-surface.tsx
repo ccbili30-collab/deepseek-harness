@@ -5,12 +5,11 @@
  * @module noven-shell/client/module-surface
  */
 import type { ReactNode } from 'react'
-import { ModuleBox, type ModuleBoxProps } from './card-page.tsx'
+import { ModuleBox, type ModuleBoxProps, type ModuleWriteCapabilities } from './card-page.tsx'
 
 /** Everything needed to display a module, without any card-page command. */
-export type ModuleSurfaceProps = Pick<ModuleBoxProps,
-  'module' | 't' | 'card' | 'imageUrl' | 'imageResources' | 'refTargets'
-  | 'siblings' | 'refEdges' | 'addr' | 'loadCard' | 'readFile' | 'resolveProjectAsset' | 'mapSend'>
+export type ModuleSurfaceProps = Omit<ModuleBoxProps,
+  keyof ModuleWriteCapabilities | 'locked' | 'readOnly' | 'fill' | 'onOpenCard' | 'onOpenModule' | 'onOpenFile'>
 
 /**
  * Render the same module body used by the card page in display-only mode.

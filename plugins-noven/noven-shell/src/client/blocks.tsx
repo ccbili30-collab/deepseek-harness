@@ -14,6 +14,7 @@ import type { WidgetSend } from './widgets.tsx'
 import { findModule } from './pages/card-tree.ts'
 import type { ShellT } from './pages/Home.tsx'
 import { ModuleSurface } from './module-surface.tsx'
+import { mapResultChannel } from './map-result-channel.ts'
 import { readModuleSource, resolveModuleSource } from './module-source.ts'
 import { InlineCodeBlock } from './code/CodeBlock.tsx'
 import { registerCodeChoiceCodec } from './code/choice-codec.ts'
@@ -52,8 +53,7 @@ function findOwnedModule(document: CardDocView, moduleId: string): { readonly ow
 export function createInlineMapSender(addr: CardAddr, state: CardState, targetId: string, moduleId: string): WidgetSend {
   let version = state.version
   let pending = Promise.resolve()
-  return async command => {
-    if ((command.kind !== 'record_map_terrain' && command.kind !== 'write_map_document') || command.moduleId !== moduleId) return false
+  return mapResultChannel(moduleId, async command => {
     const write = pending.then(async () => {
       try {
         const result = await cardOp(addr, { op: 'apply', cardId: state.cardId, targetId, version, command })
@@ -65,7 +65,7 @@ export function createInlineMapSender(addr: CardAddr, state: CardState, targetId
     })
     pending = write.then(() => undefined)
     return write
-  }
+  })
 }
 
 /** A display-only existing module loaded through its container-resolved address. */
