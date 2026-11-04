@@ -95,6 +95,9 @@ afterAll(async () => { await close() })
 describe('web snapshot: Noven inline blocks', () => {
   it('renders a committed session, keeps two text-block choice groups distinct, and matches the golden', async () => {
     onTestFailed(() => saveFailureShot(page, 'noven-inline-blocks-snapshot'))
+    const revealCanvas = page.locator('[data-conversation-root] [data-chrome-command="reveal-auxiliary"]')
+    await revealCanvas.click()
+    await revealCanvas.waitFor({ state: 'hidden' })
     await page.getByRole('button', { name: /选甲/ }).click()
     await page.getByRole('button', { name: /选丙/ }).click()
     await page.locator('[data-composer-chip]', { hasText: '第一组 · 选甲' }).waitFor()
