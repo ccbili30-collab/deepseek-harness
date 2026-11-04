@@ -16,9 +16,10 @@ import type {} from '@deepseek-ai/dsh-tools'
 // Type-only: pulls the ctx.connection merge for the fetch-route registry.
 import type {} from '@deepseek-ai/dsh-client-connection'
 import z from '@deepseek-ai/schemastery'
+import { credentialRef } from '@deepseek-ai/dsh-credentials'
 
 export const name = 'noven-image'
-export const inject = ['tools', 'connection']
+export const inject = ['tools', 'connection', 'credentials']
 
 /** Resolved plugin config: every field is a volatile reference read through `.get()`. */
 export interface Config {
@@ -27,6 +28,8 @@ export interface Config {
   apiKey: Volatile<string>
   apiKeyEnv: Volatile<string>
   outputDir: Volatile<string>
+  /** Maximum duration of a provider model-list request in milliseconds. */
+  modelRequestTimeoutMs: Volatile<number>
 }
 
 export const Config = z.object({
@@ -35,13 +38,14 @@ export const Config = z.object({
   apiKey: z.string().role('secret').default('').description('API 密钥；留空则读 apiKeyEnv 指定的环境变量').volatile(),
   apiKeyEnv: z.string().role('credential-ref').default('NOVEN_IMAGE_API_KEY').description('存放密钥的环境变量名').volatile(),
   outputDir: z.string().default('视觉').description('生成图片在项目内的落盘目录').volatile(),
+  modelRequestTimeoutMs: z.number().min(1).default(15_000).description('模型列表请求超时（毫秒）').volatile(),
 })
 
-/** Effective key: config value first, then the named environment variable. */
-function resolveKey(config: Config): string {
+/** Direct configuration takes precedence over per-operation credential resolution. */
+async function resolveKey(ctx: Context, config: Config, reference = config.apiKeyEnv.get()): Promise<string> {
   const staged = config.apiKey.get().trim()
   if (staged.length > 0) return staged
-  return (process.env[config.apiKeyEnv.get()] ?? '').trim()
+  return (await ctx.credentials.resolve(credentialRef(reference)))?.value.trim() ?? ''
 }
 
 /** Prompt → short filesystem slug. */
@@ -86,46 +90,68 @@ const IMAGE_HINT = /image|img|dall|flux|kolors|hunyuan|seedream|dreamina|banana|
 
 /**
  * Serve the provider's model list to the settings page: `POST
- * /api/noven-image-models` with `{ base?, apiKey? }`, where each staged value
+ * /api/noven-image-models` with `{ base?, apiKey?, apiKeyEnv? }`, where each staged value
  * overrides the stored one so the page can probe before saving. The key stays
  * host-side: an empty staged key falls back to the configured credential, and
  * the response carries ids only.
  */
-function serveModels(config: Config): (request: Request) => Promise<Response> {
+function serveModels(ctx: Context, config: Config): (request: Request) => Promise<Response> {
   return async (request) => {
     const fail = (status: number, message: string): Response =>
       new Response(JSON.stringify({ error: message }), { status, headers: JSON_HEADERS })
-    let body: { base?: unknown, apiKey?: unknown }
+    let body: unknown
     try {
-      body = await request.json() as typeof body
-    } catch {
+      body = await request.json()
+    } catch (_error) {
       return fail(400, 'body is not valid JSON')
     }
-    const stagedBase = typeof body.base === 'string' ? body.base.trim() : ''
+    if (typeof body !== 'object' || body === null || Array.isArray(body)) return fail(400, 'provider fields must be strings')
+    const fields = body as Record<string, unknown>
+    if (!Object.keys(fields).every(field => ['base', 'apiKey', 'apiKeyEnv'].includes(field))
+      || Object.values(fields).some(value => typeof value !== 'string')) return fail(400, 'provider fields must be strings')
+    const stagedBase = typeof fields['base'] === 'string' ? fields['base'].trim() : ''
     const endpoint = (stagedBase.length > 0 ? stagedBase : config.baseURL.get()).replace(/\/+$/u, '')
-    const stagedKey = typeof body.apiKey === 'string' ? body.apiKey.trim() : ''
-    const key = stagedKey.length > 0 ? stagedKey : resolveKey(config)
+    const stagedKey = typeof fields['apiKey'] === 'string' ? fields['apiKey'].trim() : ''
+    const reference = typeof fields['apiKeyEnv'] === 'string' && fields['apiKeyEnv'].trim() !== '' ? fields['apiKeyEnv'].trim() : config.apiKeyEnv.get()
+    let key: string
+    try {
+      credentialRef(reference)
+    } catch (_error) {
+      return fail(400, 'credential reference is invalid')
+    }
+    try {
+      key = stagedKey.length > 0 ? stagedKey : await resolveKey(ctx, config, reference)
+    } catch (_error) {
+      return fail(502, 'credential provider is unavailable')
+    }
     if (endpoint.length === 0) return fail(400, 'endpoint is not configured')
     if (key.length === 0) return fail(400, 'no API key is configured')
     let response: Response
     try {
       response = await fetch(`${endpoint}/models`, {
         headers: { authorization: `Bearer ${key}` },
-        signal: AbortSignal.timeout(15_000),
+        signal: AbortSignal.any([request.signal, AbortSignal.timeout(config.modelRequestTimeoutMs.get())]),
       })
-    } catch (error) {
-      return fail(502, error instanceof Error ? error.message : 'request failed')
+    } catch (_error) {
+      return fail(502, request.signal.aborted ? 'request cancelled' : 'provider request failed')
     }
     if (!response.ok) return fail(response.status, `provider answered ${String(response.status)}`)
-    const payload = await response.json() as {
-      data?: readonly { id?: unknown }[]
-      models?: readonly { id?: unknown, name?: unknown }[]
+    let payload: unknown
+    try {
+      payload = await response.json()
+    } catch (_error) {
+      return fail(502, 'provider returned invalid model data')
     }
+    if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return fail(502, 'provider returned invalid model data')
+    const record = payload as Record<string, unknown>
+    const data = record['data'] ?? []
+    const listed = record['models'] ?? []
+    if (!Array.isArray(data) || !Array.isArray(listed)) return fail(502, 'provider returned invalid model data')
     const ids = new Set<string>()
-    for (const item of payload.data ?? [])
-      if (typeof item.id === 'string' && item.id.length > 0) ids.add(item.id)
-    for (const item of payload.models ?? []) {
-      const id = typeof item.id === 'string' && item.id.length > 0 ? item.id : item.name
+    for (const item of [...data, ...listed]) {
+      if (typeof item !== 'object' || item === null) return fail(502, 'provider returned invalid model data')
+      const model = item as Record<string, unknown>
+      const id = typeof model['id'] === 'string' && model['id'].length > 0 ? model['id'] : model['name']
       if (typeof id === 'string' && id.length > 0) ids.add(id)
     }
     const models = [...ids].sort((left, right) => Number(IMAGE_HINT.test(right)) - Number(IMAGE_HINT.test(left)) || left.localeCompare(right))
@@ -133,20 +159,26 @@ function serveModels(config: Config): (request: Request) => Promise<Response> {
   }
 }
 
-/** Register generate_image, edit_image, and the model-list probe route. */
+/**
+ * Register generate_image, edit_image, and the model-list probe route.
+ * @param ctx - Host context with tools, connection and credentials providers.
+ * @param config - schema-resolved volatile provider configuration.
+ */
 export function apply(ctx: Context, config: Config): void {
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/noven-image-models',
     methods: ['POST'],
     requestBody: 'buffered',
-    fetch: serveModels(config),
+    fetch: serveModels(ctx, config),
   }), 'noven-image: /api/noven-image-models')
-  const base = (): { endpoint: string, key: string, model: string } => {
-    const key = resolveKey(config)
+  const base = async (): Promise<{ endpoint: string, key: string, model: string }> => {
+    const key = await resolveKey(ctx, config)
+    if (key === '') throw new Error('no image API key is configured')
+    if (config.baseURL.get().trim() === '') throw new Error('image endpoint is not configured')
     return { endpoint: config.baseURL.get().replace(/\/+$/u, ''), key, model: config.model.get() }
   }
 
-  ctx.tools.register(defineTool({
+  ctx.effect(() => ctx.tools.register(defineTool({
     name: 'generate_image',
     description: 'Generate one image from a prompt and save it into the project. Returns the saved path.',
     parameters: {
@@ -167,7 +199,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: `图片已保存：${String((value as { path?: string }).path ?? '')}` }],
     },
     async execute(args, exec) {
-      const { endpoint, key, model } = base()
+      const { endpoint, key, model } = await base()
       const response = await fetch(`${endpoint}/images/generations`, {
         method: 'POST',
         headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
@@ -182,12 +214,13 @@ export function apply(ctx: Context, config: Config): void {
       const customName = (args.filename ?? '').trim()
       const stem = customName.length > 0 ? customName : `${slugify(args.prompt)}-${Date.now().toString(36)}`
       const path = join(dir, `${stem}.png`)
+      exec.signal.throwIfAborted()
       await writeFile(path, bytes)
       return { path, bytes: bytes.byteLength, model }
     },
-  }))
+  })), 'noven-image: generate_image')
 
-  ctx.tools.register(defineTool({
+  ctx.effect(() => ctx.tools.register(defineTool({
     name: 'edit_image',
     description: 'Edit one existing image in the project with a prompt and save the result as a new PNG.',
     parameters: {
@@ -209,7 +242,7 @@ export function apply(ctx: Context, config: Config): void {
       render: (_args, value) => [{ type: 'text', text: `图片已保存：${String((value as { path?: string }).path ?? '')}` }],
     },
     async execute(args, exec) {
-      const { endpoint, key, model } = base()
+      const { endpoint, key, model } = await base()
       const { readFile, mkdir, writeFile } = await import('node:fs/promises')
       const { join, resolve, basename, extname } = await import('node:path')
       const cwd = sessionCwd(exec)
@@ -235,8 +268,9 @@ export function apply(ctx: Context, config: Config): void {
         ? customName
         : `${original}-edit-${Date.now().toString(36)}`
       const path = join(dir, `${stem}.png`)
+      exec.signal.throwIfAborted()
       await writeFile(path, bytes)
       return { path, bytes: bytes.byteLength, model }
     },
-  }))
+  })), 'noven-image: edit_image')
 }

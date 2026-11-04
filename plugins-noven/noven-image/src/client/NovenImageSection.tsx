@@ -5,7 +5,6 @@
  */
 
 import type {} from '@deepseek-ai/dsh-client-ui-plugin-manager/client'
-import { useState } from 'react'
 import { Button, SettingsForm, SettingsSecretField, SettingsValueField } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import { formLabels } from './locales.ts'
@@ -26,39 +25,8 @@ export function NovenImageSection(props: NovenImageSectionProps) {
   const { t } = props
   const state = props.useNovenImageCard(snapshot => snapshot)
   const disabled = !state.writable
-  const [models, setModels] = useState<readonly string[] | undefined>(undefined)
-  const [fetching, setFetching] = useState(false)
-  const [fetchError, setFetchError] = useState<string | undefined>(undefined)
-
-  const fetchModels = async (): Promise<void> => {
-    setFetching(true)
-    setFetchError(undefined)
-    try {
-      const response = await fetch('/api/noven-image-models', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ base: state.baseURL.text, apiKey: state.apiKey.text }),
-      })
-      const payload = await response.json() as { models?: string[], error?: string }
-      if (!response.ok) {
-        setFetchError(payload.error ?? `${t('fetchFailed')} (${String(response.status)})`)
-        setModels(undefined)
-        return
-      }
-      const found = payload.models ?? []
-      if (found.length === 0) {
-        setFetchError(t('fetchEmpty'))
-        setModels(undefined)
-        return
-      }
-      setModels(found)
-    } catch (error) {
-      setFetchError(error instanceof Error ? error.message : t('fetchFailed'))
-      setModels(undefined)
-    } finally {
-      setFetching(false)
-    }
-  }
+  const { models, fetching } = state
+  const fetchError = state.fetchError ?? (models?.length === 0 ? t('fetchEmpty') : undefined)
 
   return (
     <SettingsForm labels={formLabels(t)} state={state} onSave={props.save} onDiscard={props.discard}>
@@ -97,10 +65,10 @@ export function NovenImageSection(props: NovenImageSectionProps) {
         onReset={() => { props.resetField('model') }}
       />
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: -6, paddingBottom: 12 }}>
-        <Button size="sm" variant="outline" disabled={disabled || fetching} onClick={() => { void fetchModels() }}>
+        <Button size="sm" variant="outline" disabled={disabled || fetching} onClick={() => { void props.fetchModels() }}>
           {fetching ? t('fetching') : t('fetchModels')}
         </Button>
-        {models !== undefined && <select
+        {models !== undefined && models.length > 0 && <select
           aria-label={t('model')}
           value=""
           onChange={(event) => {

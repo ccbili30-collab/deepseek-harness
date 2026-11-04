@@ -13,7 +13,7 @@ import type {} from '@deepseek-ai/dsh-api-settings-controller/remote'
 import type { SnapshotStore } from '@deepseek-ai/dsh-client-store'
 import {
   SettingsFormModel, settingsTextField,
-  type SettingsFieldState, type SettingsFormActions, type SettingsFormShell, type SettingsFormScope, type SettingsFormScopeSnapshot,
+  type SettingsFieldState, type SettingsFormActions, type SettingsFormShell, type SettingsFormScope,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 
 /** Settings namespace of the Noven image plugin (its package name). */
@@ -49,6 +49,12 @@ interface CredentialState {
 
 /** What the image page renders. */
 export interface NovenImageCardState extends SettingsFormShell {
+  /** Model identifiers accepted for the current staged connection. */
+  models: readonly string[] | undefined
+  /** Whether that connection's model request is pending. */
+  fetching: boolean
+  /** Transport or provider failure for that connection. */
+  fetchError: string | undefined
   baseURL: SettingsFieldState
   model: SettingsFieldState
   outputDir: SettingsFieldState
@@ -63,6 +69,8 @@ export interface NovenImageCardState extends SettingsFormShell {
 
 /** The registration-side face the page's slot entry injects. */
 export interface NovenImageCardFace extends SettingsFormActions {
+  /** Probe the staged endpoint and credential without saving either. */
+  fetchModels: () => Promise<void>
   hooks: {
     /** Page snapshot bound by the renderer as useNovenImageCard. */
     novenImageCard: SnapshotStore<NovenImageCardState>
@@ -75,6 +83,13 @@ export class NovenImageCardController {
   private readonly store: SnapshotStore<NovenImageCardState>
   private readonly unsubscribe: () => void
   private credential: CredentialState = { ref: '', configured: false, writable: true }
+  private credentialGeneration = 0
+  private disposed = false
+  private submittedKeyRef: string | undefined
+  private probe: AbortController | undefined
+  private models: readonly string[] | undefined
+  private fetching = false
+  private fetchError: string | undefined
 
   /**
    * @param scope - the bound settings scope for the `noven-image` namespace.
@@ -91,13 +106,16 @@ export class NovenImageCardController {
       [{ field: API_KEY_FIELD, write: text => this.writeKey(text) }],
     )
     this.store = this.form.bind(() => this.projection())
-    this.unsubscribe = scope.subscribe(() => { void this.readCredential() })
+    this.unsubscribe = scope.subscribe(() => { this.cancelProbe(); void this.readCredential() })
     void this.readCredential()
   }
 
   private projection(): NovenImageCardState {
     return {
       ...this.form.shell(),
+      models: this.models,
+      fetching: this.fetching,
+      fetchError: this.fetchError,
       baseURL: this.form.field('baseURL'),
       model: this.form.field('model'),
       outputDir: this.form.field('outputDir'),
@@ -114,13 +132,21 @@ export class NovenImageCardController {
    * responses for a changed `apiKeyEnv` never publish.
    */
   private async readCredential(): Promise<void> {
-    const ref = refOf(this.scope.getSnapshot())
+    if (this.disposed) return
+    const ref = this.reference()
+    const generation = ++this.credentialGeneration
     if (ref !== this.credential.ref) {
       this.credential = { ref, configured: false, writable: true }
       this.store.set(this.projection())
     }
-    const response = await this.ctx.remote.credentials.describe([ref])
-    if (!response.ok || ref !== refOf(this.scope.getSnapshot())) return
+    let response: Awaited<ReturnType<typeof this.ctx.remote.credentials.describe>>
+    try {
+      response = await this.ctx.remote.credentials.describe([ref])
+    } catch (_error) {
+      // A disconnected Host leaves the last accepted credential description intact.
+      return
+    }
+    if (!response.ok || this.disposed || generation !== this.credentialGeneration || ref !== this.reference()) return
     const view = response.value[ref]
     const next: CredentialState = {
       ref,
@@ -146,7 +172,76 @@ export class NovenImageCardController {
    * @returns the page's snapshot and its form actions.
    */
   inject(): NovenImageCardFace {
-    return { hooks: { novenImageCard: this.store }, ...this.form.actions() }
+    const actions = this.form.actions()
+    return {
+      hooks: { novenImageCard: this.store }, ...actions,
+      edit: (field, text) => {
+        if (this.disposed) return
+        if (['baseURL', 'apiKeyEnv', API_KEY_FIELD].includes(field)) this.cancelProbe()
+        actions.edit(field, text)
+        if (field === 'apiKeyEnv') void this.readCredential()
+      },
+      resetField: field => {
+        if (this.disposed) return
+        this.cancelProbe()
+        actions.resetField(field)
+        if (field === 'apiKeyEnv') void this.readCredential()
+      },
+      discard: () => {
+        if (this.disposed) return
+        this.cancelProbe()
+        actions.discard()
+        void this.readCredential()
+      },
+      save: () => {
+        if (this.disposed || this.form.shell().saving) return
+        this.submittedKeyRef = this.reference()
+        void this.form.save().finally(() => { this.submittedKeyRef = undefined })
+      },
+      fetchModels: () => this.fetchModels(),
+    }
+  }
+
+  private reference(): string {
+    return this.form.field('apiKeyEnv').text.trim() || DEFAULT_API_KEY_REF
+  }
+
+  private cancelProbe(): void {
+    this.probe?.abort()
+    this.probe = undefined
+    this.models = undefined
+    this.fetching = false
+    this.fetchError = undefined
+    if (!this.disposed) this.store.set(this.projection())
+  }
+
+  private async fetchModels(): Promise<void> {
+    if (this.disposed) return
+    this.cancelProbe()
+    const probe = new AbortController()
+    this.probe = probe
+    this.fetching = true
+    this.store.set(this.projection())
+    try {
+      const response = await fetch('/api/noven-image-models', {
+        method: 'POST', headers: { 'content-type': 'application/json' }, signal: probe.signal,
+        body: JSON.stringify({ base: this.form.field('baseURL').text, apiKey: this.form.field(API_KEY_FIELD).text, apiKeyEnv: this.reference() }),
+      })
+      const payload: unknown = await response.json()
+      if (this.disposed || this.probe !== probe) return
+      if (typeof payload !== 'object' || payload === null) throw new Error('Invalid model response')
+      const value = payload as { models?: unknown, error?: unknown }
+      if (!response.ok) throw new Error(typeof value.error === 'string' ? value.error : `Provider status ${response.status}`)
+      if (!Array.isArray(value.models) || value.models.some(id => typeof id !== 'string')) throw new Error('Invalid model response')
+      this.models = value.models
+    } catch (error) {
+      if (this.disposed || this.probe !== probe) return
+      this.fetchError = error instanceof Error ? error.message : 'Model request failed'
+    }
+    if (this.disposed || this.probe !== probe) return
+    this.probe = undefined
+    this.fetching = false
+    this.store.set(this.projection())
   }
 
   /**
@@ -155,21 +250,20 @@ export class NovenImageCardController {
    * @returns whether the Host reports a configured credential afterwards.
    */
   private async writeKey(value: string): Promise<boolean> {
-    await this.ctx.remote.credentials.set(refOf(this.scope.getSnapshot()), value)
+    const ref = this.submittedKeyRef ?? this.reference()
+    const response = await this.ctx.remote.credentials.set(ref, value)
+    if (!response.ok) return false
+    const accepted = await this.ctx.remote.credentials.describe([ref])
     await this.readCredential()
-    return this.credential.configured
+    return accepted.ok && accepted.value[ref]?.configured === true
   }
 
   /** Release configuration subscriptions. */
-  dispose(): void { this.unsubscribe(); this.form.dispose() }
-}
-
-/**
- * The credential reference the section names, or the plugin's default.
- * @param snapshot - the current scope snapshot.
- * @returns the reference to address.
- */
-function refOf(snapshot: SettingsFormScopeSnapshot<NovenImageSettings>): string {
-  const declared = snapshot.value?.apiKeyEnv
-  return declared !== undefined && declared.length > 0 ? declared : DEFAULT_API_KEY_REF
+  dispose(): void {
+    this.disposed = true
+    this.credentialGeneration += 1
+    this.cancelProbe()
+    this.unsubscribe()
+    this.form.dispose()
+  }
 }

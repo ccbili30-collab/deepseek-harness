@@ -124,6 +124,10 @@ void group
   ])
   console.log('installed metadata types and rejection cases PASS')
   const require = createRequire(join(consumer, 'package.json'))
+  const imageHost = await import(pathToFileURL(join(consumer, 'plugins', 'noven-image', 'lib', 'index.js')).href)
+  assert.equal(typeof imageHost.apply, 'function')
+  assert.ok(imageHost.inject.includes('credentials'))
+  console.log('image Host runtime imports from installed dependencies PASS')
   const modules = {}
   for (const name of ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client',
     '@deepseek-ai/cordis', '@deepseek-ai/dsh-client-store', '@deepseek-ai/dsh-client-ui-slots']) {
