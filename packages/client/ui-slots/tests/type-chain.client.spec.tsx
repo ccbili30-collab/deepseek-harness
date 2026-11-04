@@ -30,6 +30,10 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
     'chain.takeover': { kind: 'chain'; scope: 'session'; owner: { items: readonly Item[] } }
   }
 
+  interface SlotMetadataMap {
+    'chain.side': { readonly category: 'navigation' }
+  }
+
   interface LocaleNamespaceMap {
     'chain.factory': 'title'
   }
@@ -179,6 +183,13 @@ describe('terminal-design type chain', () => {
 
       // Pure reader: same handle, no inject.
       core.register({ name: 'chain.conv', store: chat }, Details)
+      // @ts-expect-error this slot declares no metadata
+      core.register({ name: 'chain.conv', store: chat, metadata: { category: 'navigation' } }, Details)
+      // @ts-expect-error metadata values must satisfy the owning slot declaration
+      core.register({ name: 'chain.side', metadata: { category: 'other' } }, () => null)
+      core.register({ name: 'chain.side', metadata: { category: 'navigation' } }, () => null)
+      const category: 'navigation' | undefined = core.entries('chain.side')[0]?.options.metadata?.category
+      void category
 
       // Owner + store shares arrive typed on the component face. Standard-kit
       // member payloads are the owning adapters' property — not probed here

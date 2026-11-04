@@ -27,6 +27,8 @@ kind: "package-library"
 
 编写客户端插件时都通过本包组合 UI：把组件注册进父级已声明的 slot，或声明组件将要渲染的子 slot。四种 kind 覆盖组合形态——`single`（单个占位者）、`list`（有序条目）、`keyed`（按键分派）与 `chain`（条目自行提名）。
 
+Slot 所有者可以在 `SlotMetadataMap` 声明可选的注册载荷。`register({ metadata })` 按目标 slot 检查载荷，`entries(key)` 通过 `StoredEntryOf<K>` 返回声明的类型。核心保留该值且不解释它；卸载时与条目一并移除。Metadata 不进入组件 props 或持久数据。核心与渲染器声明的配套要求见[设置壳发布要求](../ui-settings-general/README.zh.md#ledger-projections)。
+
 ### 可复用 Component Factory
 
 当一个包定义装配、而互不相关的 parents 需要独立渲染它时，使用 Component Factory。在 `SlotFactoryMap` 中声明完整类型，通过 `ctx.slots.registerFactory()` 安装 definition，通过注入的 `renderFactorySlot()` 渲染 occurrences，并通过调用的 `slots` 选项选择每个已声明的局部 Component。definition 通过 `useFactorySlot(name, fallback)` 读取该选择。

@@ -164,6 +164,7 @@ export function apply(ctx: ClientContext): void {
                 id: e.options.id ?? '',
                 order: e.options.order ?? 0,
                 label: resolveSlotLabel(e.options.label) ?? '',
+                ...(e.options.metadata === undefined ? {} : { metadata: e.options.metadata }),
               }))
               .sort((a, b) => a.order - b.order)
           }

@@ -63,9 +63,14 @@ The shell declares settings.launcher for an account-owned sidebar menu and retai
 
 The shell owns the chrome and the projections; it contributes the Coding Tools and Current version rows, while feature registrants own their additional content and copy.
 
+<a id="ledger-projections"></a>
 ### Ledger projections
 
 The navigation is a projection of the `settings.section` ledger; nav labels may be locale-following thunks, resolved through `resolveSlotLabel` and re-rendered on the section ledger bump or the locale revision (an optional `ctx.get('locale')` read; no hard locale dependency). The onboarding ledger projects in ascending order; the active registrant receives its id, `complete()`, and an `openSection(id)` callback, and completing or skipping transfers ownership to the next entry.
+
+Sections may supply typed `metadata.icon` and `metadata.group`. The shell uses the declared glyph, retains the established section-id glyph fallback, and exposes the group as `data-settings-group`. It preserves labels and `order`; it adds no group headings or sorting policy. The slot core and renderer own metadata transport; ui-settings owns its fields; this package owns presentation.
+
+Ship `ui-slots`, `ui-renderer`, `ui-settings`, and `ui-settings-general` together in one [Desktop runtime release](../../../apps/desktop/README.md). Candidate tarballs must be qualified before publication; changed contents require a new published version. An older core drops metadata but still registers the page with its id, label, and order. A newer shell with old registrants retains legacy glyphs. Metadata alone introduces no runtime method or persisted-format requirement; other plugin APIs still require their matching runtime. Reverting this presentation removes metadata without rewriting user settings.
 
 ### Connection recovery
 

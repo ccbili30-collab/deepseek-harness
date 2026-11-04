@@ -9,7 +9,7 @@ import { createSettingsDeveloperMode } from '../src/client/settings-developer-mo
 import { bindSnapshotSelector, makeTranslate } from '@deepseek-ai/dsh-client-test-runtime'
 import type { SessionListState } from '@deepseek-ai/dsh-api-session-controller/client'
 import { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { SettingsRootComponentProps } from '../src/client/shell-contract.ts'
+import type { SettingsRootComponentProps, SettingsSectionRow } from '../src/client/shell-contract.ts'
 import { SettingsRoot } from '../src/client/SettingsRoot.tsx'
 import { en, zh } from '../src/client/locales.ts'
 import type { DesktopUpdateView } from '../src/types.ts'
@@ -24,7 +24,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-type Row = { id: string; order: number; label: string }
+type Row = SettingsSectionRow
 type Step = { id: string; order: number }
 
 /** Slot-content stand-ins: the shell renders whatever the seats contribute. */
@@ -512,6 +512,23 @@ it('explicitly reopens one onboarding editor during an existing session', () => 
   act(() => { (call?.[1] as { complete: () => void }).complete() })
   renderSlot.mockClear()
   expect(screen.queryByTestId('onboarding')).toBeNull()
+})
+
+it('uses declared icons while retaining id fallback, row order and labels', () => {
+  mount({ rows: [
+    { id: 'custom', order: 0, label: 'Custom', metadata: { icon: 'account', group: 'product-owned' } },
+    { id: 'account', order: 1, label: 'Account' },
+    { id: 'unknown', order: 2, label: 'Unknown' },
+  ] })
+  fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+  const custom = screen.getByRole('button', { name: 'Custom' })
+  const account = screen.getByRole('button', { name: 'Account' })
+  expect(custom.querySelector('svg')?.innerHTML).toBe(account.querySelector('svg')?.innerHTML)
+  expect(custom.getAttribute('data-settings-group')).toBe('product-owned')
+  expect(account.hasAttribute('data-settings-group')).toBe(false)
+  expect(screen.getByRole('button', { name: 'Unknown' }).querySelector('svg')).not.toBeNull()
+  expect(Array.from(custom.parentElement!.querySelectorAll('button')).map(button => button.textContent))
+    .toEqual(['Custom', 'Account', 'Unknown'])
 })
 
 it('opens Account from the contributed sidebar launcher', () => {

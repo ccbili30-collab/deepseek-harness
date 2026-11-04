@@ -19,6 +19,7 @@ import {
   IconPersonalizationOutlineMedium, IconSettingsOutlineMedium, IconUserOutlineMedium,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { ConnectionIndicatorState } from '@deepseek-ai/dsh-client-ui-primitives'
+import type { SettingsSectionIcon } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { SettingsRootComponentProps, SettingsSectionRow } from './shell-contract.ts'
 import css from './SettingsRoot.module.css'
 import { DesktopUpdateIndicator } from './DesktopUpdateIndicator.tsx'
@@ -28,13 +29,18 @@ const RECOVERY_CONFIRMATION_MS = 2_000
 /** Minimum visible time for the connecting pill; shorter attempts read as flicker. */
 const CONNECTING_MIN_VISIBLE_MS = 800
 
-/** Nav glyph by section id; unknown ids fall back to the settings gear. */
-function navIcon(id: string) {
-  if (id === 'account') return <IconUserOutlineMedium className={css.navIcon} size={16} />
-  if (id === 'models') return <IconDataOutlineMedium className={css.navIcon} size={16} />
-  if (id === 'agent-presets') return <IconAgentPresetOutlineMedium className={css.navIcon} size={16} />
-  if (id === 'plugins') return <IconPersonalizationOutlineMedium className={css.navIcon} size={16} />
-  if (id === 'archived-sessions') return <IconArchiveOutlineMedium className={css.navIcon} size={16} />
+/** Declared glyph with the established section-id fallback for older registrants. */
+function navIcon(id: string, icon?: SettingsSectionIcon) {
+  const kind = icon ?? (id === 'account' ? 'account'
+    : id === 'models' ? 'models'
+      : id === 'agent-presets' ? 'agent'
+        : id === 'plugins' ? 'plugins'
+          : id === 'archived-sessions' ? 'archive' : 'settings')
+  if (kind === 'account') return <IconUserOutlineMedium className={css.navIcon} size={16} />
+  if (kind === 'models') return <IconDataOutlineMedium className={css.navIcon} size={16} />
+  if (kind === 'agent') return <IconAgentPresetOutlineMedium className={css.navIcon} size={16} />
+  if (kind === 'plugins') return <IconPersonalizationOutlineMedium className={css.navIcon} size={16} />
+  if (kind === 'archive') return <IconArchiveOutlineMedium className={css.navIcon} size={16} />
   return <IconSettingsOutlineMedium className={css.navIcon} size={16} />
 }
 
@@ -81,10 +87,11 @@ function SettingsPanel({ rows, renderSlot, activeId, onSelect, onClose, onTitleC
                 type="button"
                 className={clsx(css.navCell, row.id === active && css.active)}
                 aria-current={row.id === active ? 'true' : undefined}
+                data-settings-group={row.metadata?.group}
                 data-modal-autofocus={row.id === active ? '' : undefined}
                 onClick={() => { onSelect(row.id) }}
               >
-                {navIcon(row.id)}
+                {navIcon(row.id, row.metadata?.icon)}
                 <span className={css.navLabel}>{row.label}</span>
               </button>
             ))}

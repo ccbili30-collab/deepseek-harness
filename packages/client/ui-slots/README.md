@@ -27,6 +27,8 @@ English | [中文](README.zh.md)
 
 Compose UI through this package whenever you write a client plugin: register a component into a slot your parent declared, or declare child slots your component renders. The four kinds cover the composition shapes — `single` (one occupant), `list` (ordered entries), `keyed` (dispatch by a key), and `chain` (entries elect themselves).
 
+Slot owners can declare an optional registration payload in `SlotMetadataMap`. `register({ metadata })` checks that payload against the selected slot, and `entries(key)` returns its declared type through `StoredEntryOf<K>`. The core retains the value without interpreting it; disposal removes it with the entry. Metadata never enters component props or durable data. Pair core and renderer declarations as described by the [settings shell release requirements](../ui-settings-general/README.md#ledger-projections).
+
 ### Reusable Component Factories
 
 Use a Component Factory when one package defines an assembly that unrelated parents render independently. Declare its complete type in `SlotFactoryMap`, install the definition with `ctx.slots.registerFactory()`, render occurrences through the injected `renderFactorySlot()`, and select each declared local Component through the call's `slots` option. The definition reads that choice through `useFactorySlot(name, fallback)`.

@@ -14,7 +14,7 @@ import type {
 // into every program that sees this contract.
 import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 // Type-only: pulls the settings slot declarations the shell renders into.
-import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
+import type { SettingsSectionMetadata } from '@deepseek-ai/dsh-client-ui-settings/client'
 import type { PropsStore } from '@deepseek-ai/dsh-client-store'
 import type { createSettingsShellStore } from './shell-store.ts'
 import type { ShortcutCatalogEntry } from '@deepseek-ai/dsh-client-shortcuts/client'
@@ -26,6 +26,7 @@ export interface SettingsSectionRow {
   id: string
   order: number
   label: string
+  metadata?: SettingsSectionMetadata
 }
 
 /** One ordered onboarding step projected from a slot registration. */

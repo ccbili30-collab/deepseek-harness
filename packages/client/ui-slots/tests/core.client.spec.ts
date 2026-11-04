@@ -5,6 +5,9 @@ import { SlotCore } from '@deepseek-ai/dsh-client-ui-slots'
 // 'root' is NOT merged here: ui-renderer owns the built-in row, and
 // the client aggregate program would see both merges collide.
 declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface SlotMetadataMap {
+    'test.list': { readonly category: string }
+  }
   interface SlotMap {
     'test.single': { kind: 'single'; scope: 'root' }
     'test.session': { kind: 'single'; scope: 'session' }
@@ -45,6 +48,24 @@ function mountFrame(core: SlotCore) {
 const flushMicrotasks = () => new Promise<void>((resolve) => { queueMicrotask(resolve) })
 
 describe('a-priori root and declaration gate', () => {
+  it('retains owner metadata through reads and releases it with the declaration', () => {
+    const core = new SlotCore()
+    const releaseFrame = mountFrame(core)
+    const metadata = { category: 'tools' }
+    const release = core.register({ name: 'test.list', id: 'tools', metadata }, Comp)
+    const entries = core.entries('test.list')
+    expect(entries[0]!.options.metadata).toBe(metadata)
+    expect(entries[0]!.options.metadata?.category).toBe('tools')
+    expect(core.entries('test.list')).toBe(entries)
+    expect(core.entriesOfSlot('test.list')[0]!.options.metadata).toBe(metadata)
+    release()
+    expect(core.entries('test.list')).toEqual([])
+    core.register({ name: 'test.list', id: 'plain' }, Comp)
+    expect(core.entries('test.list')[0]!.options).not.toHaveProperty('metadata')
+    releaseFrame()
+    expect(core.entries('test.list')).toEqual([])
+  })
+
   it('seeds root as single/root at construction', () => {
     const core = new SlotCore()
     expect(core.specDynamic('root')).toEqual({ kind: 'single', scope: 'root' })

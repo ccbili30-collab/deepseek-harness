@@ -21,7 +21,7 @@ import type {
   HostObservable, LiveCompositionNode, LocaleFace, OwnerOf, RegisterFactory, SlotEntryDef, SlotMap, SlotRenderer, SlotRendererHost,
   RootStandardSourceContribution, ScopedStandardSourceBinding, SlotScope, SlotScopeAdapter, SlotSpec,
   StandardSourceBinding, StoredFactory,
-  StoreDecl, StoreFactory, StoredEntry, StoreInstanceLike,
+  StoreDecl, StoreFactory, StoredEntry, StoredEntryOf, StoreInstanceLike,
 } from '@deepseek-ai/dsh-client-ui-slots'
 import { SlotAssemblyError } from './errors.ts'
 
@@ -400,7 +400,7 @@ export class SlotRegistry extends Service {
    * @param key - SlotMap key.
    * @returns registered entries.
    */
-  entries(key: keyof SlotMap & string): readonly StoredEntry[] {
+  entries<K extends keyof SlotMap & string>(key: K): readonly StoredEntryOf<K>[] {
     return this._core.entries(key)
   }
 

@@ -25,6 +25,9 @@ export * from './renderer.ts'
 /** Slot contract table. Owners extend via declaration merging; entries are {@link SlotEntryDef}. */
 export interface SlotMap {}
 
+/** Optional registration metadata declared and interpreted by each slot owner. */
+export interface SlotMetadataMap {}
+
 /** Reusable Component Factory contract table, extended through declaration merging. */
 export interface SlotFactoryMap {}
 
@@ -818,6 +821,8 @@ type BaseOptions<
 > = {
   /** Target slot key (the entry contributes INTO this slot). */
   name: K
+  /** Metadata typed by the slot owner; absent for slots without a declaration. */
+  metadata?: K extends keyof SlotMetadataMap ? SlotMetadataMap[K] : never
   /** Child-slot declaration + render authorization + runtime spec, in one table. */
   children?: D
   /** Store seat: a shared handle (apply-constructed) or an exclusive factory (framework-called per entry x scope). */
@@ -840,7 +845,7 @@ type BaseOptions<
  */
 export interface StoredEntry {
   component: unknown
-  options: { key?: string; id?: string; order?: number; label?: SlotLabel; priority?: number }
+  options: { key?: string; id?: string; order?: number; label?: SlotLabel; priority?: number; metadata?: unknown }
   /** Chain routing selector (type-erased like `inject`; present exactly on chain-slot entries). */
   select?: ((owner: never) => unknown) | undefined
   /** Registrant business face; positional params derive from the declaration (sessionId?, actions?). */
@@ -853,6 +858,13 @@ export interface StoredEntry {
   locale?: string | undefined
   /** Diagnostics label of who registered. */
   registrant?: string | undefined
+}
+
+/** Registered entry whose metadata type comes from the selected slot declaration. */
+export type StoredEntryOf<K extends keyof SlotMap & string> = Omit<StoredEntry, 'options'> & {
+  options: Omit<StoredEntry['options'], 'metadata'> & {
+    metadata?: K extends keyof SlotMetadataMap ? SlotMetadataMap[K] : never
+  }
 }
 
 /**
@@ -878,6 +890,7 @@ interface ErasedOptions {
   id?: string | undefined
   order?: number | undefined
   label?: SlotLabel | undefined
+  metadata?: unknown
   select?: ((owner: never) => unknown) | undefined
   priority?: number | undefined
   children?: Record<string, SlotSpec<SlotEntryDef>> | undefined
@@ -1265,6 +1278,7 @@ export class SlotCore {
         ...(options.id !== undefined ? { id: options.id } : {}),
         ...(options.order !== undefined ? { order: options.order } : {}),
         ...(options.label !== undefined ? { label: options.label } : {}),
+        ...(options.metadata !== undefined ? { metadata: options.metadata } : {}),
         ...(options.priority !== undefined ? { priority: options.priority } : {}),
       },
       ...(options.select !== undefined ? { select: options.select } : {}),
@@ -1333,6 +1347,8 @@ export class SlotCore {
    * @param key - slot key (dynamic: the render machinery holds keys as strings).
    * @returns entries in registration (list: order) sequence.
    */
+  entries<K extends keyof SlotMap & string>(key: K): readonly StoredEntryOf<K>[]
+  entries(key: string): readonly StoredEntry[]
   entries(key: string): readonly StoredEntry[] {
     return this.records.get(key)?.entries ?? NO_ENTRIES
   }

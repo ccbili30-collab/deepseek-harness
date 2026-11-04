@@ -11,7 +11,20 @@
 
 import type {} from '@deepseek-ai/dsh-client-ui-slots'
 
+/** Existing settings navigation glyphs, independent of a section's registration id. */
+export type SettingsSectionIcon = 'settings' | 'account' | 'models' | 'agent' | 'plugins' | 'archive'
+
+/** Optional section presentation; group identifiers belong to the registering product. */
+export interface SettingsSectionMetadata {
+  readonly icon?: SettingsSectionIcon
+  /** Opaque grouping key; the shared shell preserves section order and adds no group headings. */
+  readonly group?: string
+}
+
 declare module '@deepseek-ai/dsh-client-ui-slots' {
+  interface SlotMetadataMap {
+    'settings.section': SettingsSectionMetadata
+  }
   interface SlotMap {
     /** Optional sidebar account launcher; opens the shell-owned settings panel. */
     'settings.launcher': { kind: 'single'; scope: 'root'; owner: SettingsLauncherOwnerProps }

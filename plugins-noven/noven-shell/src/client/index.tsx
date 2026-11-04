@@ -1494,7 +1494,7 @@ export function apply(ctx: ClientContext): void {
 
   /** 打开或激活一个 host 注册页；默认入口在同一画布内去重，关闭页签仍由页面自己清理资源。 */
   const openCanvasPage = (sessionId: SessionId, kind: string): void => {
-    const definition = canvasPages?.get(kind)
+    const definition = canvasPages.get(kind)
     if (definition === undefined) return
     const pageKey = kind
     canvasInstance.actions.open({
@@ -1526,7 +1526,7 @@ export function apply(ctx: ClientContext): void {
       ensureCanvas()
       return true
     }
-    if (canvasPages?.get(kind) !== undefined) { openCanvasPage(sessionId, kind); return true }
+    if (canvasPages.get(kind) !== undefined) { openCanvasPage(sessionId, kind); return true }
     return false
   }
   ctx.effect(() => rightExtras.provideTabRouter?.({
@@ -1540,7 +1540,7 @@ export function apply(ctx: ClientContext): void {
       if (current !== featureTabsValue) {
         featureTabsValue = current
         canvasFeatureTabsValue = current.filter(box =>
-          box.kind === 'files' || box.kind === 'noven:library' || canvasPages?.get(box.kind) !== undefined)
+          box.kind === 'files' || box.kind === 'noven:library' || canvasPages.get(box.kind) !== undefined)
       }
       return canvasFeatureTabsValue
     },
@@ -2749,15 +2749,18 @@ export function apply(ctx: ClientContext): void {
   }, () => null)), 'noven-shell: unified appearance entry')
   ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'noven-workbench', order: 90, locale: NS, store: workbenchStore,
+    metadata: { icon: 'settings', group: 'noven' },
     label: () => t('workbench.settings.group'),
   }, WorkbenchSection)), 'noven-shell: workbench settings')
   ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'noven-appearance', order: 80, locale: NS,
+    metadata: { icon: 'settings', group: 'noven' },
     label: () => t('appearance.title'),
     inject: () => ({ current: currentSessionSource }),
   }, AppearanceSettingsSection)), 'noven-shell: global appearance settings')
   ctx.effect(() => ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'noven-updates', order: 100, locale: NS,
+    metadata: { icon: 'settings', group: 'noven' },
     label: () => t('updates.nav'),
   }, UpdatesSection)), 'noven-shell: about & updates')
   ctx.effect(() => ctx.slots.inject('sidebar.workspaces.workspace.menu.item', () => ctx.slots.register({

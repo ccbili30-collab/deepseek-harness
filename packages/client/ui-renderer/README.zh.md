@@ -35,6 +35,8 @@ kind: "package-reference"
 
 业务插件注册普通 Slot entry 或可复用 Component Factory；渲染器在渲染位置把运行时的会话与 Workspace observable source 绑定为 selector 钩子。插件通过推导出的 Component props 收到标准 scope props——它绝不导入渲染器，也不触碰 React 内部机制。每个由 renderer 创建的 Component 都能渲染 Factory occurrence，Factory 也能暴露由调用方选择的局部 Component，而无需在包之间共享实现值。
 
+`ctx.slots.entries(key)` 保留 `ui-slots` 中 slot 所有者声明的 metadata 类型；消费者不强转擦除后的载荷，也不重复声明服务。参见 [metadata 发布要求](../ui-settings-general/README.zh.md#ledger-projections)。
+
 -----
 
 <a id="understand-the-implementation"></a>

@@ -91,11 +91,12 @@ describe('ui-settings-general shell', () => {
     const { sections } = injectedOf(c).hooks
     const product = sections.getSnapshot()
     expect(product.map(row => row.id)).toEqual(PRODUCT_SECTIONS)
-    c.ctx.slots.register({ name: 'settings.section', id: 'z', order: 1_000, label: 'Z' } as never, () => null)
+    const metadata = { icon: 'settings', group: 'test-product' } as const
+    const release = c.ctx.slots.register({ name: 'settings.section', id: 'z', order: 1_000, label: 'Z', metadata }, () => null)
     // No order and no label: both projection defaults apply, and order 0 sorts among the product rows.
     c.ctx.slots.register({ name: 'settings.section', id: 'a' } as never, () => null)
     const rows = sections.getSnapshot()
-    expect(rows.at(-1)).toEqual({ id: 'z', order: 1_000, label: 'Z' })
+    expect(rows.at(-1)).toEqual({ id: 'z', order: 1_000, label: 'Z', metadata })
     expect(rows.find(row => row.id === 'a')).toEqual({ id: 'a', order: 0, label: '' })
     expect(rows.map(row => row.order)).toEqual([...rows.map(row => row.order)].sort((x, y) => x - y))
     // Snapshot identity is stable until the ledger moves (uSES contract).
@@ -106,8 +107,10 @@ describe('ui-settings-general shell', () => {
     await Promise.resolve()
     expect(listener).toHaveBeenCalled()
     expect(sections.getSnapshot()).not.toBe(rows)
+    release()
+    expect(sections.getSnapshot().find(row => row.id === 'z')).toBeUndefined()
     off()
-  })
+  }, COLD_BOOT_TIMEOUT_MS)
 
   it('shows Account first in Desktop while signed in and removes it on sign-out', async ({ start }) => {
     vi.stubGlobal('dshDesktop', {})

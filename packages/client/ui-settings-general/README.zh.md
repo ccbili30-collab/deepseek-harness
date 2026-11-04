@@ -63,9 +63,14 @@ Web 与桌面端的通用设置底部显示当前发布版本，使用构建注�
 
 外壳拥有界面框架与投影，并提供代码工作工具行与当前版本行；功能注册方拥有其余内容与文案。
 
+<a id="ledger-projections"></a>
 ### 账本投影
 
 导航是 `settings.section` 账本的投影；导航 label 可以是跟随语言的 thunk，经 `resolveSlotLabel` 解析，并在分区账本更新或 locale revision 变化时重新渲染（`ctx.get('locale')` 可选读取，无硬 locale 依赖）。引导账本按升序投影；当前注册方会收到该条目的 id、`complete()` 与 `openSection(id)` 回调，完成或跳过当前步骤后，所有权转交给下一项。
+
+分区可以提供带类型的 `metadata.icon` 与 `metadata.group`。壳使用声明的图标，保留已有的分区 id 图标回退，并把分组暴露为 `data-settings-group`。标签与 `order` 保持原样；不增加分组标题或排序策略。Slot 核心与渲染器负责 metadata 传递，ui-settings 定义字段，本包负责展示。
+
+`ui-slots`、`ui-renderer`、`ui-settings` 与 `ui-settings-general` 必须在同一[桌面运行时发布](../../../apps/desktop/README.zh.md)中配套交付。候选 tarball 必须在发布前验收；内容变化必须使用新的发布版本。旧核心丢弃 metadata，但仍按 id、标签与顺序注册页面。新壳遇到旧注册方时保留旧图标。Metadata 本身不引入新运行时方法或持久格式要求；插件的其他 API 仍须匹配运行时。回滚本展示只移除 metadata，不重写用户设置。
 
 ### 连接恢复
 

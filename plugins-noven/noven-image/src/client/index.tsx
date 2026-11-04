@@ -51,5 +51,6 @@ export function apply(ctx: ClientContext): void {
   )
   ctx.effect(() => ctx.configForms.whileServed([NOVEN_IMAGE_NS], () => ctx.slots.inject('settings.section', () => ctx.slots.register({
     name: 'settings.section', id: 'noven-image', order: 11, label: () => t('nav'), locale: NS, inject: () => card.inject(),
+    metadata: { icon: 'settings', group: 'noven' },
   }, NovenImageSection))), 'noven-image: page')
 }
