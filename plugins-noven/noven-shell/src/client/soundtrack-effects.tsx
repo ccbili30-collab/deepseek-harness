@@ -21,7 +21,7 @@ export function SoundtrackEffects({ current, subject }: SoundtrackEffectsInjecte
   const sessionId = useSyncExternalStore(current.subscribe, current.getSnapshot)
   const mode = useSyncExternalStore(subject.subscribe, subject.getSnapshot)
   const focusedFile = useFocusedCanvasFile()
-  const filePath = mode === 'canvas' ? focusedFile?.path : undefined
+  const filePath = mode === 'canvas' && focusedFile !== undefined && focusedFile.sessionId === sessionId ? focusedFile.path : undefined
   const appearance = useAppearance(sessionId, filePath)
   useEffect(() => {
     if (sessionId === undefined) {
@@ -30,7 +30,7 @@ export function SoundtrackEffects({ current, subject }: SoundtrackEffectsInjecte
     }
     if (appearance === undefined) return
     reconcileSoundtrack(
-      { sessionId, filePath },
+      { sessionId, filePath, workspaceRoot: appearance.workspaceRoot },
       mode === 'conversation' ? appearance.resolved.conversationTrack : appearance.resolved.canvasTrack,
       appearance.revision,
     )

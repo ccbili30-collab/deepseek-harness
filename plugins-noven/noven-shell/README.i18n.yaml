@@ -3,5 +3,5 @@
 # After editing either side, bring the other along and re-record with:
 #   pnpm run verify-translation-pairing --write plugins-noven/noven-shell/README.md
 /noven-shell:
-  en: b24af15b781a7194
-  zh: 300acb785218c26a
+  en: cc9714833c034da4
+  zh: 8b15d58e737d771b

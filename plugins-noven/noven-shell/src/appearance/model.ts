@@ -165,6 +165,8 @@ export interface GlobalAppearanceDocument {
 /** Raw overrides at each scope, plus the resolved values a view consumes. */
 export interface AppearanceView {
   readonly version: 1
+  /** Canonical project root supplied by the Host; absent on older Hosts. */
+  readonly workspaceRoot?: string
   readonly revision: number
   readonly globalRevision: number
   readonly global: {

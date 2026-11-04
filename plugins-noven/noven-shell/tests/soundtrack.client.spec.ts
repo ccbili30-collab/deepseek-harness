@@ -6,6 +6,9 @@ import { createRoot } from '../node_modules/react-dom/client.js'
 import { afterEach, describe, test, vi } from 'vitest'
 import { disposeSoundtrack, isSoundtrackPlaying, reconcileSoundtrack, soundtrackAssetUrl, toggleSoundtrack, useSoundtrackPlayback } from '../lib/client/soundtrack.js'
 import { PlayableTitle } from '../lib/client/playable-title.js'
+import { SoundtrackEffects } from '../lib/client/soundtrack-effects.js'
+import { setFocusedCanvasFile } from '../lib/client/appearance.js'
+import { emptyAppearanceDocument, resolveAppearance } from '../lib/appearance/model.js'
 import { applyScopedForeground } from '../lib/client/scoped-foreground.js'
 import { en } from '../lib/client/locales.js'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -27,6 +30,7 @@ class FakeAudio {
   preload = ''
   paused = true
   playCalls = 0
+  currentTime = 0
   constructor(src: string) {
     this.src = src
     FakeAudio.instances.push(this)
@@ -42,7 +46,7 @@ class FakeAudio {
 }
 
 afterEach(() => {
-  disposeSoundtrack()
+  act(() => { disposeSoundtrack() })
   for (const root of mounted) act(() => { root.unmount() })
   mounted.clear()
   document.body.replaceChildren()
@@ -107,6 +111,97 @@ describe('soundtrack controller', () => {
     first.resolve()
     await Promise.resolve()
     assert.match(FakeAudio.instances.at(-1).src, /forest.mp3/u)
+  })
+
+  test('retains position and the audio element across revisions, preferences, pause and another presentation', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('Audio', FakeAudio)
+    await mountPlayback()
+    const scoped = { ...owner, workspaceRoot: '/project-a', filePath: 'a.md' }
+    await act(async () => { toggleSoundtrack(scoped, track, 1) })
+    const audio = FakeAudio.instances[0]
+    audio.currentTime = 42
+    await act(async () => { reconcileSoundtrack(scoped, { ...track, volume: 0.2, loop: false }, 8) })
+    assert.equal(audio.volume, 0.2)
+    assert.equal(audio.loop, false)
+    assert.equal(audio.currentTime, 42)
+    assert.equal(FakeAudio.instances.length, 1)
+    await act(async () => { toggleSoundtrack(scoped, track, 9) })
+    await act(async () => { await vi.runAllTimersAsync() })
+    assert.equal(audio.paused, true)
+    const otherPresentation = { ...scoped, sessionId: 'sess-other' as SessionId }
+    await act(async () => { reconcileSoundtrack(otherPresentation, track, 10) })
+    assert.equal(document.querySelector('output')?.textContent, 'paused')
+    await act(async () => { toggleSoundtrack(otherPresentation, track, 10) })
+    assert.equal(FakeAudio.instances.length, 1)
+    assert.equal(audio.currentTime, 42)
+    assert.equal(audio.volume, 0.4)
+  })
+
+  test('distinguishes equal paths in different projects and fences rejection after disposal', async () => {
+    vi.useFakeTimers()
+    vi.stubGlobal('Audio', FakeAudio)
+    await mountPlayback()
+    await act(async () => { toggleSoundtrack({ ...owner, workspaceRoot: '/a' }, track, 1) })
+    await act(async () => { reconcileSoundtrack({ ...owner, workspaceRoot: '/b' }, track, 1) })
+    assert.equal(FakeAudio.instances.length, 2)
+    const pending = Promise.withResolvers<void>()
+    FakeAudio.deferred = pending
+    await act(async () => { toggleSoundtrack(owner, other, 2) })
+    await act(async () => { disposeSoundtrack() })
+    assert.equal(vi.getTimerCount(), 0)
+    assert.ok(FakeAudio.instances.every(audio => audio.paused && audio.src === ''))
+    pending.reject(new Error('disposed transport'))
+    await act(async () => { await pending.promise.catch(() => {}) })
+    assert.equal(document.querySelector('output')?.textContent, 'idle')
+  })
+
+  test('reports play failure and retries only after a new user action', async () => {
+    vi.stubGlobal('Audio', FakeAudio)
+    await mountPlayback()
+    const pending = Promise.withResolvers<void>()
+    FakeAudio.deferred = pending
+    await act(async () => { toggleSoundtrack(owner, track, 1) })
+    await act(async () => { pending.reject(new Error('blocked playback')); await pending.promise.catch(() => {}) })
+    assert.equal(document.querySelector('output')?.textContent, 'error')
+    await act(async () => { reconcileSoundtrack(owner, track, 2) })
+    assert.equal(FakeAudio.instances[0].playCalls, 1)
+    FakeAudio.deferred = null
+    await act(async () => { toggleSoundtrack(owner, track, 3) })
+    assert.equal(document.querySelector('output')?.textContent, 'playing')
+  })
+
+  test('uses the new Session root without borrowing a stale canvas focus and stops on unmount', async () => {
+    vi.stubGlobal('Audio', FakeAudio)
+    await mountPlayback()
+    await act(async () => { toggleSoundtrack({ ...owner, workspaceRoot: '/a' }, track, 1) })
+    setFocusedCanvasFile(owner.sessionId, 'stale.md')
+    const requests: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async input => {
+      requests.push(String(input))
+      return {
+        ok: true,
+        json: async () => ({
+          ...resolveAppearance({ ...emptyAppearanceDocument(), workspace: { canvasTrack: track } }, 'sess-new'),
+          workspaceRoot: '/b',
+        }),
+      }
+    }))
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    mounted.add(root)
+    await act(async () => {
+      root.render(createElement(SoundtrackEffects, {
+        current: { getSnapshot: () => 'sess-new' as SessionId, subscribe: () => () => {} },
+        subject: { getSnapshot: () => 'canvas' as const, subscribe: () => () => {} },
+      }))
+    })
+    await vi.waitFor(() => assert.equal(FakeAudio.instances.length, 2))
+    assert.ok(requests.every(url => !url.includes('file=')))
+    await act(async () => { root.unmount() })
+    mounted.delete(root)
+    assert.equal(document.querySelector('output')?.textContent, 'idle')
   })
 })
 

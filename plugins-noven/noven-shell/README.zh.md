@@ -17,3 +17,5 @@ Host 与 Client 分别用 `tsc -p tsconfig.host.json` 和 `tsc -p tsconfig.json`
 Noven 设置注册提供可选 metadata，同时保留当前齿轮图标与顺序。[共享设置兼容要求](../../packages/client/ui-settings-general/README.zh.md#ledger-projections)定义核心、渲染器和设置包的配套发布单元。支持 metadata 的插件遇到旧核心时仍按旧导航注册。Noven 的其他必需服务（包括 `canvasPages`）仍须匹配运行时；缺失必需提供方会阻止激活。本插件直接消费渲染器的 `canvasPages` 声明。
 
 构建共享包、Session Controller、store/util 库、ledger 和 fmg 后，在仓库根运行 `node plugins-noven/noven-shell/tests/packed-runtime.mjs`。它打包实际 `files` 载荷，在隔离消费者内安装并检查包路径仅落在该安装内，使用已安装声明构建两个 Noven 客户端，解析真实 factory，验证 Cordis 注册与卸载，并检查已发布 rc.2 核心对 metadata 的回退。候选包只是暂存验收输入，不是对已发布 rc.2 的替换。此 smoke 不替代桌面或完整 Loader 验收。
+
+外观保留 version-one 文件、默认值和继承规则。读取只向 HTTP 视图添加可选的规范 `workspaceRoot`，不重写存储字节。旧 Host 不返回此字段，播放器按 Session 隔离项目资源。播放器暂停时保留元素与进度，更新音量和循环时不因外观 revision 重启，并在卸载时释放音频和渐出定时器。自动启动与切歌渐出保留原规则。外观订阅取消被取代的读取，失败时保留已接受内容。回滚只恢复旧播放时序，不需要数据迁移；回归在 `tests/appearance.spec.ts`、`tests/appearance.client.spec.ts` 与 `tests/soundtrack.client.spec.ts` 中执行。

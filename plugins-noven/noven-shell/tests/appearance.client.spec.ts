@@ -282,4 +282,55 @@ describe('appearance effects', () => {
     })
     mountedView.unmount()
   })
+
+  test('cancels an earlier read when a write invalidates it and ignores its late response', async () => {
+    const first = Promise.withResolvers<{ ok: true; json: () => Promise<AppearanceView> }>()
+    const signals: AbortSignal[] = []
+    let reads = 0
+    vi.stubGlobal('fetch', vi.fn(async (_input, init) => {
+      if (init?.method === 'POST') return { ok: true, json: async () => ({ ...view, revision: 10 }) }
+      signals.push(init.signal)
+      reads += 1
+      if (reads === 1) return first.promise
+      return { ok: true, json: async () => ({ ...view, revision: 10 }) }
+    }))
+    function Probe() {
+      const current = useAppearance('sess-late')
+      return createElement('output', {}, current?.revision ?? -1)
+    }
+    const mountedView = await mount(createElement(Probe))
+    await act(async () => { await updateAppearance('sess-late', { action: 'visual', view: 'light' }) })
+    await vi.waitFor(() => assert.equal(document.querySelector('output')?.textContent, '10'))
+    assert.equal(signals[0].aborted, true)
+    await act(async () => { first.resolve({ ok: true, json: async () => view }); await first.promise })
+    assert.equal(document.querySelector('output')?.textContent, '10')
+    mountedView.unmount()
+  })
+
+  test('aborts the last subscriber read and retains the last accepted view on a failed refresh', async () => {
+    let fail = false
+    let signal: AbortSignal | undefined
+    const pending = Promise.withResolvers<never>()
+    vi.stubGlobal('fetch', vi.fn(async (_input, init) => {
+      signal = init.signal
+      if (fail) return { ok: false }
+      return { ok: true, json: async () => view }
+    }))
+    function Probe() {
+      const current = useAppearance('sess-failure')
+      return createElement('output', {}, current?.revision ?? -1)
+    }
+    const mountedView = await mount(createElement(Probe))
+    await vi.waitFor(() => assert.equal(document.querySelector('output')?.textContent, '7'))
+    fail = true
+    const { invalidateAppearance } = await import('../lib/client/appearance.js')
+    await act(async () => { invalidateAppearance('sess-failure') })
+    assert.equal(document.querySelector('output')?.textContent, '7')
+    vi.stubGlobal('fetch', vi.fn(async (_input, init) => { signal = init.signal; return pending.promise }))
+    await act(async () => { invalidateAppearance('sess-failure') })
+    mountedView.unmount()
+    assert.equal(signal?.aborted, true)
+    pending.reject(new Error('closed'))
+    await pending.promise.catch(() => {})
+  })
 })

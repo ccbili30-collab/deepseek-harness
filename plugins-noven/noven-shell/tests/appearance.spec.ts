@@ -33,6 +33,27 @@ const project = join(root, 'project')
 afterAll(async () => { await rm(root, { recursive: true, force: true }) })
 
 describe('appearance document', () => {
+  test('reads version one without rewriting bytes and supplies canonical runtime identity', async () => {
+    const document = {
+      ...emptyAppearanceDocument(), revision: 9,
+      backgroundVisibility: 0.75,
+      workspace: { canvasTrack: { kind: 'asset', path: '音频/雨声.mp3', volume: 0, loop: false } },
+      sessions: { old: { foreground: 'invert' } },
+    }
+    const directory = await ledgerDir(project)
+    await mkdir(directory, { recursive: true })
+    const path = join(directory, 'appearance.json')
+    const bytes = JSON.stringify(document) + '\n'
+    await writeFile(path, bytes)
+    const result = await readAppearance(project, 'old')
+    assert.equal(result.workspaceRoot, await (await import('node:fs/promises')).realpath(project))
+    assert.equal(result.session.foreground, 'invert')
+    assert.equal(result.visual.backgroundVisibility, 0.75)
+    assert.equal(result.resolved.conversationTrack, null)
+    assert.deepEqual(result.resolved.canvasTrack, document.workspace.canvasTrack)
+    assert.equal(await readFile(path, 'utf8'), bytes)
+    await rm(path)
+  })
   test('resolves built-in, workspace, file, and session layers independently', () => {
     const document = {
       version: 1 as const,

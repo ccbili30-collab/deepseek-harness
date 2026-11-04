@@ -2495,7 +2495,7 @@ function CanvasTabTitle({ row, session, onSelect, t }: {
       title={tabTitle(row, t)}
       track={appearance?.resolved.canvasTrack ?? null}
       revision={appearance?.revision ?? 0}
-      owner={{ sessionId: session, filePath }}
+      owner={{ sessionId: session, filePath, workspaceRoot: appearance?.workspaceRoot }}
       onActivate={onSelect}
       t={t}
     />

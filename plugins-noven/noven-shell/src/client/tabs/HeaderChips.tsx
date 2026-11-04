@@ -42,7 +42,7 @@ export function HeaderChips({ useSession, useSessions, useBinding, openContext, 
         title={`${t('chip.project')} · ${project}`}
         track={track}
         revision={appearance?.revision ?? 0}
-        owner={{ sessionId }}
+        owner={{ sessionId, workspaceRoot: appearance?.workspaceRoot }}
         onActivate={track === null ? openContext : undefined}
         t={t}
       />,

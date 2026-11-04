@@ -4,7 +4,7 @@
  * project ledgers.
  * @module noven-shell/appearance/store
  */
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { APP_HOME, ledgerDir } from 'noven-ledger'
 import {
@@ -83,8 +83,11 @@ async function readGlobalDocument(): Promise<GlobalAppearanceDocument> {
   return load(globalDocumentPath(), emptyGlobalAppearanceDocument, parseGlobalAppearanceDocument)
 }
 
-async function resolveWithGlobal(document: AppearanceDocument, sessionId: string, filePath?: string): Promise<AppearanceView> {
-  return resolveAppearance(document, sessionId, filePath, await readGlobalDocument())
+async function resolveWithGlobal(root: string, document: AppearanceDocument, sessionId: string, filePath?: string): Promise<AppearanceView> {
+  return {
+    ...resolveAppearance(document, sessionId, filePath, await readGlobalDocument()),
+    workspaceRoot: await realpath(root),
+  }
 }
 
 /**
@@ -96,7 +99,7 @@ async function resolveWithGlobal(document: AppearanceDocument, sessionId: string
  */
 export async function readAppearance(root: string, sessionId: string, filePath?: string): Promise<AppearanceView> {
   const [document, global] = await Promise.all([readDocument(root), readGlobalDocument()])
-  return resolveAppearance(document, sessionId, filePath, global)
+  return { ...resolveAppearance(document, sessionId, filePath, global), workspaceRoot: await realpath(root) }
 }
 
 /**
@@ -120,10 +123,10 @@ export async function updateAppearance(
     const current = await load(path, emptyAppearanceDocument, parseAppearanceDocument)
     if (expectedRevision !== undefined && expectedRevision !== current.revision) throw new AppearanceConflictError(current.revision)
     const next = change(current)
-    if (next === undefined || JSON.stringify(next) === JSON.stringify(current)) return resolveWithGlobal(current, sessionId, filePath)
+    if (next === undefined || JSON.stringify(next) === JSON.stringify(current)) return resolveWithGlobal(root, current, sessionId, filePath)
     const document: AppearanceDocument = { ...next, version: 1, revision: current.revision + 1 }
     await save(path, document)
-    return resolveWithGlobal(document, sessionId, filePath)
+    return resolveWithGlobal(root, document, sessionId, filePath)
   })
 }
 

@@ -14,6 +14,8 @@ export interface ResolvedSoundtrack {
 /** The central object that owns a resolved soundtrack. */
 export interface SoundtrackOwner {
   readonly sessionId: SessionId
+  /** Canonical root from the appearance response, never inferred from a UI pane. */
+  readonly workspaceRoot?: string
   readonly filePath?: string
 }
 
@@ -28,15 +30,20 @@ export interface SoundtrackPlayback {
 
 interface ActiveAudio {
   readonly element: HTMLAudioElement
-  readonly generation: number
+  timer?: number
 }
 
 function sameOwner(left: SoundtrackOwner | undefined, right: SoundtrackOwner): boolean {
   return left?.sessionId === right.sessionId && left.filePath === right.filePath
 }
 
-function sameTrack(left: ResolvedSoundtrack | undefined, leftRevision: number, right: ResolvedSoundtrack, rightRevision: number): boolean {
-  return left?.path === right.path && left.source === right.source && leftRevision === rightRevision
+function sameTrack(leftOwner: SoundtrackOwner | undefined, left: ResolvedSoundtrack | undefined, rightOwner: SoundtrackOwner, right: ResolvedSoundtrack): boolean {
+  if (left?.path !== right.path || left.source !== right.source) return false
+  if (right.source === 'global') return true
+  if (leftOwner?.workspaceRoot !== undefined && rightOwner.workspaceRoot !== undefined) {
+    return leftOwner.workspaceRoot === rightOwner.workspaceRoot
+  }
+  return leftOwner?.sessionId === rightOwner.sessionId
 }
 
 /** Authenticated URL for one project or application audio asset. */
@@ -51,6 +58,7 @@ class SoundtrackController {
   private snapshot: SoundtrackPlayback = { status: 'idle', revision: 0 }
   private readonly listeners = new Set<() => void>()
   private active: ActiveAudio | undefined
+  private readonly retiring = new Set<ActiveAudio>()
   private generation = 0
   private hasStarted = false
   private userPaused = false
@@ -67,10 +75,8 @@ class SoundtrackController {
     for (const listener of [...this.listeners]) listener()
   }
 
-  private stopAudio(): void {
-    const active = this.active
-    this.active = undefined
-    if (active === undefined) return
+  private fade(active: ActiveAudio, finish: () => void): void {
+    if (active.timer !== undefined) window.clearTimeout(active.timer)
     const { element } = active
     const initialVolume = element.volume
     let step = 0
@@ -78,41 +84,72 @@ class SoundtrackController {
       step += 1
       element.volume = initialVolume * Math.max(0, 1 - step / 4)
       if (step < 4) {
-        window.setTimeout(fade, 25)
+        active.timer = window.setTimeout(fade, 25)
         return
       }
-      element.pause()
-      element.removeAttribute('src')
-      element.load()
+      active.timer = undefined
+      finish()
     }
     fade()
   }
 
+  private release(active: ActiveAudio): void {
+    if (active.timer !== undefined) window.clearTimeout(active.timer)
+    active.element.onended = null
+    active.element.pause()
+    active.element.removeAttribute('src')
+    active.element.load()
+    this.retiring.delete(active)
+  }
+
+  private stopAudio(): void {
+    const active = this.active
+    this.active = undefined
+    if (active === undefined) return
+    this.retiring.add(active)
+    this.fade(active, () => { this.release(active) })
+  }
+
+  private preferences(active: ActiveAudio, track: ResolvedSoundtrack): void {
+    active.element.loop = track.loop ?? true
+    active.element.volume = track.volume ?? 0.4
+  }
+
   stop(status: 'idle' | 'paused', owner?: SoundtrackOwner, track?: ResolvedSoundtrack, revision = 0): void {
     this.generation += 1
-    this.stopAudio()
+    if (status === 'paused' && this.active !== undefined) {
+      const active = this.active
+      this.fade(active, () => { active.element.pause() })
+    } else this.stopAudio()
     this.publish(status === 'paused' ? { status, owner, track, revision } : { status, revision })
   }
 
   private async play(owner: SoundtrackOwner, track: ResolvedSoundtrack, revision: number): Promise<void> {
     const generation = ++this.generation
-    this.stopAudio()
+    if (!sameTrack(this.snapshot.owner, this.snapshot.track, owner, track)) this.stopAudio()
+    const active = this.active ?? { element: new Audio(soundtrackAssetUrl(owner.sessionId, track, revision)) }
+    if (active.timer !== undefined) {
+      window.clearTimeout(active.timer)
+      active.timer = undefined
+    }
+    this.preferences(active, track)
+    this.active = active
     this.publish({ status: 'loading', owner, track, revision })
-    const element = new Audio(soundtrackAssetUrl(owner.sessionId, track, revision))
-    element.loop = track.loop ?? true
-    element.volume = track.volume ?? 0.4
+    const { element } = active
     element.preload = 'auto'
-    this.active = { element, generation }
     element.onended = () => {
-      if (this.generation === generation && !element.loop) this.stop('paused', owner, track, revision)
+      if (this.active === active && !element.loop) {
+        this.userPaused = true
+        this.stop('paused', this.snapshot.owner, this.snapshot.track, this.snapshot.revision)
+      }
     }
     try {
       await element.play()
       if (this.generation !== generation) {
-        element.pause()
+        if (this.active !== active) element.pause()
         return
       }
-      this.publish({ status: 'playing', owner, track, revision })
+      this.publish({ ...this.snapshot, status: 'playing' })
     } catch (error: unknown) {
       if (this.generation !== generation) return
       this.userPaused = true
@@ -129,7 +166,7 @@ class SoundtrackController {
   /** Toggle a soundtrack from an explicit user action on a title. */
   toggle(owner: SoundtrackOwner, track: ResolvedSoundtrack, revision: number): void {
     if (this.snapshot.status === 'playing' && sameOwner(this.snapshot.owner, owner)
-      && sameTrack(this.snapshot.track, this.snapshot.revision, track, revision)) {
+      && sameTrack(this.snapshot.owner, this.snapshot.track, owner, track)) {
       this.userPaused = true
       this.stop('paused', owner, track, revision)
       return
@@ -142,9 +179,10 @@ class SoundtrackController {
   /** Reconcile the current central object without allowing overlapping audio. */
   reconcile(owner: SoundtrackOwner, track: ResolvedSoundtrack | null, revision: number): void {
     if (this.snapshot.owner === undefined) return
-    if (track !== null && this.snapshot.status !== 'idle' && this.snapshot.status !== 'paused'
-      && sameTrack(this.snapshot.track, this.snapshot.revision, track, revision)) {
-      if (!sameOwner(this.snapshot.owner, owner)) this.publish({ ...this.snapshot, owner, revision })
+    if (track !== null && this.snapshot.status !== 'idle'
+      && sameTrack(this.snapshot.owner, this.snapshot.track, owner, track)) {
+      if (this.active !== undefined && this.active.timer === undefined) this.preferences(this.active, track)
+      this.publish({ ...this.snapshot, owner, track, revision })
       return
     }
     this.stop('idle')
@@ -154,7 +192,9 @@ class SoundtrackController {
   /** Reset playback and user intent when the owning plugin is disposed. */
   dispose(): void {
     this.generation += 1
-    this.stopAudio()
+    if (this.active !== undefined) this.release(this.active)
+    this.active = undefined
+    for (const active of this.retiring) this.release(active)
     this.hasStarted = false
     this.userPaused = false
     this.snapshot = { status: 'idle', revision: 0 }
@@ -189,7 +229,7 @@ export function disposeSoundtrack(): void {
   controller.dispose()
 }
 
-/** Compare title state with the actual audible owner and asset revision. */
-export function isSoundtrackPlaying(snapshot: SoundtrackPlayback, owner: SoundtrackOwner, track: ResolvedSoundtrack, revision: number): boolean {
-  return snapshot.status === 'playing' && sameOwner(snapshot.owner, owner) && sameTrack(snapshot.track, snapshot.revision, track, revision)
+/** Compare title state with the audible object and resource; revision only versions the fetch URL. */
+export function isSoundtrackPlaying(snapshot: SoundtrackPlayback, owner: SoundtrackOwner, track: ResolvedSoundtrack, _revision: number): boolean {
+  return snapshot.status === 'playing' && sameOwner(snapshot.owner, owner) && sameTrack(snapshot.owner, snapshot.track, owner, track)
 }

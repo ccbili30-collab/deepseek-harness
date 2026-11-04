@@ -4,7 +4,7 @@
  * UI state here is a View, never a second persistence layer.
  * @module noven-shell/client/appearance
  */
-import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react'
 import { applyScopedForeground, clearScopedForeground } from './scoped-foreground.ts'
 import type { CSSProperties, ReactNode } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
@@ -28,8 +28,9 @@ interface ActiveFile {
 
 const POLL_MS = 5000
 const snapshots = new Map<string, AppearanceSnapshot>()
-const listeners = new Map<string, Set<() => void>>()
-const inflight = new Map<string, Promise<void>>()
+const snapshotListeners = new Map<string, Set<() => void>>()
+const subscriptions = new Map<string, number>()
+const inflight = new Map<string, { readonly controller: AbortController; readonly promise: Promise<void> }>()
 const fileListeners = new Set<() => void>()
 const visualSnapshots = new Map<SessionId, { readonly revision: number; readonly value: AppearanceVisualState }>()
 const visualListeners = new Map<SessionId, Set<() => void>>()
@@ -42,23 +43,21 @@ const DEFAULT_VISUAL = defaultAppearanceVisual()
 const keyOf = (sessionId: SessionId, filePath?: string): string => `${sessionId}\u0000${filePath ?? ''}`
 const prefixOf = (sessionId: SessionId): string => `${sessionId}\u0000`
 
-function publish(key: string, snapshot: AppearanceSnapshot): void {
-  const current = snapshots.get(key)
-  if (current?.loading === snapshot.loading
-    && current.view?.revision === snapshot.view?.revision
-    && current.view?.globalRevision === snapshot.view?.globalRevision
-    && current.error === snapshot.error) return
-  snapshots.set(key, snapshot)
-  for (const listener of listeners.get(key) ?? []) listener()
-}
-
 function subscribe(key: string, listener: () => void): () => void {
-  const entries = listeners.get(key) ?? new Set<() => void>()
-  entries.add(listener)
-  listeners.set(key, entries)
+  if (snapshots.get(key) === undefined) snapshots.set(key, LOADING)
+  subscriptions.set(key, (subscriptions.get(key) ?? 0) + 1)
+  const listeners = snapshotListeners.get(key) ?? new Set<() => void>()
+  listeners.add(listener)
+  snapshotListeners.set(key, listeners)
   return () => {
-    entries.delete(listener)
-    if (entries.size === 0) listeners.delete(key)
+    listeners.delete(listener)
+    if (listeners.size === 0) snapshotListeners.delete(key)
+    const count = (subscriptions.get(key) ?? 1) - 1
+    if (count > 0) subscriptions.set(key, count)
+    else {
+      subscriptions.delete(key)
+      cancelLoad(key)
+    }
   }
 }
 
@@ -85,35 +84,47 @@ function subscribeVisual(sessionId: SessionId, listener: () => void): () => void
   }
 }
 
-async function fetchView(sessionId: SessionId, filePath?: string): Promise<AppearanceView | undefined> {
+async function fetchView(sessionId: SessionId, signal: AbortSignal, filePath?: string): Promise<AppearanceView | undefined> {
   const query = new URLSearchParams({ session: sessionId })
   if (filePath !== undefined) query.set('file', filePath)
   const response = await fetch(new URL(`api/noven-appearance?${query.toString()}`, document.baseURI), {
     headers: { accept: 'application/json' },
+    signal,
   }).catch(() => undefined)
   if (response === undefined || !response.ok) return undefined
   return await response.json().catch(() => undefined) as AppearanceView | undefined
 }
 
+function cancelLoad(key: string): void {
+  inflight.get(key)?.controller.abort()
+  inflight.delete(key)
+}
+
 function load(sessionId: SessionId, filePath?: string): Promise<void> {
   const key = keyOf(sessionId, filePath)
   const existing = inflight.get(key)
-  if (existing !== undefined) return existing
-  const request = fetchView(sessionId, filePath).then((view) => {
+  if (existing !== undefined) return existing.promise
+  const controller = new AbortController()
+  const request = (async () => {
+    const view = await fetchView(sessionId, controller.signal, filePath)
     const previous = snapshots.get(key)
-    if (view === undefined) {
-      publish(key, {
+    if (controller.signal.aborted || inflight.get(key)?.controller !== controller) return
+    if (previous?.view !== undefined && view !== undefined
+      && (previous.view.revision > view.revision || previous.view.globalRevision > view.globalRevision)) return
+    const next: AppearanceSnapshot = view === undefined
+      ? {
         loading: false,
         error: 'appearance unavailable',
         ...(previous?.view === undefined ? {} : { view: previous.view }),
-      })
-      return
-    }
-    if (previous?.view !== undefined && (previous.view.revision > view.revision || previous.view.globalRevision > view.globalRevision)) return
-    publishVisual(sessionId, view)
-    publish(key, { loading: false, view })
-  }).finally(() => { inflight.delete(key) })
-  inflight.set(key, request)
+      }
+      : { loading: false, view }
+    snapshots.set(key, next)
+    for (const listener of snapshotListeners.get(key) ?? []) listener()
+    if (view !== undefined) publishVisual(sessionId, view)
+  })().finally(() => {
+    if (inflight.get(key)?.controller === controller) inflight.delete(key)
+  })
+  inflight.set(key, { controller, promise: request })
   return request
 }
 
@@ -203,7 +214,7 @@ export async function uploadGlobalAppearanceImage(sessionId: SessionId, file: Fi
 export function useAppearance(sessionId: SessionId | undefined, filePath?: string): AppearanceView | undefined {
   const key = sessionId === undefined ? undefined : keyOf(sessionId, filePath)
   const snapshot = useSyncExternalStore(
-    key === undefined ? NO_SUBSCRIBE : listener => subscribe(key, listener),
+    useCallback((listener: () => void) => key === undefined ? NO_SUBSCRIBE() : subscribe(key, listener), [key]),
     () => key === undefined ? IDLE : snapshots.get(key) ?? LOADING,
     () => key === undefined ? IDLE : snapshots.get(key) ?? LOADING,
   )
@@ -536,6 +547,8 @@ export function invalidateAppearance(sessionId: SessionId): void {
   const prefix = prefixOf(sessionId)
   for (const key of snapshots.keys()) {
     if (!key.startsWith(prefix)) continue
+    cancelLoad(key)
+    if (!subscriptions.has(key)) continue
     const filePath = key.slice(prefix.length)
     void load(sessionId, filePath === '' ? undefined : filePath)
   }
@@ -544,6 +557,8 @@ export function invalidateAppearance(sessionId: SessionId): void {
 /** Refresh every workspace after an application-wide default changes. */
 function invalidateAllAppearances(): void {
   for (const key of snapshots.keys()) {
+    cancelLoad(key)
+    if (!subscriptions.has(key)) continue
     const separator = key.indexOf('\u0000')
     if (separator < 0) continue
     const sessionId = key.slice(0, separator) as SessionId
