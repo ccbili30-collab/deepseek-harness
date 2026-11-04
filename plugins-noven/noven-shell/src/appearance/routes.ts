@@ -10,13 +10,14 @@ import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { readAppearance, AppearanceConflictError, AppearanceStoreError } from './store.ts'
 import {
-  AppearanceInvalidError, applyAppearancePreset, readAppearanceAsset, readGlobalAppearanceAsset, resetAppearance, saveAppearanceAsset, saveAppearancePreset, saveGlobalAppearanceAsset, sessionAppearanceRoot,
-  setCanvasAppearance, setConversationAppearance, setGlobalUnifiedAppearance, setSharedAppearance, setShellAppearance, setUnifiedAppearance, setVisualAppearance,
-  type AvatarChoice, type BackgroundChoice, type SharedBackgroundChoice, type UnifiedBackgroundChoice, type VisualAppearanceInput,
+  AppearanceInvalidError, applyAppearancePreset, readAppearanceAsset, readAppearanceAudioAsset, readGlobalAppearanceAsset, resetAppearance, saveAppearanceAsset, saveAppearanceAudioAsset, saveAppearancePreset, saveGlobalAppearanceAsset, sessionAppearanceRoot,
+  setCanvasAppearance, setConversationAppearance, setGlobalUnifiedAppearance, setSharedAppearance, setShellAppearance, setTrackAppearance, setUnifiedAppearance, setVisualAppearance,
+  type AvatarChoice, type BackgroundChoice, type SharedBackgroundChoice, type TrackAppearanceInput, type UnifiedBackgroundChoice, type VisualAppearanceInput,
 } from './service.ts'
 
 const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }
 const MAX_BODY = 8 * 1024 * 1024
+const MAX_AUDIO_BODY = 16 * 1024 * 1024
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
@@ -80,6 +81,34 @@ function shared(value: unknown): SharedBackgroundChoice {
   if (imagePath !== undefined && typeof imagePath !== 'string') throw new AppearanceInvalidError('shared.imagePath must be a string')
   if (!Object.keys(value).every(key => key === 'kind' || key === 'imagePath')) throw new AppearanceInvalidError('shared has unsupported fields')
   return { kind: value['kind'], ...(imagePath === undefined ? {} : { imagePath }) }
+}
+
+function track(value: unknown): TrackAppearanceInput['track'] {
+  if (!isRecord(value) || (value['kind'] !== 'default' && value['kind'] !== 'audio')) {
+    throw new AppearanceInvalidError('track.kind must be default or audio')
+  }
+  const audioPath = value['audioPath']
+  const volume = value['volume']
+  const loop = value['loop']
+  if (audioPath !== undefined && typeof audioPath !== 'string') throw new AppearanceInvalidError('track.audioPath must be a string')
+  if (volume !== undefined && typeof volume !== 'number') throw new AppearanceInvalidError('track.volume must be a number')
+  if (loop !== undefined && typeof loop !== 'boolean') throw new AppearanceInvalidError('track.loop must be boolean')
+  if (!Object.keys(value).every(key => ['kind', 'audioPath', 'volume', 'loop'].includes(key))) {
+    throw new AppearanceInvalidError('track has unsupported fields')
+  }
+  return {
+    kind: value['kind'],
+    ...(audioPath === undefined ? {} : { audioPath }),
+    ...(volume === undefined ? {} : { volume }),
+    ...(loop === undefined ? {} : { loop }),
+  }
+}
+
+function objectForeground(value: unknown): TrackAppearanceInput['foreground'] {
+  if (value !== 'default' && value !== 'light' && value !== 'dark' && value !== 'invert') {
+    throw new AppearanceInvalidError('foreground must be default, light, dark, or invert')
+  }
+  return value
 }
 
 function avatar(value: unknown): AvatarChoice {
@@ -170,6 +199,20 @@ async function mutate(request: Request, ctx: Context): Promise<Response> {
       })
       return Response.json(view, { headers: JSON_HEADERS })
     }
+    case 'track': {
+      const scope = raw['scope']
+      if (scope !== 'workspace' && scope !== 'file' && scope !== 'session') throw new AppearanceInvalidError('track scope must be workspace, file, or session')
+      const filePath = raw['filePath']
+      if (filePath !== undefined && typeof filePath !== 'string') throw new AppearanceInvalidError('filePath must be a string')
+      const view = await setTrackAppearance(resolved.root, resolved.sessionId, {
+        scope,
+        ...(filePath === undefined ? {} : { filePath }),
+        ...(raw['track'] === undefined ? {} : { track: track(raw['track']) }),
+        ...(raw['foreground'] === undefined ? {} : { foreground: objectForeground(raw['foreground']) }),
+        ...(expectedRevision === undefined ? {} : { expectedRevision }),
+      })
+      return Response.json(view, { headers: JSON_HEADERS })
+    }
     case 'visual': {
       const view = await setVisualAppearance(resolved.root, resolved.sessionId, {
         ...visual(raw),
@@ -235,6 +278,24 @@ async function asset(request: Request, ctx: Context): Promise<Response> {
   })
 }
 
+async function audioAsset(request: Request, ctx: Context): Promise<Response> {
+  const resolved = await rootFor(ctx, request)
+  if (resolved instanceof Response) return resolved
+  if (request.method === 'POST') {
+    const length = Number(request.headers.get('content-length') ?? '0')
+    if (!Number.isFinite(length) || length > MAX_AUDIO_BODY) return Response.json({ error: 'audio exceeds 16 MiB' }, { status: 413, headers: JSON_HEADERS })
+    const bytes = new Uint8Array(await request.arrayBuffer())
+    if (bytes.byteLength > MAX_AUDIO_BODY) return Response.json({ error: 'audio exceeds 16 MiB' }, { status: 413, headers: JSON_HEADERS })
+    const path = await saveAppearanceAudioAsset(resolved.root, bytes)
+    return Response.json({ path }, { headers: JSON_HEADERS })
+  }
+  const path = new URL(request.url).searchParams.get('path') ?? ''
+  const audio = await readAppearanceAudioAsset(resolved.root, path)
+  return new Response(request.method === 'HEAD' ? null : new Uint8Array(audio.bytes), {
+    headers: { 'content-type': audio.type, 'cache-control': 'private, max-age=60' },
+  })
+}
+
 async function globalAsset(request: Request, ctx: Context): Promise<Response> {
   const resolved = await rootFor(ctx, request)
   if (resolved instanceof Response) return resolved
@@ -276,6 +337,15 @@ export function registerAppearanceRoutes(ctx: Context): void {
       catch (error: unknown) { return failure(error) }
     },
   }), 'noven-shell: /api/noven-appearance/asset')
+  ctx.effect(() => ctx.connection.fetch.register({
+    path: '/api/noven-appearance/audio-asset',
+    methods: ['GET', 'HEAD', 'POST'],
+    requestBody: 'buffered',
+    fetch: async request => {
+      try { return await audioAsset(request, ctx) }
+      catch (error: unknown) { return failure(error) }
+    },
+  }), 'noven-shell: /api/noven-appearance/audio-asset')
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/noven-appearance/global-asset',
     methods: ['GET', 'HEAD', 'POST'],

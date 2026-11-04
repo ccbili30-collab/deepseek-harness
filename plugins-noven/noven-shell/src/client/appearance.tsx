@@ -5,6 +5,7 @@
  * @module noven-shell/client/appearance
  */
 import { useEffect, useRef, useSyncExternalStore } from 'react'
+import { applyScopedForeground, clearScopedForeground } from './scoped-foreground.ts'
 import type { CSSProperties, ReactNode } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
@@ -148,6 +149,24 @@ export async function updateAppearance(sessionId: SessionId, action: Record<stri
 export async function uploadAppearanceImage(sessionId: SessionId, file: File): Promise<string | undefined> {
   const query = new URLSearchParams({ session: sessionId })
   const response = await fetch(new URL(`api/noven-appearance/asset?${query.toString()}`, document.baseURI), {
+    method: 'POST',
+    headers: { 'content-type': file.type || 'application/octet-stream' },
+    body: await file.arrayBuffer(),
+  }).catch(() => undefined)
+  if (response === undefined || !response.ok) return undefined
+  const payload = await response.json().catch(() => undefined) as { readonly path?: string } | undefined
+  return payload?.path
+}
+
+/**
+ * Upload one audio file into the project's appearance asset directory.
+ * @param sessionId - Session authorizing workspace access.
+ * @param file - Browser audio file.
+ * @returns The workspace-relative audio path, or undefined on failure.
+ */
+export async function uploadAppearanceAudio(sessionId: SessionId, file: File): Promise<string | undefined> {
+  const query = new URLSearchParams({ session: sessionId })
+  const response = await fetch(new URL(`api/noven-appearance/audio-asset?${query.toString()}`, document.baseURI), {
     method: 'POST',
     headers: { 'content-type': file.type || 'application/octet-stream' },
     body: await file.arrayBuffer(),
@@ -571,6 +590,7 @@ function clearAppearance(): void {
   document.documentElement.removeAttribute('data-noven-conversation-blur')
   document.documentElement.removeAttribute('data-noven-conversation-skin')
   document.documentElement.removeAttribute('data-noven-conversation-foreground')
+  document.documentElement.removeAttribute('data-noven-conversation-text')
   document.documentElement.removeAttribute('data-noven-assistant-avatar')
   for (const prefix of ['shell', 'conversation'] as const) {
     for (const key of Object.keys(SKIN_VARIABLES)) setVariable(`--noven-${prefix}-skin-${key}`, undefined)
@@ -722,5 +742,18 @@ export function AppearanceEffects({ current, scheme, theme }: AppearanceEffectsI
       try { theme.setTheme(visual.view) } finally { applyingView.current = false }
     })
   }, [sessionId, scheme, theme])
+  useEffect(() => {
+    const element = document.querySelector<HTMLElement>('[data-conversation-root]')
+    if (element === null) return
+    if (sessionId === undefined || view === undefined) {
+      document.documentElement.removeAttribute('data-noven-conversation-text')
+      clearScopedForeground(element)
+      return
+    }
+    const foreground = view.resolved.conversationForeground ?? 'system'
+    document.documentElement.setAttribute('data-noven-conversation-text', foreground)
+    void applyScopedForeground(element, foreground)
+    return () => { clearScopedForeground(element) }
+  }, [sessionId, view])
   return null
 }

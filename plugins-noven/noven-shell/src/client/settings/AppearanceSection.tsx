@@ -8,10 +8,10 @@ import type { CSSProperties, ReactNode } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { fmt, type ShellT } from '../pages/Home.tsx'
 import type {
-  AppearanceFocus, AppearanceForeground, AppearanceMaterial, AppearanceUnifiedBackground, AppearanceView, AppearanceViewMode,
+  AppearanceFocus, AppearanceForeground, AppearanceMaterial, AppearanceObjectForeground, AppearanceUnifiedBackground, AppearanceView, AppearanceViewMode,
 } from '../../appearance/model.ts'
 import { defaultAppearanceVisual } from '../../appearance/model.ts'
-import { appearanceAssetUrl, updateAppearance, uploadAppearanceImage, uploadGlobalAppearanceImage, useAppearance, useFocusedCanvasFile } from '../appearance.tsx'
+import { appearanceAssetUrl, updateAppearance, uploadAppearanceAudio, uploadAppearanceImage, uploadGlobalAppearanceImage, useAppearance, useFocusedCanvasFile } from '../appearance.tsx'
 
 interface Props {
   readonly sessionId: SessionId
@@ -180,11 +180,91 @@ function Select({ label, value, onChange, children, className = '', disabled = f
   return <select className={`nv-ap-select ${className}`} aria-label={label} value={value} disabled={disabled} onChange={event => { onChange(event.target.value) }}>{children}</select>
 }
 
-/**
- * Render one scope's appearance editor with immediate, serialized persistence.
- * @param props - Current Session and shell translator.
- * @returns The appearance settings section.
- */
+/** Edit one scope's audio binding and independent File/Session foreground. */
+function TrackControls({ sessionId, scope, filePath, view, save, onError, t }: {
+  readonly sessionId: SessionId
+  readonly scope: Scope
+  readonly filePath?: string
+  readonly view: AppearanceView
+  readonly save: (action: Record<string, unknown>) => Promise<AppearanceView | undefined>
+  readonly onError: (failed: boolean) => void
+  readonly t: ShellT
+}) {
+  const rawTrack = scope === 'workspace' ? view.workspace.canvasTrack : scope === 'file' ? view.file?.track : view.session.track
+  const resolvedTrack = scope === 'workspace' || scope === 'file' ? view.resolved.canvasTrack : view.resolved.conversationTrack
+  const rawForeground = scope === 'file' ? view.file?.foreground : scope === 'session' ? view.session.foreground : undefined
+  const [audioPath, setAudioPath] = useState(rawTrack?.path ?? resolvedTrack?.path ?? '')
+  const [volume, setVolume] = useState(Math.round((rawTrack?.volume ?? resolvedTrack?.volume ?? 0.4) * 100))
+  const [loop, setLoop] = useState(rawTrack?.loop ?? resolvedTrack?.loop ?? true)
+  const [foreground, setForeground] = useState<'default' | AppearanceObjectForeground>(rawForeground ?? 'default')
+  const uploadRef = useRef<HTMLInputElement | null>(null)
+  const disabled = scope === 'file' && filePath === undefined
+  const trackAction = (path = audioPath, level = volume, repeating = loop): Record<string, unknown> => ({
+    action: 'track', scope,
+    ...(scope === 'file' ? { filePath } : {}),
+    track: path.trim() === ''
+      ? { kind: 'default' }
+      : { kind: 'audio', audioPath: path.trim(), volume: level / 100, loop: repeating },
+  })
+  const saveTrack = async (path = audioPath, level = volume, repeating = loop): Promise<void> => {
+    const accepted = await save(trackAction(path, level, repeating))
+    if (accepted === undefined) onError(true)
+  }
+  const saveForeground = async (value: 'default' | AppearanceObjectForeground): Promise<void> => {
+    setForeground(value)
+    const accepted = await save({ action: 'track', scope, ...(scope === 'file' ? { filePath } : {}), foreground: value })
+    if (accepted === undefined) onError(true)
+  }
+  return (
+    <div className="nv-ap-track-controls" data-track-scope={scope}>
+      <Row title={scope === 'workspace' ? t('soundtrack.default') : t('soundtrack.title')} description={scope === 'workspace' ? t('soundtrack.default.desc') : t('appearance.autosave')}>
+        <div className="nv-ap-background-control">
+          <input className="nv-ap-input" aria-label={t('soundtrack.title')} value={audioPath} disabled={disabled} placeholder={t('soundtrack.path.ph')} onChange={event => { setAudioPath(event.target.value) }} onBlur={() => { if (!disabled) void saveTrack() }} />
+          <div className="nv-ap-inline-actions">
+            <button type="button" className="nv-ap-quiet" disabled={disabled} onClick={() => { uploadRef.current?.click() }}>{t('soundtrack.upload')}</button>
+            <button type="button" className="nv-ap-quiet" disabled={disabled || audioPath.trim() === ''} onClick={() => { setAudioPath(''); void saveTrack('') }}>{t('soundtrack.remove')}</button>
+          </div>
+          <input ref={uploadRef} type="file" accept="audio/mpeg,audio/wav,audio/ogg" hidden onChange={event => {
+            const file = event.target.files?.[0]
+            event.target.value = ''
+            if (file === undefined || disabled) return
+            void uploadAppearanceAudio(sessionId, file).then(path => {
+              if (path === undefined) { onError(true); return }
+              setAudioPath(path)
+              void saveTrack(path)
+            })
+          }} />
+        </div>
+        <div className="nv-ap-track-preferences">
+          <div className="nv-ap-range-control">
+            <input type="range" min="0" max="100" value={volume} disabled={disabled || audioPath.trim() === ''} aria-label={t('soundtrack.volume')} onChange={event => {
+              const next = Number(event.target.value)
+              setVolume(next)
+              void saveTrack(audioPath, next)
+            }} />
+            <output>{volume}%</output>
+          </div>
+          <label className="nv-ap-inline-check"><input type="checkbox" checked={loop} disabled={disabled || audioPath.trim() === ''} onChange={event => {
+            const next = event.target.checked
+            setLoop(next)
+            void saveTrack(audioPath, volume, next)
+          }} /><span>{t('soundtrack.loop')}</span></label>
+        </div>
+      </Row>
+      {scope !== 'workspace' && (
+        <Row title={t('appearance.foreground')}>
+          <Select label={t('appearance.foreground')} value={foreground} onChange={value => { void saveForeground(value as 'default' | AppearanceObjectForeground) }}>
+            <option value="default">{t('appearance.foreground.system')}</option>
+            <option value="light">{t('appearance.foreground.light')}</option>
+            <option value="dark">{t('appearance.foreground.dark')}</option>
+            <option value="invert">{t('appearance.foreground.invert')}</option>
+          </Select>
+        </Row>
+      )}
+    </div>
+  )
+}
+
 export function AppearanceSection({ sessionId, t, sections = 'all', filePath: exactFilePath, backgroundOnly = false }: Props): ReactNode {
   const focused = useFocusedCanvasFile()
   const filePath = exactFilePath ?? (focused?.sessionId === sessionId ? focused.path : undefined)
@@ -437,6 +517,19 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
           </div>
         )}
       </Row>
+
+      {!globalTarget && (scope !== 'workspace' || target === 'canvas') && (
+        <TrackControls
+          key={`${sessionId}:${scope}:${filePath ?? ''}`}
+          sessionId={sessionId}
+          scope={scope}
+          filePath={filePath}
+          view={view}
+          save={save}
+          onError={setError}
+          t={t}
+        />
+      )}
 
       {!backgroundOnly && (
         <Row title={t('appearance.visibility')} description={t('appearance.visibility.desc')}>

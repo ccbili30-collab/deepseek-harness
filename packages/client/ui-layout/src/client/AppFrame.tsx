@@ -344,7 +344,7 @@ export function AppFrame({
   // in handcraft, the right column holds the side Canvas in Agent. The slot
   // renders the side parent once; the frame owns the fold beside it.
   const sideColumn = centerCollapsible ? 'center' : canvasAuxiliary ? 'rightbar' : null
-  const contentSideChrome = framePolicy?.sideChrome === 'content' && sideColumn === 'rightbar'
+  const contentSideChrome = framePolicy?.sideChrome === 'content'
   const sideChrome = framePolicy === null || sideColumn === null || contentSideChrome ? null : renderSlot('side.header.trailing', {
     collapsed: sideColumn === 'center' ? centerCollapsed : rightbarAuxiliaryCollapsed,
   })
@@ -358,6 +358,9 @@ export function AppFrame({
   const mirrorLights = darwin && !isDarwinDesktop()
   const collapsedWidth = framePolicy === null
     && (darwin || document.documentElement.hasAttribute('data-windows-titlebar')) ? 0 : SIDEBAR_COLLAPSED
+  // Content-owned Chrome also owns recovery in the primary row, so a folded
+  // auxiliary subject leaves no second rail or absolute recovery overlay.
+  const auxiliaryRecoveryTrack = contentSideChrome ? 0 : SIDEBAR_COLLAPSED
   // Opening on a narrow frame collapses the left sidebar. Eligibility must
   // include that space before the occupant's first shown report arrives.
   const rail = layoutInfo.rightbarRail
@@ -748,13 +751,13 @@ export function AppFrame({
   // The handles sit on the moving edges: the panel's free edge inside the
   // column, and the column's own conversation-facing edge while a canvas is up.
   const unitW = centerCollapsed && policyRegions !== null
-    ? workWidth - SIDEBAR_COLLAPSED
+    ? workWidth - auxiliaryRecoveryTrack
     : canvas === null ? cols.rightbar : rightTrackMax
   // The handles anchor to the solved centre width, not centerCap: a stored
   // unit width makes the drawn unit column narrower than the default share,
   // and placing grips off the nominal cap detaches them from the real seams.
   const convW = centerCollapsed && policyRegions !== null
-    ? SIDEBAR_COLLAPSED
+    ? auxiliaryRecoveryTrack
     : policyCenterWidth ?? workWidth - unitW
   const unitColLeft = unitLeft ? cols.sidebar : cols.sidebar + convW
   const rightbarHandleLeft = anchorLeft
@@ -872,7 +875,7 @@ export function AppFrame({
           gridTemplateColumns: canvasFullscreen
             ? 'minmax(0px, 1fr)'
             : centerCollapsed
-              ? `minmax(0px, 1fr) minmax(0px, ${SIDEBAR_COLLAPSED}px)`
+              ? `minmax(0px, 1fr) minmax(0px, ${auxiliaryRecoveryTrack}px)`
               : rightbarAuxiliaryCollapsed
                 ? 'minmax(0px, 1fr) 0px'
                 : policyRegions !== null
@@ -886,13 +889,13 @@ export function AppFrame({
       >
         <CenterColumn
           order={unitLeft ? 2 : 1}
-          collapsible={contentSideChrome ? centerCollapsed : centerCollapsible}
+          collapsible={contentSideChrome ? false : centerCollapsible}
           collapsed={centerCollapsed}
           productFold={framePolicy !== null} sideChrome={sideColumn === 'center' ? sideChrome : null} toggle={toggleCenter}
           collapseLabel={t('collapse')} expandLabel={t('expand')}>{main}</CenterColumn>
         <RightbarColumn
           order={unitLeft ? 1 : 2}
-          collapsible={contentSideChrome ? rightbarAuxiliaryCollapsed : canvasAuxiliary}
+          collapsible={contentSideChrome ? false : canvasAuxiliary}
           collapsed={rightbarAuxiliaryCollapsed}
           productFold={framePolicy !== null} sideChrome={sideColumn === 'rightbar' ? sideChrome : null} toggle={toggleAuxiliary}
           collapseLabel={t('collapse')} expandLabel={t('expand')}>

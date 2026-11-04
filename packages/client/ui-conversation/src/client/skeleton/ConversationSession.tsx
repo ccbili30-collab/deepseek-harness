@@ -134,7 +134,7 @@ export function ConversationSessionHeader({
           </>
         )}
         <div className={css.headerCorner} data-conversation-header-corner="">
-          {renderSlot('conversation.session.header.corner', {})}
+          {renderSlot('conversation.session.header.corner', { hidden: hideChrome })}
         </div>
       </div>
       {showTabs && (

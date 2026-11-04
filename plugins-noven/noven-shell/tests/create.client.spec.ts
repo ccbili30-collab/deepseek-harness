@@ -58,14 +58,14 @@ function deferred(): { readonly promise: Promise<void>; readonly resolve: () => 
   return { promise, resolve }
 }
 
-async function mount(state: SessionListState, ensureBlankHost: (workspaceId: WorkspaceId | undefined) => Promise<void>, revealSession = vi.fn(), factory: RenderFactorySlot = () => null) {
+async function mount(state: SessionListState, ensureBlankHost: (workspaceId: WorkspaceId | undefined) => Promise<void>, revealSession = vi.fn(), factory: RenderFactorySlot = () => null, revealAuxiliary = vi.fn()) {
   const container = document.createElement('div')
   document.body.appendChild(container)
   const root = createRoot(container)
   mounted.add(root)
   const props = {
     t,
-    sessionNavigation: null,
+    revealAuxiliary,
     useWorkspaces: <T,>(selector: (value: WorkspaceSnapshot) => T): T => selector(workspaceState),
     useSessions: <T,>(selector: (value: SessionListState) => T): T => selector(state),
     renderFactorySlot: factory,
@@ -76,6 +76,7 @@ async function mount(state: SessionListState, ensureBlankHost: (workspaceId: Wor
   }
   await act(async () => { root.render(createElement(Create, props)) })
   return {
+    revealAuxiliary,
     update: async (next: SessionListState) => {
       await act(async () => { root.render(createElement(Create, { ...props, useSessions: <T,>(selector: (value: SessionListState) => T): T => selector(next) })) })
     },
@@ -118,5 +119,15 @@ describe('creation panel host lifecycle', () => {
     const view = await mount(sessions({ legacy: { blank: true, cwd: '/a', preset: 'standard' } }), vi.fn(async () => {}), vi.fn(), factory)
     assert.equal(factory.mock.calls.length, 0)
     view.unmount()
+  })
+
+  test('uses the shared auxiliary recovery command instead of Session navigation', async () => {
+    const revealAuxiliary = vi.fn()
+    await mount(sessions({ host: { blank: true, cwd: '/a' } }), vi.fn(), vi.fn(), () => null, revealAuxiliary)
+    const button = document.querySelector<HTMLButtonElement>('[data-chrome-command="reveal-auxiliary"]')
+    assert.ok(button)
+    assert.equal(document.querySelector('[data-side-session-menu]'), null)
+    await act(async () => { button.click() })
+    assert.equal(revealAuxiliary.mock.calls.length, 1)
   })
 })

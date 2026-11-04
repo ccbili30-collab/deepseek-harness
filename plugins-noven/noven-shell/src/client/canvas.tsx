@@ -17,7 +17,10 @@ import { defineStore } from '@deepseek-ai/dsh-client-store'
 import { LibraryTab } from './tabs/Library.tsx'
 import type { PropsLocale, PropsRuntime, PropsStore, InjectFace } from '@deepseek-ai/dsh-client-ui-slots'
 import type { SidebarRightGuideBox } from '@deepseek-ai/dsh-client-ui-sidebar-right/client'
-import { Menu, MarkdownText, Modal, IconPanelLeftOutlineRegular, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Menu, MarkdownText, Modal, type MarkdownLabels } from '@deepseek-ai/dsh-client-ui-primitives'
+import { AuxiliaryFoldButton } from './chrome.tsx'
+import { PlayableTitle } from './playable-title.tsx'
+import { useScopedForeground } from './scoped-foreground.ts'
 import type { CardAddr, CardOp, CardOpResult, CardState } from './card-api.ts'
 import type { ImportReport } from './tree-api.ts'
 
@@ -759,6 +762,8 @@ export interface CanvasInjected {
   readonly auxiliaryCanvas: ObservableSnapshot<boolean>
   /** Frame-owned auxiliary fold action, placed by the active leaf's chrome row. */
   readonly setAuxiliaryCollapsed: (collapsed: boolean) => void
+  /** Restore the auxiliary Conversation after leaving any global panel without creating a Session. */
+  readonly revealAuxiliary: () => void
   /** Real directory entry injected with this canvas Session's tree hooks. */
   readonly directory: ReactNode
 }
@@ -2261,10 +2266,19 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
   const canvasBackground = canvasBackgroundStyle(
     session, appearance?.resolved.canvas ?? null, appearance?.revision ?? 0, visual, appearance?.globalRevision ?? 0,
   )
+  const leafRef = useRef<HTMLDivElement | null>(null)
+  const canvasBackgroundPath = appearance?.resolved.canvas?.kind === 'asset' ? appearance.resolved.canvas.path : ''
+  useScopedForeground(
+    leafRef,
+    appearance?.resolved.canvasForeground ?? 'system',
+    `${appearance?.revision ?? 0}:${appearance?.resolved.canvas?.kind ?? 'builtin'}:${canvasBackgroundPath}`,
+  )
   const spotZone = dropSpot?.leaf === leaf.id ? dropSpot.zone : undefined
   return (
     <div className="nv-leaf"
+      ref={leafRef}
       style={canvasBackground}
+      data-noven-canvas-text={appearance?.resolved.canvasForeground}
       data-noven-canvas-background={appearance?.resolved.canvas?.kind}
       data-noven-surface={surface}
       data-noven-canvas-skin={appearanceMaterial(appearance?.resolved.canvas ?? null, visual)}
@@ -2294,7 +2308,7 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
               }
             }}
             onClick={() => actions.select(session, row.key)}>
-            <span className="nv-canvas-tabtitle">{tabTitle(row, t)}</span>
+            <CanvasTabTitle row={row} session={session} onSelect={() => actions.select(session, row.key)} t={t} />
             {aiEditing && <span className="nv-ai-tag" title={t('ai.editing')}>{t('ai.tag')}</span>}
             <span className="nv-canvas-dots">
               {working && <span className="nv-canvas-dot nv-dot-working" title={t('canvas.dot.working')} />}
@@ -2343,14 +2357,16 @@ function LeafView({ leaf, focused, immersive = false, canvasFullscreen, toggleCa
         <button type="button" className="nv-canvas-fullscreentoggle" data-active={canvasFullscreen || undefined}
           aria-label={t('canvas.fullscreen')} title={t('canvas.fullscreen')}
           onClick={toggleCanvasFullscreen}>{glyph.expand(13)}</button>
-        {focused && auxiliaryCanvas && !auxiliaryCollapsed && (
+        {focused && ((auxiliaryCanvas && !auxiliaryCollapsed) || (!auxiliaryCanvas && auxiliaryCollapsed)) && (
           <span className="nv-canvas-chrome-trailing">
-            {props.directory}
-            <button type="button" className="nv-canvas-menubutton" data-side-fold
-              aria-label={auxiliaryCollapsed ? t('tree.expand') : t('tree.collapse')}
-              onClick={() => { props.setAuxiliaryCollapsed(!auxiliaryCollapsed) }}>
-              <IconPanelLeftOutlineRegular size={16} />
-            </button>
+            {auxiliaryCanvas && props.directory}
+            <AuxiliaryFoldButton
+              reveal={!auxiliaryCanvas}
+              label={auxiliaryCanvas ? t('tree.collapse') : t('tree.expand')}
+              onClick={auxiliaryCanvas
+                ? () => { props.setAuxiliaryCollapsed(true) }
+                : props.revealAuxiliary}
+            />
           </span>
         )}
       </div>}
@@ -2443,6 +2459,28 @@ function tabTitle(row: CanvasTab, t: ShellT): string {
     : row.kind === 'chat' ? t('canvas.tab.chat')
       : row.kind === 'conv' ? t('canvas.tab.conv')
         : row.cardId ?? t('canvas.start.tab')
+}
+
+/** Resolve one tab's own audio binding without reusing the active tab's appearance. */
+function CanvasTabTitle({ row, session, onSelect, t }: {
+  readonly row: CanvasTab
+  readonly session: SessionId
+  readonly onSelect: () => void
+  readonly t: ShellT
+}) {
+  const filePath = row.kind === 'doc' || row.kind === 'work' ? row.path : undefined
+  const appearance = useAppearance(session, filePath)
+  return (
+    <PlayableTitle
+      className="nv-canvas-tabtitle"
+      title={tabTitle(row, t)}
+      track={appearance?.resolved.canvasTrack ?? null}
+      revision={appearance?.revision ?? 0}
+      owner={{ sessionId: session, filePath }}
+      onActivate={onSelect}
+      t={t}
+    />
+  )
 }
 
 /**

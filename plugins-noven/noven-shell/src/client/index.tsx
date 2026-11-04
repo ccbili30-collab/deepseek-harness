@@ -71,6 +71,8 @@ import { CardReceiptTail, CardToolView, CARD_READ_TOOLS, CARD_WRITE_TOOLS, type 
 import { cardSavedDefinition, savedMeta } from './card-receipt.ts'
 import { CreateHero } from './create-hero.tsx'
 import { Create } from './pages/Create.tsx'
+import { ConversationAuxiliaryChrome } from './chrome.tsx'
+import { SoundtrackEffects, type SoundtrackEffectsInjected } from './soundtrack-effects.tsx'
 import { InputQuote } from './input-quote.tsx'
 import { applyQuote } from './quote.tsx'
 import { applyBranches } from './branches.tsx'
@@ -232,6 +234,7 @@ interface PreviewPageInjected {
 
 /** Injected face for the independent creation panel and its blank-Session composer. */
 interface CreatePageInjected {
+  readonly revealAuxiliary: () => void
   readonly ensureBlankHost: (workspaceId: WorkspaceId | undefined) => Promise<void>
   readonly revealSession: (sessionId: SessionId) => void
   readonly onStartHandcraft: (workspaceId: WorkspaceId | undefined, source: HTMLElement) => Promise<boolean>
@@ -1047,6 +1050,10 @@ export function apply(ctx: ClientContext): void {
     name: 'shell.overlay', id: 'noven-appearance', locale: NS,
     inject: (): AppearanceEffectsInjected => ({ current: currentSessionSource, scheme: themeColorSchemeSource, theme: ctx.theme }),
   }, AppearanceEffects)), 'noven-shell: appearance surface')
+  ctx.effect(() => ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+    name: 'shell.overlay', id: 'noven-soundtrack', locale: NS,
+    inject: (): SoundtrackEffectsInjected => ({ current: currentSessionSource, subject: subjectSource }),
+  }, SoundtrackEffects)), 'noven-shell: soundtrack owner')
   let directoryQueryValue = ''
   const directoryQueryListeners = new Set<() => void>()
   const directoryQuery: ObservableSnapshot<string> = {
@@ -1303,6 +1310,37 @@ export function apply(ctx: ClientContext): void {
       ;(ctx.uiWorkspace.openSession as (target: SessionId, options?: { panel?: 'preserve', transition?: 'none' }) => void)(
         sessionId, { transition: 'none' },
       )
+    })
+  }
+
+  /** Last non-blank main-view Session retained while a creation host occupies the panel. */
+  let auxiliaryReturnSession: SessionId | undefined
+  ctx.effect(() => {
+    const remember = (): void => {
+      const current = Object.values(ctx.sessions.list.getSnapshot().byId)
+        .find(row => (row.retainedBy.mainView ?? 0) > 0)
+      if (current !== undefined && current.blank !== true) auxiliaryReturnSession = current.id
+    }
+    remember()
+    const stop = ctx.sessions.list.subscribe(remember)
+    return () => { stop() }
+  }, 'noven-shell: auxiliary return session')
+
+  /** Reveal the retained Session and its auxiliary content without creating a Session or switching subjects. */
+  const revealAuxiliary = (): void => {
+    const state = ctx.sessions.list.getSnapshot()
+    const current = Object.values(state.byId).find(row => (row.retainedBy.mainView ?? 0) > 0)
+    const remembered = auxiliaryReturnSession === undefined ? undefined : state.byId[auxiliaryReturnSession]
+    const target = current?.blank === true && remembered?.blank === false
+      ? remembered.id
+      : current?.id ?? remembered?.id
+    ctx.layout.transitionFrame(() => {
+      if (target !== undefined && target !== current?.id) {
+        ;(ctx.uiWorkspace.openSession as (sessionId: SessionId, options?: { transition?: 'none' }) => void)(target, { transition: 'none' })
+      } else {
+        ctx.layout.selectPanel(null)
+      }
+      ctx.layout.setAuxiliaryCollapsed(false)
     })
   }
 
@@ -2461,6 +2499,7 @@ export function apply(ctx: ClientContext): void {
         subscribe: listener => subjectInstance.subscribe(listener),
       },
       setAuxiliaryCollapsed: collapsed => { ctx.layout.setAuxiliaryCollapsed(collapsed) },
+      revealAuxiliary,
       directory: (() => {
         const injected = treeInjected(sessionId)
         return <DirectorySideEntry {...injected} t={t}
@@ -2531,6 +2570,7 @@ export function apply(ctx: ClientContext): void {
     yield ctx.slots.register({
       name: 'main', key: CREATE_ID, locale: NS,
       inject: (): CreatePageInjected => ({
+        revealAuxiliary,
         ensureBlankHost,
         revealSession,
         onStartHandcraft: startHandcraft,
@@ -2539,15 +2579,7 @@ export function apply(ctx: ClientContext): void {
     }, (p: PageProps & InjectFace<CreatePageInjected>) => (
       <Create
         t={p.t}
-        sessionNavigation={<NovenSideSessionMenu
-          t={p.t}
-          sessions={sideSessionsSource}
-          open={revealSession}
-          showBrowser={() => {
-            ctx.uiWorkspace.showSessionBrowser()
-            ctx.layout.setSidebarCollapsed(false)
-          }}
-        />}
+        revealAuxiliary={p.revealAuxiliary}
         useWorkspaces={p.useWorkspaces}
         useSessions={p.useSessions}
         renderFactorySlot={p.renderFactorySlot}
@@ -2809,6 +2841,34 @@ export function apply(ctx: ClientContext): void {
     name: 'settings.launcher', priority: -1, locale: NS,
     inject: (): FootLauncherInjected => ({ openMy: () => { ctx.layout.selectPanel(ME_ID) } }),
   }, (p: FootLauncherProps) => <FootLauncher {...p} />))
+
+  // One shared auxiliary command lives in the Conversation's real trailing slot.
+  ctx.slots.inject('conversation.session.header.corner', () => ctx.slots.register({
+    name: 'conversation.session.header.corner', locale: NS,
+  }, (p: PropsRuntime<'conversation.session.header.corner'> & PropsLocale<'novenShell'>) => (
+    <ConversationAuxiliaryChrome
+      t={p.t}
+      subject={subjectSource}
+      useFrameFoldState={p.useFrameFoldState}
+      revealAuxiliary={revealAuxiliary}
+      setAuxiliaryCollapsed={collapsed => { ctx.layout.setAuxiliaryCollapsed(collapsed) }}
+      sessionId={p.sessionId}
+      claims={ctx.layout.canvasClaims}
+      chromeHidden={p.hidden}
+      navigation={<NovenSideSessionMenu
+        t={p.t}
+        sessions={sideSessionsSource}
+        open={id => {
+          ctx.uiWorkspace.openSession(id)
+          ctx.layout.setAuxiliaryCollapsed(false)
+        }}
+        showBrowser={() => {
+          ctx.uiWorkspace.showSessionBrowser()
+          ctx.layout.setSidebarCollapsed(false)
+        }}
+      />}
+    />
+  )))
 
   // noven 页头不要「标准模式」preset 标签：同 id 注册一条更低 priority 的
   // 空条目把它遮蔽（preset 功能本身照旧，只是标签不渲）。

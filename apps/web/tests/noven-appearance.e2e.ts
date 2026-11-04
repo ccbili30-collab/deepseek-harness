@@ -14,6 +14,7 @@ const PLUGIN_ROOT = fileURLToPath(new URL('../../../plugins-noven', import.meta.
 const PRODUCT_OVERLAY = fileURLToPath(new URL('../../desktop/noven/profile/cordis.patch.yml', import.meta.url))
 const BROWSE_OVERLAY = fileURLToPath(new URL('./pin-browse-picker.overlay.yml', import.meta.url))
 const ASSETS = fileURLToPath(new URL('../../../plugins-noven/noven-shell/assets', import.meta.url))
+const AUDIO_MIME = 'audio/wav'
 const SHOTS = join(tmpdir(), `noven-appearance-shots-${process.pid}`)
 const BUNDLES = [
   'noven-study', 'noven-brand', 'noven-shell', 'noven-dock', 'noven-image',
@@ -21,6 +22,29 @@ const BUNDLES = [
 ] as const
 const SESSION_ID = 'noven-appearance'
 const ISOLATED_ENV = ['NOVEN_HOME', 'NOVEN_PROJECTS_ROOT', 'NOVEN_CHANNEL'] as const
+
+function wavTone(frequency: number): Buffer {
+  const sampleRate = 8000
+  const samples = 800
+  const buffer = Buffer.alloc(44 + samples * 2)
+  buffer.write('RIFF', 0)
+  buffer.writeUInt32LE(36 + samples * 2, 4)
+  buffer.write('WAVE', 8)
+  buffer.write('fmt ', 12)
+  buffer.writeUInt32LE(16, 16)
+  buffer.writeUInt16LE(1, 20)
+  buffer.writeUInt16LE(1, 22)
+  buffer.writeUInt32LE(sampleRate, 24)
+  buffer.writeUInt32LE(sampleRate * 2, 28)
+  buffer.writeUInt16LE(2, 32)
+  buffer.writeUInt16LE(16, 34)
+  buffer.write('data', 36)
+  buffer.writeUInt32LE(samples * 2, 40)
+  for (let index = 0; index < samples; index += 1) {
+    buffer.writeInt16LE(Math.round(Math.sin(index / sampleRate * frequency * Math.PI * 2) * 1000), 44 + index * 2)
+  }
+  return buffer
+}
 
 let scaffold: WebScaffold
 let browser: Browser
@@ -50,6 +74,14 @@ async function close(): Promise<void> {
 }
 process.on('SIGINT', onSignal)
 process.on('SIGTERM', onSignal)
+
+interface SoundtrackResponse {
+  readonly kind: 'asset'
+  readonly path: string
+  readonly volume?: number
+  readonly loop?: boolean
+  readonly source?: 'global'
+}
 
 interface AppearanceResponse {
   readonly revision: number
@@ -91,12 +123,26 @@ interface AppearanceResponse {
       readonly material?: string
       readonly foreground?: string
     }
+    readonly canvasTrack?: SoundtrackResponse
+  }
+  readonly file?: {
+    readonly canvas?: { readonly kind: string; readonly path?: string }
+    readonly track?: SoundtrackResponse
+    readonly foreground?: string
+  }
+  readonly session: {
+    readonly track?: SoundtrackResponse
+    readonly foreground?: string
   }
   readonly resolved: {
     readonly shell: { readonly kind: string; readonly path?: string; readonly source?: 'global' } | null
     readonly canvas: { readonly kind: string; readonly path?: string; readonly source?: 'global' } | null
     readonly conversation: { readonly kind: string; readonly path?: string; readonly source?: 'global' } | null
     readonly assistantAvatar: { readonly path?: string } | null
+    readonly conversationTrack: SoundtrackResponse | null
+    readonly canvasTrack: SoundtrackResponse | null
+    readonly conversationForeground: string
+    readonly canvasForeground: string
   }
 }
 
@@ -112,6 +158,12 @@ async function appearance(body: Record<string, unknown>): Promise<AppearanceResp
 
 async function backgroundImage(page: Page, selector: string): Promise<string> {
   return page.locator(selector).first().evaluate(element => getComputedStyle(element).backgroundImage)
+}
+
+async function resetCanvasLayout(): Promise<void> {
+  await page.evaluate(() => { localStorage.removeItem('noven.canvas.tabs.v4') })
+  await page.reload({ waitUntil: 'load' })
+  await page.locator('.nv-mode-switch').first().waitFor({ timeout: 30_000 })
 }
 
 beforeAll(async () => {
@@ -139,6 +191,9 @@ beforeAll(async () => {
     ['cover-yueban.webp', 'conversation.webp'], ['cover-new-world.webp', 'session.webp'],
     ['avatar-yunhe.webp', 'avatar-default.webp'], ['avatar-shenyan.webp', 'avatar-session.webp'],
   ] as const) await copyFile(join(ASSETS, source), join(assets, target))
+  await writeFile(join(assets, '案头.wav'), wavTone(220))
+  await writeFile(join(assets, '雨声.wav'), wavTone(330))
+  await writeFile(join(assets, '林间.wav'), wavTone(440))
   await seedSession(scaffold, sessionFixture(), SESSION_ID, 'create', { createdAt: Date.UTC(2026, 0, 1) })
   await mkdir(SHOTS, { recursive: true })
   browser = await chromium.launch()
@@ -324,8 +379,34 @@ describe('web e2e: scoped Noven appearance', () => {
     await page.waitForFunction(() => document.querySelector('[data-animating]') === null)
     await page.waitForTimeout(600)
     await expectPaperInsets('[data-conversation-root]', { top: 4, right: 4, bottom: 4, left: 4 })
-    const recoveryFold = page.locator('[data-rightbar-col] [data-side-fold]:visible')
-    if (await recoveryFold.count() > 0) await recoveryFold.click()
+    const recoveryFold = page.locator('[data-conversation-root] [data-chrome-command="reveal-auxiliary"]:visible')
+    if (await recoveryFold.count() > 0) {
+      const peers = await recoveryFold.evaluate((button) => {
+        const rect = button.getBoundingClientRect()
+        const titleRow = button.closest('[class*="titleRow"]')!
+        const utilities = [...titleRow.querySelectorAll('[class*="headerUtilities"] button')]
+          .filter(element => element.getBoundingClientRect().width > 0)
+        const overlaps = utilities.filter((element) => {
+          const other = element.getBoundingClientRect()
+          return rect.left < other.right && rect.right > other.left && rect.top < other.bottom && rect.bottom > other.top
+        }).length
+        return {
+          width: rect.width,
+          height: rect.height,
+          centerY: rect.y + rect.height / 2,
+          peerY: utilities.map((element) => {
+            const other = element.getBoundingClientRect()
+            return other.y + other.height / 2
+          }),
+          overlaps,
+        }
+      })
+      expect(peers.width).toBe(28)
+      expect(peers.height).toBe(28)
+      expect(peers.overlaps).toBe(0)
+      expect(peers.peerY.every(value => Math.abs(value - peers.centerY) <= 1)).toBe(true)
+      await recoveryFold.click()
+    }
     await page.waitForFunction(() => document.querySelector('[data-work][data-animating]') === null)
     await expectPaperInsets('.nv-canvas', { top: 4, right: 4, bottom: 4, left: 0 })
     const columnGap = await page.evaluate(() => {
@@ -384,7 +465,7 @@ describe('web e2e: scoped Noven appearance', () => {
     expect(await defaultChoice.getAttribute('aria-pressed')).toBe('true')
     expect(await addChoice.getAttribute('aria-pressed')).toBe('false')
     await addChoice.click()
-    await page.locator('.nv-ap-background-control input[type="file"]').setInputFiles(join(scaffold.workspaceCwd, '外观/conversation.webp'))
+    await page.locator('.nv-ap-background-control input[type="file"][accept*="image"]').setInputFiles(join(scaffold.workspaceCwd, '外观/conversation.webp'))
     await expect.poll(() => backgroundImage(page, '[data-conversation-root]'), { timeout: 15_000 }).toContain('/api/noven-appearance/asset')
     await expect.poll(async () => {
       const persisted = await (await scaffold.hostFetch(`/api/noven-appearance?session=${encodeURIComponent(SESSION_ID)}`)).json() as AppearanceResponse
@@ -466,6 +547,7 @@ describe('web e2e: scoped Noven appearance', () => {
 
   it('keeps default, shared, custom, and transparent backgrounds independent per pane', async () => {
     onTestFailed(() => saveFailureShot(page, 'noven-appearance-panes'))
+    await page.setViewportSize({ width: 1440, height: 900 })
     await appearance({ action: 'shell', background: { kind: 'image', imagePath: '外观/shell.webp' } })
     await appearance({ action: 'visual', view: 'dark', surface: 'frosted', foreground: 'system', backgroundVisibility: 0.75 })
     await expect.poll(() => page.locator('html').getAttribute('data-noven-shell-skin'), { timeout: 15_000 }).toBe('frosted')
@@ -491,6 +573,10 @@ describe('web e2e: scoped Noven appearance', () => {
       await expect.poll(async () => page.locator(selector).first().evaluate(element => getComputedStyle(element).borderLeftColor), { timeout: 15_000 }).toBe('rgba(0, 0, 0, 0)')
     }
     const activeCanvasTab = page.locator('.nv-canvas-tab[aria-selected="true"]').first()
+    if (await activeCanvasTab.locator('.nv-canvas-tabx').count() === 0) {
+      await page.getByRole('button', { name: /文稿 从一页白纸开始/ }).click()
+      await page.locator('.nv-ed-title').waitFor({ timeout: 30_000 })
+    }
     await page.mouse.move(0, 0)
     await expect.poll(() => activeCanvasTab.locator('.nv-canvas-tabx').evaluate(element => getComputedStyle(element).opacity)).toBe('0')
     await activeCanvasTab.hover()
@@ -735,11 +821,12 @@ describe('web e2e: scoped Noven appearance', () => {
 
   it('edits independent backgrounds through file tabs and preserves them across splits and reloads', async () => {
     onTestFailed(() => saveFailureShot(page, 'noven-appearance-tabs'))
+    await resetCanvasLayout()
     const manual = page.getByRole('button', { name: '切换到手作', exact: true })
     if (await manual.count() > 0) await manual.click()
     const createDocument = async (): Promise<string> => {
       if (await page.locator('[data-noven-canvas-switch]').count() > 0) {
-        await page.locator('[data-noven-canvas-switch]').click()
+        await page.locator('[data-noven-canvas-switch]').first().click()
         await page.getByRole('menuitem', { name: '起点', exact: true }).click()
       }
       await page.getByRole('button', { name: /文稿 从一页白纸开始/ }).click()
@@ -750,14 +837,28 @@ describe('web e2e: scoped Noven appearance', () => {
     }
     const firstTitle = await createDocument()
     const secondTitle = await createDocument()
+    const firstPath = `文稿/${firstTitle}.md`
+    const secondPath = `文稿/${secondTitle}.md`
+    const fileBackground = async (filePath: string): Promise<string | undefined> => {
+      const response = await scaffold.hostFetch(`/api/noven-appearance?session=${encodeURIComponent(SESSION_ID)}&file=${encodeURIComponent(filePath)}`)
+      if (!response.ok) return undefined
+      const view = await response.json() as AppearanceResponse
+      return view.file?.canvas?.kind === 'asset' ? view.file.canvas.path : undefined
+    }
+    const expectUploadedBackground = async (filePath: string): Promise<void> => {
+      await expect.poll(() => fileBackground(filePath), { timeout: 15_000 }).toContain('.noven/appearance/')
+      const uploaded = await fileBackground(filePath)
+      if (uploaded === undefined) throw new Error(`file background missing for ${filePath}`)
+      await expect.poll(() => backgroundImage(page, '.nv-leaf'), { timeout: 15_000 }).toContain(encodeURIComponent(uploaded))
+    }
 
     const backgroundButton = page.locator('[data-noven-canvas-tab-background]')
     await expect.poll(() => backgroundButton.count()).toBe(1)
     await backgroundButton.click()
     let dialog = page.getByRole('dialog')
     await dialog.getByLabel('背景', { exact: true }).selectOption('custom')
-    await dialog.locator('.nv-ap-background-control input[type="file"]').setInputFiles(join(scaffold.workspaceCwd, '外观/canvas.webp'))
-    await expect.poll(() => backgroundImage(page, '.nv-leaf'), { timeout: 15_000 }).toContain('/api/noven-appearance/asset')
+    await dialog.locator('.nv-ap-background-control input[type="file"][accept*="image"]').setInputFiles(join(scaffold.workspaceCwd, '外观/canvas.webp'))
+    await expectUploadedBackground(secondPath)
     const secondImage = await backgroundImage(page, '.nv-leaf')
     const imageIdentity = (image: string): string => image.replace(/([?&])revision=\d+/, '')
     expect(await dialog.getByLabel('界面视图', { exact: true }).count()).toBe(0)
@@ -768,8 +869,8 @@ describe('web e2e: scoped Noven appearance', () => {
     await backgroundButton.click()
     dialog = page.getByRole('dialog')
     await dialog.getByLabel('背景', { exact: true }).selectOption('custom')
-    await dialog.locator('.nv-ap-background-control input[type="file"]').setInputFiles(join(scaffold.workspaceCwd, '外观/file.webp'))
-    await expect.poll(() => backgroundImage(page, '.nv-leaf'), { timeout: 15_000 }).toContain('/api/noven-appearance/asset')
+    await dialog.locator('.nv-ap-background-control input[type="file"][accept*="image"]').setInputFiles(join(scaffold.workspaceCwd, '外观/file.webp'))
+    await expectUploadedBackground(firstPath)
     const firstImage = await backgroundImage(page, '.nv-leaf')
     await dialog.getByRole('button', { name: '关闭', exact: true }).click()
 
@@ -836,7 +937,7 @@ describe('web e2e: scoped Noven appearance', () => {
     const defaultChoice = page.getByRole('button', { name: /^(默认|Default)$/, exact: true })
     const addChoice = page.getByRole('button', { name: /^(添加自定义背景|Add custom background)$/, exact: true })
     await addChoice.click()
-    await page.locator('.nv-ap-background-control input[type="file"]').setInputFiles(join(scaffold.workspaceCwd, '外观/shell.webp'))
+    await page.locator('.nv-ap-background-control input[type="file"][accept*="image"]').setInputFiles(join(scaffold.workspaceCwd, '外观/shell.webp'))
     await expect.poll(async () => {
       const current = await (await scaffold.hostFetch(`/api/noven-appearance?session=${encodeURIComponent(SESSION_ID)}`)).json() as AppearanceResponse
       return current.globalRevision
@@ -920,4 +1021,144 @@ describe('web e2e: scoped Noven appearance', () => {
     }
     expect(tripwire.pageErrors).toEqual([])
   }, 120_000)
+
+  it('binds soundtracks and independent foregrounds with one central audio owner', async () => {
+    onTestFailed(() => saveFailureShot(page, 'noven-soundtrack'))
+    if (await page.getByRole('dialog').count() > 0) {
+      await page.keyboard.press('Escape')
+      await expect.poll(() => page.getByRole('dialog').count()).toBe(0)
+    }
+    await resetCanvasLayout()
+    await appearance({ action: 'reset' })
+    const requestedAudio: string[] = []
+    page.on('request', (request) => {
+      if (request.url().includes('audio-asset')) requestedAudio.push(request.url())
+    })
+    const currentView = async (): Promise<AppearanceResponse> => await (await scaffold.hostFetch(`/api/noven-appearance?session=${encodeURIComponent(SESSION_ID)}`)).json() as AppearanceResponse
+    const audioRequests = async (): Promise<string[]> => requestedAudio
+    const expectAudio = async (path: string): Promise<void> => {
+      await expect.poll(async () => (await audioRequests()).some(name => decodeURIComponent(name).includes(path)),
+        { timeout: 15_000 }).toBe(true)
+    }
+    const createDocument = async (): Promise<string> => {
+      if (await page.locator('[data-noven-canvas-switch]').count() > 0) {
+        await page.locator('[data-noven-canvas-switch]').first().click()
+        await page.getByRole('menuitem', { name: '起点', exact: true }).click()
+      }
+      await page.getByRole('button', { name: /文稿 从一页白纸开始/ }).click()
+      const editorTitle = page.locator('.nv-leaf').first().locator('.nv-ed-title:visible')
+      await editorTitle.waitFor({ timeout: 30_000 })
+      const title = await editorTitle.textContent()
+      if (title === null || title === '') throw new Error('document title missing')
+      return title
+    }
+
+    await page.getByRole('button', { name: '设置', exact: true }).click()
+    await page.getByRole('dialog').getByRole('button', { name: /^(外观|Appearance)$/ }).click()
+    await page.getByRole('button', { name: /^(分别设置|Customize scopes)$/ }).click()
+    await page.getByLabel(/^(编辑对象|Edit target)$/, { exact: true }).selectOption('session')
+    const sessionControls = page.locator('.nv-ap-track-controls[data-track-scope="session"]')
+    await sessionControls.locator('input[type="file"]').setInputFiles(join(scaffold.workspaceCwd, '外观/雨声.wav'))
+    await expect.poll(async () => (await currentView()).session.track?.path, { timeout: 15_000 }).toContain('.noven/appearance/')
+    const uploadedTrack = (await currentView()).session.track!
+    expect(uploadedTrack.kind).toBe('asset')
+    const audioResponse = await scaffold.hostFetch(`/api/noven-appearance/audio-asset?session=${encodeURIComponent(SESSION_ID)}&path=${encodeURIComponent(uploadedTrack.path)}`)
+    expect(audioResponse.status).toBe(200)
+    expect(audioResponse.headers.get('content-type')).toBe(AUDIO_MIME)
+    const audioHead = await scaffold.hostFetch(`/api/noven-appearance/audio-asset?session=${encodeURIComponent(SESSION_ID)}&path=${encodeURIComponent(uploadedTrack.path)}`, { method: 'HEAD' })
+    expect(audioHead.status).toBe(200)
+    expect(await audioHead.text()).toBe('')
+    await sessionControls.locator('input[type="range"]').evaluate((element) => {
+      const input = element as HTMLInputElement
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(input, '0')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+    await sessionControls.locator('input[type="checkbox"]').uncheck()
+    await sessionControls.locator('select').selectOption('invert')
+    await expect.poll(async () => (await currentView()).session.track?.volume, { timeout: 15_000 }).toBe(0)
+    expect((await currentView()).session.track?.loop).toBe(false)
+    await expect.poll(async () => (await currentView()).session.foreground, { timeout: 15_000 }).toBe('invert')
+    await page.keyboard.press('Escape')
+    const switchAgent = page.getByRole('button', { name: '切换到Agent', exact: true })
+    if (await switchAgent.count() > 0) await switchAgent.click()
+
+    const projectTitle = page.locator('.nv-hchip[data-has-track]')
+    await expect.poll(() => projectTitle.count(), { timeout: 15_000 }).toBe(1)
+    await expect.poll(() => projectTitle.isVisible(), { timeout: 15_000 }).toBe(true)
+    await projectTitle.hover()
+    await expect.poll(() => projectTitle.locator('.nv-title-play').isVisible()).toBe(true)
+    await projectTitle.click()
+    await expect.poll(() => projectTitle.getAttribute('data-playing'), { timeout: 15_000 }).toBe('true')
+    await expectAudio(uploadedTrack.path)
+    await projectTitle.click()
+    await expect.poll(() => projectTitle.getAttribute('data-playing'), { timeout: 15_000 }).toBeNull()
+    expect(await page.locator('[data-conversation-root]').evaluate(element => element.style.getPropertyValue('--nv-primary-text'))).toBe('#000000')
+
+    await appearance({ action: 'track', scope: 'workspace', track: { kind: 'audio', audioPath: '外观/案头.wav', volume: 0.2, loop: false } })
+    await page.getByRole('button', { name: '切换到手作', exact: true }).click()
+    const firstTitle = await createDocument()
+    const firstPath = `文稿/${firstTitle}.md`
+    await appearance({ action: 'track', scope: 'file', filePath: firstPath, track: { kind: 'audio', audioPath: '外观/林间.wav' }, foreground: 'dark' })
+    const firstTab = page.locator('.nv-canvas-tabtitle').filter({ hasText: firstTitle })
+    await expect.poll(() => firstTab.getAttribute('data-has-track'), { timeout: 15_000 }).toBe('true')
+    const firstLeafSelectedTab = page.locator('.nv-leaf').first().locator('.nv-canvas-tab[aria-selected="true"]')
+    await firstLeafSelectedTab.hover()
+    await expect.poll(() => firstTab.locator('.nv-title-play').isVisible()).toBe(true)
+    await expect.poll(() => firstLeafSelectedTab.locator('.nv-canvas-tabx').evaluate(element => getComputedStyle(element).opacity)).toBe('1')
+    await firstTab.click()
+    await expect.poll(() => firstTab.getAttribute('data-playing'), { timeout: 15_000 }).toBe('true')
+    await expectAudio((await currentView()).resolved.canvasTrack!.path)
+    await expect.poll(() => page.locator('.nv-leaf').first().evaluate(element => element.style.getPropertyValue('--nv-primary-text')), { timeout: 15_000 }).toBe('#16181a')
+    await appearance({ action: 'track', scope: 'file', filePath: firstPath, foreground: 'invert' })
+    await expect.poll(() => page.locator('.nv-leaf').first().evaluate(element => element.style.getPropertyValue('--nv-primary-text')), { timeout: 15_000 }).toBe('#000000')
+
+    const secondTitle = await createDocument()
+    const secondPath = `文稿/${secondTitle}.md`
+    await appearance({ action: 'track', scope: 'file', filePath: secondPath, track: { kind: 'audio', audioPath: '外观/雨声.wav' } })
+    await page.evaluate(() => {
+      const key = 'noven.canvas.tabs.v4'
+      const raw = localStorage.getItem(key)
+      if (raw === null) throw new Error('canvas persistence missing')
+      const persisted = JSON.parse(raw) as { state?: Record<string, unknown> } & Record<string, unknown>
+      const state = (persisted.state ?? persisted) as {
+        layout: Record<string, { tabs: unknown; active?: unknown } | Record<string, unknown>>
+        focus: Record<string, string>
+      }
+      for (const [scope, node] of Object.entries(state.layout)) {
+        if (!('tabs' in node) || !Array.isArray(node.tabs) || node.tabs.length < 2) continue
+        const tabs: readonly unknown[] = node.tabs
+        const [first, second] = tabs
+        if (typeof first !== 'string' || typeof second !== 'string') continue
+        state.layout[scope] = {
+          id: 'soundtrack-split', dir: 'x', ratio: 0.5,
+          a: { id: 'soundtrack-leaf-a', tabs: [first], active: first },
+          b: { id: 'soundtrack-leaf-b', tabs: [second], active: second },
+        }
+        state.focus[scope] = 'soundtrack-leaf-a'
+      }
+      localStorage.setItem(key, JSON.stringify(persisted))
+    })
+    await page.reload({ waitUntil: 'load' })
+    await page.locator('.nv-canvas').first().waitFor({ timeout: 30_000 })
+    await expect.poll(() => page.locator('.nv-leaf').count(), { timeout: 15_000 }).toBe(2)
+    expect(await page.locator('.nv-playable-title[data-playing="true"]').count()).toBe(0)
+    const firstLeafTab = page.locator('.nv-leaf').nth(0).locator('.nv-canvas-tabtitle').first()
+    const secondLeafTab = page.locator('.nv-leaf').nth(1).locator('.nv-canvas-tabtitle').first()
+    await firstLeafTab.click()
+    await expect.poll(() => firstLeafTab.getAttribute('data-playing'), { timeout: 15_000 }).toBe('true')
+    expect(await secondLeafTab.getAttribute('data-playing')).toBeNull()
+    await secondLeafTab.click()
+    await expect.poll(() => secondLeafTab.getAttribute('data-playing'), { timeout: 15_000 }).toBe('true')
+    expect(await firstLeafTab.getAttribute('data-playing')).toBeNull()
+    await secondLeafTab.click()
+    await expect.poll(() => secondLeafTab.getAttribute('data-playing'), { timeout: 15_000 }).toBeNull()
+    await appearance({ action: 'track', scope: 'session', track: { kind: 'default' } })
+    await expect.poll(() => secondLeafTab.getAttribute('data-playing'), { timeout: 15_000 }).toBeNull()
+    await appearance({ action: 'track', scope: 'workspace', track: { kind: 'default' } })
+    await appearance({ action: 'track', scope: 'file', filePath: secondPath, track: { kind: 'default' } })
+    await expect.poll(() => secondLeafTab.getAttribute('data-has-track'), { timeout: 15_000 }).toBeNull()
+    await appearance({ action: 'reset' })
+    expect(tripwire.pageErrors).toEqual([])
+  }, 180_000)
 })

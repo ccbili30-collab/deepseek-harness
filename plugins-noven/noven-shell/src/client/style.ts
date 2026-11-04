@@ -312,6 +312,7 @@ html[data-panel-handoff]::view-transition-new(noven-work) { mix-blend-mode: norm
   background:
   radial-gradient(circle at 50% 30%, rgba(52,211,153,.12), transparent 42%), var(--nv-surface); }
 html[data-noven-conversation-appearance] .nv-create-page { background: transparent; }
+.nv-create-topbar { display: flex; height: 48px; flex: none; align-items: center; justify-content: flex-end; padding: 0 12px; }
 .nv-create-ritual { width: min(920px, calc(100% - 64px)); flex: 1; min-height: 0; margin: 0 auto; padding: 0;
   box-sizing: border-box; display: flex; flex-direction: column; align-items: stretch; gap: 12px; overflow-y: auto; scrollbar-width: none; }
 /* The stack is the anchor, not any element in it: the leading spacer parks
@@ -1418,10 +1419,24 @@ button.nv-tree-switch[data-canvas-on] { background: var(--nv-accent); }
 .nv-canvas-strip { display: flex; align-items: center; gap: 2px; padding: 6px 10px 0; border-bottom: 0; overflow-x: auto; flex: none; }
 .nv-canvas-chrome-trailing { display: flex; align-items: center; gap: 2px; margin-left: auto; flex: none; }
 .nv-canvas-chrome-trailing .nv-canvas-menubutton { width: 28px; height: 28px; }
+.nv-chrome-icon-button { display: inline-flex; width: 28px; height: 28px; flex: none; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--nv-secondary-text); cursor: pointer; transition: color var(--nv-dur-micro) var(--nv-ease-out), background var(--nv-dur-micro) var(--nv-ease-out); }
+.nv-chrome-icon-button:hover { color: var(--nv-accent-deep); background: var(--nv-accent-soft); }
+.nv-chrome-icon-button svg { width: 16px; height: 16px; flex: none; }
 /* 侧边画布的页签条为框架的 [上级][折叠] 预留同一块宽度。 */
 [data-side-chrome] .nv-canvas-strip { padding-right: var(--dsh-side-chrome-inset); }
 .nv-canvas-tab { position: relative; display: flex; align-items: center; gap: 6px; padding: 7px 12px; font-size: 12.5px; cursor: pointer;
   color: var(--nv-secondary-text); border-radius: 8px 8px 0 0; border-bottom: 2px solid transparent; white-space: nowrap; }
+.nv-playable-title { display: inline-flex; min-width: 0; height: 30px; align-items: center; gap: 6px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: inherit; white-space: nowrap; }
+.nv-playable-title:hover, .nv-playable-title:focus-visible { background: var(--nv-hover); }
+.nv-title-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.nv-title-play { display: none; align-items: center; color: var(--nv-accent-deep); }
+.nv-playable-title:hover .nv-title-text, .nv-playable-title:focus-visible .nv-title-text { display: none; }
+.nv-playable-title:hover .nv-title-play, .nv-playable-title:focus-visible .nv-title-play { display: inline-flex; }
+.nv-playing-dot { width: 6px; height: 6px; flex: none; border-radius: 50%; background: var(--nv-accent); }
+@media (pointer: coarse) {
+  .nv-playable-title .nv-title-text { display: none; }
+  .nv-playable-title .nv-title-play { display: inline-flex; }
+}
 .nv-canvas-tab:hover { color: var(--nv-primary-text); background: var(--nv-accent-soft); }
 /* 选中页签：绿字（统一规则）+ 底缘一字宽的圆头短绿线，无底色。 */
 .nv-canvas-tab-on::after { content: ''; position: absolute; left: 50%; bottom: 0; transform: translateX(-50%);
@@ -4530,8 +4545,8 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
   color: var(--nv-accent-deep); font: inherit; font-size: 12.5px; cursor: pointer; }
 
 /* 外观设置沿用通用设置的 14/12px 字阶、16px 行距、细分隔线和轻选择器。 */
-.nv-appearance { display: flex; flex-direction: column; width: 100%; max-width: 720px; color: var(--dsw-alias-label-primary); }
-.nv-canvas-appearance { width: min(760px, calc(100vw - 32px)); }
+.nv-appearance { display: flex; flex-direction: column; width: 100%; max-width: 720px; max-height: calc(100vh - 96px); overflow-y: auto; color: var(--dsw-alias-label-primary); }
+.nv-canvas-appearance { width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow-y: auto; }
 .nv-ap-row { display: flex; align-items: center; gap: 24px; padding: 16px 0; border-bottom: .5px solid var(--dsw-alias-border-l2); }
 .nv-ap-row-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; padding-right: 24px; }
 .nv-ap-title { overflow: hidden; text-overflow: ellipsis; font-size: 14px; font-weight: 400; line-height: 22px; color: var(--dsw-alias-label-primary); }
@@ -4558,6 +4573,9 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
   background: var(--dsw-alias-bg-module-platform); color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; }
 .nv-ap-input::placeholder { color: var(--dsw-alias-label-caption); }
 .nv-ap-inline-actions { display: flex; gap: 12px; }
+.nv-ap-track-preferences { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px 12px; }
+.nv-ap-track-preferences .nv-ap-range-control { flex: 1; min-width: 160px; }
+.nv-ap-inline-check { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .nv-ap-preset-list { display: flex; flex-wrap: wrap; gap: 8px 18px; padding: 0 0 16px; border-bottom: .5px solid var(--dsw-alias-border-l2); }
 .nv-ap-preset-list:empty { display: none; }
 .nv-ap-preset-list button { border: 0; padding: 0; background: transparent; color: var(--dsw-alias-label-primary); font: inherit; font-size: 14px; line-height: 22px; cursor: pointer; }

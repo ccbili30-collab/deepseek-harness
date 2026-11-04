@@ -143,6 +143,13 @@ declare module '@deepseek-ai/dsh-client-ui-slots' {
   }
 }
 
+declare module '@deepseek-ai/dsh-client-ui-conversation/client' {
+  interface ConversationHeaderCornerOwnerProps {
+    /** Hidden-Chrome presentation supplied by the current source frame. */
+    readonly hidden: boolean
+  }
+}
+
 declare module '@deepseek-ai/dsh-client-ui-workspace/client' {
   interface UiWorkspace {
     /** Temporary Session navigation source; absent on older published builds. */
@@ -186,6 +193,11 @@ declare module '@deepseek-ai/dsh-client-ui-layout/client' {
     readonly auxiliaryCollapsed: boolean
   }
   interface ILayout {
+    /** Actual restorable Canvas claims used by content-owned recovery controls. */
+    readonly canvasClaims: {
+      claim(sessionId: string | null, includeParked?: boolean): 'left' | 'right' | null
+      subscribe(listener: () => void): () => void
+    }
     /** Coordinated explicit frame transition; absent on older published builds. */
     transitionFrame(commit: () => void): void
     setSidebarCollapsed(collapsed: boolean): void

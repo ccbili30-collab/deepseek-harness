@@ -26,7 +26,7 @@ const ISOLATED_ENV = ['NOVEN_HOME', 'NOVEN_PROJECTS_ROOT', 'NOVEN_CHANNEL'] as c
 async function inspectMainSession(
   page: Page,
   scaffold: WebScaffold,
-): Promise<{ readonly cwd?: string; readonly blank?: boolean; readonly preset?: string }> {
+): Promise<{ readonly id: string; readonly cwd?: string; readonly blank?: boolean; readonly preset?: string }> {
   const raw = await page.evaluate(() => localStorage.getItem('dsh.sessions.current'))
   if (raw === null) throw new Error('current Session pointer missing')
   const parsed = JSON.parse(raw) as { sessionId?: unknown }
@@ -38,6 +38,7 @@ async function inspectMainSession(
   ])
   const blank = list.items.find(row => row.sessionId === id)?.blank
   return {
+    id,
     ...(inspection.meta.cwd === undefined ? {} : { cwd: inspection.meta.cwd }),
     ...(blank === undefined ? {} : { blank }),
     ...(inspection.meta.agentPreset === undefined ? {} : { preset: inspection.meta.agentPreset }),
@@ -164,7 +165,7 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
     await page.keyboard.press('Escape')
 
     if (await page.locator('[data-side-session-menu]:visible').count() === 0) {
-      await page.locator('[data-center-col] [data-side-fold]').click()
+      await page.locator('.nv-canvas [data-chrome-command="reveal-auxiliary"]').click()
     }
     await page.locator('[data-noven-session-navigation]:visible').first().click()
     await page.getByRole('menuitem', { name: '会话列表', exact: true }).click()
@@ -259,25 +260,33 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
     await page.locator('.nv-tree-row', { hasText: '第二.txt' }).first().waitFor()
     expect(await page.locator('.nv-tree-row', { hasText: '第二.txt' }).first().getAttribute('data-current')).toBe('true')
 
-    // The side subject gets one frame button in both states.
+    // Handcraft folds the auxiliary Conversation in its own trailing slot;
+    // recovery then joins the primary Canvas tools without an independent rail.
     const center = page.locator('[data-center-col]')
-    const fold = page.locator('[data-center-col] [data-side-fold]')
-    if ((await center.boundingBox())?.width === 56) await fold.click()
+    const recovery = page.locator('.nv-canvas [data-chrome-command="reveal-auxiliary"]')
+    if ((await center.boundingBox())?.width === 0) await recovery.click()
+    const fold = page.locator('[data-center-col] [data-chrome-command="fold-auxiliary"]')
     await fold.waitFor()
-    const before = await fold.boundingBox()
-    const beforeLabel = await fold.getAttribute('aria-label')
     await fold.click()
-    await page.waitForTimeout(500)
-    expect((await center.boundingBox())?.width).toBe(56)
-    const after = await fold.boundingBox()
-    expect(Math.round(after?.x ?? 0)).toBe(Math.round(before?.x ?? 0))
-    expect(Math.round(after?.y ?? 0)).toBe(Math.round(before?.y ?? 0))
-    expect(Math.round(after?.width ?? 0)).toBe(Math.round(before?.width ?? 0))
-    expect(Math.round(after?.height ?? 0)).toBe(Math.round(before?.height ?? 0))
-    expect(await fold.getAttribute('aria-label')).not.toBe(beforeLabel)
-    await fold.click()
-    await page.waitForFunction(() => (document.querySelector('[data-center-col]')?.getBoundingClientRect().width ?? 0) > 56)
-    expect((await center.boundingBox())?.width).toBeGreaterThan(56)
+    await page.waitForFunction(() => document.querySelector('[data-center-col]')?.getBoundingClientRect().width === 0)
+    await recovery.waitFor()
+    const peers = await page.evaluate(() => {
+      const recoveryButton = document.querySelector('.nv-canvas [data-chrome-command="reveal-auxiliary"]')!
+      const tools = document.querySelector('.nv-canvas [data-noven-canvas-tools]')!
+      const left = recoveryButton.getBoundingClientRect()
+      const other = tools.getBoundingClientRect()
+      return {
+        width: left.width,
+        height: left.height,
+        centerY: left.y + left.height / 2,
+        toolsY: other.y + other.height / 2,
+        overlap: left.left < other.right && left.right > other.left && left.top < other.bottom && left.bottom > other.top,
+      }
+    })
+    expect(peers).toEqual({ width: 28, height: 28, centerY: peers.toolsY, toolsY: peers.toolsY, overlap: false })
+    await recovery.click()
+    await page.waitForFunction(() => (document.querySelector('[data-center-col]')?.getBoundingClientRect().width ?? 0) > 0)
+    expect((await center.boundingBox())?.width).toBeGreaterThan(0)
     expect(await page.locator('.nv-topbar-nav-toggle').count()).toBe(0)
   }, 120_000)
 
@@ -285,7 +294,6 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
     onTestFailed(() => saveFailureShot(page, 'noven-shell-parent-matrix'))
     const sidebar = page.locator('[data-sidebar-col]')
     const brand = page.locator('[data-sidebar-brand-toggle]')
-    const centerFold = page.locator('[data-center-col] [data-side-fold]')
 
     // Agent: Sessions are the main parent; no side parent is forced into the nav.
     await sidebar.locator('[role="treeitem"]').first().waitFor({ timeout: 30_000 })
@@ -297,9 +305,9 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
 
     // The side Canvas parent and fold share the trailing row; the fullscreen
     // is a content action and stays in the leading group.
-    const rightbarFold = page.locator('[data-rightbar-col] [data-side-fold]')
+    const recoveryFold = page.locator('[data-conversation-root] [data-chrome-command="reveal-auxiliary"]')
     const directory = page.locator('[data-workspace-side-directory]')
-    if (!(await directory.isVisible())) await rightbarFold.click()
+    if (!(await directory.isVisible()) && await recoveryFold.count() > 0) await recoveryFold.click()
     await directory.waitFor({ state: 'visible', timeout: 30_000 })
     const peers = await page.evaluate(() => {
       const box = (selector: string): { readonly width: number; readonly height: number; readonly y: number } | undefined => {
@@ -331,7 +339,9 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
 
     // Handcraft: the directory is the main parent; Sessions hang off the side Conversation header.
     await page.getByRole('button', { name: '切换到手作', exact: true }).click()
-    if ((await page.locator('[data-center-col]').boundingBox())?.width === 56) await centerFold.click()
+    if ((await page.locator('[data-center-col]').boundingBox())?.width === 0) {
+      await page.locator('.nv-canvas [data-chrome-command="reveal-auxiliary"]').click()
+    }
     const sessionMenu = page.locator('[data-side-session-menu]')
     await sessionMenu.waitFor({ state: 'visible' })
     expect(await sidebar.locator('[data-workspace-side-sessions]').count()).toBe(0)
@@ -347,6 +357,7 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
     await page.locator('[data-workspace-trigger]').waitFor()
 
     // Creation is an independent main panel; New Session remains a separate command.
+    const creationReturn = await inspectMainSession(page, scaffold)
     await page.locator('nav[class*="panelList"] button[aria-label="创作"]').click()
     await page.locator('.nv-create-page').waitFor({ timeout: 30_000 })
     expect(await page.locator('.nv-create-page').count()).toBe(1)
@@ -360,6 +371,12 @@ describe('web e2e: Noven shell, object chrome, motion, and macOS mirror', () => 
     console.log(`NOVEN_CREATE_SHOT=${createShot}`)
     expect(await page.getByRole('button', { name: /^(手作|Handcraft)/ }).count()).toBe(1)
     expect(await page.getByRole('button', { name: /^(导入|Import)/ }).count()).toBe(1)
+    expect(await page.locator('.nv-create-page [data-side-session-menu]').count()).toBe(0)
+    await page.locator('.nv-create-page [data-chrome-command="reveal-auxiliary"]').click()
+    await expect.poll(() => page.locator('.nv-create-page').count(), { timeout: 15_000 }).toBe(0)
+    expect((await inspectMainSession(page, scaffold)).id).toBe(creationReturn.id)
+    await page.locator('nav[class*="panelList"] button[aria-label="创作"]').click()
+    await page.locator('.nv-create-hero [data-composer-input]').waitFor({ timeout: 30_000 })
     await page.keyboard.press('Alt+Meta+N')
     await expect.poll(() => page.locator('.nv-create-page').count(), { timeout: 15_000 }).toBe(0)
     await page.locator('[data-composer-input]').first().waitFor({ timeout: 30_000 })
