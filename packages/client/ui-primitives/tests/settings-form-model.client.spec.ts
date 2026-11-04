@@ -76,6 +76,60 @@ describe('SettingsFormModel', () => {
     expect(first).toHaveBeenCalledWith('one')
     expect(second).toHaveBeenCalledWith('two')
     expect(subject.shell()).toMatchObject({ failed: true, dirty: true })
+    expect(subject.field('first').text).toBe('one')
+    expect(subject.field('second').text).toBe('')
+  })
+
+  it('retains input during a save and uses the accepted revision for the next save', async () => {
+    const { host, subject } = form()
+    host.publish({ revision: 4 })
+    let accept = (): void => {}
+    host.mutate.mockImplementationOnce(() => new Promise((resolve) => {
+      accept = () => {
+        host.publish({ revision: 5, value: { timeoutMs: 9000, baseURL: 'https://search.test/v1' }, user: { timeoutMs: 9000 } })
+        resolve(true)
+      }
+    }))
+    subject.actions().edit('timeoutMs', '9000')
+    const saving = subject.save()
+    subject.actions().edit('timeoutMs', '12000')
+    subject.actions().edit('baseURL', 'https://new.test')
+    accept()
+    await saving
+    expect(subject.field('timeoutMs').text).toBe('12000')
+    expect(subject.field('baseURL').text).toBe('https://new.test')
+    expect(subject.shell()).toMatchObject({ dirty: true, saving: false, failed: false })
+    acceptWrites(host)
+    await subject.save()
+    expect(host.mutate).toHaveBeenLastCalledWith([
+      { op: 'set', path: ['timeoutMs'], value: 12000 },
+      { op: 'set', path: ['baseURL'], value: 'https://new.test' },
+    ], 5)
+    expect(subject.shell().dirty).toBe(false)
+  })
+
+  it('acknowledges accepted settings and retains refused or newer credential drafts', async () => {
+    const host = stubScope<Record<string, unknown>>()
+    host.publish({ status: 'ready', writable: true, revision: 2, value: { baseURL: 'https://old.test' }, user: {} })
+    acceptWrites(host)
+    let accept = (): void => {}
+    const credential = vi.fn(() => new Promise<boolean>((resolve) => { accept = () => resolve(true) }))
+    const subject = new SettingsFormModel(host.scope, [settingsTextField('baseURL')], [
+      { field: 'key', write: credential },
+      { field: 'refused', write: () => Promise.resolve(false) },
+    ])
+    subject.actions().edit('baseURL', 'https://new.test')
+    subject.actions().edit('key', 'submitted')
+    subject.actions().edit('refused', 'retry')
+    const saving = subject.save()
+    await Promise.resolve()
+    subject.actions().edit('key', 'later')
+    accept()
+    await saving
+    expect(subject.field('baseURL').text).toBe('https://new.test')
+    expect(subject.field('key').text).toBe('later')
+    expect(subject.field('refused').text).toBe('retry')
+    expect(subject.shell()).toMatchObject({ failed: true, dirty: true })
   })
 
   it('retains drafts after transport failure and allows a retry', async () => {

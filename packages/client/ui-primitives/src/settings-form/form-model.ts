@@ -121,7 +121,7 @@ export interface SettingsFormActions {
   edit: (field: string, text: string) => void
   /** Stage a clear, so saving lets the field re-inherit the composition layer. */
   resetField: (field: string) => void
-  /** Write every staged edit, then re-seed from what the Host accepted. */
+  /** Save submitted drafts, retaining edits made during the write. */
   save: () => void
   /** Drop every staged edit. */
   discard: () => void
@@ -289,7 +289,7 @@ export class SettingsFormModel<T> {
   }
 
   /**
-   * Write every staged edit, then re-seed from what the Host accepted.
+   * Save current drafts and acknowledge only the submitted edits.
    *
    * The Host is the only authority on whether a value was accepted — its
    * validators own the constraints no schema can express — so the outcome is
@@ -301,6 +301,7 @@ export class SettingsFormModel<T> {
     const plan = this.plan()
     if (!plan.length || this.saving || !this.scope.getSnapshot().writable
       || plan.some(item => item.run === undefined && item.op === undefined)) return
+    const submitted = new Map(this.staged)
     this.saving = true
     this.failed = false
     this.publish()
@@ -308,8 +309,20 @@ export class SettingsFormModel<T> {
       const ops = plan.flatMap(item => item.op === undefined ? [] : [item.op])
       let landed = !ops.length || await this.scope.mutate(ops, this.baseline?.revision)
       if (!landed) { this.failed = true; return }
-      for (const item of plan) if (item.run) landed = await item.run() && landed
-      if (landed) { this.staged.clear(); this.baseline = undefined }
+      const acknowledge = (field: string): void => {
+        if (this.staged.get(field) === submitted.get(field)) this.staged.delete(field)
+      }
+      for (const field of submitted.keys()) {
+        if (!this.secretSpecs.has(field)) acknowledge(field)
+      }
+      this.baseline = this.staged.size === 0 ? undefined : this.scope.getSnapshot()
+      for (const item of plan) {
+        if (item.run === undefined) continue
+        const accepted = await item.run()
+        if (accepted) acknowledge(item.field)
+        landed = accepted && landed
+      }
+      if (this.staged.size === 0) this.baseline = undefined
       this.failed = !landed
     } catch (_error) {
       this.failed = true

@@ -11,6 +11,7 @@ import { BlockNoteView } from '@blocknote/mantine'
 import { wordCount } from './editor.tsx'
 import { applyImageWidths, extractImageWidths, percentToPx, pxToPercent } from './doc-image-width.ts'
 import { BLOCKNOTE_CSS } from './doc-blocknote-css.ts'
+import { TextSaveBuffer, type TextWriteResult } from './text-save-buffer.ts'
 
 export type NovenColorScheme = 'light' | 'dark'
 let colorScheme: NovenColorScheme = 'light'
@@ -135,7 +136,7 @@ function useBlockNoteStyles(): void {
  */
 export function BlockNoteDocEditor({ markdown, onChange, onDraft, autoSave = true, onOutline, onActive, onWordCount, onMarks, zoom, onZoom }: {
   readonly markdown: string
-  readonly onChange: (markdown: string) => void
+  readonly onChange: (markdown: string) => TextWriteResult | Promise<TextWriteResult>
   /** Latest draft for the manual-save path; never written automatically when autoSave is false. */
   readonly onDraft?: ((markdown: string) => void) | undefined
   /** When false, keep edits in the draft instead of calling the persistence callback. */
@@ -160,11 +161,16 @@ export function BlockNoteDocEditor({ markdown, onChange, onDraft, autoSave = tru
   const zoomRef = useRef(zoom)
   zoomRef.current = zoom
   const loaded = useRef(false)
-  const last = useRef(markdown)
+  const buffer = useRef(new TextSaveBuffer(markdown))
+  const callbacks = useRef({ onChange, autoSave })
+  callbacks.current = { onChange, autoSave }
   const timer = useRef<number | undefined>(undefined)
   /** 首帧的程序化载入不算用户编辑：ready 之前不存盘，避免"打开即改写"（AI 内容尤其）。 */
   const ready = useRef(false)
-  useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
+  useEffect(() => () => {
+    if (timer.current !== undefined) window.clearTimeout(timer.current)
+    if (callbacks.current.autoSave) void buffer.current.flush(text => callbacks.current.onChange(text))
+  }, [])
   // Ctrl/Cmd + 滚轮缩放；普通滚轮照常滚动。
   useEffect(() => {
     const view = scroller.current
@@ -215,15 +221,13 @@ export function BlockNoteDocEditor({ markdown, onChange, onDraft, autoSave = tru
     const extracted = extractImageWidths(markdown)
     const blocks = editor.tryParseMarkdownToBlocks(extracted.markdown)
     if (blocks.length > 0) editor.replaceBlocks(editor.document, blocks)
-    window.setTimeout(() => {
-      const contentWidth = Math.max(120, (scroller.current?.clientWidth ?? 860) - 96)
-      imageBlocksOf(editor.document).forEach((block, index) => {
-        const width = extracted.widths[index]
-        if (width === undefined) return
-        editor.updateBlock(block.id, { type: 'image', props: { previewWidth: percentToPx(width, contentWidth) } })
-      })
-      ready.current = true
-    }, 120)
+    const contentWidth = Math.max(120, (scroller.current?.clientWidth ?? 860) - 96)
+    imageBlocksOf(editor.document).forEach((block, index) => {
+      const width = extracted.widths[index]
+      if (width === undefined) return
+      editor.updateBlock(block.id, { type: 'image', props: { previewWidth: percentToPx(width, contentWidth) } })
+    })
+    ready.current = true
     const items = outlineOf(editor.document)
     itemsRef.current = items
     onOutline(items)
@@ -242,21 +246,19 @@ export function BlockNoteDocEditor({ markdown, onChange, onDraft, autoSave = tru
           onOutline(items)
           onWordCount(wordCount(plainTextOf(editor.document)))
           reportMarks()
-          if (ready.current) onDraft?.(editor.blocksToMarkdownLossy())
           if (timer.current !== undefined) window.clearTimeout(timer.current)
-          timer.current = window.setTimeout(() => {
+          if (!ready.current) return
+          const contentWidth = Math.max(120, (scroller.current?.clientWidth ?? 860) - 96)
+          const widths = imageBlocksOf(editor.document).map(block => {
+            const width = previewWidthOf(block)
+            return width === undefined ? undefined : pxToPercent(width, contentWidth)
+          })
+          const text = applyImageWidths(editor.blocksToMarkdownLossy(), widths)
+          buffer.current.stage(text)
+          onDraft?.(text)
+          if (autoSave) timer.current = window.setTimeout(() => {
             timer.current = undefined
-            if (!ready.current) return
-            const contentWidth = Math.max(120, (scroller.current?.clientWidth ?? 860) - 96)
-            const widths = imageBlocksOf(editor.document).map(block => {
-              const width = previewWidthOf(block)
-              return width === undefined ? undefined : pxToPercent(width, contentWidth)
-            })
-            const text = applyImageWidths(editor.blocksToMarkdownLossy(), widths)
-            if (text === last.current) return
-            last.current = text
-            onDraft?.(text)
-            if (autoSave) onChange(text)
+            void buffer.current.flush(value => callbacks.current.onChange(value))
           }, 600)
         }}
       />
@@ -270,7 +272,7 @@ export function BlockNoteDocEditor({ markdown, onChange, onDraft, autoSave = tru
  */
 export function PlainTextDocEditor({ text, onChange, onDraft, autoSave = true, lineNumbers = false }: {
   readonly text: string
-  readonly onChange: (text: string) => void
+  readonly onChange: (text: string) => TextWriteResult | Promise<TextWriteResult>
   /** Latest draft for the manual-save path; never written automatically when autoSave is false. */
   readonly onDraft?: ((text: string) => void) | undefined
   /** When false, keep edits in the draft instead of calling the persistence callback. */
@@ -279,10 +281,15 @@ export function PlainTextDocEditor({ text, onChange, onDraft, autoSave = true, l
   readonly lineNumbers?: boolean
 }) {
   const timer = useRef<number | undefined>(undefined)
-  const last = useRef(text)
+  const buffer = useRef(new TextSaveBuffer(text))
+  const callbacks = useRef({ onChange, autoSave })
+  callbacks.current = { onChange, autoSave }
   const numbersRef = useRef<HTMLOListElement | null>(null)
   const [lineCount, setLineCount] = useState(() => text.split('\n').length)
-  useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
+  useEffect(() => () => {
+    if (timer.current !== undefined) window.clearTimeout(timer.current)
+    if (callbacks.current.autoSave) void buffer.current.flush(value => callbacks.current.onChange(value))
+  }, [])
   const editor = (
     <textarea className="nv-doc-plain" defaultValue={text} spellCheck={false}
       onScroll={event => {
@@ -291,13 +298,12 @@ export function PlainTextDocEditor({ text, onChange, onDraft, autoSave = true, l
       onChange={event => {
         const value = event.currentTarget.value
         setLineCount(value.split('\n').length)
+        buffer.current.stage(value)
         onDraft?.(value)
         if (timer.current !== undefined) window.clearTimeout(timer.current)
-        timer.current = window.setTimeout(() => {
+        if (autoSave) timer.current = window.setTimeout(() => {
           timer.current = undefined
-          if (value === last.current) return
-          last.current = value
-          if (autoSave) onChange(value)
+          void buffer.current.flush(next => callbacks.current.onChange(next))
         }, 600)
       }} />
   )
@@ -322,14 +328,16 @@ export function PlainTextDocEditor({ text, onChange, onDraft, autoSave = true, l
  */
 export function CardMarkdownEditor({ markdown, onSave, locked = false }: {
   readonly markdown: string
-  readonly onSave: (markdown: string) => void
+  readonly onSave: (markdown: string, expectedText?: string) => TextWriteResult | Promise<TextWriteResult>
   readonly locked?: boolean
 }) {
   useBlockNoteStyles()
   const colorScheme = useNovenColorScheme()
   const editor = useCreateBlockNote({ dictionary: zh })
   const loaded = useRef(false)
-  const last = useRef(markdown)
+  const buffer = useRef(new TextSaveBuffer(markdown))
+  const save = useRef(onSave)
+  save.current = onSave
   const timer = useRef<number | undefined>(undefined)
   const box = useRef<HTMLDivElement | null>(null)
   const ready = useRef(false)
@@ -339,35 +347,32 @@ export function CardMarkdownEditor({ markdown, onSave, locked = false }: {
     const extracted = extractImageWidths(markdown)
     const blocks = editor.tryParseMarkdownToBlocks(extracted.markdown)
     if (blocks.length > 0) editor.replaceBlocks(editor.document, blocks)
-    window.setTimeout(() => {
-      const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
-      imageBlocksOf(editor.document).forEach((block, index) => {
-        const width = extracted.widths[index]
-        if (width === undefined) return
-        editor.updateBlock(block.id, { type: 'image', props: { previewWidth: percentToPx(width, contentWidth) } })
-      })
-      ready.current = true
-    }, 120)
+    const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
+    imageBlocksOf(editor.document).forEach((block, index) => {
+      const width = extracted.widths[index]
+      if (width === undefined) return
+      editor.updateBlock(block.id, { type: 'image', props: { previewWidth: percentToPx(width, contentWidth) } })
+    })
+    ready.current = true
   }, [editor, markdown])
-  // The editor is uncontrolled after mount. An external write (AI direct
-  // commit, another tab) arrives as a new `markdown` prop; reparse it instead
-  // of leaving the stale document on screen. A local save echoes its own text
-  // and is skipped by the last-value check.
+  // External snapshots may replace content only while local input is acknowledged.
   useEffect(() => {
-    if (markdown === last.current) return
-    last.current = markdown
+    if (!buffer.current.receive(markdown)) return
+    ready.current = false
     const extracted = extractImageWidths(markdown)
     editor.replaceBlocks(editor.document, editor.tryParseMarkdownToBlocks(extracted.markdown))
-    window.setTimeout(() => {
-      const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
-      imageBlocksOf(editor.document).forEach((block, index) => {
-        const width = extracted.widths[index]
-        if (width === undefined) return
-        editor.updateBlock(block.id, { type: 'image', props: { previewWidth: percentToPx(width, contentWidth) } })
-      })
-    }, 0)
+    const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
+    imageBlocksOf(editor.document).forEach((block, index) => {
+      const width = extracted.widths[index]
+      if (width === undefined) return
+      editor.updateBlock(block.id, { type: 'image', props: { previewWidth: percentToPx(width, contentWidth) } })
+    })
+    ready.current = true
   }, [editor, markdown])
-  useEffect(() => () => { if (timer.current !== undefined) window.clearTimeout(timer.current) }, [])
+  useEffect(() => () => {
+    if (timer.current !== undefined) window.clearTimeout(timer.current)
+    void buffer.current.flush((text, expected) => save.current(text, expected))
+  }, [])
   const commit = useCallback((): void => {
     if (!ready.current) return
     const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
@@ -376,10 +381,9 @@ export function CardMarkdownEditor({ markdown, onSave, locked = false }: {
       return width === undefined ? undefined : pxToPercent(width, contentWidth)
     })
     const text = applyImageWidths(editor.blocksToMarkdownLossy(), widths)
-    if (text === last.current) return
-    last.current = text
-    onSave(text)
-  }, [editor, onSave])
+    buffer.current.stage(text)
+    void buffer.current.flush((value, expected) => save.current(value, expected))
+  }, [editor])
   // AI 接手前把已经敲下的内容先提交：锁定发生在 800ms 防抖窗内时，
   // 不能把用户最后几下输入静默丢掉。
   useEffect(() => {
@@ -396,6 +400,13 @@ export function CardMarkdownEditor({ markdown, onSave, locked = false }: {
         editable={!locked}
         onChange={() => {
           if (locked) return
+          if (!ready.current) return
+          const contentWidth = Math.max(120, (box.current?.clientWidth ?? 640) - 4)
+          const widths = imageBlocksOf(editor.document).map(block => {
+            const width = previewWidthOf(block)
+            return width === undefined ? undefined : pxToPercent(width, contentWidth)
+          })
+          buffer.current.stage(applyImageWidths(editor.blocksToMarkdownLossy(), widths))
           if (timer.current !== undefined) window.clearTimeout(timer.current)
           timer.current = window.setTimeout(() => {
             timer.current = undefined

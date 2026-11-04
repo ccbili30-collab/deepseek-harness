@@ -44,6 +44,7 @@ import { Messages } from './pages/Messages.tsx'
 import { notifyUndo } from './ui/interact.tsx'
 import { openWorkspaceFolder } from './workspace-folder.ts'
 import { cardCache } from './ui/retain.ts'
+import { keyedCache } from './ui/keyed-cache.ts'
 import { forgetColdWhere } from './ui/cold-store.ts'
 import { MeHome, type LibraryFocus } from './pages/MeHome.tsx'
 import { CardPreview } from './card-page.tsx'
@@ -656,31 +657,6 @@ function transcriptSource(sessions: ClientContext['sessions'], sessionId: Sessio
           started = false
         }
       }
-    },
-  }
-}
-
-/**
- * 按键温层：条目快照跨退订保留——页重挂先渲缓存、后台补齐，不闪空。
- * 各源（doc/dir/转录）共用的最薄一层 Map 语义。
- */
-function keyedCache<T>(): {
-  readonly snapshot: ObservableSnapshot<Readonly<Record<string, T>>>
-  readonly get: (key: string) => T | undefined
-  readonly put: (key: string, value: T) => void
-} {
-  let state: Readonly<Record<string, T>> = {}
-  const listeners = new Set<() => void>()
-  return {
-    snapshot: {
-      getSnapshot: () => state,
-      subscribe: listener => { listeners.add(listener); return () => { listeners.delete(listener) } },
-    },
-    get: key => state[key],
-    put: (key, value) => {
-      if (state[key] === value) return
-      state = { ...state, [key]: value }
-      for (const listener of listeners) listener()
     },
   }
 }
@@ -1605,13 +1581,19 @@ export function apply(ctx: ClientContext): void {
   }
 
   /** 模块级命令的公共通道：先 loadCard 拿 version 再 apply（树行 ⋯ 菜单走这里）。 */
-  const moduleCommand = async (addr: CardAddr, cardId: string, build: (state: import('./card-api.ts').CardState) => CardCommand | undefined): Promise<void> => {
-    const state = await fetchCard(addr, cardId)
-    if (state === undefined) return
-    const command = build(state)
-    if (command === undefined) return
-    await cardOp(addr, { op: 'apply', cardId, version: state.version, command })
-      .catch((reason: unknown) => { console.warn('noven-shell: module command failed:', reason) })
+  const moduleCommand = async (addr: CardAddr, cardId: string, build: (state: import('./card-api.ts').CardState) => CardCommand | undefined): Promise<boolean> => {
+    try {
+      const state = await fetchCard(addr, cardId)
+      if (state === undefined) throw new Error(t('cardpage.missing'))
+      const command = build(state)
+      if (command === undefined) return false
+      await cardOp(addr, { op: 'apply', cardId, version: state.version, command })
+      treeSource.refresh()
+      return true
+    } catch (reason: unknown) {
+      notifyUndo({ text: fmt(t, 'ui.receipt.failedReason', { name: cardId, reason: reason instanceof Error ? reason.message : String(reason) }) })
+      return false
+    }
   }
 
   /** 模块子树里按 id 找名字（删除回执文案用）。 */
@@ -1779,8 +1761,10 @@ export function apply(ctx: ClientContext): void {
   }
 
   const readDoc = async (sessionId: SessionId, path: string): Promise<string | undefined> => {
-    const page = await ctx.remote.workspaceFiles.read(sessionId, path, {}, new AbortController().signal).catch(() => undefined)
-    return page !== undefined && page.ok ? page.value.text : undefined
+    const page = await ctx.remote.workspaceFiles.read(sessionId, path, {}, new AbortController().signal)
+    if (page.ok) return page.value.text
+    if (page.error.code === 'workspace-file/not-found') return undefined
+    throw page.error
   }
 
   const readProjectAsset = async (sessionId: SessionId, assetPath: string, base?: string): Promise<Blob | null> => {
@@ -1806,8 +1790,8 @@ export function apply(ctx: ClientContext): void {
 
   const listDir = async (sessionId: SessionId, path: string): Promise<readonly { name: string; type: string }[]> => {
     // 服务端拒收空路径——根目录用 "." 表达。
-    const listing = await ctx.remote.workspaceFiles.list(sessionId, path === '' ? '.' : path, new AbortController().signal).catch(() => undefined)
-    if (listing === undefined || !listing.ok) return []
+    const listing = await ctx.remote.workspaceFiles.list(sessionId, path === '' ? '.' : path, new AbortController().signal)
+    if (!listing.ok) throw listing.error
     return listing.value.entries.map(entry => ({ name: entry.name, type: entry.type }))
   }
 
@@ -1828,34 +1812,38 @@ export function apply(ctx: ClientContext): void {
     const key = docKey(sessionId, path)
     if (docCache.get(key) !== undefined) return
     docCache.put(key, { state: 'loading' })
-    void readDoc(sessionId, path).then(content => {
-      docCache.put(key, content === undefined ? { state: 'missing' } : { state: 'ready', content })
-    })
+    void docCache.refresh(key, async () => {
+      const content = await readDoc(sessionId, path)
+      return content === undefined ? { state: 'missing' } : { state: 'ready', content }
+    }).catch((reason: unknown) => { console.warn('noven-shell: document read failed:', reason) })
   }
 
   /** 强制重拉：保留旧快照到响应到达——重挂中的岛/预览不闪空。 */
   const refreshDoc = (sessionId: SessionId, path: string): void => {
     const key = docKey(sessionId, path)
-    void readDoc(sessionId, path).then(content => {
-      docCache.put(key, content === undefined ? { state: 'missing' } : { state: 'ready', content })
-    })
+    void docCache.refresh(key, async () => {
+      const content = await readDoc(sessionId, path)
+      return content === undefined ? { state: 'missing' } : { state: 'ready', content }
+    }).catch((reason: unknown) => { console.warn('noven-shell: document refresh failed:', reason) })
   }
 
   const ensureDir = (sessionId: SessionId, path: string): void => {
     const key = dirKey(sessionId, path)
     if (dirCache.get(key) !== undefined) return
     dirCache.put(key, { state: 'loading', entries: [] })
-    void listDir(sessionId, path).then(entries => {
-      dirCache.put(key, { state: 'ready', entries })
-    })
+    void dirCache.refresh(key, async () => {
+      const entries = await listDir(sessionId, path)
+      return { state: 'ready', entries }
+    }).catch((reason: unknown) => { console.warn('noven-shell: directory read failed:', reason) })
   }
 
   /** 目录版强制重拉：旧清单留到响应到达（文件列表挂回时用——目录成员可能已变）。 */
   const refreshDir = (sessionId: SessionId, path: string): void => {
     const key = dirKey(sessionId, path)
-    void listDir(sessionId, path).then(entries => {
-      dirCache.put(key, { state: 'ready', entries })
-    })
+    void dirCache.refresh(key, async () => {
+      const entries = await listDir(sessionId, path)
+      return { state: 'ready', entries }
+    }).catch((reason: unknown) => { console.warn('noven-shell: directory refresh failed:', reason) })
   }
 
   /** 建一条「模-」模拟会话：真实 session + rename + pick + open（树 Studio 组与模拟器列表共用）。 */
@@ -2204,7 +2192,8 @@ export function apply(ctx: ClientContext): void {
           name = findTreeName(state.document.modules, moduleId) ?? ''
           return { kind: 'remove_module', moduleId }
         })
-          .then(() => {
+          .then(accepted => {
+            if (!accepted) return
             canvasInstance.actions.close(sessionId, `mod:${cardId}:${moduleId}`)
             treeSource.refresh()
             notifyUndo({
@@ -2223,7 +2212,6 @@ export function apply(ctx: ClientContext): void {
       deleteCard: (cardId, name) => { deleteCardWithUndo({ sessionId, root: focusSnapshot?.root }, cardId, name, sessionId) },
       embedFile: (cardId, moduleId, path) => {
         void moduleCommand({ sessionId, root: focusSnapshot?.root }, cardId, () => ({ kind: 'embed_file', path, moduleId }))
-          .then(() => treeSource.refresh())
       },
       openDoc: (path, title) => {
         const kind = fileTabKind(path)
@@ -2659,11 +2647,14 @@ export function apply(ctx: ClientContext): void {
           })
         },
         deleteCard: (cardId, addr, name) => {
-          instance.actions.closePreview()
-          face.openPanel(ME_ID)
-          void deleteCatalogCard(addr, cardId, name).catch((reason: unknown) => {
-            console.warn('noven-shell: preview card delete failed:', reason)
-          })
+          void deleteCatalogCard(addr, cardId, name)
+            .then(() => {
+              instance.actions.closePreview()
+              face.openPanel(ME_ID)
+            })
+            .catch((reason: unknown) => {
+              notifyUndo({ text: fmt(t, 'ui.receipt.failedReason', { name, reason: reason instanceof Error ? reason.message : String(reason) }) })
+            })
         },
       }),
     }, (p: PageProps & PropsStore<ReturnType<typeof createShellStore>> & InjectFace<PreviewPageInjected>) => {

@@ -8,7 +8,7 @@ import { spawnSync } from 'node:child_process'
 const packageRoot = fileURLToPath(new URL('..', import.meta.url))
 const tests = [
   'round-trip', 'proposals', 'selection', 'routes', 'map', 'presets',
-  'module-presets', 'image-width', 'ai-interface', 'surface', 'resource-closure',
+  'module-presets', 'image-width', 'ai-interface', 'surface', 'resource-closure', 'markdown-save',
 ]
 const requested = process.argv.slice(2)
 for (const name of requested) {

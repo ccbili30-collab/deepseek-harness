@@ -5,7 +5,7 @@
  * container, so neither renderer reads the current Session or surrounding surface.
  * @module noven-shell/client/blocks
  */
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { CardAddr, CardDocView, CardModuleDoc, CardState } from './card-api.ts'
@@ -14,9 +14,10 @@ import type { WidgetSend } from './widgets.tsx'
 import { findModule } from './pages/card-tree.ts'
 import type { ShellT } from './pages/Home.tsx'
 import { ModuleSurface } from './module-surface.tsx'
-import { readModuleSource, resolveModuleSource, type ResolvedModuleSource } from './module-source.ts'
+import { readModuleSource, resolveModuleSource } from './module-source.ts'
 import { InlineCodeBlock } from './code/CodeBlock.tsx'
 import { registerCodeChoiceCodec } from './code/choice-codec.ts'
+import { useRetainedCard } from './ui/retain.ts'
 
 /** Host services needed to read module content; no navigation or write services. */
 export interface InlineBlockDependencies {
@@ -26,11 +27,6 @@ export interface InlineBlockDependencies {
 }
 
 type ModuleOwner = CardDocView | CardDocView['characters'][number]
-interface LoadedModule {
-  readonly state: CardState
-  readonly owner: ModuleOwner
-  readonly module: CardModuleDoc
-}
 
 /** Find a module in the card root or one of its internal character documents. */
 function findOwnedModule(document: CardDocView, moduleId: string): { readonly owner: ModuleOwner, readonly module: CardModuleDoc } | undefined {
@@ -41,18 +37,6 @@ function findOwnedModule(document: CardDocView, moduleId: string): { readonly ow
     if (module !== undefined) return { owner, module }
   }
   return undefined
-}
-
-/** Load one resolved card address and select the referenced module. */
-async function loadModule(source: ResolvedModuleSource, signal: AbortSignal): Promise<LoadedModule | undefined> {
-  const response = await fetch(source.endpoint, { signal }).catch(() => undefined)
-  if (response === undefined || !response.ok) return undefined
-  const state = await response.json().catch(() => undefined) as CardState | undefined
-  if (state === undefined || typeof state.document !== 'object' || state.document === null
-    || !Array.isArray(state.document.modules) || !Array.isArray(state.document.characters)
-    || !Array.isArray(state.resources)) return undefined
-  const found = findOwnedModule(state.document, source.moduleId)
-  return found === undefined ? undefined : { state, ...found }
 }
 
 /**
@@ -91,23 +75,18 @@ export function ModuleBlock({ src, title, dependencies }: {
   readonly dependencies: InlineBlockDependencies
 }) {
   const source = useMemo(() => readModuleSource(src), [src])
-  const [loaded, setLoaded] = useState<LoadedModule | null | undefined>(undefined)
-  useEffect(() => {
-    const controller = new AbortController()
-    setLoaded(undefined)
-    if (source === undefined) {
-      setLoaded(null)
-      return () => { controller.abort() }
-    }
-    void loadModule(source, controller.signal).then(next => {
-      if (!controller.signal.aborted) setLoaded(next ?? null)
-    })
-    return () => { controller.abort() }
-  }, [source])
   const addr = useMemo<CardAddr>(() => ({
     sessionId: source?.sessionId as SessionId,
     ...(source?.workspaceRoot === '' ? {} : { root: source?.workspaceRoot }),
   }), [source])
+  const retained = useRetainedCard(source === undefined ? null : addr, source?.cardId, fetchCard)
+  const loaded = useMemo(() => {
+    if (source === undefined) return null
+    if (retained.state === 'loading') return undefined
+    if (retained.state === undefined) return null
+    const found = findOwnedModule(retained.state.document, source.moduleId)
+    return found === undefined ? null : { state: retained.state, ...found }
+  }, [retained.state, source])
   const mapSend = useMemo(() => loaded === undefined || loaded === null
     ? undefined
     : createInlineMapSender(addr, loaded.state, loaded.owner.id, loaded.module.id), [addr, loaded])
@@ -122,6 +101,14 @@ export function ModuleBlock({ src, title, dependencies }: {
   const resolveProjectAsset = useCallback((path: string, base?: string): Promise<Blob | null> => source === undefined
     ? Promise.resolve(null)
     : dependencies.resolveProjectAsset(source.sessionId as SessionId, path, base), [dependencies, source])
+  if (retained.error !== undefined && loaded === null) {
+    return (
+      <div className="nv-module-block-status" role="alert">
+        <span>{retained.error.message}</span>
+        <code>{title ?? src}</code>
+      </div>
+    )
+  }
   if (loaded === null) {
     return (
       <div className="nv-module-block-status" role="status">

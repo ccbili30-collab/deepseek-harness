@@ -12,7 +12,7 @@ import { ledgerDir } from 'noven-ledger'
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { emptyCardDocument, findTarget, mintId, type ContentDocument, type ContentModule } from './model.ts'
+import { emptyCardDocument, findTarget, flattenModules, mintId, type ContentDocument, type ContentModule } from './model.ts'
 import { CardStore, DraftConflict, EditConflict, type CardDraft, type SavedCard } from './store.ts'
 import { buildPresetDocument, loadPreset } from './presets.ts'
 import { buildReferenceIndex } from './refs.ts'
@@ -25,6 +25,7 @@ import { appendDiagnostics } from './diagnostics.ts'
 import { acceptProposal, proposalChanges, proposalPreview, rejectProposal } from './proposals.ts'
 import { aiTrustOf, setAiTrust, type AiTrust } from './trust.ts'
 import { cardDocuments, cardModule } from './document-graph.ts'
+import { readModuleMarkdown } from './markdown.ts'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -439,6 +440,7 @@ function validateCommand(command: Record<string, unknown>): string | undefined {
     case 'place_module': case 'copy_module': case 'merge_child': return needs(['moduleId'])
     case 'write_text': return needs(['moduleId', 'moduleName', 'text'])
     case 'write_markdown': return needs(['moduleId', 'name', 'text'])
+      ?? (command.expectedText !== undefined && typeof command.expectedText !== 'string' ? 'invalid expectedText' : undefined)
     case 'write_caption': return needs(['moduleId', 'blockId', 'moduleName', 'text'])
     case 'move_block': case 'remove_block': case 'replace_block_image': return needs(['moduleId', 'blockId'])
     case 'insert_owned_image': return needs(['moduleId', 'resourceId'])
@@ -617,8 +619,14 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
           delete command.imageBase64
         }
         const { outcome, saved } = await applyAndCommit(store, cardId, String(body.targetId ?? cardId), command as unknown as EditorCommand, 'HUMAN')
+        const written = command.kind === 'write_markdown' && typeof command.moduleId === 'string'
+          ? flattenModules(findTarget(saved.document, String(body.targetId ?? cardId))?.modules ?? [])
+            .find(module => module.id === command.moduleId) : undefined
+        const savedText = written === undefined ? undefined
+          : await readModuleMarkdown(written, async ref => new TextDecoder().decode(await store.readPayload(cardId, ref)))
         return new Response(JSON.stringify({
           ok: true, revision: saved.revision, version: saved.version,
+          ...(savedText === undefined ? {} : { savedText }),
           createdModuleIds: outcome.createdModuleIds, createdBlockIds: outcome.createdBlockIds,
         }), { headers: JSON_HEADERS })
       }

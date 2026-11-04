@@ -1023,17 +1023,36 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, autoSave, line
   const base = entry?.content
   const [draft, setDraft] = useState<string | undefined>(base)
   const [saving, setSaving] = useState(false)
-  useEffect(() => { setDraft(base) }, [base])
+  const previousBase = useRef(base)
+  const saveBase = useRef(base)
+  const writes = useRef<Promise<unknown>>(Promise.resolve())
+  useEffect(() => {
+    const previous = previousBase.current
+    setDraft(current => current === undefined || current === previous ? base : current)
+    previousBase.current = base
+    saveBase.current = base
+  }, [base])
   const saveText = useCallback(async (text: string): Promise<'ok' | 'conflict' | 'error'> => {
-    // 注入的 saveDoc 在 'ok' 时把新内容写回温层——base 的推进由缓存承担。
     setSaving(true)
     setStatus(tab.key, 'working', true)
-    const result = await saveDoc(sessionId, path, text, base ?? null)
-    setSaving(false)
-    setStatus(tab.key, 'working', false)
-    setStatus(tab.key, 'error', result !== 'ok')
-    return result
-  }, [sessionId, saveDoc, path, base, tab.key, setStatus])
+    const write = writes.current.then(async () => {
+      const result = await saveDoc(sessionId, path, text, saveBase.current ?? null)
+      if (result === 'ok') saveBase.current = text
+      setStatus(tab.key, 'error', result !== 'ok')
+      return result
+    }).catch((_error): 'error' => {
+      setStatus(tab.key, 'error', true)
+      return 'error'
+    })
+    writes.current = write
+    try { return await write }
+    finally {
+      if (writes.current === write) {
+        setSaving(false)
+        setStatus(tab.key, 'working', false)
+      }
+    }
+  }, [sessionId, saveDoc, path, tab.key, setStatus])
   if (state === 'missing' || base === undefined) {
     return <div className="nv-canvas-missing">{t(state === 'missing' ? 'canvas.doc.missing' : 'canvas.files.loading')}</div>
   }
@@ -1175,10 +1194,10 @@ function DocTab({ tab, t, sessionId, useDocs, ensureDoc, saveDoc, autoSave, line
         )}
       </header>
       {RICH_TEXT_PATH.test(path)
-        ? <BlockNoteDocEditor markdown={base} onChange={text => { void saveText(text) }} onDraft={setDraft} autoSave={autoSave}
+        ? <BlockNoteDocEditor markdown={base} onChange={saveText} onDraft={setDraft} autoSave={autoSave}
             onOutline={setOutline} onActive={setActiveHeading} onWordCount={setLiveCount} onMarks={setMarks}
             zoom={zoom} onZoom={setZoom} />
-        : <PlainTextDocEditor text={base} onChange={text => { void saveText(text) }} onDraft={setDraft}
+        : <PlainTextDocEditor text={base} onChange={saveText} onDraft={setDraft}
             autoSave={autoSave} lineNumbers={lineNumbers} />}
       </div>
       {RICH_TEXT_PATH.test(path) && (

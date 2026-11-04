@@ -4,6 +4,7 @@
  * @module noven-shell/client/card-api
  */
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
+import { cardCache, cardKey } from './ui/card-store.ts'
 
 export interface CardBlockView {
   readonly kind: 'text' | 'image'
@@ -103,7 +104,7 @@ export interface CardAddr {
 }
 
 const api = (addr: CardAddr): string => addr.sessionId !== undefined
-  ? `/api/noven-cards?session=${encodeURIComponent(addr.sessionId)}`
+  ? `/api/noven-cards?session=${encodeURIComponent(addr.sessionId)}${addr.root ? `&root=${encodeURIComponent(addr.root)}` : ''}`
   : `/api/noven-cards?root=${encodeURIComponent(addr.root ?? '')}`
 
 /** One sandbox console line posted for a free surface. */
@@ -132,11 +133,16 @@ export async function postCardDiagnostics(addr: CardAddr, cardId: string, module
   }).catch(() => undefined)
 }
 
-/** Fetch one card's editable state. */
+/** Fetch editable state; only an authoritative 404 returns undefined. Other failures reject. */
 export async function fetchCard(addr: CardAddr, cardId: string): Promise<CardState | undefined> {
-  const response = await fetch(`${api(addr)}&card=${encodeURIComponent(cardId)}`).catch(() => undefined)
-  if (response === undefined || !response.ok) return undefined
-  return (await response.json()) as CardState
+  const response = await fetch(`${api(addr)}&card=${encodeURIComponent(cardId)}`)
+  if (response.status === 404) return undefined
+  if (!response.ok) throw new Error(`card read failed (${response.status})`)
+  const state = await response.json() as CardState
+  if (typeof state !== 'object' || state === null || typeof state.document !== 'object' || state.document === null
+    || !Array.isArray(state.document.modules) || !Array.isArray(state.document.characters)
+    || !Array.isArray(state.resources)) throw new Error('invalid card response')
+  return state
 }
 
 /** One card's catalog row as `/api/noven-cards` lists it (root-relative fields only). */
@@ -200,6 +206,8 @@ export interface CardOpResult {
   /** apply 新建的模块/块：调用方据此直接打开新页，而不是停在总览。 */
   readonly createdModuleIds?: readonly string[]
   readonly createdBlockIds?: readonly string[]
+  /** Stored Markdown after a whole-module write, including parser spacing and image ids. */
+  readonly savedText?: string
 }
 
 /**
@@ -207,7 +215,7 @@ export interface CardOpResult {
  * A 409 may also carry a plain-text refusal (e.g. the delete guard); that is an
  * ordinary Error whose message is the route's explanation, not a conflict.
  */
-export async function cardOp(addr: CardAddr, op: CardOp): Promise<CardOpResult> {
+async function sendCardOp(addr: CardAddr, op: CardOp): Promise<CardOpResult> {
   const response = await fetch(api(addr), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -227,7 +235,48 @@ export async function cardOp(addr: CardAddr, op: CardOp): Promise<CardOpResult> 
     throw new Error(text || 'card op failed (409)')
   }
   if (!response.ok) throw new Error(text || `card op failed (${response.status})`)
-  return JSON.parse(text) as CardOpResult
+  const result = JSON.parse(text) as CardOpResult
+  if (result.ok === false) throw new Error('card op refused')
+  return result
+}
+
+interface PendingWrite {
+  readonly baseVersion: string | undefined
+  readonly settled: Promise<void>
+  acceptedVersion: string | undefined
+}
+const cardWrites = new Map<string, PendingWrite>()
+
+/**
+ * Serialize card commands and invalidate reads predating accepted writes.
+ * Only commands already queued from the same revision follow its accepted successor.
+ * @param addr - Captured card home.
+ * @param op - Operation with the caller's revision.
+ * @returns Accepted Host result; a refresh failure does not undo an accepted write.
+ */
+export async function cardOp(addr: CardAddr, op: CardOp): Promise<CardOpResult> {
+  if (op.cardId === undefined) return sendCardOp(addr, op)
+  const cardId = op.cardId
+  const key = cardKey(addr, cardId)
+  const previous = cardWrites.get(key)
+  const run = (previous?.settled ?? Promise.resolve()).then(async () => {
+    const version = previous?.baseVersion === op.version ? previous?.acceptedVersion ?? op.version : op.version
+    const result = await sendCardOp(addr, { ...op, ...(op.version === undefined ? {} : { version }) })
+    queued.acceptedVersion = result.version
+    cardCache.acceptWrite(addr, cardId)
+    if (op.op === 'delete' || op.op === 'move') cardCache.put(addr, cardId, undefined)
+    else {
+      try { await cardCache.refresh(addr, cardId, fetchCard) }
+      catch (_error) {
+        // The write is acknowledged; readers retain their snapshot until retry.
+      }
+    }
+    return result
+  })
+  const queued: PendingWrite = { baseVersion: op.version, settled: run.then(() => undefined, () => undefined), acceptedVersion: undefined }
+  cardWrites.set(key, queued)
+  void queued.settled.then(() => { if (cardWrites.get(key) === queued) cardWrites.delete(key) })
+  return run
 }
 
 /** Download the card's `.novex.zip` exchange package through the route's export op. */

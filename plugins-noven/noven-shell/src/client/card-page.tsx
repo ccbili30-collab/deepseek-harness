@@ -13,6 +13,7 @@ import { CardConflict, cardContentUrl, deleteUserModule, fetchUserModules, postC
 import { avatarImageId, coverImageId } from './card-images.ts'
 import { findModule } from './pages/card-tree.ts'
 import type { EditorSaveResult } from './editor.tsx'
+import type { TextWriteResult } from './text-save-buffer.ts'
 import { CardMarkdownEditor } from './doc-editor.tsx'
 import { CollectionWidget, RelationWidget, SceneWidget, TimelineWidget, coll, collText, rel, tl, type RefBacklink, type RefTarget, type TlPlace, type WidgetSend } from './widgets.tsx'
 import { setPlaceFocus } from './place-link.ts'
@@ -271,14 +272,9 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
   readonly refTargets?: readonly RefTarget[]
 }) {
   const source = module.widget?.source
-  const [state, setState] = useState<CardState | null | undefined>(undefined)
+  const retained = useRetainedCard(source === undefined ? null : addr, source?.cardId, loadCard)
+  const state = retained.state === 'loading' ? undefined : retained.state ?? null
   const [notice, setNotice] = useState('')
-  useEffect(() => {
-    if (source === undefined) return
-    let live = true
-    void loadCard(addr, source.cardId).then(next => { if (live) setState(next ?? null) })
-    return () => { live = false }
-  }, [addr, loadCard, source?.cardId])
   const sourceModule = state === undefined || state === null || source === undefined ? undefined : findModule(state.document.modules, source.moduleId)
   const snapshot = module.widget?.snapshot
   const imageUrl = useCallback((resourceId: string): string => {
@@ -289,8 +285,7 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
     if (state === undefined || state === null || op === undefined) return false
     try {
       const result = await op(addr, { op: 'apply', cardId: state.cardId, version: state.version, command })
-      const next = await loadCard(addr, state.cardId)
-      if (next !== undefined) setState(next)
+      await retained.refresh()
       if (result.version === undefined) {
         setNotice(t('card.refConflict'))
         return false
@@ -298,11 +293,10 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
       return true
     } catch (error: unknown) {
       setNotice(String(error instanceof Error ? error.message : error))
-      const next = await loadCard(addr, state.cardId)
-      if (next !== undefined) setState(next)
+      void retained.refresh()
       return false
     }
-  }, [addr, loadCard, op, state, t])
+  }, [addr, op, retained.refresh, state, t])
   const derive = (base: CardModuleDoc | undefined): CardModuleDoc | undefined => {
     if (base === undefined) return undefined
     const widget = base.widget
@@ -348,6 +342,7 @@ function RefModule({ module, t, addr, loadCard, op, onOpenCard, refTargets }: {
     setPlaceFocus({ cardId: state.cardId, mapModuleId: place.mapModuleId, markerId: place.markerId, ...(place.label === undefined ? {} : { label: place.label }) })
     onOpenCard?.(state.cardId, place.mapModuleId)
   }
+  if (retained.error !== undefined && state === null) return <div className="nv-refnotice" role="alert">{retained.error.message}</div>
   if (source === undefined) return <div className="nv-canvas-missing">{t('cardpage.missing')}</div>
   const live = derived !== undefined && state !== undefined && state !== null && sourceModule !== undefined
   const display = live ? derived : snapshotModule
@@ -394,7 +389,7 @@ export interface ModuleBoxProps {
   readonly imageUrl: (resourceId: string) => string
   /** 本卡可用的图片资源（地图选底图用）。 */
   readonly imageResources: readonly { readonly id: string, readonly mediaType?: string }[]
-  readonly saveMarkdown?: (module: CardModuleDoc, text: string) => Promise<EditorSaveResult>
+  readonly saveMarkdown?: (module: CardModuleDoc, text: string, expectedText?: string) => Promise<TextWriteResult>
   /** 预制模块的编辑命令直发（apply + 刷新由宿主负责）；缺席时统一拒绝写入。 */
   readonly send?: WidgetSend
   /** Only an authorized map-generation result channel may override the display-only sender. */
@@ -509,7 +504,7 @@ export function ModuleBox({ module, t, card, addr, loadCard, op, onOpenCard, ima
         )}
         {(widget === undefined || widget === 'document') && (
           <CardMarkdownEditor markdown={moduleMarkdown(module.blocks)} locked={locked || readOnly}
-            onSave={(text: string) => { void saveMarkdown?.(module, text) }} />
+            onSave={(text: string, expected?: string) => saveMarkdown?.(module, text, expected) ?? false} />
         )}
       </div>
       {module.children.length > 0 && !readOnly && (
@@ -1045,7 +1040,7 @@ function OverviewPage({ cardId, target, overviewModule, isCharacter, cardKind, t
   readonly t: ShellT
   readonly imageUrl: (resourceId: string) => string
   readonly imageResources: readonly { readonly id: string, readonly mediaType?: string }[]
-  readonly saveMarkdown: (module: CardModuleDoc, text: string) => Promise<EditorSaveResult>
+  readonly saveMarkdown: (module: CardModuleDoc, text: string, expectedText?: string) => Promise<TextWriteResult>
   readonly roles: readonly Omit<CardDocView, 'characters'>[]
   readonly rolesOpen: boolean
   readonly onToggleRoles: () => void
@@ -1086,7 +1081,7 @@ function OverviewPage({ cardId, target, overviewModule, isCharacter, cardKind, t
       {overviewModule !== undefined && (overviewModule.blocks?.length ?? 0) > 0 && (
         <div className={`nv-ov-intro${overviewLocked ? ' nv-ai-locked' : ''}`} data-ai-locked={overviewLocked ? '' : undefined} aria-busy={overviewLocked || undefined}>
           <CardMarkdownEditor markdown={introMarkdown} locked={overviewLocked}
-            onSave={(text: string) => { void saveMarkdown(overviewModule, text) }} />
+            onSave={(text: string, expected?: string) => saveMarkdown(overviewModule, text, expected)} />
         </div>
       )}
       {tiles.length === 0 && <div className="nv-canvas-missing">{t('ov.empty')}</div>}
@@ -1299,15 +1294,15 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
     if (url.hostname === 'file' && parts.length > 0) onOpenFile?.(parts.join('/'))
   }, [onOpenCard, onOpenFile])
 
-  const saveMarkdown = useCallback(async (module: CardModuleDoc, text: string): Promise<EditorSaveResult> => {
+  const saveMarkdown = useCallback(async (module: CardModuleDoc, text: string, expectedText?: string): Promise<TextWriteResult> => {
     try {
       const result = await op(addr, {
         op: 'apply', cardId, targetId, version,
-        command: { kind: 'write_markdown', moduleId: module.id, name: module.name, text },
+        command: { kind: 'write_markdown', moduleId: module.id, name: module.name, text, ...(expectedText === undefined ? {} : { expectedText }) },
       })
       if (result.version !== undefined) setVersion(result.version)
       void refresh()
-      return 'ok'
+      return result.savedText === undefined ? 'ok' : { savedText: result.savedText }
     } catch (error: unknown) {
       if (error instanceof CardConflict) { setNotice(t('editor.conflict')); void refresh(); return 'conflict' }
       setNotice(String(error instanceof Error ? error.message : error))
@@ -1334,9 +1329,8 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
   const clearHomeImage = useCallback((purpose: 'avatar' | 'cover' | 'logo'): void => {
     void homeCommand({ kind: 'appearance', resourceId: null, cover: purpose === 'cover', logo: purpose === 'logo' })
   }, [homeCommand])
-  const saveHomeTags = useCallback((tags: readonly string[]): void => {
-    void homeCommand({ kind: 'set_card_tags', tags })
-  }, [homeCommand])
+  const saveHomeTags = useCallback((tags: readonly string[]): Promise<boolean> =>
+    homeCommand({ kind: 'set_card_tags', tags }), [homeCommand])
   const addHomeRole = useCallback((name: string): void => {
     setRolesOpen(true)
     void homeCommand({ kind: 'add_character', name })
@@ -1435,6 +1429,7 @@ export function CardPage({ addr, cardId, pageModuleId, autoLibrary, scrollKey, t
       .catch((error: unknown) => setNotice(String(error instanceof Error ? error.message : error)))
   }, [addr, cardId, op, refresh, targetId, version])
 
+  if (retained.error !== undefined && state === undefined) return <div className="nv-canvas-missing" role="alert">{retained.error.message}</div>
   if (state === 'loading') return <div className="nv-canvas-missing">{t('canvas.files.loading')}</div>
   if (state === undefined || doc === undefined) {
     return <div className="nv-canvas-missing">{t('cardpage.missing')}</div>
@@ -1902,6 +1897,9 @@ export function CardPreview({ addr, cardId, t, loadCard, onBack, onEdit, onExpor
     </div>
   )
 
+  if (retained.error !== undefined && state === undefined) {
+    return <div className="nv-cardpreview">{bar}<div className="nv-cardpreview-missing" role="alert">{retained.error.message}</div></div>
+  }
   if (state === 'loading') {
     return <div className="nv-cardpreview">{bar}<div className="nv-cardpreview-missing">{t('canvas.files.loading')}</div></div>
   }

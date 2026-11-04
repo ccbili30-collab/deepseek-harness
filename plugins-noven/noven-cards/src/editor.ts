@@ -12,7 +12,7 @@ import { mintId, flattenModules, editBlocks, findTarget, replaceTarget, insertMo
 import { transferCardDocument } from './transfer.ts'
 import { cardModule } from './document-graph.ts'
 import { CardStore, EditConflict, type CardDraft, type ChangeSource, type SavedCard } from './store.ts'
-import { parseModuleMarkdown } from './markdown.ts'
+import { parseModuleMarkdown, readModuleMarkdown } from './markdown.ts'
 import { readProjectFile } from './exchange.ts'
 import { expandShape, bboxOf as geomBBox, padBBox, clipPolygonRect, clipPolylineRect, toChild, type GBBox } from 'noven-fmg/mapgeom'
 import { resolvePngHeightmap } from './heightmap-png.ts'
@@ -31,7 +31,7 @@ export type EditorCommand =
   | { kind: 'rename_card', name: string }
   | { kind: 'write_text', moduleId: string, blockId?: string | null, moduleName?: string, text: string, expectedContent?: string }
   | { kind: 'replace_text_range', moduleId: string, blockId: string, expectedContent: string, start: number, end: number, text: string, moduleName?: string }
-  | { kind: 'write_markdown', moduleId: string, name: string, text: string }
+  | { kind: 'write_markdown', moduleId: string, name: string, text: string, expectedText?: string }
   | { kind: 'write_caption', moduleId: string, blockId: string, moduleName?: string, text: string }
   | { kind: 'move_module', moduleId: string, beforeId?: string | null }
   | { kind: 'place_module', moduleId: string, parentId?: string | null, beforeId?: string | null }
@@ -153,7 +153,7 @@ export interface EditOutcome {
 /**
  * 把一条编辑命令套用到这张卡**当前最新**的草稿上（整段读改写在卡的串行链里完成）。
  * 不需要读取时的版本号：编辑不同模块的人和 AI 互不干扰；只有命令自带的块级期望
- * （`replace_text_range.expectedContent`、`write_text.expectedContent`）不满足时才抛
+ * （`replace_text_range.expectedContent`、`write_text.expectedContent`、`write_markdown.expectedText`）不满足时才抛
  * {@link EditConflict}。调用方随后 commit。
  * @param store - 卡库。
  * @param cardId - 根卡 id。
@@ -497,6 +497,10 @@ async function transformDocument(
     }
     case 'write_markdown': {
       const target = module(command.moduleId)
+      if (command.expectedText !== undefined) {
+        const current = await readModuleMarkdown(target, async ref => new TextDecoder().decode(await store.readPayload(cardId, ref)))
+        if (current !== command.expectedText) throw new EditConflict('模块正文已变化，请重新读取后修改', target.id)
+      }
       const blocks = await parseModuleMarkdown(card, command.text, async text => textRef(text))
       next = put({ ...card, modules: updateModule(card.modules, target.id, original => ({ ...original, name: command.name, blocks })) })
       break

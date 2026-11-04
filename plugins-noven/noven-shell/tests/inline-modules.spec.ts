@@ -275,11 +275,12 @@ describe('module block registration', () => {
 
 describe('inline map command channel', () => {
   test('writes only the referenced module and serializes card versions', async () => {
-    const fetchMock = vi.fn(async () => ({
+    let writes = 0
+    const fetchMock = vi.fn(async (_url, options) => options?.method === 'POST' ? ({
       ok: true,
       status: 200,
-      text: async () => JSON.stringify({ ok: true, version: `v${fetchMock.mock.calls.length + 1}` }),
-    }))
+      text: async () => JSON.stringify({ ok: true, version: `v${++writes + 1}` }),
+    }) : ({ ok: true, json: async () => ({ ...cardState([]), version: `v${writes + 1}` }) }))
     vi.stubGlobal('fetch', fetchMock)
     const send = createInlineMapSender({ sessionId: 'sess-1', root: '/workspace' }, cardState([]), 'character-1', 'map-1')
     assert.equal(await send({ kind: 'write_text', moduleId: 'map-1', text: 'no' }), false)
@@ -289,7 +290,7 @@ describe('inline map command channel', () => {
     const second = send({ kind: 'write_map_document', moduleId: 'map-1', text: '1.154.2|map' })
     assert.equal(await first, true)
     assert.equal(await second, true)
-    const bodies = fetchMock.mock.calls.map(call => JSON.parse(call[1].body))
+    const bodies = fetchMock.mock.calls.filter(call => call[1]?.method === 'POST').map(call => JSON.parse(call[1].body))
     assert.deepEqual(bodies.map(body => body.version), ['v1', 'v2'])
     assert.deepEqual(bodies.map(body => body.targetId), ['character-1', 'character-1'])
     assert.deepEqual(bodies.map(body => body.command.kind), ['record_map_terrain', 'write_map_document'])
@@ -317,7 +318,7 @@ describe('module block loading', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => { throw new SyntaxError('bad json') } })))
     const src = resolveModuleSource('card:card-1/module-1', 'sess-1', '/workspace')
     const view = await mount(createElement(ModuleBlock, { src, title: 'Invalid', dependencies }))
-    await vi.waitFor(() => assert.match(view.container.textContent, /cardpage.module.missing/))
+    await vi.waitFor(() => assert.match(view.container.textContent, /bad json/))
     assert.match(view.container.textContent, /Invalid/)
   })
 
@@ -327,7 +328,7 @@ describe('module block loading', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => state })))
     const src = resolveModuleSource('card:card-1/doc', 'sess-1', '/workspace')
     const view = await mount(createElement(ModuleBlock, { src, title: 'No resources', dependencies }))
-    await vi.waitFor(() => assert.match(view.container.textContent, /cardpage.module.missing/))
+    await vi.waitFor(() => assert.match(view.container.textContent, /invalid card response/))
     assert.match(view.container.textContent, /No resources/)
     assert.equal(view.container.querySelector('.nv-module-surface'), null)
   })

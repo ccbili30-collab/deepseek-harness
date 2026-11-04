@@ -683,46 +683,61 @@ function TimelineSettings({ moduleId, send, data, t }: {
   readonly t: ShellT
 }) {
   const [open, setOpen] = useState(false)
+  const [saving, setSaving] = useState(false)
   const [name, setName] = useState(data.calendar.name)
   const [unit, setUnit] = useState(data.calendar.unit)
   const [from, setFrom] = useState(data.window?.from === undefined ? '' : String(data.window.from))
   const [to, setTo] = useState(data.window?.to === undefined ? '' : String(data.window.to))
-  useEffect(() => {
-    if (!open) return
-    setName(data.calendar.name)
-    setUnit(data.calendar.unit)
-    setFrom(data.window?.from === undefined ? '' : String(data.window.from))
-    setTo(data.window?.to === undefined ? '' : String(data.window.to))
-  }, [open, data.calendar.name, data.calendar.unit, data.window?.from, data.window?.to])
-  const apply = (): void => {
+  const duplicateUnit = unit.trim() !== data.calendar.unit && data.calendar.units.some(entry => entry.name === unit.trim())
+  const toggle = (): void => {
+    if (!open) {
+      setName(data.calendar.name)
+      setUnit(data.calendar.unit)
+      setFrom(data.window?.from === undefined ? '' : String(data.window.from))
+      setTo(data.window?.to === undefined ? '' : String(data.window.to))
+    }
+    setOpen(value => !value)
+  }
+  const apply = async (): Promise<void> => {
+    if (saving || duplicateUnit) return
     const nextUnit = unit.trim() === '' ? data.calendar.unit : unit.trim()
     const calendar: TlCalendar = {
       ...data.calendar, name: name.trim(), unit: nextUnit,
-      units: [{ name: nextUnit, per: 1 }],
+      units: data.calendar.units.map(entry => entry.name === data.calendar.unit ? { ...entry, name: nextUnit } : entry),
+      cycles: data.calendar.cycles.map(entry => entry.unit === data.calendar.unit ? { ...entry, unit: nextUnit } : entry),
     }
     const window: TlWindow = {
       ...(from.trim() !== '' && Number.isFinite(Number(from)) ? { from: Number(from) } : {}),
       ...(to.trim() !== '' && Number.isFinite(Number(to)) ? { to: Number(to) } : {}),
     }
-    void send({ kind: 'timeline_set_calendar', moduleId, calendar })
-    void send({ kind: 'timeline_set_window', moduleId, window })
-    setOpen(false)
+    setSaving(true)
+    try {
+      if ((calendar.name !== data.calendar.name || nextUnit !== data.calendar.unit)
+        && !await send({ kind: 'timeline_set_calendar', moduleId, calendar })) return
+      if ((window.from !== data.window?.from || window.to !== data.window?.to)
+        && !await send({ kind: 'timeline_set_window', moduleId, window })) return
+      setOpen(false)
+    } catch (_error) {
+      // The owner reports write failures; retain the settings for retry.
+    } finally {
+      setSaving(false)
+    }
   }
   return (
     <span className="nv-tlset">
-      <button type="button" className="nv-tlset-button" onClick={() => setOpen(value => !value)}>{t('tl.settings')}</button>
+      <button type="button" className="nv-tlset-button" disabled={saving} onClick={toggle}>{t('tl.settings')}</button>
       {open && (
         <div className="nv-tlset-pop" onClick={event => event.stopPropagation()}>
-          <label><span>{t('tl.calName')}</span><input value={name} placeholder={t('tl.calUntitled')} onChange={event => setName(event.target.value)} /></label>
-          <label><span>{t('tl.unit')}</span><input value={unit} placeholder="年 / 月 / 日 / 岁" onChange={event => setUnit(event.target.value)} /></label>
+          <label><span>{t('tl.calName')}</span><input value={name} disabled={saving} placeholder={t('tl.calUntitled')} onChange={event => setName(event.target.value)} /></label>
+          <label><span>{t('tl.unit')}</span><input value={unit} disabled={saving} aria-invalid={duplicateUnit || undefined} placeholder="年 / 月 / 日 / 岁" onChange={event => setUnit(event.target.value)} /></label>
           <div className="nv-tlset-range">
-            <label><span>{t('tl.from')}</span><input type="number" value={from} placeholder="—" onChange={event => setFrom(event.target.value)} /></label>
-            <label><span>{t('tl.to')}</span><input type="number" value={to} placeholder="—" onChange={event => setTo(event.target.value)} /></label>
+            <label><span>{t('tl.from')}</span><input type="number" value={from} disabled={saving} placeholder="—" onChange={event => setFrom(event.target.value)} /></label>
+            <label><span>{t('tl.to')}</span><input type="number" value={to} disabled={saving} placeholder="—" onChange={event => setTo(event.target.value)} /></label>
           </div>
           <small>{t('tl.spanHint')}</small>
           <div className="nv-tlset-actions">
-            <button type="button" onClick={() => setOpen(false)}>{t('tl.cancel')}</button>
-            <button type="button" className="nv-tlset-apply" onClick={apply}>{t('tl.apply')}</button>
+            <button type="button" disabled={saving} onClick={() => setOpen(false)}>{t('tl.cancel')}</button>
+            <button type="button" className="nv-tlset-apply" disabled={saving || duplicateUnit} onClick={() => void apply()}>{t('tl.apply')}</button>
           </div>
         </div>
       )}
@@ -744,18 +759,30 @@ function TimelineDiaryFirst({ moduleId, send, t, unit, links }: {
   const [description, setDescription] = useState('')
   const [character, setCharacter] = useState('')
   const [relation, setRelation] = useState('')
-  const save = (): void => {
+  const [saving, setSaving] = useState(false)
+  const save = async (): Promise<void> => {
     const name = title.trim()
-    if (name === '') return
+    if (name === '' || saving) return
     const value = Number(age)
     const id = typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `ev-${String(Date.now())}`
-    void send({
+    setSaving(true)
+    try {
+      if (!await send({
       kind: 'timeline_add_event', moduleId,
       event: { id, at: Number.isFinite(value) ? value : 0, title: name, description,
         ...(character === '' ? {} : { characters: [character] }),
         ...(relation === '' ? {} : { relations: [relation] }) },
-    })
-    setAge('0'); setTitle(''); setDescription(''); setCharacter(''); setRelation('')
+      })) return
+      setAge(current => current === age ? '0' : current)
+      setTitle(current => current === title ? '' : current)
+      setDescription(current => current === description ? '' : current)
+      setCharacter(current => current === character ? '' : current)
+      setRelation(current => current === relation ? '' : current)
+    } catch (_error) {
+      // The owner reports write failures; retain this entry for retry.
+    } finally {
+      setSaving(false)
+    }
   }
   return (
     <article className="nv-tldiary-entry nv-tldiary-first">
@@ -785,7 +812,7 @@ function TimelineDiaryFirst({ moduleId, send, t, unit, links }: {
             </select>
           </label>
         </div>
-        <button type="button" className="nv-tldiary-firstsave" disabled={title.trim() === ''} onClick={save}>{t('coll.draftSave')}</button>
+        <button type="button" className="nv-tldiary-firstsave" disabled={saving || title.trim() === ''} onClick={() => void save()}>{t('coll.draftSave')}</button>
       </div>
     </article>
   )

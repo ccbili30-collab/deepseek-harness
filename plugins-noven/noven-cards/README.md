@@ -1,11 +1,15 @@
 # Noven cards
 
-卡片、模块和内部角色共享根卡的载荷目录。读取、地图请求、引用索引和导出使用完整文档树；每个模块仍由所属文档的资源表解析图片。
+English | [中文](README.zh.md)
 
-复制内部角色先分配编号，再搬运正文、图注、图片和扩展文件。自身引用指向目标世界，外部引用保持原地址。导入为每个模块分别重映射局部编号；不同地图中相同的地标编号互不影响。预览规范中的素材标签、时间线人物名称和普通文字字段保持原样。
+Whole-module edits may carry `expectedText`. The Host compares stored Markdown inside the card's serialized write and rejects content conflicts; the HTTP result's `savedText` contains the stored text. Older calls without an expectation retain their semantics, and edits to different modules do not require an identical card revision. These fields do not enter durable card data. `node tests/run.mjs markdown-save` tests conflicts, rejected input and older calls through the real route.
 
-交换包校验失败、载荷缺失或结构化 JSON 无效时，操作拒绝，目标卡的已提交修订不变。导入仍由既有草稿确认流程完成。
+Cards, modules and internal characters share the root card's payload directory. Reads, map requests, reference indexes and exports traverse the complete document tree; each module resolves images through its owning document's resource table.
 
-现有卡片格式、资源路径格式和交换包版本不变。读取不迁移或重写文件；普通文本只有本卡 `card-image:` 引用在复制和导入时随资源编号改写。图片和不透明扩展保持字节一致。复制和导入后的卡片仍能由此前运行时读取；回滚代码不会删除已生成卡片、历史修订或载荷。
+Internal-character copies allocate ids before transferring text, captions, images and extension files. Self references point to the destination world; external references retain their address. Imports remap local ids per module, keeping identical marker ids in different maps independent. Presentation asset labels, timeline character names and ordinary text fields remain unchanged.
 
-构建：在仓库根依次执行 `tsc -p plugins-noven/noven-ledger/tsconfig.json`、`tsc -p plugins-noven/noven-fmg/tsconfig.json`、`tsc -p plugins-noven/noven-cards/tsconfig.json`。回归入口：`node plugins-noven/noven-cards/tests/run.mjs resource-closure round-trip routes map`。测试进程使用独立的 `NOVEN_HOME` 和项目目录。
+Invalid exchange checksums, missing payloads and malformed structured JSON reject the operation without changing the destination's committed revision. Imports use the existing draft confirmation process.
+
+Existing card, resource path and exchange package versions remain unchanged. Reads do not migrate or rewrite files. Copies and imports rewrite only the owning card's `card-image:` references inside ordinary text. Images and opaque extensions retain their bytes. Earlier runtimes can read copied and imported cards; reverting code does not delete generated cards, historical revisions or payloads.
+
+Build from the repository root with `tsc -p plugins-noven/noven-ledger/tsconfig.json`, `tsc -p plugins-noven/noven-fmg/tsconfig.json`, then `tsc -p plugins-noven/noven-cards/tsconfig.json`. Run regressions with `node plugins-noven/noven-cards/tests/run.mjs resource-closure round-trip routes map`. Test processes use private `NOVEN_HOME` and project directories.

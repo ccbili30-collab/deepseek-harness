@@ -49,7 +49,7 @@ export interface SettingPageProps {
   readonly onAddRole?: (name: string) => void
   readonly onSetImage?: (purpose: 'avatar' | 'cover' | 'logo', base64: string, mediaType: string) => Promise<boolean>
   readonly onClearImage?: (purpose: 'avatar' | 'cover' | 'logo') => void
-  readonly onSaveTags?: (tags: readonly string[]) => void
+  readonly onSaveTags?: (tags: readonly string[]) => Promise<boolean>
 }
 
 const noop = (): void => undefined
@@ -280,6 +280,7 @@ function CharacterCard({ character, t, imageUrl, onOpen }: {
 export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModule, onAddModule, onOpenRole, onAddRole, onBackRole, isRole, menu, draft, aiEditing, renaming, onRename, onSetImage, onClearImage, onSaveTags }: SettingPageProps) {
   const [activeId, setActiveId] = useState('home')
   const [tagDraft, setTagDraft] = useState<string | undefined>(undefined)
+  const tagSaving = useRef(false)
   const [roleDraft, setRoleDraft] = useState<string | undefined>(undefined)
   const [imageSlot, setImageSlot] = useState<'avatar' | 'cover' | 'logo' | undefined>(undefined)
   const [tabScroll, setTabScroll] = useState({ left: false, right: false })
@@ -391,6 +392,7 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
     walk(target.modules)
     return [...found].slice(0, 10)
   }, [target.modules, target.tags])
+  const ownedTags = useMemo(() => [...new Set((target.tags ?? []).map(tag => tag.trim()).filter(tag => tag !== ''))], [target.tags])
 
   useEffect(() => {
     if (cover === '') {
@@ -415,11 +417,20 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
     setImageSlot(slot)
     fileRef.current?.click()
   }
-  const commitTag = (): void => {
+  const commitTag = async (): Promise<void> => {
+    if (tagSaving.current) return
     const value = (tagDraft ?? '').trim()
-    setTagDraft(undefined)
-    if (value === '' || tags.includes(value)) return
-    onSaveTags?.([...tags, value])
+    if (value === '' || ownedTags.includes(value)) { setTagDraft(undefined); return }
+    tagSaving.current = true
+    try {
+      if (await onSaveTags?.([...ownedTags, value])) {
+        setTagDraft(current => current?.trim() === value ? undefined : current)
+      }
+    } catch (_error) {
+      // The card owner reports the failure; retain the tag draft for retry.
+    } finally {
+      tagSaving.current = false
+    }
   }
   const commitRole = (): void => {
     const name = (roleDraft ?? '').trim()
@@ -502,9 +513,9 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
                 {tags.map(tag => (
                   <span key={tag} className="nv-set-tag">
                     {tag.startsWith('#') ? tag : `#${tag}`}
-                    {onSaveTags !== undefined && (
+                    {onSaveTags !== undefined && ownedTags.includes(tag) && (
                       <button type="button" aria-label={t('card.home.tagRemove')}
-                        onClick={() => onSaveTags(tags.filter(candidate => candidate !== tag))}>×</button>
+                        onClick={() => { void onSaveTags(ownedTags.filter(candidate => candidate !== tag)) }}>×</button>
                     )}
                   </span>
                 ))}
@@ -515,9 +526,9 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
                   )
                   : <input className="nv-set-taginput" autoFocus value={tagDraft} aria-label={t('card.home.tagAdd')}
                       onChange={event => setTagDraft(event.target.value)}
-                      onBlur={commitTag}
+                      onBlur={() => { void commitTag() }}
                       onKeyDown={event => {
-                        if (event.key === 'Enter') { event.preventDefault(); commitTag() }
+                        if (event.key === 'Enter') { event.preventDefault(); void commitTag() }
                         if (event.key === 'Escape') setTagDraft(undefined)
                       }} />}
               </div>

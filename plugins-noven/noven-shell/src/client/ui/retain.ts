@@ -14,54 +14,17 @@
  */
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { CardAddr, CardState } from '../card-api.ts'
-import { readColdSync, writeCold, forgetCold, type ColdNamespace } from './cold-store.ts'
+import { cardCache, cardKey } from './card-store.ts'
+export { cardCache, cardKey } from './card-store.ts'
 
 // ── card snapshots ─────────────────────────────────────────────────────────
-
-const cards = new Map<string, CardState>()
-const cardListeners = new Map<string, Set<(state: CardState | undefined) => void>>()
-
-/** Cache key for one card; the project root wins over the session so two sessions of one project share it. */
-export function cardKey(addr: CardAddr, cardId: string): string {
-  return `${addr.root ?? `session:${addr.sessionId ?? ''}`}::${cardId}`
-}
-
-/** Module-level card snapshot store. */
-export const cardCache = {
-  /**
-   * Last known state of a card.
-   * @param addr - card address (project root or session).
-   * @param cardId - card id.
-   * @returns the snapshot, or undefined when the card was never loaded.
-   */
-  get(addr: CardAddr, cardId: string): CardState | undefined {
-    return cards.get(cardKey(addr, cardId))
-  },
-  /**
-   * Record a fresh state (or forget the card with undefined) and notify views showing it.
-   * @param addr - card address.
-   * @param cardId - card id.
-   * @param state - new snapshot; undefined when the card no longer exists.
-   */
-  put(addr: CardAddr, cardId: string, state: CardState | undefined): void {
-    const key = cardKey(addr, cardId)
-    if (state === undefined) {
-      cards.delete(key)
-      // The card was explicitly removed/deleted: drop its cold snapshot too so
-      // a re-created card with the same id never flashes the old document.
-      forgetCold('card', key)
-    } else {
-      cards.set(key, state)
-      writeCold('card', key, state)
-    }
-    for (const listener of cardListeners.get(key) ?? []) listener(state)
-  },
-}
 
 /** What {@link useRetainedCard} hands to a card view. */
 export interface RetainedCard {
   /** Snapshot to render: last known state, `'loading'` only for a never-seen card, undefined when missing. */
   readonly state: CardState | 'loading' | undefined
+  /** Read failure, distinct from confirmed absence. */
+  readonly error: Error | undefined
   /** Replace the view's state locally (optimistic paths) and record it in the cache. */
   readonly setState: (next: CardState | undefined) => void
   /** Refetch now; resolves with the fresh state and records it. */
@@ -86,54 +49,56 @@ export function useRetainedCard(
     if (addr === null || cardId === undefined || key === undefined) return undefined
     // Cold layer first after a reload: render the persisted document on the
     // first paint, then the background refresh silently replaces it.
-    return cardCache.get(addr, cardId) ?? readColdSync<CardState>('card', key) ?? 'loading'
+    return cardCache.get(addr, cardId) ?? 'loading'
   }
   const [state, setLocal] = useState<CardState | 'loading' | undefined>(seed)
-  const addrRef = useRef(addr)
-  addrRef.current = addr
+  const [error, setError] = useState<Error | undefined>(undefined)
+  const seenKey = useRef(key)
+  const live = useRef(false)
+  const request = useRef(0)
   const loadRef = useRef(load)
   loadRef.current = load
 
   const refresh = useCallback(async (): Promise<CardState | undefined> => {
-    const target = addrRef.current
-    if (target === null || cardId === undefined) return undefined
-    const next = await loadRef.current(target, cardId)
-    // 取数失败（网络/会话休眠）与「卡没了」在 fetchCard 里同为 undefined——
-    // 有快照时不让一次失败把屏清空（内存或冷层都行）；卡真被删的路径由删除方显式 put(undefined)。
-    if (next === undefined && (cardCache.get(target, cardId) !== undefined
-      || (key !== undefined && readColdSync<CardState>('card', key) !== undefined))) {
-      return cardCache.get(target, cardId) ?? (key === undefined ? undefined : readColdSync<CardState>('card', key))
+    if (addr === null || cardId === undefined) return undefined
+    const attempt = ++request.current
+    try {
+      const next = await cardCache.refresh(addr, cardId, loadRef.current)
+      if (live.current && request.current === attempt && seenKey.current === key) setError(undefined)
+      return next
+    } catch (reason: unknown) {
+      if (live.current && request.current === attempt && seenKey.current === key) {
+        setError(reason instanceof Error ? reason : new Error(String(reason)))
+        setLocal(cardCache.get(addr, cardId))
+      }
+      return cardCache.get(addr, cardId)
     }
-    cardCache.put(target, cardId, next)
-    return next
-  }, [cardId, key])
+  }, [addr?.root, addr?.sessionId, cardId, key])
 
   // Re-seed synchronously when the card changes, so the first paint of the new
   // card is its snapshot rather than the previous card or a loading flash.
-  const seenKey = useRef(key)
   if (seenKey.current !== key) {
     seenKey.current = key
     const next = seed()
     if (next !== state) setLocal(next)
+    setError(undefined)
   }
 
   useEffect(() => {
     if (key === undefined) return
-    const listeners = cardListeners.get(key) ?? new Set()
-    cardListeners.set(key, listeners)
-    const listener = (next: CardState | undefined): void => { setLocal(next) }
-    listeners.add(listener)
+    if (addr === null || cardId === undefined) return
+    live.current = true
+    const unsubscribe = cardCache.subscribe(addr, cardId, setLocal)
     void refresh()
-    return () => { listeners.delete(listener) }
+    return () => { live.current = false; unsubscribe() }
   }, [key, refresh])
 
   const setState = useCallback((next: CardState | undefined) => {
-    const target = addrRef.current
-    if (target === null || cardId === undefined) { setLocal(next); return }
-    cardCache.put(target, cardId, next)
-  }, [cardId])
+    if (addr === null || cardId === undefined) { setLocal(next); return }
+    cardCache.put(addr, cardId, next)
+  }, [addr?.root, addr?.sessionId, cardId])
 
-  return { state, setState, refresh }
+  return { state, error, setState, refresh }
 }
 
 // ── scroll memory ──────────────────────────────────────────────────────────

@@ -5,7 +5,21 @@
  * @module noven-cards/markdown
  */
 
-import { mintId, flattenModules, type ContentBlock, type ContentDocument } from './model.ts'
+import { mintId, flattenModules, type ContentBlock, type ContentDocument, type ContentModule } from './model.ts'
+
+/**
+ * Read stored module Markdown for whole-module optimistic writes.
+ * @param module - Module to compare.
+ * @param readText - Reader for immutable text and caption payloads.
+ * @returns Markdown in editor block order.
+ */
+export async function readModuleMarkdown(module: ContentModule, readText: (ref: string) => Promise<string>): Promise<string> {
+  return (await Promise.all(module.blocks.map(async block => {
+    if (block.kind === 'text') return readText(block.content)
+    const caption = block.caption === undefined ? '' : await readText(block.caption)
+    return `![${caption}](card-image:${block.resourceId}#${block.id}${block.width === undefined ? '' : ` "w=${String(Math.round(block.width))}%"`})`
+  }))).join('\n\n')
+}
 
 const IMAGE_LINE = /^!\[([^\]]*)\]\(card-image:([^)#\s]+?)(?:#([^\)\s]+))?(?:\s+"([^"]*)")?\)$/
 const WIDTH_TITLE = /^w=(\d{1,3})%$/
