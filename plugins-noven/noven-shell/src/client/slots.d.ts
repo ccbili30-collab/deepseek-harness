@@ -223,21 +223,6 @@ declare module '@deepseek-ai/dsh-client-ui-sidebar-right/client' {
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
-    /** Host-owned canvas page kinds; absent on older published builds. */
-    canvasPages?: {
-      get(kind: string): {
-        readonly kind: string
-        readonly title: () => string
-        readonly component: import('react').ComponentType<{
-          readonly sessionId: string
-          readonly pageKey: string
-          readonly active: boolean
-          readonly close: () => void
-          readonly openPage: (kind: string) => void
-        }>
-      } | undefined
-      subscribe(listener: () => void): () => void
-    }
     /** Persisted settings developer unlock; absent on older published builds. */
     settingsDeveloperMode?: {
       getSnapshot(): boolean
