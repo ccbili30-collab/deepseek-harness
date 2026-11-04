@@ -19,6 +19,7 @@ import { buildBulkModules, parseBulkTree } from '../lib/bulk.js'
 import { exportCard, importExchange, importForeignFile } from '../lib/exchange.js'
 import { applyAndCommit, applyEdit } from '../lib/editor.js'
 import { setAiTrust } from '../lib/trust.js'
+import { cardModules } from '../lib/document-graph.js'
 
 const CRC_TABLE = new Int32Array(256).map((_, n) => {
   let c = n
@@ -126,7 +127,22 @@ try {
   check(canonical(structure1) === canonical(structure2), '往返结构逐项一致（编号除外）')
   const sha1 = Object.values(exported.sha256).sort()
   const sha2 = Object.values(exported2.sha256).sort()
-  check(JSON.stringify(sha1) === JSON.stringify(sha2), `载荷 SHA-256 对账（${String(sha1.length)} 条）`)
+  const widgetBlocks = document => cardModules(document)
+    .filter(({ module }) => ['collection', 'timeline', 'map', 'relation', 'scene'].includes(module.widget?.type))
+    .map(({ module }) => module.blocks.find(block => block.kind === 'text'))
+    .filter(Boolean)
+  const beforeImport = (await store.open('card-a')).document
+  const sourceWidgets = widgetBlocks(beforeImport)
+  const targetWidgets = widgetBlocks(committedImport.document)
+  const immutableHashes = (sha, widgets) => {
+    const rewritten = new Set(widgets.map(block => block.content))
+    return Object.entries(sha).filter(([ref]) => !rewritten.has(ref)).map(([, hash]) => hash).sort()
+  }
+  check(JSON.stringify(immutableHashes(exported.sha256, sourceWidgets)) === JSON.stringify(immutableHashes(exported2.sha256, targetWidgets)), '正文、图片与不透明扩展的 SHA-256 一致')
+  const structuredPayloads = async (rootId, blocks) => Promise.all(blocks.map(async block =>
+    stripIds(JSON.parse(new TextDecoder().decode(await store.readPayload(rootId, block.content))))))
+  check(canonical(await structuredPayloads('card-a', sourceWidgets)) === canonical(await structuredPayloads(imported.cardId, targetWidgets)), '结构化载荷除重新分配的编号外逐项一致')
+  check(sha1.length === sha2.length, `载荷数量一致（${String(sha1.length)} 条）`)
   check(committedImport.document.internalCharacters.length === 1, '世界内角色递归完整保留')
 
   // 6. 抽屉式并发：不同模块同时写互不丢更新；同一文字块读后被改才拒绝

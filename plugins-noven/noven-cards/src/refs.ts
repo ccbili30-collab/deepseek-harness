@@ -9,6 +9,7 @@
 import type { CardStore } from './store.ts'
 import type { ContentModule } from './model.ts'
 import { decodeCollection } from './formats.ts'
+import { cardModules } from './document-graph.ts'
 
 /** One stored reference cell. `name` is denormalized for display; ids drive links. */
 export interface CardRef {
@@ -80,11 +81,6 @@ export function asCardRef(value: unknown): CardRef | undefined {
   }
 }
 
-const flatten = (modules: readonly ContentModule[], out: ContentModule[] = []): ContentModule[] => {
-  for (const module of modules) { out.push(module); flatten(module.children, out) }
-  return out
-}
-
 /**
  * Build the reference index for one project.
  * @param store - card store rooted at the project.
@@ -98,7 +94,7 @@ export async function buildReferenceIndex(store: CardStore): Promise<ReferenceIn
   for (const cardId of ids) {
     const card = await store.open(cardId)
     if (card === undefined) continue
-    const modules = flatten(card.document.modules)
+    const modules = cardModules(card.document).map(entry => entry.module)
     targets.push({
       cardId, name: card.document.name, kind: card.document.kind,
       modules: modules.map(module => ({ id: module.id, name: module.name, type: module.widget?.type ?? 'document' })),

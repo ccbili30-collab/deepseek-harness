@@ -24,6 +24,7 @@ import { buildExportPackage, importExchange, importForeignFile } from './exchang
 import { appendDiagnostics } from './diagnostics.ts'
 import { acceptProposal, proposalChanges, proposalPreview, rejectProposal } from './proposals.ts'
 import { aiTrustOf, setAiTrust, type AiTrust } from './trust.ts'
+import { cardDocuments, cardModule } from './document-graph.ts'
 
 const JSON_HEADERS = {
   'Content-Type': 'application/json; charset=utf-8',
@@ -226,7 +227,8 @@ async function cardPayload(store: CardStore, root: string, cardId: string, previ
     canUndo: (undo?.at ?? head.revision) > 1,
     canRedo: (undo?.redo.length ?? 0) > 0,
     document: await hydrateDocument(store, cardId, effective.document),
-    resources: effective.document.resources.map(r => ({ id: r.id, ref: r.content, mediaType: r.mediaType })),
+    resources: cardDocuments(effective.document).flatMap(owner =>
+      owner.resources.map(r => ({ id: r.id, ref: r.content, mediaType: r.mediaType }))),
     coverResourceId: effective.document.appearance.coverResourceId ?? null,
     hasProposal: proposal !== undefined,
     proposal: proposal === undefined ? null : { pending: true, baseRevision: proposal.baseRevision, changes: proposalChanges(head.document, proposal) },
@@ -518,15 +520,7 @@ async function serve(request: Request, ctx: Context): Promise<Response> {
     if (mapRequestModule !== null && mapRequestModule !== '') {
       const head = await store.open(cardId)
       if (head === undefined) return new Response('card not found', { status: 404, headers: JSON_HEADERS })
-      const findModule = (modules: readonly ContentModule[]): ContentModule | undefined => {
-        for (const module of modules) {
-          if (module.id === mapRequestModule) return module
-          const child = findModule(module.children)
-          if (child !== undefined) return child
-        }
-        return undefined
-      }
-      const module = findModule(head.document.modules)
+      const module = cardModule(head.document, mapRequestModule)?.module
       return new Response(request.method === 'HEAD' ? null : JSON.stringify({
         revision: head.revision,
         request: module?.widget?.type === 'map' ? module.widget.request ?? null : null,

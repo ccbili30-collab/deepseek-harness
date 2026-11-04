@@ -12,10 +12,12 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises'
 import { Buffer } from 'node:buffer'
 import { inflateRawSync } from 'node:zlib'
 import { dirname, join } from 'node:path'
-import { mintId, flattenModules, type ContentDocument, type ContentModule, type ContentRef } from './model.ts'
+import { assertValid, mintId, flattenModules, type ContentDocument, type ContentModule } from './model.ts'
 import { CardStore } from './store.ts'
 import { readZip, writeZip, type ZipEntry } from './zip.ts'
-import { decodeCollection, decodeMap, decodeRelation, decodeTimeline } from './formats.ts'
+import { decodeCollection, decodeMap, decodeRelation, decodeScene, decodeTimeline } from './formats.ts'
+import { cardDocuments, cardModule, cardModules, cardPayloadRefs, moduleResourceIds } from './document-graph.ts'
+import { transferCardDocument } from './transfer.ts'
 
 const EXPERIMENT = 'novex-content-exchange'
 const SUPPORTED_VERSIONS = [1, 2] as const
@@ -24,22 +26,8 @@ interface ManifestEntry { path: string, size: number, sha256: string }
 interface ExchangeStructure {
   experiment: string
   version: number
-  card: Record<string, unknown>
+  card: ContentDocument
   contents: Record<string, ManifestEntry>
-}
-
-/** 收集一张卡结构里引用到的全部 ContentRef（含世界内角色，递归）。 */
-function collectRefs(card: ContentDocument, into: Set<string> = new Set()): Set<string> {
-  for (const module of flattenModules(card.modules)) {
-    for (const block of module.blocks) {
-      if (block.kind === 'text') into.add(block.content)
-      else if (block.caption !== undefined) into.add(block.caption)
-    }
-  }
-  for (const resource of card.resources) into.add(resource.content)
-  for (const value of Object.values(card.extensions)) into.add(value)
-  for (const character of card.internalCharacters) collectRefs(character, into)
-  return into
 }
 
 /** 载荷归类与文件名（v2：图片/ 正文/ 扩展/，四位序号 + 人可读标签）。 */
@@ -71,6 +59,7 @@ const WIDGET_DECODERS: Record<string, (raw: string | undefined) => unknown> = {
   timeline: decodeTimeline,
   map: decodeMap,
   relation: decodeRelation,
+  scene: decodeScene,
 }
 
 /**
@@ -80,15 +69,17 @@ const WIDGET_DECODERS: Record<string, (raw: string | undefined) => unknown> = {
  */
 async function inlineRefSnapshots(store: CardStore, cardId: string, document: ContentDocument): Promise<ContentDocument> {
   const exported = JSON.parse(JSON.stringify(document)) as ContentDocument
-  for (const module of flattenModules(exported.modules)) {
+  for (const { module } of cardModules(exported)) {
     const widget = module.widget
     if (widget?.type !== 'ref' || widget.source === undefined) continue
     const sourceDoc = widget.source.cardId === cardId
       ? document
       : (await store.open(widget.source.cardId).catch(() => undefined))?.document
     if (sourceDoc === undefined) continue
-    const sourceModule = flattenModules(sourceDoc.modules).find(candidate => candidate.id === widget.source?.moduleId)
-    if (sourceModule === undefined || sourceModule.widget === undefined) continue
+    const owned = cardModule(sourceDoc, widget.source.moduleId)
+    if (owned === undefined) continue
+    const { module: sourceModule, document: owner } = owned
+    if (sourceModule.widget === undefined) continue
     const sourceType = sourceModule.widget.type
     if (sourceType === 'ref') continue
     const decode = WIDGET_DECODERS[sourceType]
@@ -101,21 +92,9 @@ async function inlineRefSnapshots(store: CardStore, cardId: string, document: Co
         data = undefined
       }
     }
-    const used = new Set<string>()
-    const scan = (value: unknown): void => {
-      if (Array.isArray(value)) { value.forEach(scan); return }
-      if (typeof value !== 'object' || value === null) return
-      const record = value as Record<string, unknown>
-      if (typeof record.resourceId === 'string') used.add(record.resourceId)
-      if (typeof record.visualKey === 'string') used.add(record.visualKey)
-      for (const nested of Object.values(record)) scan(nested)
-    }
-    scan(data)
-    for (const block of sourceModule.blocks) {
-      if (block.kind === 'image' && block.resourceId !== undefined) used.add(block.resourceId)
-    }
+    const used = moduleResourceIds(sourceModule, data)
     const resources: Record<string, { base64: string, mediaType: string }> = {}
-    for (const resource of sourceDoc.resources) {
+    for (const resource of owner.resources) {
       if (!used.has(resource.id)) continue
       try {
         const bytes = await store.readPayload(widget.source.cardId, resource.content)
@@ -125,7 +104,7 @@ async function inlineRefSnapshots(store: CardStore, cardId: string, document: Co
       }
     }
     widget.snapshot = {
-      cardName: sourceDoc.name,
+      cardName: owner.name,
       moduleName: sourceModule.name,
       widget: { type: sourceType, ...(data === undefined ? {} : { data }) },
       ...(Object.keys(resources).length === 0 ? {} : { resources }),
@@ -140,13 +119,12 @@ export async function buildExportPackage(store: CardStore, cardId: string): Prom
   const saved = await store.open(cardId)
   if (saved === undefined) throw new Error('卡不存在或已删除')
   const exported = await inlineRefSnapshots(store, cardId, saved.document)
-  const refs = [...collectRefs(exported)].sort()
-  const entries: ZipEntry[] = [{ name: 'structure.json', data: new TextEncoder().encode(JSON.stringify({ experiment: EXPERIMENT, version: 2, card: saved.document, contents: {} }, null, 2)) }]
-  void entries.pop()
+  const refs = [...cardPayloadRefs(exported)].sort()
   const contents: Record<string, ManifestEntry> = {}
   const sha256s: Record<string, string> = {}
   let imageIndex = 0, textIndex = 0, extensionIndex = 0
-  const resourceMedia = new Map(saved.document.resources.map(resource => [resource.content, resource.mediaType]))
+  const resourceMedia = new Map(cardDocuments(saved.document).flatMap(owner =>
+    owner.resources.map(resource => [resource.content, resource.mediaType] as const)))
   const kindOf = (ref: string): 'image' | 'text' | 'extension' => {
     const media = resourceMedia.get(ref)
     return media !== undefined && media.startsWith('image/') ? 'image' : media !== undefined ? 'extension' : 'text'
@@ -163,7 +141,7 @@ export async function buildExportPackage(store: CardStore, cardId: string): Prom
     sha256s[ref] = sha256
     packageEntries.push({ name: path, data: bytes })
   }
-  const structure: ExchangeStructure = { experiment: EXPERIMENT, version: 2, card: exported as unknown as Record<string, unknown>, contents }
+  const structure: ExchangeStructure = { experiment: EXPERIMENT, version: 2, card: exported, contents }
   const all: ZipEntry[] = [
     { name: 'structure.json', data: new TextEncoder().encode(`${JSON.stringify(structure, null, 2)}\n`) },
     ...packageEntries,
@@ -291,7 +269,7 @@ function parseModulesStrict(raw: unknown, path: string): ContentModule[] {
         if (block === null || typeof block !== 'object') throw new Error(`${path}[${String(index)}].blocks[${String(blockIndex)}] 不是对象`)
         const value = block as Record<string, unknown>
         for (const key of Object.keys(value)) {
-          if (!['kind', 'id', 'content', 'resource', 'resourceId', 'caption'].includes(key)) throw new Error(`${path}[${String(index)}].blocks[${String(blockIndex)}].${key} 是未支持字段`)
+          if (!['kind', 'id', 'content', 'resource', 'resourceId', 'caption', 'width'].includes(key)) throw new Error(`${path}[${String(index)}].blocks[${String(blockIndex)}].${key} 是未支持字段`)
         }
         if (typeof value.id !== 'string' || value.id.length === 0) throw new Error(`${path}[${String(index)}].blocks[${String(blockIndex)}].id 不能为空`)
         if (value.kind === 'text') {
@@ -302,7 +280,10 @@ function parseModulesStrict(raw: unknown, path: string): ContentModule[] {
           const resourceId = typeof value.resourceId === 'string' ? value.resourceId : value.resource
           if (typeof resourceId !== 'string') throw new Error(`${path}[${String(index)}].blocks[${String(blockIndex)}].resource 不能为空`)
           const caption = typeof value.caption === 'string' ? value.caption : undefined
-          return { kind: 'image', id: value.id, resourceId, ...(caption !== undefined ? { caption } : {}) }
+          if (value.width !== undefined && (typeof value.width !== 'number' || !Number.isFinite(value.width) || value.width < 10 || value.width > 100)) {
+            throw new Error(`${path}[${String(index)}].blocks[${String(blockIndex)}].width 无效`)
+          }
+          return { kind: 'image', id: value.id, resourceId, ...(caption !== undefined ? { caption } : {}), ...(typeof value.width === 'number' ? { width: value.width } : {}) }
         }
         throw new Error(`${path}[${String(index)}].blocks[${String(blockIndex)}].kind 无效`)
       }),
@@ -350,7 +331,8 @@ export async function importExchange(store: CardStore, bytes: Uint8Array): Promi
   const manifest: Record<string, { path: string, size: number, sha256: string }> = structure.contents
   const card = parseCardStrict(structure.card, 'card')
   // manifest: keys must exactly equal referenced refs; entries must exist with matching size + sha256
-  const refs = collectRefs(card)
+  assertValid(card)
+  const refs = cardPayloadRefs(card)
   const manifestKeys = new Set(Object.keys(structure.contents))
   for (const ref of refs) {
     if (!manifestKeys.has(ref)) throw new Error(`清单缺少结构引用的载荷：${ref}`)
@@ -368,62 +350,37 @@ export async function importExchange(store: CardStore, bytes: Uint8Array): Promi
   for (const name of entries.keys()) {
     if (name !== 'structure.json' && !knownPaths.has(name)) throw new Error(`包内存在清单之外的条目：${name}`)
   }
-  // verify + transfer payloads, remap refs
-  const refMap = new Map<string, string>()
-  const cardId = mintId()
-  // 先落一个壳草稿把卡目录建出来——载荷要进它的 contents/；随后整卡覆盖。
-  const shell = await store.ensureDraft(cardId, 'IMPORT', {
-    kind: card.kind,
-    name: card.name,
-    document: { ...card, id: cardId, modules: [], resources: [], internalCharacters: [], extensions: {} },
-  })
+  const payloads = new Map<string, Uint8Array>()
   for (const ref of refs) {
     const entry = manifest[ref]
-    if (entry === undefined) throw new Error(`清单缺少结构引用的载荷：${ref}`)
     const data = entries.get(entry.path)
     if (data === undefined) throw new Error(`包内缺少清单登记的载荷：${entry.path}`)
     if (data.length !== entry.size) throw new Error(`载荷大小不匹配：${entry.path}`)
     const sha256 = createHash('sha256').update(data).digest('hex')
     if (sha256 !== entry.sha256) throw new Error(`载荷校验失败：${entry.path}`)
-    refMap.set(ref, await store.receivePayload(cardId, data))
+    payloads.set(ref, data)
   }
-  const remapped = remapAllIds(card, cardId, refMap)
-  const draft = await store.updateDraft(cardId, shell.version, remapped, 'IMPORT')
-  return { cardId, version: draft.version, name: remapped.name, kind: remapped.kind }
-}
-
-/** 导入语义：对象编号与内容引用全部重新分配（防冲突，设计行为）。 */
-function remapAllIds(card: ContentDocument, freshCardId: string, refMap: Map<string, string>): ContentDocument {
-  const idMap = new Map<string, string>()
-  const fresh = (old: string): string => {
-    const mapped = idMap.get(old) ?? mintId()
-    idMap.set(old, mapped)
-    return mapped
-  }
-  const ref = (old: ContentRef): ContentRef => refMap.get(old) ?? old
-  const walkModules = (modules: ContentModule[]): ContentModule[] => modules.map(original => ({
-    ...original,
-    id: fresh(original.id),
-    blocks: original.blocks.map(block => block.kind === 'text'
-      ? { ...block, id: fresh(block.id), content: ref(block.content) }
-      : { ...block, id: fresh(block.id), resourceId: fresh(block.resourceId), ...(block.caption !== undefined ? { caption: ref(block.caption) } : {}) }),
-    characterIds: original.characterIds.map(id => idMap.get(id) ?? id),
-    children: walkModules(original.children),
-  }))
-  return {
-    ...card,
-    id: freshCardId,
-    modules: walkModules(card.modules),
-    resources: card.resources.map(resource => ({ ...resource, id: fresh(resource.id), content: ref(resource.content) })),
-    extensions: Object.fromEntries(Object.entries(card.extensions).map(([key, value]) => [key, ref(value)])),
-    appearance: {
-      readingLayout: card.appearance.readingLayout,
-      ...(card.appearance.avatarResourceId !== undefined ? { avatarResourceId: idMap.get(card.appearance.avatarResourceId) ?? card.appearance.avatarResourceId } : {}),
-      ...(card.appearance.coverResourceId !== undefined ? { coverResourceId: idMap.get(card.appearance.coverResourceId) ?? card.appearance.coverResourceId } : {}),
-      ...(card.appearance.logoResourceId !== undefined ? { logoResourceId: idMap.get(card.appearance.logoResourceId) ?? card.appearance.logoResourceId } : {}),
+  const cardId = mintId()
+  let shell: Awaited<ReturnType<CardStore['ensureDraft']>> | undefined
+  const ensureShell = async (): Promise<Awaited<ReturnType<CardStore['ensureDraft']>>> => shell ??= await store.ensureDraft(cardId, 'IMPORT', {
+    kind: card.kind,
+    name: card.name,
+    document: { ...card, id: cardId, modules: [], resources: [], internalCharacters: [], extensions: {}, appearance: { readingLayout: card.appearance.readingLayout } },
+  })
+  const remapped = await transferCardDocument(card, {
+    rootId: cardId,
+    readPayload: async ref => {
+      const data = payloads.get(ref)
+      if (data === undefined) throw new Error(`清单缺少结构引用的载荷：${ref}`)
+      return data
     },
-    internalCharacters: card.internalCharacters.map((character, index) => remapAllIds(character, fresh(`${card.id}:c${String(index)}`), refMap)),
-  }
+    writePayload: async data => {
+      await ensureShell()
+      return store.receivePayload(cardId, data)
+    },
+  })
+  const draft = await store.updateDraft(cardId, (await ensureShell()).version, remapped, 'IMPORT')
+  return { cardId, version: draft.version, name: remapped.name, kind: remapped.kind }
 }
 
 /**

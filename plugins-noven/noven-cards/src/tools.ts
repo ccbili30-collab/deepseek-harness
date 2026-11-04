@@ -1533,9 +1533,12 @@ export function registerCardTools(ctx: Context): void {
     async execute(args, exec) {
       const cwd = sessionCwd(exec)
       const sessionId = exec.agent?.session?.id as SessionId | undefined
-      const source = (await resolveCard(cwd, sessionId, String(args.source_id), optionalId(args.source_project) ?? undefined)).saved
-      if (source.document.kind !== 'CHARACTER') throw new Error('只能复制角色卡')
-      return editAndCommit(exec, String(args.root_id), String(args.target_id), { kind: 'copy_character', source: source.document }, optionalId(args.project) ?? undefined)
+      const source = await resolveCard(cwd, sessionId, String(args.source_id), optionalId(args.source_project) ?? undefined)
+      if (source.saved.document.kind !== 'CHARACTER') throw new Error('只能复制角色卡')
+      return editAndCommit(exec, String(args.root_id), String(args.target_id), {
+        kind: 'copy_character', source: source.saved.document,
+        readPayload: ref => source.store.readPayload(source.saved.cardId, ref),
+      }, optionalId(args.project) ?? undefined)
     },
   }))
 

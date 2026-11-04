@@ -9,6 +9,8 @@
  */
 
 import { mintId, flattenModules, editBlocks, findTarget, replaceTarget, insertModule, updateModule, removeModule, parentOfModule, placeModule, organizeFolders, assertValid, IMAGE_MEDIA, type ContentBlock, type ContentDocument, type ContentModule, type ModuleLayout, type ModuleRouting, type ModuleTemporality, type ModuleUse } from './model.ts'
+import { transferCardDocument } from './transfer.ts'
+import { cardModule } from './document-graph.ts'
 import { CardStore, EditConflict, type CardDraft, type ChangeSource, type SavedCard } from './store.ts'
 import { parseModuleMarkdown } from './markdown.ts'
 import { readProjectFile } from './exchange.ts'
@@ -64,7 +66,7 @@ export type EditorCommand =
   | { kind: 'surface_set_state', moduleId: string, state: unknown, expectedVersion?: number }
   | { kind: 'place_character', characterId: string, moduleId?: string | null }
   | { kind: 'add_character', name: string }
-  | { kind: 'copy_character', source: ContentDocument }
+  | { kind: 'copy_character', source: ContentDocument, readPayload: (ref: string) => Promise<Uint8Array> }
   | { kind: 'remove_character', characterId: string }
   // ---------- 预制模块的结构化命令（契约 C2）：人、AI、提案共用 ----------
   | { kind: 'set_widget_data', moduleId: string, widget: 'timeline' | 'collection' | 'map' | 'relation' | 'scene', data: unknown }
@@ -399,19 +401,14 @@ async function transformDocument(
       break
     }
     case 'add_module_ref': {
-      if (command.sourceCardId === card.id) {
-        const found = flattenModules(card.modules).find(candidate => candidate.id === command.sourceModuleId)
-        if (found === undefined) throw new Error('被引用的模块不存在')
-      } else {
-        const source = await store.open(command.sourceCardId)
-        if (source === undefined) throw new Error('被引用的卡不在当前项目；跨项目引用默认禁止（可先复制源卡或导出快照）')
-        const found = flattenModules(source.document.modules).find(candidate => candidate.id === command.sourceModuleId)
-        if (found === undefined) throw new Error('被引用的模块不存在')
-      }
+      const sameRoot = command.sourceCardId === cardId || command.sourceCardId === card.id
+      const source = sameRoot ? document : (await store.open(command.sourceCardId))?.document
+      if (source === undefined) throw new Error('被引用的卡不在当前项目；跨项目引用默认禁止（可先复制源卡或导出快照）')
+      if (cardModule(source, command.sourceModuleId) === undefined) throw new Error('被引用的模块不存在')
       const created: ContentModule = {
         id: mintId(), name: command.name, blocks: [], tags: [], children: [], layout: 'VERTICAL', characterIds: [],
         widget: {
-          type: 'ref', source: { cardId: command.sourceCardId, moduleId: command.sourceModuleId },
+          type: 'ref', source: { cardId: sameRoot ? cardId : command.sourceCardId, moduleId: command.sourceModuleId },
           ...(command.view === undefined ? {} : { view: command.view }),
           ...(command.filter === undefined ? {} : { filter: command.filter }),
           ...(command.overrides === undefined ? {} : { overrides: command.overrides }),
@@ -784,7 +781,11 @@ async function transformDocument(
     case 'copy_character': {
       if (card.kind !== 'WORLD') throw new Error('只有世界卡能容纳内部角色')
       if (command.source.kind !== 'CHARACTER') throw new Error('只能复制角色卡')
-      const copy = cloneWithFreshIds(command.source)
+      const copy = await transferCardDocument(command.source, {
+        rootId: mintId(), targetCardId: cardId,
+        readPayload: command.readPayload,
+        writePayload: bytes => store.receivePayload(cardId, bytes),
+      })
       next = put({ ...card, internalCharacters: [...card.internalCharacters, copy] })
       createdModules.push(copy.id)
       break
@@ -1244,41 +1245,6 @@ function stripCharacter(modules: ContentModule[], characterId: string): ContentM
     characterIds: original.characterIds.filter(id => id !== characterId),
     children: stripCharacter(original.children, characterId),
   }))
-}
-
-/** 深拷贝一份角色卡并全树换新编号（含引用改写），副本独立。 */
-function cloneWithFreshIds(source: ContentDocument): ContentDocument {
-  const idMap = new Map<string, string>()
-  const fresh = (old: string): string => {
-    const mapped = idMap.get(old) ?? mintId()
-    idMap.set(old, mapped)
-    return mapped
-  }
-  const remapRef = (ref: string): string => ref
-  const walkModules = (modules: ContentModule[]): ContentModule[] => modules.map(original => ({
-    ...original,
-    id: fresh(original.id),
-    blocks: original.blocks.map(block => block.kind === 'image'
-      ? { ...block, id: fresh(block.id), resourceId: fresh(block.resourceId) }
-      : { ...block, id: fresh(block.id) }),
-    characterIds: original.characterIds.map(id => idMap.get(id) ?? id),
-    children: walkModules(original.children),
-  }))
-  void remapRef
-  return {
-    ...source,
-    id: fresh(source.id),
-    modules: walkModules(source.modules),
-    resources: source.resources.map(resource => ({ ...resource, id: fresh(resource.id) })),
-    extensions: { ...source.extensions },
-    appearance: {
-      readingLayout: source.appearance.readingLayout,
-      avatarResourceId: source.appearance.avatarResourceId !== undefined ? fresh(source.appearance.avatarResourceId) : undefined,
-      coverResourceId: source.appearance.coverResourceId !== undefined ? fresh(source.appearance.coverResourceId) : undefined,
-      logoResourceId: source.appearance.logoResourceId !== undefined ? fresh(source.appearance.logoResourceId) : undefined,
-    },
-    internalCharacters: [],
-  }
 }
 
 /** 深拷贝模块子树：模块与块全部换新 id，文字载荷与图片资源按引用共享（载荷不可变，天然可共享）。 */
