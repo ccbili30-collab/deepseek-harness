@@ -21,6 +21,12 @@ const arrangement = readFileSync(new URL('../src/client/arrangement.ts', import.
 check(frame.includes('--dsh-frame-leading-clearance: 160px'), '默认 DSH 普通窗口安全区保持 160px')
 check(frame.includes('--dsh-frame-leading-clearance: 84px'), '默认 DSH 全屏安全区保持 84px')
 check(!style.includes('--dsh-frame-leading-clearance: 196px') && !style.includes('--dsh-frame-leading-clearance: 120px'), 'Noven 不再为废弃的第三个 leading 控件增加安全区')
+check(style.includes('html[data-noven-shell][data-noven-shell-appearance] [data-product-frame]')
+  && !style.includes('html[data-noven-shell][data-noven-shell-foreground] [data-product-frame] {\n  background-color:')
+  && !style.includes('html[data-noven-shell][data-noven-shell-foreground]:not([data-noven-shell-appearance]) [data-product-frame] {'),
+'外框填充只由自定义外壳背景决定，前景和可见度不得覆盖 macOS 原生材质')
+check(style.includes(":is([data-platform='darwin'], [data-chrome-platform='darwin']):not([data-noven-shell-appearance]) [data-product-frame] {\n  background-color: var(--dsh-window-material-tint);"),
+  '无自定义外壳背景时 macOS 原生材质优先于浅色和深色视图')
 check(shell.includes("ctx.slots.inject('sidebar.brand.trailing'") && !shell.includes("ctx.slots.inject('shell.topbar'") && !shell.includes("ctx.slots.inject('shell.topbar.navigation'"), '模式注册到品牌行，独立顶栏不再挂载')
 check(!shell.includes('NovenLeadingModeSwitch') && !shell.includes("ctx.slots.inject('shell.leading.action'"), '不再存在旧的 leading 模式注册')
 check(!shell.includes('SessionNavigationButton') && mode.includes('showBrowser'), '完整会话浏览器并入现有会话菜单，不恢复旧导航注册')

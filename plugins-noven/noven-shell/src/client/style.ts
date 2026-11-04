@@ -4623,11 +4623,8 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
    内容列拥有唯一的圆角、细描边与裁切，叶只负责自己的文件背景。 */
 html[data-noven-shell] [data-product-frame] { border-radius: 16px; }
 html[data-noven-shell]:not(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) [data-product-frame],
-html[data-noven-shell][data-noven-shell-foreground] [data-product-frame] {
+html[data-noven-shell][data-noven-shell-appearance] [data-product-frame] {
   background-color: var(--noven-shell-background-color, var(--dsw-specific-sidebar-fill));
-}
-html[data-noven-shell][data-noven-shell-foreground]:not([data-noven-shell-appearance]) [data-product-frame] {
-  background-image: none;
 }
 html[data-noven-shell]:not(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) [data-product-frame] [data-sidebar-col],
 html[data-noven-shell]:not(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) [data-product-frame] [data-work][data-mode-scene],
@@ -4636,7 +4633,9 @@ html[data-noven-shell][data-noven-shell-foreground] [data-product-frame] [data-w
 html[data-noven-shell] [data-product-frame] [data-work],
 html[data-noven-shell] [data-product-frame] [data-center-col],
 html[data-noven-shell] [data-product-frame] [data-rightbar-col] { background-color: transparent; }
-html[data-noven-shell]:is([data-platform='darwin'], [data-chrome-platform='darwin']):not([data-noven-shell-appearance], [data-noven-shell-foreground]) [data-product-frame] {
+/* Foreground changes only recolor text; without a custom shell image or color,
+   macOS keeps the native window material in every view and visibility. */
+html[data-noven-shell]:is([data-platform='darwin'], [data-chrome-platform='darwin']):not([data-noven-shell-appearance]) [data-product-frame] {
   background-color: var(--dsh-window-material-tint);
 }
 html[data-noven-shell]:not(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) [data-product-frame] [data-sidebar-col],

@@ -345,6 +345,19 @@ describe('web e2e: scoped Noven appearance', () => {
     expect(scene.color).not.toBe('rgba(0, 0, 0, 0)')
     expect(scene.image).toContain('linear-gradient')
     expect(scene.radius).toBe('16px')
+    await appearance({ action: 'visual', view: 'dark', surface: 'auto', foreground: 'system', backgroundVisibility: 0.75 })
+    await expect.poll(() => page.locator('html').getAttribute('data-noven-shell-foreground'), { timeout: 15_000 }).toBe('light')
+    await appearance({ action: 'visual', view: 'light', surface: 'auto', foreground: 'system', backgroundVisibility: 1 })
+    await expect.poll(() => page.locator('html').getAttribute('data-noven-shell-foreground'), { timeout: 15_000 }).toBe('dark')
+    const lightScene = await page.locator('[data-product-frame]').evaluate(element => ({
+      color: getComputedStyle(element).backgroundColor,
+      image: getComputedStyle(element).backgroundImage,
+    }))
+    expect(lightScene.color).not.toBe('rgb(255, 255, 255)')
+    expect(lightScene.image).toContain('linear-gradient')
+    await page.screenshot({ path: join(SHOTS, 'light-native-frame.png'), fullPage: true })
+    await appearance({ action: 'visual', view: 'light', surface: 'auto', foreground: 'system', backgroundVisibility: 0.75 })
+    await expect.poll(() => page.locator('html').getAttribute('data-noven-shell-foreground'), { timeout: 15_000 }).toBeNull()
     expect(await page.locator('[data-sidebar-col]').evaluate(element => ({
       color: getComputedStyle(element).backgroundColor,
       image: getComputedStyle(element).backgroundImage,
