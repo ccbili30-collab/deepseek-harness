@@ -321,6 +321,25 @@
    to the opaque centre: on the translucent sidebar the alpha border mixes
    with the wallpaper and reads as a dark seam. */
 :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .frame {
+  --dsh-window-sidebar-wash: linear-gradient(
+    to bottom,
+    rgb(122 155 240 / 0.1),
+    rgb(122 155 240 / 0) 35%,
+    rgb(143 137 184 / 0) 68%,
+    rgb(143 137 184 / 0.09)
+  );
+  --dsh-window-material-tint: color-mix(in srgb, color-mix(in srgb, var(--dsw-specific-sidebar-fill) 97%, rgb(122 155 240)) 40%, transparent);
+  background: transparent;
+}
+
+/* A product frame paints the navigation material once across the whole scene.
+   Its sidebar and work columns only expose that scene; content columns own the
+   opaque work surfaces above it. Ordinary DSH keeps the sidebar-only wash. */
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .frame[data-product-frame] {
+  background: var(--dsh-window-sidebar-wash), var(--dsh-window-material-tint);
+}
+
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .frame[data-product-frame] .sidebarCol {
   background: transparent;
 }
 
@@ -336,34 +355,21 @@
 }
 
 :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .sidebarCol {
-  /* A blue wash over the top of the translucent tint, gone by a third of the
-     column; a faint blue-grey-violet rises through the bottom third; and a
-     faint blue cast is mixed into the tint itself. Every layer stays
-     transparent so vibrancy shows. */
-  background:
-    linear-gradient(
-      to bottom,
-      rgb(122 155 240 / 0.1),
-      rgb(122 155 240 / 0) 35%,
-      rgb(143 137 184 / 0) 68%,
-      rgb(143 137 184 / 0.09)
-    ),
-    color-mix(in srgb, color-mix(in srgb, var(--dsw-specific-sidebar-fill) 97%, rgb(122 155 240)) 40%, transparent);
+  background: var(--dsh-window-sidebar-wash), var(--dsh-window-material-tint);
   border-right: none;
 }
 
 /* Dark drops the blue cast (the light-mode wash reads purple over dark fills)
    and thins the fill so more wallpaper shows; the washes stay. */
-:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) :global([data-ds-dark-theme]) .sidebarCol {
-  background:
-    linear-gradient(
-      to bottom,
-      rgb(122 155 240 / 0.08),
-      rgb(122 155 240 / 0) 35%,
-      rgb(143 137 184 / 0) 68%,
-      rgb(143 137 184 / 0.07)
-    ),
-    color-mix(in srgb, var(--dsw-specific-sidebar-fill) 50%, transparent);
+:global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) :global([data-ds-dark-theme]) .frame {
+  --dsh-window-sidebar-wash: linear-gradient(
+    to bottom,
+    rgb(122 155 240 / 0.08),
+    rgb(122 155 240 / 0) 35%,
+    rgb(143 137 184 / 0) 68%,
+    rgb(143 137 184 / 0.07)
+  );
+  --dsh-window-material-tint: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 50%, transparent);
 }
 
 /* macOS Reduce Transparency: the OS flattens the window's vibrancy layer to a
@@ -371,9 +377,17 @@
    them with a 90%-opaque fill of the same token in both themes (the dark
    selector repeats so this outranks its thinner fill). */
 @media (prefers-reduced-transparency: reduce) {
+  :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .frame,
+  :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) :global([data-ds-dark-theme]) .frame {
+    --dsh-window-material-tint: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 90%, transparent);
+  }
+  :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .frame[data-product-frame],
+  :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) :global([data-ds-dark-theme]) .frame[data-product-frame] {
+    background: var(--dsh-window-material-tint);
+  }
   :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .sidebarCol,
   :global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) :global([data-ds-dark-theme]) .sidebarCol {
-    background: color-mix(in srgb, var(--dsw-specific-sidebar-fill) 90%, transparent);
+    background: var(--dsh-window-material-tint);
   }
 }
 
@@ -661,7 +675,8 @@
 
 /* A configured workspace scene covers the whole shell rectangle. The macOS
    vibrancy rules above stay untouched until this attribute exists. */
-:global(html[data-noven-shell-appearance]) .frame {
+:global(html[data-noven-shell-appearance]) .frame,
+:global(html[data-noven-shell-appearance]) .frame[data-product-frame] {
   background-color: var(--noven-shell-background-color, var(--dsw-alias-bg-base));
   background-image: var(--noven-shell-background-image, none);
   background-position: var(--noven-shell-background-position, center);

@@ -17,8 +17,8 @@ export const inject = ['slots']
 export function NovenName() {
   return (
     <span style={{ display: 'inline-flex', alignItems: 'baseline', gap: '0.375em', fontWeight: 600 }}>
-      <span>诺文</span>
-      <span style={{ fontWeight: 400, opacity: 0.66, fontSize: '0.72em', letterSpacing: '0.08em' }}>Noven</span>
+      <span data-noven-chinese-name>诺文</span>
+      <span data-noven-latin-name style={{ fontWeight: 400, opacity: 0.66, fontSize: '0.72em', letterSpacing: '0.08em' }}>Noven</span>
     </span>
   )
 }

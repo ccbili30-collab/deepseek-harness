@@ -282,9 +282,11 @@ export interface ConversationHeaderActionOwnerProps {
   children?: never
 }
 
-/** The header corner's occupant derives its state from standard Session props. */
+/** The header corner's occupant derives its state from standard Session props and the hidden-Chrome fact. */
 export interface ConversationHeaderCornerOwnerProps {
-  /** Marker field: the occupant receives no owner-specific values. */
+  /** Blank Hero and other hidden-Chrome presentations suppress the corner command. */
+  readonly hidden: boolean
+  /** Marker field: the occupant receives no nested owner values. */
   children?: never
 }
 

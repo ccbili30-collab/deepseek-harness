@@ -8,10 +8,10 @@ import type { CSSProperties, ReactNode } from 'react'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { fmt, type ShellT } from '../pages/Home.tsx'
 import type {
-  AppearanceBackground, AppearanceFocus, AppearanceForeground, AppearanceMaterial, AppearanceView, AppearanceViewMode,
+  AppearanceFocus, AppearanceForeground, AppearanceMaterial, AppearanceObjectForeground, AppearanceUnifiedBackground, AppearanceView, AppearanceViewMode,
 } from '../../appearance/model.ts'
 import { defaultAppearanceVisual } from '../../appearance/model.ts'
-import { appearanceAssetUrl, updateAppearance, uploadAppearanceImage, useAppearance, useFocusedCanvasFile } from '../appearance.tsx'
+import { appearanceAssetUrl, updateAppearance, uploadAppearanceAudio, uploadAppearanceImage, uploadGlobalAppearanceImage, useAppearance, useFocusedCanvasFile } from '../appearance.tsx'
 
 interface Props {
   readonly sessionId: SessionId
@@ -26,6 +26,7 @@ interface Props {
 
 type Scope = 'workspace' | 'file' | 'session'
 type Target = 'shell' | 'canvas' | 'conversation'
+type UnifiedTarget = 'workspace' | 'global'
 type BackgroundMode = 'default' | 'shared' | 'custom' | 'off'
 
 interface Draft {
@@ -35,6 +36,7 @@ interface Draft {
   readonly visibility: number
   readonly mode: BackgroundMode
   readonly imagePath: string
+  readonly imageSource?: 'global'
   readonly focus: AppearanceFocus
   readonly dim: number
   readonly blur: number
@@ -47,8 +49,15 @@ interface Draft {
 const FOCI: readonly AppearanceFocus[] = ['center', 'top', 'bottom', 'left', 'right']
 const FOCUS_POSITION: Record<AppearanceFocus, string> = { center: 'center', top: 'center top', bottom: 'center bottom', left: 'center left', right: 'center right' }
 
-function backgroundOf(view: AppearanceView, scope: Scope, target: Target, unified = false): AppearanceBackground | undefined {
-  if (unified) return view.workspace.unified
+function backgroundOf(
+  view: AppearanceView,
+  scope: Scope,
+  target: Target,
+  unified = false,
+  unifiedTarget: UnifiedTarget = 'workspace',
+): AppearanceUnifiedBackground | undefined {
+  if (unifiedTarget === 'global') return view.global.unified
+  if (unified) return view.workspace.unified ?? view.global.unified
   if (scope === 'file') return view.file?.canvas
   if (scope === 'session') return view.session.conversation
   if (target === 'shell') return view.workspace.shell
@@ -56,15 +65,15 @@ function backgroundOf(view: AppearanceView, scope: Scope, target: Target, unifie
   return view.workspace.conversation
 }
 
-function modeOf(background: AppearanceBackground | undefined): BackgroundMode {
-  if (background === undefined) return 'default'
+function modeOf(background: AppearanceUnifiedBackground | undefined): BackgroundMode {
+  if (background === undefined || background.kind === 'builtin') return 'default'
   if (background.kind === 'transparent') return 'off'
   if (background.kind === 'shared') return 'shared'
   return 'custom'
 }
 
-function draftOf(view: AppearanceView, scope: Scope, target: Target, unified = false): Draft {
-  const background = backgroundOf(view, scope, target, unified)
+function draftOf(view: AppearanceView, scope: Scope, target: Target, unified = false, unifiedTarget: UnifiedTarget = 'workspace'): Draft {
+  const background = backgroundOf(view, scope, target, unified, unifiedTarget)
   const visual = view.visual ?? defaultAppearanceVisual()
   const avatar = scope === 'session' ? view.session.assistantAvatar : view.workspace.assistantAvatar
   return {
@@ -74,11 +83,12 @@ function draftOf(view: AppearanceView, scope: Scope, target: Target, unified = f
     visibility: Math.round(visual.backgroundVisibility * 100),
     mode: modeOf(background),
     imagePath: background?.kind === 'asset' ? background.path : view.workspace.shared?.path ?? '',
-    focus: background !== undefined && background.kind !== 'transparent' ? background.focus ?? 'center' : 'center',
-    dim: background !== undefined && background.kind !== 'transparent' ? Math.round((background.dim ?? 0) * 100) : 0,
-    blur: background !== undefined && background.kind !== 'transparent' ? background.blur ?? 0 : 0,
-    material: background?.material ?? 'auto',
-    scopeForeground: background?.foreground ?? 'system',
+    imageSource: background?.kind === 'asset' && (unifiedTarget === 'global' || (unified && view.workspace.unified === undefined)) ? 'global' : undefined,
+    focus: background !== undefined && background.kind !== 'transparent' && background.kind !== 'builtin' ? background.focus ?? 'center' : 'center',
+    dim: background !== undefined && background.kind !== 'transparent' && background.kind !== 'builtin' ? Math.round((background.dim ?? 0) * 100) : 0,
+    blur: background !== undefined && background.kind !== 'transparent' && background.kind !== 'builtin' ? background.blur ?? 0 : 0,
+    material: background?.kind === 'builtin' ? 'auto' : background?.material ?? 'auto',
+    scopeForeground: background?.kind === 'builtin' ? 'system' : background?.foreground ?? 'system',
     avatarPath: avatar?.path ?? '',
     advanced: false,
   }
@@ -103,16 +113,17 @@ function backgroundChoice(draft: Draft): Record<string, unknown> {
 
 type PreviewStyle = CSSProperties & Record<'--nv-ap-image' | '--nv-ap-blur' | '--nv-ap-focus' | '--nv-ap-alpha', string>
 
-function Preview({ sessionId, draft, revision, sharedPath, t }: {
+function Preview({ sessionId, draft, revision, globalRevision, sharedPath, t }: {
   readonly sessionId: SessionId
   readonly draft: Draft
   readonly revision: number
+  readonly globalRevision: number
   readonly sharedPath?: string
   readonly t: ShellT
 }): ReactNode {
   const path = draft.mode === 'custom' ? draft.imagePath : draft.mode === 'shared' ? sharedPath : undefined
   const style: PreviewStyle = {
-    '--nv-ap-image': path === undefined || path.trim() === '' ? 'none' : `url(${JSON.stringify(appearanceAssetUrl(sessionId, path, revision))})`,
+    '--nv-ap-image': path === undefined || path.trim() === '' ? 'none' : `url(${JSON.stringify(appearanceAssetUrl(sessionId, path, draft.imageSource === 'global' ? globalRevision : revision, draft.imageSource))})`,
     '--nv-ap-blur': `${draft.blur}px`,
     '--nv-ap-focus': FOCUS_POSITION[draft.focus],
     '--nv-ap-alpha': String(Math.max(0.1, 0.52 - draft.visibility / 220)),
@@ -169,11 +180,91 @@ function Select({ label, value, onChange, children, className = '', disabled = f
   return <select className={`nv-ap-select ${className}`} aria-label={label} value={value} disabled={disabled} onChange={event => { onChange(event.target.value) }}>{children}</select>
 }
 
-/**
- * Render one scope's appearance editor with immediate, serialized persistence.
- * @param props - Current Session and shell translator.
- * @returns The appearance settings section.
- */
+/** Edit one scope's audio binding and independent File/Session foreground. */
+function TrackControls({ sessionId, scope, filePath, view, save, onError, t }: {
+  readonly sessionId: SessionId
+  readonly scope: Scope
+  readonly filePath?: string
+  readonly view: AppearanceView
+  readonly save: (action: Record<string, unknown>) => Promise<AppearanceView | undefined>
+  readonly onError: (failed: boolean) => void
+  readonly t: ShellT
+}) {
+  const rawTrack = scope === 'workspace' ? view.workspace.canvasTrack : scope === 'file' ? view.file?.track : view.session.track
+  const resolvedTrack = scope === 'workspace' || scope === 'file' ? view.resolved.canvasTrack : view.resolved.conversationTrack
+  const rawForeground = scope === 'file' ? view.file?.foreground : scope === 'session' ? view.session.foreground : undefined
+  const [audioPath, setAudioPath] = useState(rawTrack?.path ?? resolvedTrack?.path ?? '')
+  const [volume, setVolume] = useState(Math.round((rawTrack?.volume ?? resolvedTrack?.volume ?? 0.4) * 100))
+  const [loop, setLoop] = useState(rawTrack?.loop ?? resolvedTrack?.loop ?? true)
+  const [foreground, setForeground] = useState<'default' | AppearanceObjectForeground>(rawForeground ?? 'default')
+  const uploadRef = useRef<HTMLInputElement | null>(null)
+  const disabled = scope === 'file' && filePath === undefined
+  const trackAction = (path = audioPath, level = volume, repeating = loop): Record<string, unknown> => ({
+    action: 'track', scope,
+    ...(scope === 'file' ? { filePath } : {}),
+    track: path.trim() === ''
+      ? { kind: 'default' }
+      : { kind: 'audio', audioPath: path.trim(), volume: level / 100, loop: repeating },
+  })
+  const saveTrack = async (path = audioPath, level = volume, repeating = loop): Promise<void> => {
+    const accepted = await save(trackAction(path, level, repeating))
+    if (accepted === undefined) onError(true)
+  }
+  const saveForeground = async (value: 'default' | AppearanceObjectForeground): Promise<void> => {
+    setForeground(value)
+    const accepted = await save({ action: 'track', scope, ...(scope === 'file' ? { filePath } : {}), foreground: value })
+    if (accepted === undefined) onError(true)
+  }
+  return (
+    <div className="nv-ap-track-controls" data-track-scope={scope}>
+      <Row title={scope === 'workspace' ? t('soundtrack.default') : t('soundtrack.title')} description={scope === 'workspace' ? t('soundtrack.default.desc') : t('appearance.autosave')}>
+        <div className="nv-ap-background-control">
+          <input className="nv-ap-input" aria-label={t('soundtrack.title')} value={audioPath} disabled={disabled} placeholder={t('soundtrack.path.ph')} onChange={event => { setAudioPath(event.target.value) }} onBlur={() => { if (!disabled) void saveTrack() }} />
+          <div className="nv-ap-inline-actions">
+            <button type="button" className="nv-ap-quiet" disabled={disabled} onClick={() => { uploadRef.current?.click() }}>{t('soundtrack.upload')}</button>
+            <button type="button" className="nv-ap-quiet" disabled={disabled || audioPath.trim() === ''} onClick={() => { setAudioPath(''); void saveTrack('') }}>{t('soundtrack.remove')}</button>
+          </div>
+          <input ref={uploadRef} type="file" accept="audio/mpeg,audio/wav,audio/ogg" hidden onChange={event => {
+            const file = event.target.files?.[0]
+            event.target.value = ''
+            if (file === undefined || disabled) return
+            void uploadAppearanceAudio(sessionId, file).then(path => {
+              if (path === undefined) { onError(true); return }
+              setAudioPath(path)
+              void saveTrack(path)
+            })
+          }} />
+        </div>
+        <div className="nv-ap-track-preferences">
+          <div className="nv-ap-range-control">
+            <input type="range" min="0" max="100" value={volume} disabled={disabled || audioPath.trim() === ''} aria-label={t('soundtrack.volume')} onChange={event => {
+              const next = Number(event.target.value)
+              setVolume(next)
+              void saveTrack(audioPath, next)
+            }} />
+            <output>{volume}%</output>
+          </div>
+          <label className="nv-ap-inline-check"><input type="checkbox" checked={loop} disabled={disabled || audioPath.trim() === ''} onChange={event => {
+            const next = event.target.checked
+            setLoop(next)
+            void saveTrack(audioPath, volume, next)
+          }} /><span>{t('soundtrack.loop')}</span></label>
+        </div>
+      </Row>
+      {scope !== 'workspace' && (
+        <Row title={t('appearance.foreground')}>
+          <Select label={t('appearance.foreground')} value={foreground} onChange={value => { void saveForeground(value as 'default' | AppearanceObjectForeground) }}>
+            <option value="default">{t('appearance.foreground.system')}</option>
+            <option value="light">{t('appearance.foreground.light')}</option>
+            <option value="dark">{t('appearance.foreground.dark')}</option>
+            <option value="invert">{t('appearance.foreground.invert')}</option>
+          </Select>
+        </Row>
+      )}
+    </div>
+  )
+}
+
 export function AppearanceSection({ sessionId, t, sections = 'all', filePath: exactFilePath, backgroundOnly = false }: Props): ReactNode {
   const focused = useFocusedCanvasFile()
   const filePath = exactFilePath ?? (focused?.sessionId === sessionId ? focused.path : undefined)
@@ -181,14 +272,20 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
   const viewRef = useRef(view)
   viewRef.current = view
   const acceptedRevision = useRef<number | undefined>(undefined)
-  if (view !== undefined && (acceptedRevision.current === undefined || view.revision >= acceptedRevision.current)) {
-    acceptedRevision.current = view.revision
+  const acceptedGlobalRevision = useRef<number | undefined>(undefined)
+  if (view !== undefined) {
+    if (acceptedRevision.current === undefined || view.revision >= acceptedRevision.current) acceptedRevision.current = view.revision
+    if (acceptedGlobalRevision.current === undefined || view.globalRevision >= acceptedGlobalRevision.current) acceptedGlobalRevision.current = view.globalRevision
   }
-  useEffect(() => { acceptedRevision.current = undefined }, [sessionId])
+  useEffect(() => {
+    acceptedRevision.current = undefined
+    acceptedGlobalRevision.current = undefined
+  }, [sessionId])
+  const [unifiedTarget, setUnifiedTarget] = useState<UnifiedTarget>('workspace')
   const [scope, setScope] = useState<Scope>(sections === 'session' ? 'session' : backgroundOnly ? 'file' : 'workspace')
   const [target, setTarget] = useState<Target>(backgroundOnly ? 'canvas' : 'shell')
   const [draft, setDraft] = useState<Draft>(() => {
-    const initial = view === undefined ? INITIAL_DRAFT : draftOf(view, scope, target, sections === 'all' && !backgroundOnly)
+    const initial = view === undefined ? INITIAL_DRAFT : draftOf(view, scope, target, sections === 'all' && !backgroundOnly, unifiedTarget)
     return { ...initial, advanced: backgroundOnly }
   })
   const draftRef = useRef(draft)
@@ -203,16 +300,18 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
   const pending = useRef(0)
   const upload = useRef<HTMLInputElement | null>(null)
   const avatarUpload = useRef<HTMLInputElement | null>(null)
-  const selectionKey = `${sessionId}\0${scope}\0${target}\0${filePath ?? ''}`
+  const selectionKey = `${sessionId}\0${scope}\0${target}\0${unifiedTarget}\0${filePath ?? ''}`
   const previousSelection = useRef(selectionKey)
 
   useEffect(() => {
     if (view === undefined) return
     const selectionChanged = previousSelection.current !== selectionKey
     previousSelection.current = selectionKey
-    if (!selectionChanged && (pending.current > 0 || (acceptedRevision.current !== undefined && view.revision < acceptedRevision.current))) return
-    updateDraft({ ...draftOf(view, scope, target, sections === 'all' && !draftRef.current.advanced), advanced: draftRef.current.advanced })
-  }, [view, scope, target, selectionKey, saving])
+    if (!selectionChanged && (pending.current > 0
+      || (acceptedRevision.current !== undefined && view.revision < acceptedRevision.current)
+      || (acceptedGlobalRevision.current !== undefined && view.globalRevision < acceptedGlobalRevision.current))) return
+    updateDraft({ ...draftOf(view, scope, target, sections === 'all' && !draftRef.current.advanced, unifiedTarget), advanced: draftRef.current.advanced })
+  }, [view, scope, target, unifiedTarget, selectionKey, saving])
 
   if (view === undefined) return <div className="nv-appearance"><p className="nv-ap-note">{t('appearance.loading')}</p></div>
 
@@ -224,8 +323,14 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
       try {
         const current = viewRef.current
         if (current === undefined) return undefined
-        const accepted = await updateAppearance(sessionId, { ...action, expectedRevision: acceptedRevision.current ?? current.revision })
-        if (accepted !== undefined) acceptedRevision.current = accepted.revision
+        const globalWrite = action['action'] === 'global_unified'
+        const accepted = await updateAppearance(sessionId, globalWrite
+          ? { ...action, expectedGlobalRevision: acceptedGlobalRevision.current ?? current.globalRevision }
+          : { ...action, expectedRevision: acceptedRevision.current ?? current.revision })
+        if (accepted !== undefined) {
+          acceptedRevision.current = accepted.revision
+          acceptedGlobalRevision.current = accepted.globalRevision
+        }
         if (accepted === undefined) setError(true)
         return accepted
       } catch {
@@ -245,7 +350,8 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
   })
   const backgroundAction = (next: Draft): Record<string, unknown> => {
     const background = backgroundChoice(next)
-    if (sections === 'all' && !next.advanced) return { action: 'unified', background }
+    if (sections === 'all' && unifiedTarget === 'global') return { action: 'global_unified', background }
+    if (sections === 'all' && !next.advanced) return { action: 'unified', background: next.mode === 'default' ? { kind: 'builtin' } : background }
     if (scope === 'file') return { action: 'canvas', scope: 'file', filePath, background }
     if (scope === 'session') return { action: 'conversation', scope: 'session', background }
     if (target === 'shell') return { action: 'shell', background }
@@ -269,7 +375,7 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
   }
   const toggleAdvanced = (): void => {
     const advanced = !draftRef.current.advanced
-    updateDraft({ ...draftOf(view, scope, target, sections === 'all' && !advanced), advanced })
+    updateDraft({ ...draftOf(view, scope, target, sections === 'all' && !advanced, unifiedTarget), advanced })
     setSelectedPreset(undefined)
   }
   const selectBackground = (mode: BackgroundMode): void => {
@@ -289,13 +395,15 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
   }
   const uploadImage = (file: File | undefined): void => {
     if (file === undefined) return
-    void uploadAppearanceImage(sessionId, file).then(path => {
+    const upload = unifiedTarget === 'global' ? uploadGlobalAppearanceImage : uploadAppearanceImage
+    void upload(sessionId, file).then(path => {
       if (path === undefined) {
         setError(true)
         return
       }
-      const mode: BackgroundMode = draftRef.current.mode === 'shared' ? 'shared' : 'custom'
-      const next = { ...draftRef.current, mode, imagePath: path }
+      setSelectedPreset(undefined)
+      const mode: BackgroundMode = draftRef.current.mode === 'shared' && unifiedTarget === 'workspace' ? 'shared' : 'custom'
+      const next = { ...draftRef.current, mode, imagePath: path, imageSource: unifiedTarget === 'global' ? 'global' as const : undefined }
       updateDraft(next)
       if (mode === 'shared') void save({ action: 'shared', background: { kind: 'image', imagePath: path } }, true)
       void save(backgroundAction(next), true)
@@ -305,6 +413,11 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
     action: 'conversation', scope: scope === 'session' ? 'session' : 'workspace', avatar: path === '' ? { kind: 'default' } : { kind: 'image', imagePath: path },
   })
   const restore = (): void => {
+    if (sections === 'all' && unifiedTarget === 'global') {
+      setSelectedPreset(undefined)
+      void save({ action: 'global_unified', background: { kind: 'default' } }, true)
+      return
+    }
     if (sections === 'all' && !draftRef.current.advanced) {
       setSelectedPreset('default')
       void save({ action: 'reset' }, true)
@@ -334,17 +447,18 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
   }
   const presets = Object.entries(view.presets ?? {})
   const unified = sections === 'all' && !draft.advanced
-  const followLabel = unified ? t('appearance.defaultImage') : scope === 'workspace' ? t('appearance.followUnified') : t('appearance.followWorkspace')
-  const scopeName = unified ? t('appearance.unified') : scope === 'workspace' ? t(`appearance.${target}`) : scope === 'file' ? filePath ?? t('appearance.noFile') : t('appearance.session')
+  const globalTarget = sections === 'all' && unifiedTarget === 'global'
+  const followLabel = globalTarget ? t('appearance.defaultImage') : unified ? t('appearance.defaultImage') : scope === 'workspace' ? t('appearance.followUnified') : t('appearance.followWorkspace')
+  const scopeName = globalTarget ? t('appearance.allWorkspaces') : unified ? t('appearance.unified') : scope === 'workspace' ? t(`appearance.${target}`) : scope === 'file' ? filePath ?? t('appearance.noFile') : t('appearance.session')
 
   return (
     <div className="nv-appearance" data-saving={saving || undefined}>
       <Row title={scopeName} description={saving ? t('appearance.saving') : t('appearance.autosave')} className="nv-ap-head" live>
         <button type="button" className="nv-ap-quiet" onClick={restore}>{unified ? t('appearance.restoreDefault') : followLabel}</button>
       </Row>
-      <div className="nv-ap-preview-row"><Preview sessionId={sessionId} draft={draft} revision={view.revision} sharedPath={view.workspace.shared?.path} t={t} /></div>
+      <div className="nv-ap-preview-row"><Preview sessionId={sessionId} draft={draft} revision={view.revision} globalRevision={view.globalRevision} sharedPath={view.workspace.shared?.path} t={t} /></div>
 
-      {sections === 'all' && draft.advanced && !backgroundOnly && (
+      {sections === 'all' && draft.advanced && !backgroundOnly && !globalTarget && (
         <Row title={t('appearance.applyTo')} description={t('appearance.applyTo.desc')}>
           <div className="nv-ap-scope-controls">
             <Select label={t('appearance.applyTo')} value={scope} onChange={value => { selectScope(value as Scope) }}>
@@ -369,15 +483,53 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
         </Row>
       )}
 
-      <Row title={unified ? t('appearance.unified') : t('appearance.background')} description={unified ? t('appearance.unified.desc') : t('appearance.background.desc')}>
-        <div className="nv-ap-background-control">
-          <Select label={unified ? t('appearance.unified') : t('appearance.background')} value={draft.mode} onChange={value => { selectBackground(value as BackgroundMode) }}>
-            {(['default', 'shared', 'custom', 'off'] as const).map(item => <option key={item} value={item}>{item === 'default' ? followLabel : item === 'shared' ? t('appearance.sharedImage') : item === 'custom' ? t('appearance.customImage') : t('appearance.off')}</option>)}
-          </Select>
-          <button type="button" className="nv-ap-quiet" onClick={() => { upload.current?.click() }}>{t('appearance.changeImage')}</button>
-          <input ref={upload} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; uploadImage(file) }} />
-        </div>
+      <Row title={t('appearance.background')} description={unified ? t('appearance.unified.desc') : t('appearance.background.desc')}>
+        {unified ? (
+          <div className="nv-ap-background-control">
+            <Select label={t('appearance.backgroundScope')} className="nv-ap-background-scope" value={unifiedTarget} onChange={value => {
+              setUnifiedTarget(value as UnifiedTarget)
+              setSelectedPreset(undefined)
+            }}>
+              <option value="workspace">{t('appearance.currentWorkspace')}</option>
+              <option value="global">{t('appearance.allWorkspaces')}</option>
+            </Select>
+            <div className="nv-ap-choice-list">
+              <button type="button" className="nv-ap-choice nv-ap-default" aria-label={t('appearance.defaultImage')} aria-pressed={draft.mode === 'default'} onClick={() => { selectBackground('default') }}>
+                <span>{t('appearance.defaultImage')}</span>
+              </button>
+              <button type="button" className="nv-ap-choice nv-ap-add" aria-label={t('appearance.addBackground')} aria-pressed={draft.mode === 'custom' || draft.mode === 'shared'} onClick={() => { upload.current?.click() }}>+</button>
+            </div>
+            {unifiedTarget === 'workspace' && view.workspace.unified !== undefined && view.global.unified !== undefined && (
+              <button type="button" className="nv-ap-quiet" onClick={() => {
+                setSelectedPreset(undefined)
+                void save({ action: 'unified', background: { kind: 'default' } }, true)
+              }}>{t('appearance.followGlobal')}</button>
+            )}
+            <input ref={upload} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; uploadImage(file) }} />
+          </div>
+        ) : (
+          <div className="nv-ap-background-control">
+            <Select label={t('appearance.background')} value={draft.mode} onChange={value => { selectBackground(value as BackgroundMode) }}>
+              {(globalTarget ? ['default', 'custom', 'off'] as const : ['default', 'shared', 'custom', 'off'] as const).map(item => <option key={item} value={item}>{item === 'default' ? followLabel : item === 'shared' ? t('appearance.sharedImage') : item === 'custom' ? t('appearance.customImage') : t('appearance.off')}</option>)}
+            </Select>
+            <button type="button" className="nv-ap-quiet" onClick={() => { upload.current?.click() }}>{t('appearance.changeImage')}</button>
+            <input ref={upload} type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden onChange={event => { const file = event.target.files?.[0]; event.target.value = ''; uploadImage(file) }} />
+          </div>
+        )}
       </Row>
+
+      {!globalTarget && (scope !== 'workspace' || target === 'canvas') && (
+        <TrackControls
+          key={`${sessionId}:${scope}:${filePath ?? ''}`}
+          sessionId={sessionId}
+          scope={scope}
+          filePath={filePath}
+          view={view}
+          save={save}
+          onError={setError}
+          t={t}
+        />
+      )}
 
       {!backgroundOnly && (
         <Row title={t('appearance.visibility')} description={t('appearance.visibility.desc')}>
@@ -400,13 +552,13 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
             <Row title={t('appearance.blur')}><div className="nv-ap-range-control"><input className="nv-ap-light-range" type="range" min="0" max="20" value={draft.blur} aria-label={t('appearance.blur')} onChange={event => { edit({ blur: Number(event.target.value) }, backgroundAction) }} /><output>{draft.blur}px</output></div></Row>
             <Row title={t('appearance.scopeMaterial')}><Select label={t('appearance.scopeMaterial')} value={draft.material} onChange={value => { edit({ material: value as AppearanceMaterial }, backgroundAction) }}>{(['auto', 'frosted', 'clear'] as const).map(item => <option key={item} value={item}>{t(`appearance.material.${item}`)}</option>)}</Select></Row>
             <Row title={t('appearance.scopeForeground')}><Select label={t('appearance.scopeForeground')} value={draft.scopeForeground} onChange={value => { edit({ scopeForeground: value as AppearanceForeground }, backgroundAction) }}>{(['system', 'light', 'dark'] as const).map(item => <option key={item} value={item}>{t(`appearance.foreground.${item}`)}</option>)}</Select></Row>
-            {!backgroundOnly && (
+            {!backgroundOnly && !globalTarget && (
               <>
                 <Row title={t('appearance.globalMaterial')}><Select label={t('appearance.globalMaterial')} value={draft.surface} onChange={value => { edit({ surface: value as AppearanceMaterial }, visualAction) }}>{(['auto', 'frosted', 'clear'] as const).map(item => <option key={item} value={item}>{t(`appearance.material.${item}`)}</option>)}</Select></Row>
                 <Row title={t('appearance.globalForeground')}><Select label={t('appearance.globalForeground')} value={draft.foreground} onChange={value => { edit({ foreground: value as AppearanceForeground }, visualAction) }}>{(['system', 'light', 'dark'] as const).map(item => <option key={item} value={item}>{t(`appearance.foreground.${item}`)}</option>)}</Select></Row>
               </>
             )}
-            {!backgroundOnly && scope !== 'file' && target === 'conversation' && (
+            {!backgroundOnly && !globalTarget && scope !== 'file' && target === 'conversation' && (
               <div className="nv-ap-avatar">
                 <Row title={t('appearance.avatar')}>
                   <div className="nv-ap-avatar-controls">
@@ -430,7 +582,7 @@ export function AppearanceSection({ sessionId, t, sections = 'all', filePath: ex
         )}
       </div>
 
-      {unified && !backgroundOnly && (
+      {unified && !backgroundOnly && !globalTarget && (
         <div className="nv-ap-presets">
           <Row title={t('appearance.presets')} description={presets.length === 0 ? t('appearance.noPresets') : t('appearance.presets.desc')}>
             <button type="button" className="nv-ap-quiet" onClick={() => { void savePreset() }}>{t('appearance.savePreset')}</button>

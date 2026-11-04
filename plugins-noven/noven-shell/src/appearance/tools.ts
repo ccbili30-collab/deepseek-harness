@@ -1,16 +1,23 @@
 /**
- * The model's complete appearance authority: canvas background and
- * conversation background/avatar. The tools bind themselves to the executing
- * Session and provide no Agent, navigation, file-content, or settings writes.
+ * The model's complete appearance authority: canvas background, conversation
+ * background/avatar, and Session/File soundtracks with independent foregrounds.
+ * The tools bind themselves to the executing Session and provide no Agent,
+ * navigation, file-content, or settings writes.
  * @module noven-shell/appearance/tools
  */
 import type { Context } from '@deepseek-ai/cordis'
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-session'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import type { AppearanceForeground, AppearanceMaterial } from './model.ts'
+import type {
+  AppearanceForeground, AppearanceMaterial, AppearanceObjectForeground, AppearanceSoundtrack, AppearanceView,
+} from './model.ts'
 import type { BackgroundChoice, AvatarChoice } from './service.ts'
-import { setCanvasAppearance, setConversationAppearance } from './service.ts'
+import {
+  listAppearanceAudio, readTrackAppearance, setCanvasAppearance, setConversationAppearance, setTrackAppearance,
+} from './service.ts'
+
+type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue }
 
 const RESULT_SCHEMA = { type: 'object' as const, additionalProperties: true as const }
 
@@ -58,9 +65,31 @@ function choice(
   }
 }
 
+function trackValue(track: AppearanceSoundtrack | null | undefined): Record<string, JsonValue> | null {
+  if (track === null || track === undefined) return null
+  return { path: track.path, volume: track.volume ?? null, loop: track.loop ?? null }
+}
+
+function appearanceSummary(view: AppearanceView): Record<string, JsonValue> {
+  return {
+    revision: view.revision,
+    global_revision: view.globalRevision,
+    workspace_canvas_track: trackValue(view.workspace.canvasTrack),
+    session_track: trackValue(view.session.track),
+    session_foreground: view.session.foreground ?? null,
+    file_path: view.filePath ?? null,
+    file_track: trackValue(view.file?.track),
+    file_foreground: view.file?.foreground ?? null,
+    resolved_canvas_track: trackValue(view.resolved.canvasTrack),
+    resolved_conversation_track: trackValue(view.resolved.conversationTrack),
+    resolved_canvas_foreground: view.resolved.canvasForeground,
+    resolved_conversation_foreground: view.resolved.conversationForeground,
+  }
+}
+
 /**
- * Create the two authorized appearance tool definitions.
- * @returns The canvas and conversation appearance tools.
+ * Create the four authorized appearance tool definitions.
+ * @returns The canvas, conversation, soundtrack-list, and soundtrack-write tools.
  */
 export function createAppearanceTools(): readonly ToolDefinition[] {
   return [defineTool({
@@ -103,7 +132,8 @@ export function createAppearanceTools(): readonly ToolDefinition[] {
         scope,
         ...(scope === 'file' ? { file_path: view.filePath } : {}),
         background_kind: view.resolved.canvas?.kind ?? 'default',
-        image_path: view.resolved.canvas?.kind === 'asset' ? view.resolved.canvas.path : null,
+        image_path: view.resolved.canvas?.kind === 'asset' && view.resolved.canvas.source !== 'global' ? view.resolved.canvas.path : null,
+        image_source: view.resolved.canvas?.kind === 'asset' ? view.resolved.canvas.source ?? 'workspace' : null,
         material: view.resolved.canvas?.material ?? 'auto',
         foreground: view.resolved.canvas?.foreground ?? 'system',
       }
@@ -151,17 +181,102 @@ export function createAppearanceTools(): readonly ToolDefinition[] {
         revision: view.revision,
         scope,
         conversation_kind: view.resolved.conversation?.kind ?? 'default',
-        conversation_image: view.resolved.conversation?.kind === 'asset' ? view.resolved.conversation.path : null,
+        conversation_image: view.resolved.conversation?.kind === 'asset' && view.resolved.conversation.source !== 'global' ? view.resolved.conversation.path : null,
+        conversation_source: view.resolved.conversation?.kind === 'asset' ? view.resolved.conversation.source ?? 'workspace' : null,
         material: view.resolved.conversation?.material ?? 'auto',
         foreground: view.resolved.conversation?.foreground ?? 'system',
         avatar_path: view.resolved.assistantAvatar?.path ?? null,
       }
     },
+  }), defineTool({
+    name: 'list_soundtracks',
+    description: 'Read the workspace canvas default, current Session soundtrack and independent foreground, plus an optional existing file override and the values each one currently resolves to. Returns project audio files that set_soundtrack may reference. Use this before changing soundtracks so inheritance and the current revision are explicit.',
+    parameters: {
+      path: { type: 'string', description: 'Optional existing project-relative file whose canvas soundtrack and foreground should also be reported' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const session = sessionOf(exec)
+      const filePath = typeof args.path === 'string' && args.path !== '' ? args.path : undefined
+      const [view, audio] = await Promise.all([
+        readTrackAppearance(session.root, session.id, filePath),
+        listAppearanceAudio(session.root),
+      ])
+      return {
+        ...appearanceSummary(view),
+        audio_files: [...audio.paths],
+        audio_files_total: audio.total,
+        audio_files_truncated: audio.truncated,
+      }
+    },
+  }), defineTool({
+    name: 'set_soundtrack',
+    description: 'Set or clear a project soundtrack for the workspace canvas default, one existing file, or the current Session, and optionally set that object\'s independent text foreground. This changes appearance only; it never starts playback, creates a Session, changes messages, or uploads or generates audio. Bind only an existing project MP3, WAV, or Ogg path returned by list_soundtracks or otherwise verified; choose light/dark/invert only for text, and omit foreground to leave it unchanged.',
+    parameters: {
+      scope: { type: 'string', required: true, enum: ['workspace', 'file', 'session'], description: 'workspace canvas default, one existing file, or the current Session' },
+      path: { type: 'string', description: 'Existing project-relative file for scope=file; omit for workspace and session' },
+      track_kind: { type: 'string', enum: ['default', 'audio'], description: 'Omit to leave the soundtrack unchanged; default removes this scope\'s track so it inherits, audio binds audio_path' },
+      audio_path: { type: 'string', description: 'Existing project-relative MP3, WAV, or Ogg path for track_kind=audio' },
+      volume: { type: 'number', description: 'Playback volume from 0 to 1; only with track_kind=audio' },
+      loop: { type: 'boolean', description: 'Whether the soundtrack loops; only with track_kind=audio' },
+      foreground: { type: 'string', enum: ['default', 'light', 'dark', 'invert'], description: 'Independent text/icon foreground for the file or current Session; default removes the override and inherits, omit to leave unchanged. Workspace has no independent foreground' },
+      expected_revision: { type: 'integer', description: 'Optional appearance revision the model last read; stale writes are rejected' },
+    },
+    output: { schema: RESULT_SCHEMA, render },
+    async execute(args, exec) {
+      const session = sessionOf(exec)
+      const scope = String(args.scope)
+      if (scope !== 'workspace' && scope !== 'file' && scope !== 'session') throw new Error('scope must be workspace, file, or session')
+      const filePath = typeof args.path === 'string' && args.path !== '' ? args.path : undefined
+      if (scope === 'file' && filePath === undefined) throw new Error('file scope requires path')
+      if (scope !== 'file' && args.path !== undefined) throw new Error(`${scope} scope does not take path`)
+      const rawKind = args.track_kind
+      if (rawKind !== undefined && rawKind !== 'default' && rawKind !== 'audio') throw new Error('track_kind must be default or audio')
+      const audioPath = args.audio_path
+      if (audioPath !== undefined && typeof audioPath !== 'string') throw new Error('audio_path must be a string')
+      const volume = args.volume
+      const loop = args.loop
+      if (volume !== undefined && (typeof volume !== 'number' || !Number.isFinite(volume) || volume < 0 || volume > 1)) {
+        throw new Error('volume must be between 0 and 1')
+      }
+      if (loop !== undefined && typeof loop !== 'boolean') throw new Error('loop must be boolean')
+      if (rawKind !== 'audio' && (audioPath !== undefined || volume !== undefined || loop !== undefined)) {
+        throw new Error('audio_path, volume, and loop require track_kind=audio')
+      }
+      if (rawKind === 'audio' && (audioPath === undefined || audioPath === '')) throw new Error('track_kind=audio requires audio_path')
+      const rawForeground = args.foreground
+      if (rawForeground !== undefined && rawForeground !== 'default' && rawForeground !== 'light'
+        && rawForeground !== 'dark' && rawForeground !== 'invert') {
+        throw new Error('foreground must be default, light, dark, or invert')
+      }
+      if (scope === 'workspace' && rawForeground !== undefined) throw new Error('workspace scope has no independent foreground')
+      if (rawKind === undefined && rawForeground === undefined) throw new Error('provide a soundtrack or foreground change')
+      const track = rawKind === undefined
+        ? undefined
+        : rawKind === 'default'
+          ? { kind: 'default' as const }
+          : {
+              kind: 'audio' as const,
+              audioPath,
+              ...(volume === undefined ? {} : { volume }),
+              ...(loop === undefined ? {} : { loop }),
+            }
+      const foreground = rawForeground as 'default' | AppearanceObjectForeground | undefined
+      const expected = revision(args.expected_revision)
+      const view = await setTrackAppearance(session.root, session.id, {
+        scope,
+        ...(filePath === undefined ? {} : { filePath }),
+        ...(track === undefined ? {} : { track }),
+        ...(foreground === undefined ? {} : { foreground }),
+        ...(expected === undefined ? {} : { expectedRevision: expected }),
+      })
+      return { scope, ...appearanceSummary(view) }
+    },
   })]
 }
 
 /**
- * Register the two authorized appearance tools.
+ * Register the four authorized appearance tools.
  * @param ctx - Host context carrying the tool registry.
  */
 export function registerAppearanceTools(ctx: Context): void {

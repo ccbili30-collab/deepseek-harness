@@ -1,13 +1,16 @@
 /**
- * Workspace-scoped appearance persistence. Each project owns one JSON document
- * in its app ledger; every read-modify-write is serialized per document and
- * published with an atomic rename.
+ * Workspace and application appearance persistence. Each document owns an
+ * independent revision and per-path write queue; global writes never rewrite
+ * project ledgers.
  * @module noven-shell/appearance/store
  */
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import { ledgerDir } from 'noven-ledger'
-import { emptyAppearanceDocument, parseAppearanceDocument, resolveAppearance, type AppearanceDocument, type AppearanceView } from './model.ts'
+import { APP_HOME, ledgerDir } from 'noven-ledger'
+import {
+  emptyAppearanceDocument, emptyGlobalAppearanceDocument, parseAppearanceDocument, parseGlobalAppearanceDocument, resolveAppearance,
+  type AppearanceDocument, type AppearanceView, type GlobalAppearanceDocument,
+} from './model.ts'
 
 /** Thrown when stored appearance JSON is unreadable but present. */
 export class AppearanceStoreError extends Error {
@@ -31,12 +34,16 @@ async function documentPath(root: string): Promise<string> {
   return join(await ledgerDir(root), 'appearance.json')
 }
 
-async function load(path: string): Promise<AppearanceDocument> {
+function globalDocumentPath(): string {
+  return join(APP_HOME, 'appearance', 'global.json')
+}
+
+async function load<T>(path: string, empty: () => T, parse: (value: unknown) => T | undefined): Promise<T> {
   let raw: string
   try {
     raw = await readFile(path, 'utf8')
   } catch (error: unknown) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return emptyAppearanceDocument()
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return empty()
     throw new AppearanceStoreError('appearance document cannot be read', { cause: error })
   }
   let value: unknown
@@ -45,12 +52,12 @@ async function load(path: string): Promise<AppearanceDocument> {
   } catch (error: unknown) {
     throw new AppearanceStoreError('appearance document is not valid JSON', { cause: error })
   }
-  const document = parseAppearanceDocument(value)
+  const document = parse(value)
   if (document === undefined) throw new AppearanceStoreError('appearance document contains unsupported fields')
   return document
 }
 
-async function save(path: string, document: AppearanceDocument): Promise<void> {
+async function save(path: string, document: AppearanceDocument | GlobalAppearanceDocument): Promise<void> {
   await mkdir(dirname(path), { recursive: true })
   const temp = `${path}.noven-tmp`
   await writeFile(temp, `${JSON.stringify(document, null, 2)}\n`)
@@ -69,7 +76,15 @@ function serialize<T>(path: string, task: () => Promise<T>): Promise<T> {
 }
 
 async function readDocument(root: string): Promise<AppearanceDocument> {
-  return load(await documentPath(root))
+  return load(await documentPath(root), emptyAppearanceDocument, parseAppearanceDocument)
+}
+
+async function readGlobalDocument(): Promise<GlobalAppearanceDocument> {
+  return load(globalDocumentPath(), emptyGlobalAppearanceDocument, parseGlobalAppearanceDocument)
+}
+
+async function resolveWithGlobal(document: AppearanceDocument, sessionId: string, filePath?: string): Promise<AppearanceView> {
+  return resolveAppearance(document, sessionId, filePath, await readGlobalDocument())
 }
 
 /**
@@ -77,17 +92,17 @@ async function readDocument(root: string): Promise<AppearanceDocument> {
  * @param root - Project workspace root.
  * @param sessionId - Session whose conversation and avatar resolve.
  * @param filePath - Canonical workspace-relative file path, if any.
- * @returns The resolved view.
+ * @returns The resolved view including the global default and its revision.
  */
 export async function readAppearance(root: string, sessionId: string, filePath?: string): Promise<AppearanceView> {
-  const document = await readDocument(root)
-  return resolveAppearance(document, sessionId, filePath)
+  const [document, global] = await Promise.all([readDocument(root), readGlobalDocument()])
+  return resolveAppearance(document, sessionId, filePath, global)
 }
 
 /**
- * Apply one mutation with revision checking and serialized writes.
+ * Apply one workspace mutation with revision checking and serialized writes.
  * @param root - Project workspace root.
- * @param expectedRevision - Optimistic revision supplied by a user surface.
+ * @param expectedRevision - Optimistic workspace revision supplied by a user surface.
  * @param change - Pure document transition; undefined means no write.
  * @param sessionId - Session whose view is returned after the write.
  * @param filePath - File whose view is returned after the write.
@@ -102,14 +117,40 @@ export async function updateAppearance(
 ): Promise<AppearanceView> {
   const path = await documentPath(root)
   return serialize(path, async () => {
-    const current = await load(path)
+    const current = await load(path, emptyAppearanceDocument, parseAppearanceDocument)
     if (expectedRevision !== undefined && expectedRevision !== current.revision) throw new AppearanceConflictError(current.revision)
     const next = change(current)
-    if (next === undefined || JSON.stringify(next) === JSON.stringify(current)) {
-      return resolveAppearance(current, sessionId, filePath)
-    }
+    if (next === undefined || JSON.stringify(next) === JSON.stringify(current)) return resolveWithGlobal(current, sessionId, filePath)
     const document: AppearanceDocument = { ...next, version: 1, revision: current.revision + 1 }
     await save(path, document)
-    return resolveAppearance(document, sessionId, filePath)
+    return resolveWithGlobal(document, sessionId, filePath)
+  })
+}
+
+/**
+ * Apply one application-wide default mutation without changing any workspace revision.
+ * @param root - Workspace whose resolved view is returned after the global write.
+ * @param sessionId - Session whose view is returned.
+ * @param expectedRevision - Optimistic global revision supplied by a user surface.
+ * @param change - Pure global document transition; undefined means no write.
+ * @param filePath - Optional file whose view is returned.
+ * @returns The current workspace view with the new global layer.
+ */
+export async function updateGlobalAppearance(
+  root: string,
+  sessionId: string,
+  expectedRevision: number | undefined,
+  change: (document: GlobalAppearanceDocument) => GlobalAppearanceDocument | undefined,
+  filePath?: string,
+): Promise<AppearanceView> {
+  const path = globalDocumentPath()
+  return serialize(path, async () => {
+    const current = await load(path, emptyGlobalAppearanceDocument, parseGlobalAppearanceDocument)
+    if (expectedRevision !== undefined && expectedRevision !== current.revision) throw new AppearanceConflictError(current.revision)
+    const next = change(current)
+    if (next !== undefined && JSON.stringify(next) !== JSON.stringify(current)) {
+      await save(path, { ...next, version: 1, revision: current.revision + 1 })
+    }
+    return readAppearance(root, sessionId, filePath)
   })
 }

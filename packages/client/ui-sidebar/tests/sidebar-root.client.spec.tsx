@@ -39,7 +39,7 @@ function mountShell({ collapsed = false, width = 300, shortcuts = [], policy = '
   collapsed?: boolean
   width?: number
   shortcuts?: readonly ShortcutCatalogEntry[]
-  policy?: 'legacy' | 'topbar'
+  policy?: 'legacy' | 'topbar' | 'integrated'
 } = {}) {
   const startSession = vi.fn()
   const toggleSidebar = vi.fn()
@@ -53,7 +53,9 @@ function mountShell({ collapsed = false, width = 300, shortcuts = [], policy = '
     <SidebarRoot
       collapsed={current.collapsed} width={current.width}
       useSessions={neverHook} useSessionStatus={useSessionStatus} useSessionRetainInfo={neverHook}
-      usePanelInfo={usePanelInfo} useFrameLayoutPolicy={selector => selector(policy === 'topbar' ? { primary: 'main' as const, canvasSide: 'right' as const } : null)}
+      usePanelInfo={usePanelInfo} useFrameLayoutPolicy={selector => selector(policy === 'legacy' ? null : {
+        primary: 'main' as const, canvasSide: 'right' as const, topbar: policy === 'topbar',
+      })}
       selectPanel={() => {}} usePanels={selector => selector([])} useShortcuts={selector => selector(shortcuts)}
       useResource={useResource} useWorkspaces={neverHook}
       startSession={startSession} toggleSidebar={toggleSidebar} t={t}
@@ -63,6 +65,7 @@ function mountShell({ collapsed = false, width = 300, shortcuts = [], policy = '
       ) => {
         if (key === 'sidebar.brand.mark') return brandMark
         if (key === 'sidebar.brand.name') return brandName
+        if (key === 'sidebar.brand.trailing') return <span data-testid="brand-trailing">Agent</span>
         if (key === 'sidebar.toggle.badge') return null
         if (key === 'sidebar.settings') {
           settingsOwner = owner
@@ -263,6 +266,21 @@ it('fills the collapsed brand slot with the topbar navigation toggle', () => {
   const toggle = screen.getByRole('button', { name: en['toggle.open'] })
   expect(toggle.hasAttribute('data-sidebar-brand-toggle')).toBe(true)
   expect(toggle.querySelector('[data-testid="custom-brand-mark"]')).toBeTruthy()
+})
+
+it('places product navigation in the integrated brand row without a second toggle', () => {
+  mountShell({ policy: 'integrated' })
+  const trailing = screen.getByTestId('brand-trailing')
+  expect(trailing.parentElement?.hasAttribute('data-integrated-brand')).toBe(true)
+  expect(trailing.parentElement?.hasAttribute('data-window-drag')).toBe(true)
+  expect(screen.getByRole('button', { name: en['toggle.collapse'] }).hasAttribute('data-sidebar-brand-toggle')).toBe(true)
+  expect(screen.getAllByRole('button', { name: en['toggle.collapse'] })).toHaveLength(1)
+})
+
+it('omits brand trailing navigation from the collapsed product rail', () => {
+  mountShell({ collapsed: true, policy: 'integrated' })
+  expect(screen.queryByTestId('brand-trailing')).toBeNull()
+  expect(screen.getByRole('button', { name: en['toggle.open'] }).hasAttribute('data-sidebar-brand-toggle')).toBe(true)
 })
 
 it('keeps the macOS sidebar toggle in its top strip', () => {

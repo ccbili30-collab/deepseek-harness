@@ -1,0 +1,23 @@
+- text: 背景 已自动保存
+- button "恢复 Noven 默认"
+- text: 雾松谷编年史 ··· 创作 世界 角色
+- strong: 旅途继续
+- text: 雨声停在山口，雾松谷的灯还亮着。
+- strong: Noven
+- text: 下一页要写守灯人的选择，还是先从沿途见闻开始？ 继续这段旅途…… ↑ 界面视图 同步切换整个界面的文字、控件与底色。
+- combobox "界面视图":
+  - option "亮色视图"
+  - option "暗色视图" [selected]
+- text: 背景 选择默认背景的生效范围；分别设置和对象例外保持不变。
+- combobox "生效范围":
+  - option "当前工作区" [selected]
+  - option "全部工作区"
+- button "默认" [pressed]
+- button "添加自定义背景": +
+- text: 背景可见度 调整背景之上文字与控件的清晰承托。
+- slider "背景可见度": "85"
+- status: 85%
+- text: 分别设置 单独修改外壳、画布、对话或当前对象，其他位置继续跟随工作区默认。
+- button "分别设置"
+- text: 我的预设 还没有保存的预设
+- button "保存为预设"

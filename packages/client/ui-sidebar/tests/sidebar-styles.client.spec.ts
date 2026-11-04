@@ -13,7 +13,7 @@ const css = readFileSync(fileURLToPath(new URL('../src/client/SidebarRoot.module
 function declarations(selector: string): Map<string, string> | undefined {
   const withoutComments = css.replace(/\/\*[\s\S]*?\*\//g, ' ')
   for (const [, selectorList = '', body = ''] of withoutComments.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-    if (!selectorList.split(',').map(value => value.trim()).includes(selector)) continue
+    if (selectorList.trim() !== selector && !selectorList.split(',').map(value => value.trim()).includes(selector)) continue
     const found = new Map<string, string>()
     for (const part of body.split(';')) {
       const colon = part.indexOf(':')
@@ -64,11 +64,32 @@ describe('SidebarRoot.module.css', () => {
     expect(declarations('.collapsed .newSession')?.get('width')).toBe('36px')
   })
 
+  it('integrates the product header without painting a separate surface', () => {
+    expect(declarations('.root.productRoot')?.get('background')).toBe('transparent')
+    const integrated = declarations('.root:not(.collapsed) .logoRow.integratedBrand')
+    expect(integrated?.get('background')).toBe('transparent')
+    expect(integrated?.get('container-type')).toBe('inline-size')
+    expect(integrated?.get('gap')).toBe('6px')
+    const darwin = declarations(":global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .root:not(.collapsed) .logoRow.integratedBrand")
+    expect(darwin?.get('height')).toBe('52px')
+    expect(darwin?.get('padding')).toBe('0 12px 2px 88px')
+    const fullscreen = declarations(":global([data-platform='darwin'][data-fullscreen]) .root:not(.collapsed) .logoRow.integratedBrand")
+    expect(fullscreen?.get('padding-left')).toBe('12px')
+  })
+
+  it('keeps the collapsed brand control below macOS traffic lights', () => {
+    const collapsed = declarations(":global(:is([data-platform='darwin'], [data-chrome-platform='darwin'])) .root.collapsed")
+    expect(collapsed?.get('padding-top')).toBe('52px')
+    const fullscreen = declarations(":global([data-platform='darwin'][data-fullscreen]) .root.collapsed")
+    expect(fullscreen?.get('padding-top')).toBe('18px')
+  })
+
   it('keeps the slotted brand row at the full artwork height', () => {
     expect(declarations('.brandIdentity')?.get('height')).toBe('24px')
     expect(declarations('.brandName')?.get('height')).toBe('24px')
     expect(declarations('.brandName')?.get('line-height')).toBe('24px')
     expect(declarations('.brandName')?.get('font-size')).toBe('18px')
+    expect(declarations('.brandName')?.get('white-space')).toBe('nowrap')
     expect(declarations('.fallbackBrandName')?.get('font-size')).toBe('17px')
     expect(declarations('.fallbackBrandName')?.get('white-space')).toBe('nowrap')
   })

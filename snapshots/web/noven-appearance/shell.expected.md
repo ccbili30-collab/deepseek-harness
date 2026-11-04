@@ -1,0 +1,2 @@
+- button "收起侧边栏" [expanded]
+- button "切换到手作": Agent

@@ -395,6 +395,40 @@ describe('AppFrame product layout policy', () => {
     expect(sidebarOwner()).toEqual({ collapsed: true, width: 56 })
   })
 
+  it('removes the topbar without changing the product rail or leading controls', () => {
+    document.documentElement.dataset.chromePlatform = 'darwin'
+    const { instance, frame, queryByTestId, sidebarOwner } = mountFrame(1920, {
+      primary: 'main', canvasSide: 'right', topbar: false,
+    })
+    expect(frame.hasAttribute('data-topbar')).toBe(false)
+    expect(queryByTestId('shell.topbar-content')).toBeNull()
+    act(() => { instance.actions.toggleSidebar() })
+    expect(queryByTestId('shell.leading-content')).toBeNull()
+    expect(sidebarOwner()).toEqual({ collapsed: true, width: 56 })
+  })
+
+  it('publishes content inset separately and leaves all auxiliary chrome and recovery to content', () => {
+    document.documentElement.dataset.chromePlatform = 'darwin'
+    const { frame, instance, setPolicy } = mountFrame(1920, {
+      primary: 'main', canvasSide: 'right', topbar: false, contentInset: 12, sideChrome: 'content', drawer: false,
+    })
+    expect(frame.style.getPropertyValue('--dsh-product-content-inset')).toBe('12px')
+    act(() => {
+      setClaim('right')
+      instance.actions.setAuxiliaryCollapsed(false)
+    })
+    expect(frame.querySelector('[data-side-trailing]')).toBeNull()
+    expect(frame.querySelector('[data-side-fold]')).toBeNull()
+    act(() => { instance.actions.setAuxiliaryCollapsed(true) })
+    expect(frame.querySelector('[data-side-fold]')).toBeNull()
+    expect(workEl(frame).style.gridTemplateColumns).toBe('minmax(0px, 1fr) 0px')
+    act(() => {
+      setPolicy({ primary: 'rightbar', canvasSide: 'right', topbar: false, sideChrome: 'content', drawer: false, foldMode: 'shared' })
+    })
+    expect(frame.querySelector('[data-side-fold]')).toBeNull()
+    expect(workEl(frame).style.gridTemplateColumns).toBe('minmax(0px, 1fr) minmax(0px, 0px)')
+  })
+
   it('switches primary regions without remounting or reading Session arrangement', () => {
     const b = mountFrame(1920, { primary: 'main', canvasSide: 'left' })
     const { instance, frame, mounts, setPolicy, getByTestId } = b

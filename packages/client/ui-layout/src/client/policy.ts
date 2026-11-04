@@ -14,6 +14,10 @@ export interface FrameLayoutPolicy {
   readonly canvasSide: CanvasSide
   /** Mount the fixed application topbar and its composition slots; defaults to true under a policy. */
   readonly topbar?: boolean
+  /** Product content-column gutter in px, independent of window and overlay clearance. */
+  readonly contentInset?: number
+  /** Place auxiliary fold and primary recovery in content rows, or use the frame's legacy chrome; defaults to frame. */
+  readonly sideChrome?: 'frame' | 'content'
   /** Render the legacy right-side drawer and reserve its track; defaults to true. */
   readonly drawer?: boolean
   /** Share one auxiliary fold across product modes, or keep Conversation and Canvas folds independent; defaults to independent. */

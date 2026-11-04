@@ -3,6 +3,7 @@
     - img
   - button "画布全屏":
     - img
+  - button "展开"
 - paragraph: 这里是你的案头：拿一张预设开工，或者从一页白纸开始。
 - heading "预设" [level=3]
 - button "世界卡 规则、地理、势力——一个世界一张卡":

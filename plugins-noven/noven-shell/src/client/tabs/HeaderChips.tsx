@@ -8,7 +8,8 @@
 import type { InjectFace, PropsLocale, PropsRuntime } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ObservableSnapshot } from '@deepseek-ai/dsh-client-store'
 import type { BindingState } from '../bindings-api.ts'
-import type { NovenShellLocaleKey } from '../locales.ts'
+import { useAppearance } from '../appearance.tsx'
+import { PlayableTitle } from '../playable-title.tsx'
 
 /** Injected face: the current session's binding plus the rail-tab opener. */
 export interface HeaderChipsInjected {
@@ -22,6 +23,7 @@ type Props = PropsRuntime<'conversation.session.header.actions'>
 
 export function HeaderChips({ useSession, useSessions, useBinding, openContext, t }: Props) {
   const sessionId = useSession(s => s.sessionId)
+  const appearance = useAppearance(sessionId)
   const cwd = useSessions(s => s.byId[sessionId]?.cwd)
   const binding = useBinding(s => s)
   const project = cwd === undefined ? undefined : cwd.split('/').filter(Boolean).pop()
@@ -31,7 +33,21 @@ export function HeaderChips({ useSession, useSessions, useBinding, openContext, 
     <button key={label} type="button" className="nv-hchip" onClick={openContext}>{label}</button>
   )
   const chips: React.ReactNode[] = []
-  if (project !== undefined) chips.push(chip(`${t('chip.project')} · ${project}`))
+  if (project !== undefined) {
+    const track = appearance?.resolved.conversationTrack ?? null
+    chips.push(
+      <PlayableTitle
+        key="project"
+        className="nv-hchip"
+        title={`${t('chip.project')} · ${project}`}
+        track={track}
+        revision={appearance?.revision ?? 0}
+        owner={{ sessionId }}
+        onActivate={track === null ? openContext : undefined}
+        t={t}
+      />,
+    )
+  }
   const background = b?.backgroundCardIds.map(id => cards[id]?.name).find(n => n !== undefined)
   if (background !== undefined) chips.push(chip(`${t('chip.background')} · ${background}`))
   if (chips.length === 0) return null

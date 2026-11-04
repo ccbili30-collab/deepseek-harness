@@ -1,4 +1,4 @@
-/** Fixed topbar controls, current-mode labeling, and Noven selection styling. */
+/** Brand-row mode control, current-mode labeling, and Noven selection styling. */
 import { readFileSync } from 'node:fs'
 
 let failures = 0
@@ -21,19 +21,19 @@ const arrangement = readFileSync(new URL('../src/client/arrangement.ts', import.
 check(frame.includes('--dsh-frame-leading-clearance: 160px'), '默认 DSH 普通窗口安全区保持 160px')
 check(frame.includes('--dsh-frame-leading-clearance: 84px'), '默认 DSH 全屏安全区保持 84px')
 check(!style.includes('--dsh-frame-leading-clearance: 196px') && !style.includes('--dsh-frame-leading-clearance: 120px'), 'Noven 不再为废弃的第三个 leading 控件增加安全区')
-check(shell.includes("ctx.slots.inject('shell.topbar'") && !shell.includes("ctx.slots.inject('shell.topbar.navigation'"), '模式注册到固定顶栏，导航开合回到导航自身')
+check(shell.includes("ctx.slots.inject('sidebar.brand.trailing'") && !shell.includes("ctx.slots.inject('shell.topbar'") && !shell.includes("ctx.slots.inject('shell.topbar.navigation'"), '模式注册到品牌行，独立顶栏不再挂载')
 check(!shell.includes('NovenLeadingModeSwitch') && !shell.includes("ctx.slots.inject('shell.leading.action'"), '不再存在旧的 leading 模式注册')
 check(!shell.includes('SessionNavigationButton') && mode.includes('showBrowser'), '完整会话浏览器并入现有会话菜单，不恢复旧导航注册')
 check(!tree.includes('SessionNavigationButton'), '目录树不再包含历史按钮')
-check(mode.includes("PropsRuntime<'shell.topbar'>") && mode.includes('createNovenSubjectStore'), '模式按钮读主体 store，不再有独立 mode store')
+check(mode.includes("PropsRuntime<'sidebar.brand.trailing'>") && mode.includes('createNovenSubjectStore'), '模式按钮读主体 store，不再有独立 mode store')
 check(mode.includes("t(mode === 'agent' ? 'mode.toAgent' : 'mode.toIde')"), '模式按钮显示当前模式而不是另一套目标文案')
-check(style.includes('.nv-mode-switch-topbar') && style.includes('.nv-side-session-button') && !style.includes('.nv-aux-fold') && !style.includes('.nv-canvas-fold'), '顶栏模式与侧边会话入口各有几何，内容头不再画折叠')
+check(style.includes('.nv-mode-switch-brand') && style.includes('.nv-side-session-button') && !style.includes('.nv-aux-fold') && !style.includes('.nv-canvas-fold'), '品牌行模式与侧边会话入口各有几何，内容头不再画折叠')
 check(sidebar.includes('data-sidebar-brand-toggle') && sidebar.includes('brandToggleVisible'), '导航顶部 logo 是唯一开合')
-check(frame.includes('data-product-frame') && frameTsx.includes('productFold') && !frameTsx.includes('centerFoldVisible'), '产品 frame 在侧边槽位拥有唯一折叠控件')
+check(frame.includes('data-product-frame') && frameTsx.includes('productFold') && frameTsx.includes('collapsible={contentSideChrome ? false'), '内容 Chrome 策略不再挂载框架覆盖折叠')
 check(!frameTsx.includes('function FoldGlyph') && frameTsx.includes('IconPanelLeftOutlineRegular'), '侧边折叠复用图标原语而不是新画一个')
 check(style.includes('.nv-mode-switch[aria-pressed="true"] { color: var(--nv-select); }'), '选中态保留薄荷文字而不是常驻底色')
 check(arrangement.includes('createNovenSubjectStore') && !arrangement.includes('createNovenModeStore'), '主体是唯一写入，mode 由主体派生')
-check(shell.includes("ctx.slots.inject('side.header.trailing'") && shell.includes("ctx.slots.inject('side.parent.directory'") && sideParent.includes('props.SessionProvider') && !shell.includes("noven.canvas.sideDirectory") && !shell.includes("conversation.session.header.corner"), '侧边上级只注册一次：会话/目录换 provider，内容不再各自挂上级')
+check(shell.includes("ctx.slots.inject('side.header.trailing'") && shell.includes("ctx.slots.inject('side.parent.directory'") && sideParent.includes('props.SessionProvider') && shell.includes("ctx.slots.inject('conversation.session.header.corner'") && shell.includes('navigation={<NovenSideSessionMenu') && !shell.includes("noven.canvas.sideDirectory"), '侧边上级只注册一次：目录保留子座，Session 导航进入真实 corner')
 check(!shell.includes('NovenTerminalAction') && !shell.includes('IDE terminal action') && !mode.includes('NovenTerminalAction'), '终端只保留工具菜单入口，不再另画底排主按钮')
 check(!style.includes("[data-slot='conversation.header'] [data-conversation-tabs] { display: none; }"), '对话视图切换不再被 Noven CSS 隐藏')
 check(!style.includes("[data-zone='features'] { display: none; }"), '画布功能导航不再被 Noven CSS 隐藏')
@@ -47,7 +47,7 @@ check(!docEditor.includes('theme="light"') && (docEditor.match(/theme=\{colorSch
 check(shell.includes("{ id: HOME_ID, order: 10") && shell.includes("{ id: MESSAGES_ID, order: 30") && shell.includes("{ id: ME_ID, order: 40"), '左侧导航保留社区/消息/我的三行，创作仍是命令')
 check(shell.includes('root.dataset.novenSubject = subjectInstance.getSnapshot().subject'), '主体写入根元素，皮肤选择不读 mode')
 check(style.includes("html[data-noven-subject='conversation'] [data-center-col] [data-phase='hero']") && style.includes('radial-gradient(circle at 50% 30%'), '空白会话 hero 恢复创作页薄荷底')
-check(/\.sideTrailing \{[\s\S]{0,180}top: 11px;[\s\S]{0,160}gap: 8px;/.test(frame) && frame.includes('data-side-chrome') && frame.includes('--dsh-side-chrome-inset: 88px') && !style.includes('.nv-canvas-strip .nv-side-parent'), '侧边上级与折叠共用框架 trailing 行，内容只预留同一块宽度')
+check(arrangement.includes("sideChrome: 'content'") && canvas.includes('nv-canvas-chrome-trailing') && canvas.includes('<AuxiliaryFoldButton') && style.includes('.nv-chrome-icon-button') && frameTsx.includes('collapsible={contentSideChrome ? false'), '辅助折叠与主内容恢复共用按钮原语，不再生成覆盖工具栏')
 check(!canvas.includes('nv-canvas-plus') && canvas.includes("items={[{ id: 'start', label: t('canvas.start.tab') }") && canvas.includes('strip.length > 0 && <Menu') && !/\.nv-canvas-fullscreentoggle \{[^}]*margin-left: auto/.test(style) && canvas.includes('nv-canvas-fullscreentoggle'), '展开菜单纳入起点，单页签也可进入案头，独立 + 不再重复占位')
 check(!style.includes('.nv-canvas-tab-on .nv-canvas-tabx') && style.includes('.nv-canvas-tab:focus-within .nv-canvas-tabx')
   && style.includes('.nv-canvas[data-canvas-fullscreen] { position: fixed; inset: 0; z-index: 900;')
