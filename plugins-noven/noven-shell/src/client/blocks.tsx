@@ -152,35 +152,44 @@ export function ModuleBlock({ src, title, dependencies }: {
 
 /**
  * Register conversation inline blocks and their container-owned source resolvers.
+ * Chat and input-trigger services are injected independently rather than read
+ * once at startup: client plugins apply in no fixed order, and a shell that ran
+ * before Chat would otherwise leave the registry empty forever and paint sealed
+ * directives as raw JSON. Block rendering must not wait on the optional choice
+ * codec's input surface.
  * @param ctx - Client root context; without Chat the registration stays off.
  * @param dependencies - Read-only module resource services and shell translations.
  */
 export function registerInlineBlocks(ctx: ClientContext, dependencies: InlineBlockDependencies): void {
-  const blocks = ctx.get('chatBlocks')
-  if (blocks === undefined) return
-  registerCodeChoiceCodec(ctx)
-  ctx.effect(() => blocks.registerSource('card', resolveModuleSource), 'noven-shell: block card source')
-  ctx.effect(() => blocks.register({
-    id: 'code',
-    content: 'data',
-    render: ({ data, blockId, resolveMedia, commit }) => (
-      <InlineCodeBlock
-        data={data}
-        blockId={blockId}
-        resolveMedia={resolveMedia}
-        t={dependencies.t}
-        {...(commit === undefined ? {} : { commit })}
-      />
-    ),
-  }), 'noven-shell: code block')
-  ctx.effect(() => blocks.register({
-    id: 'module',
-    source: 'card',
-    size: { ratio: 16 / 10 },
-    variants: { wide: 16 / 9, square: 1, tall: 4 / 5 },
-    render: ({ source }) => <ModuleBlock src={source.src} title={source.title} dependencies={dependencies} />,
-  }), 'noven-shell: module block')
-  for (const id of ['code', 'module'] as const) {
-    if (blocks.resolve(id) === undefined) throw new Error(`noven-shell: inline block "${id}" was not registered`)
-  }
+  ctx.inject(['chatBlocks'], (scope: ClientContext) => {
+    const blocks = scope.get('chatBlocks')
+    if (blocks === undefined) return
+    scope.effect(() => blocks.registerSource('card', resolveModuleSource), 'noven-shell: block card source')
+    scope.effect(() => blocks.register({
+      id: 'code',
+      content: 'data',
+      render: ({ data, blockId, resolveMedia, commit }) => (
+        <InlineCodeBlock
+          data={data}
+          blockId={blockId}
+          resolveMedia={resolveMedia}
+          t={dependencies.t}
+          {...(commit === undefined ? {} : { commit })}
+        />
+      ),
+    }), 'noven-shell: code block')
+    scope.effect(() => blocks.register({
+      id: 'module',
+      source: 'card',
+      size: { ratio: 16 / 10 },
+      variants: { wide: 16 / 9, square: 1, tall: 4 / 5 },
+      render: ({ source }) => <ModuleBlock src={source.src} title={source.title} dependencies={dependencies} />,
+    }), 'noven-shell: module block')
+    for (const id of ['code', 'module'] as const) {
+      if (blocks.resolve(id) === undefined) throw new Error(`noven-shell: inline block "${id}" was not registered`)
+    }
+  })
+  ctx.inject(['inputTriggers'], (scope: ClientContext) => {
+    registerCodeChoiceCodec(scope)
+  })
 }

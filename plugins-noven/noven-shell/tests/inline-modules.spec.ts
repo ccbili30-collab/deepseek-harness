@@ -237,7 +237,7 @@ describe('read-only map generation persistence', () => {
 })
 
 describe('module block registration', () => {
-  test('registers both product block ids, the card resolver, and the choice codec', () => {
+  test('waits for Chat services before registering both product block ids, the card resolver, and the choice codec', () => {
     const specs = new Map()
     const sources = new Map()
     const codecs = []
@@ -246,17 +246,28 @@ describe('module block registration', () => {
       registerSource: (kind, resolver) => { sources.set(kind, resolver); return () => { sources.delete(kind) } },
       resolve: id => specs.get(id),
     }
+    const pending = []
     const ctx = {
       get: id => id === 'chatBlocks' ? registry : id === 'inputTriggers' ? {
         registerSource: source => { codecs.push(source); return () => {} },
       } : undefined,
       effect: callback => { callback() },
+      inject: (dependencies, callback) => {
+        pending.push({ dependencies, callback })
+      },
     }
     registerInlineBlocks(ctx, dependencies)
+    const blocks = pending.find(entry => entry.dependencies.includes('chatBlocks'))
+    const input = pending.find(entry => entry.dependencies.includes('inputTriggers'))
+    assert.ok(blocks !== undefined && input !== undefined)
+    assert.equal(specs.size, 0)
+    blocks.callback(ctx)
     assert.deepEqual([...specs.keys()].sort(), ['code', 'module'])
     assert.deepEqual([...sources.keys()], ['card'])
     assert.equal(specs.get('code').content, 'data')
     assert.equal(specs.get('module').source, 'card')
+    assert.equal(codecs.length, 0)
+    input.callback(ctx)
     assert.equal(codecs[0].name, 'noven-code-choice')
     assert.match(sources.get('card')('card:card-1/module-1', 'sess-1', '/workspace'), /^\/api\/noven-cards\?/)
   })
