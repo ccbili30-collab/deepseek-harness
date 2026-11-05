@@ -134,6 +134,31 @@ describe('PiAiAdapter provider routing', () => {
     expect(openCodeSessionHeaders({ provider: 'opencode-go', baseUrl: 'https://opencode.ai/zen/go/v1' }, undefined)).toEqual({})
   })
 
+  it('serves Gemini over the Google protocol and carries the OpenCode session header', async () => {
+    const server = await mockServer([{ status: 401, body: JSON.stringify({ error: { message: 'expected mock failure' } }) }])
+    const ctx = new Context()
+    await ctx.plugin(LlmRuntime)
+    await ctx.plugin(LlmPiAi, {
+      providers: {
+        'opencode-go': {
+          apiKeyEnv: 'PI_TEST_KEY',
+          api: 'google-generative-ai',
+          baseURL: `${server.url}/inference/go/google/v1beta`,
+          models: [{ id: 'gemini-4-argon', contextWindow: 1048576, maxTokens: 65536, input: ['text', 'image'] }],
+        },
+      },
+    })
+    await assemble(ctx, {
+      provider: 'opencode-go',
+      model: 'gemini-4-argon',
+      messages: [createUserMessage({ content: [{ type: 'text', text: 'hi' }], source: { kind: 'test' } })],
+      sessionId: 'session-gemini' as never,
+    })
+    expect(server.paths).toEqual(['/inference/go/google/v1beta/models/gemini-4-argon:streamGenerateContent?alt=sse'])
+    expect(server.headers[0]?.['x-goog-api-key']).toBe('test-key')
+    expect(server.headers[0]?.['x-opencode-session']).toBe('session-gemini')
+  })
+
   it('sends the durable Session id in OpenCode\'s session-affinity header', async () => {
     const failure = { status: 401, body: JSON.stringify({ error: { message: 'expected mock failure' } }) }
     const server = await mockServer([failure, failure])

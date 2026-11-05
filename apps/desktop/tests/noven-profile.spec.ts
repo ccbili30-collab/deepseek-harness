@@ -102,6 +102,8 @@ describe('Noven profile build metadata', () => {
     expect(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8')).toContain('apiKeyEnv: NOVEN_IMAGE_API_KEY')
     expect(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8')).toContain('defaultWorkspaceDirectory:')
     expect(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8')).toContain('NOVEN_PROJECTS_ROOT')
+    expect(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8')).toContain('api: google-generative-ai')
+    expect(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8')).toContain('id: gemini-4-argon')
     expect(readFileSync(join(profile, 'cordis.patch.yml'), 'utf8')).not.toContain('apiKey:')
     writeFileSync(join(profile, 'pnpm-lock.yaml'), 'lockfileVersion: 9.0\n')
     finalizeNovenProfile(profile)

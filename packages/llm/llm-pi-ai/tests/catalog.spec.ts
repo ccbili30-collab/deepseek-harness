@@ -348,6 +348,20 @@ describe('hand-declared providers', () => {
     expect(() => buildProvider(spec)).toThrow(/cannot serve; supported protocols are/)
   })
 
+  it('serves a hand-declared Google Generative AI route', () => {
+    expect(supportedProtocols()).toContain('google-generative-ai')
+    const provider = buildProvider({
+      provider: 'gemini-gateway',
+      displayName: 'Gemini Gateway',
+      api: 'google-generative-ai',
+      baseURL: 'https://gemini.example/v1beta',
+      models: [],
+      namesCredential: true,
+    })
+    expect(provider.id).toBe('gemini-gateway')
+    expect(provider.baseUrl).toBe('https://gemini.example/v1beta')
+  })
+
   it('delegates both stream methods from a static provider', () => {
     const [model] = getBuiltinModels('deepseek')
     if (model === undefined) throw new Error('the installed catalog ships no deepseek model')

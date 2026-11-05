@@ -20,7 +20,7 @@ Providers that sign in with OAuth, such as Codex, are not supported here yet.
 
 ## Add a custom model API
 
-Switch the card to **Custom model API** for a relay, a company gateway, a self-hosted server, or any provider absent from the installed catalog. Supply a lowercase Provider ID, base URL, API protocol, credential, and at least one model. The **API protocol** must be the one your gateway speaks, and the picker offers three: OpenAI Chat Completions, OpenAI Responses, and Anthropic Messages, stored in the active profile's `cordis.patch.yml` as `openai-completions`, `openai-responses`, and `anthropic-messages`. A provider speaks one protocol, so a gateway that serves two needs two providers.
+Switch the card to **Custom model API** for a relay, a company gateway, a self-hosted server, or any provider absent from the installed catalog. Supply a lowercase Provider ID, base URL, API protocol, credential, and at least one model. The **API protocol** must be the one your gateway speaks, and the picker offers four: OpenAI Chat Completions, OpenAI Responses, Anthropic Messages, and Google Generative AI, stored in the active profile's `cordis.patch.yml` as `openai-completions`, `openai-responses`, `anthropic-messages`, and `google-generative-ai`. A provider speaks one protocol, so a gateway that serves two needs two providers.
 
 ![The custom model API form: Provider ID, display name, base URL, API protocol, and API key](providers-custom-form.png)
 

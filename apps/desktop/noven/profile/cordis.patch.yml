@@ -90,6 +90,26 @@
             name: kimi-k3
           - id: minimax-m3
             name: minimax-m3
+      opencode-go:
+        apiKeyEnv: OPENCODE_GO_API_KEY
+      opencode-go-gemini:
+        displayName: OpenCode Go · Gemini
+        apiKeyEnv: OPENCODE_GO_API_KEY
+        api: google-generative-ai
+        baseURL: https://opencode.ai/inference/go/google/v1beta
+        models:
+          - id: gemini-4-argon
+            name: Gemini 4 Argon
+            contextWindow: 1048576
+            maxTokens: 65536
+            input:
+              - text
+              - image
+            reasoningEfforts:
+              off:
+              low: low
+              medium: medium
+              high: high
 - id: agent-default-model
   name: "@deepseek-ai/dsh-agent-default-model"
   config:
