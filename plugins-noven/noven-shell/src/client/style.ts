@@ -4076,7 +4076,8 @@ html[data-noven-conversation-appearance] [data-center-col] [data-phase='hero'] {
 .nv-cardpreview-menu button:hover { background: var(--nv-hover); }
 .nv-cardpreview-menu button[data-armed] { color: var(--nv-danger); background: var(--nv-danger-soft); }
 .nv-cardpreview-scroll { flex: 1; min-height: 0; overflow-y: auto; }
-.nv-cardpreview-inner { max-width: 1120px; margin: 0 auto; padding: 22px 30px 80px; }
+/* 1120 内容 + 左右 30 留白；border-box 保证窄窗下正文列不越过滚动区右缘。 */
+.nv-cardpreview-inner { max-width: 1180px; margin: 0 auto; padding: 22px 30px 80px; box-sizing: border-box; }
 .nv-cardpreview-hero {
   position: relative; min-height: 340px; border-radius: 22px; overflow: hidden;
   display: flex; align-items: flex-end; padding: 36px; color: #fff;
@@ -4232,6 +4233,10 @@ html[data-noven-conversation-appearance] [data-center-col] [data-phase='hero'] {
 .nv-setting {
   position: relative; width: 100%; margin: 0; padding: 0 0 60px;
   --nv-set-hero-h: clamp(200px, 30vw, 400px);
+  --nv-set-persona-h: 112px;
+  --nv-set-page-pad: 40px;
+  --nv-set-avatar-gap: 20px;
+  --nv-set-lead: calc(var(--nv-set-page-pad) + var(--nv-set-persona-h) + var(--nv-set-avatar-gap));
   --nv-set-field: color-mix(in srgb, var(--nv-accent) 26%, #93A99C);
   --nv-set-accent: var(--nv-accent-deep);
 }
@@ -4281,7 +4286,7 @@ html[data-noven-conversation-appearance] [data-center-col] [data-phase='hero'] {
     radial-gradient(70% 50% at 50% 34%, rgba(235, 255, 255, .46), transparent 70%),
     linear-gradient(165deg, #B9DCE8 0%, #6FA3B8 45%, #2E5366 100%);
 }
-.nv-set-heroshade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(6, 14, 12, .1) 18%, rgba(6, 14, 12, .28) 58%, rgba(6, 14, 12, .62) 100%); }
+.nv-set-heroshade { position: absolute; inset: 0; pointer-events: none; background: linear-gradient(180deg, rgba(6, 14, 12, .14) 0, rgba(6, 14, 12, .06) 34%, rgba(6, 14, 12, .42) 64%, rgba(6, 14, 12, .8) 100%); }
 .nv-set-top { position: absolute; top: 12px; left: 14px; right: 14px; z-index: 3; display: flex; align-items: center; gap: 8px; }
 .nv-set-back {
   display: inline-flex; align-items: center; gap: 6px; max-width: 60%;
@@ -4303,30 +4308,40 @@ html[data-noven-conversation-appearance] [data-center-col] [data-phase='hero'] {
   background: rgba(18, 24, 22, .36); color: #fff; font-size: 10px; font-weight: 600;
   backdrop-filter: blur(10px);
 }
-.nv-set-identity { position: relative; z-index: 2; display: grid; grid-template-columns: auto auto minmax(0, 1fr); align-items: start; gap: 22px; margin: 0; }
+/* 身份压在封面下沿：与正文同一条版心，文字靠底部遮罩保读。 */
+.nv-set-covercopy {
+  position: absolute; left: 0; right: 0; bottom: 0; z-index: 2;
+  display: flex; align-items: stretch; gap: var(--nv-set-avatar-gap);
+  width: 100%; max-width: 1220px; margin: 0 auto; padding: 0 var(--nv-set-page-pad) 24px;
+  box-sizing: border-box;
+}
+/* 方图边长就是整块身份文字的高度；文字永远不探出方图上下边界。 */
 .nv-set-logo {
-  width: 92px; height: 92px; flex: none; border-radius: 22px; overflow: hidden;
-  margin-top: -46px;
-  display: grid; place-items: center; border: 3px solid var(--nv-surface);
+  width: var(--nv-set-persona-h); height: var(--nv-set-persona-h); flex: none; border-radius: 20px; overflow: hidden;
+  display: grid; place-items: center; border: 2px solid rgba(255, 255, 255, .55);
   background: var(--nv-accent-soft); color: var(--nv-accent-deep);
-  font-size: 30px; font-weight: 700; box-shadow: 0 12px 28px rgba(20, 28, 24, .2);
+  font-size: 30px; font-weight: 700; box-shadow: 0 10px 24px rgba(10, 18, 15, .32);
 }
 .nv-set-logo img { width: 100%; height: 100%; object-fit: cover; display: block; }
-.nv-set-id { min-width: 0; padding: 58px 0 2px; }
-.nv-set-kind { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; color: var(--nv-secondary-text); }
-.nv-set-name { margin: 5px 0 0; font-size: 28px; line-height: 1.16; font-weight: 600; letter-spacing: -.02em; }
+.nv-set-id {
+  min-width: 0; height: var(--nv-set-persona-h);
+  display: flex; flex-direction: column; justify-content: center;
+}
+.nv-set-kind { display: block; font-size: 10.5px; font-weight: 600; letter-spacing: .18em; text-transform: uppercase; color: rgba(255, 255, 255, .72); }
+.nv-set-name { margin: 5px 0 0; font-size: 28px; line-height: 1.16; font-weight: 600; letter-spacing: -.02em; color: #fff; text-shadow: 0 1px 18px rgba(6, 14, 12, .45); }
 .nv-set-rename {
   display: block; width: 100%; margin-top: 5px; font-size: 28px; line-height: 1.16;
-  font-weight: 600; letter-spacing: -.02em; border: 0; border-bottom: 2px solid var(--nv-set-accent);
-  background: none; color: var(--nv-primary-text); outline: none;
+  font-weight: 600; letter-spacing: -.02em; border: 0; border-bottom: 2px solid rgba(255, 255, 255, .6);
+  background: none; color: #fff; outline: none;
 }
-.nv-set-meta { margin-top: 7px; font-size: 12px; color: var(--nv-secondary-text); }
-.nv-set-tags { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; align-self: end; gap: 6px; min-width: 0; padding-bottom: 9px; }
+.nv-set-meta { font-size: 12px; color: rgba(255, 255, 255, .72); }
+.nv-set-metarow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; margin-top: 8px; }
+.nv-set-tags { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-start; gap: 6px; min-width: 0; }
 .nv-set-tag {
   display: inline-flex; align-items: center; height: 24px; padding: 0 10px; white-space: nowrap;
   border: 0; border-radius: 999px; font-size: 11.5px;
-  background: color-mix(in srgb, var(--nv-set-field) 16%, transparent);
-  color: color-mix(in srgb, var(--nv-primary-text) 62%, transparent);
+  background: rgba(10, 18, 16, .36); color: rgba(255, 255, 255, .9);
+  -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
 button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
 .nv-set-imgact {
@@ -4338,45 +4353,38 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
 .nv-set-tag button {
   width: 0; overflow: hidden; opacity: 0; margin-left: 0; padding: 0;
   border: 0; background: none; font: inherit; line-height: 1; cursor: pointer;
-  color: var(--nv-secondary-text);
+  color: rgba(255, 255, 255, .7);
   transition: width var(--nv-dur-micro) var(--nv-ease-out), opacity var(--nv-dur-micro) var(--nv-ease-out),
     margin-left var(--nv-dur-micro) var(--nv-ease-out);
 }
 .nv-set-tag:hover button, .nv-set-tag:focus-within button { width: 12px; opacity: .62; margin-left: 4px; }
-.nv-set-tag button:hover { color: var(--nv-danger); opacity: 1; }
+.nv-set-tag button:hover { color: #fff; opacity: 1; }
 .nv-set-tagadd {
   width: 24px; height: 24px; flex: none; display: grid; place-items: center; padding: 0 0 1px;
   border: 0; border-radius: 999px; background: none; font: inherit; font-size: 13px; line-height: 1;
-  color: var(--nv-secondary-text); cursor: pointer;
+  color: rgba(255, 255, 255, .8); cursor: pointer;
   transition: background var(--nv-dur-micro), color var(--nv-dur-micro);
 }
-.nv-set-tagadd:hover { background: color-mix(in srgb, var(--nv-set-field) 20%, transparent); color: var(--nv-primary-text); }
+.nv-set-tagadd:hover { background: rgba(255, 255, 255, .16); color: #fff; }
 .nv-set-taginput {
-  width: 104px; border: 1px solid var(--nv-accent); border-radius: 999px; padding: 4px 10px;
-  font: inherit; font-size: 11px; background: var(--nv-surface); color: var(--nv-primary-text); outline: none;
+  width: 104px; border: 1px solid rgba(255, 255, 255, .5); border-radius: 999px; padding: 4px 10px;
+  font: inherit; font-size: 11px; background: rgba(10, 18, 16, .5); color: #fff; outline: none;
 }
 .nv-set-roleinput {
   margin: 8px 0 0; border: 1px solid var(--nv-accent); border-radius: 8px; padding: 6px 10px;
   font: inherit; font-size: 12px; background: var(--nv-surface); color: var(--nv-primary-text); outline: none;
 }
 .nv-set-tabshell {
-  position: sticky; top: 0; z-index: 5; margin-top: 22px;
-  background: color-mix(in srgb, var(--nv-surface) 90%, transparent);
-  -webkit-backdrop-filter: blur(14px) saturate(1.1);
-  backdrop-filter: blur(14px) saturate(1.1);
-  border-bottom: 1px solid color-mix(in srgb, var(--nv-divider) 84%, transparent);
+  position: sticky; top: 0; z-index: 5; margin-top: 12px;
+  background: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-bottom: 0;
 }
-/* 长页签靠两端的渐隐交代还有内容，不再画一条像进度条的滚动条。 */
-.nv-set-tabshell::before, .nv-set-tabshell::after {
-  content: ''; position: absolute; top: 0; bottom: 1px; width: 46px; z-index: 2; pointer-events: none;
-  opacity: 0; transition: opacity var(--nv-dur-micro) var(--nv-ease-out);
-}
-.nv-set-tabshell::before { left: 0; background: linear-gradient(90deg, color-mix(in srgb, var(--nv-surface) 96%, transparent) 44%, transparent); }
-.nv-set-tabshell::after { right: 0; background: linear-gradient(270deg, color-mix(in srgb, var(--nv-surface) 96%, transparent) 44%, transparent); }
-.nv-set-tabshell[data-overflow-left]::before, .nv-set-tabshell[data-overflow-right]::after { opacity: 1; }
+/* 页签轨道不画底座：没有渐隐块、没有底色，只留文字、active 下划线和箭头。 */
 .nv-set-tabs {
-  display: flex; gap: 2px; overflow-x: auto; padding: 0 0 2px;
-  scrollbar-width: none; overscroll-behavior-x: contain; scroll-padding-inline: 30px;
+  display: flex; gap: 2px; overflow-x: auto; padding: 0 46px 2px 0;
+  scrollbar-width: none; overscroll-behavior-x: contain; scroll-padding-inline: 46px;
 }
 .nv-set-tabs::-webkit-scrollbar { display: none; }
 /* 箭头压在渐隐上，不再用浮起的圆钮盖住页签文字。 */
@@ -4399,7 +4407,8 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
 .nv-set-tab:hover { color: var(--nv-primary-text); }
 .nv-set-tab[data-active] { color: var(--nv-primary-text); font-weight: 600; border-bottom-color: var(--nv-set-accent); }
 .nv-set-lower { position: relative; z-index: 1; }
-.nv-set-lowercontent { position: relative; z-index: 2; display: flex; flex-direction: column; width: 100%; max-width: 1140px; margin: 0 auto; padding: 0 40px; }
+/* 1140 是内容宽，1220 把左右 40 留白算进来；border-box 让窄画布不再溢出两倍 padding。 */
+.nv-set-lowercontent { position: relative; z-index: 2; display: flex; flex-direction: column; width: 100%; max-width: 1220px; margin: 0 auto; padding: 0 40px 0 var(--nv-set-lead); box-sizing: border-box; }
 .nv-set-content { position: relative; min-height: 460px; padding: 34px 0 46px; touch-action: pan-y; }
 .nv-set-body { position: relative; z-index: 2; max-width: 760px; animation: nv-set-in var(--nv-dur-ui) var(--nv-ease-out); }
 @keyframes nv-set-in { from { opacity: .35; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -4517,26 +4526,43 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
 .nv-set-charinfo small { font-size: 10.5px; line-height: 1.55; color: var(--nv-secondary-text); display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .nv-set-charmeta { font-size: 9.5px; color: var(--nv-secondary-text); opacity: .8; }
 @media (max-width: 1000px) {
-  .nv-set-lowercontent { padding: 0 24px; }
+  .nv-setting { --nv-set-page-pad: 24px; --nv-set-avatar-gap: 18px; }
+  .nv-set-lowercontent { padding: 0 24px 0 var(--nv-set-lead); }
+  .nv-set-covercopy { padding: 0 var(--nv-set-page-pad) 22px; }
 }
 @media (max-width: 820px) {
-  .nv-setting { --nv-set-hero-h: clamp(180px, 42vw, 300px); }
-  .nv-set-lowercontent { padding: 0 18px; }
-  .nv-set-identity { grid-template-columns: auto minmax(0, 1fr); gap: 14px; }
-  .nv-set-id { padding-top: 48px; }
-  .nv-set-logo { width: 74px; height: 74px; margin-top: -38px; border-radius: 18px; font-size: 24px; }
+  .nv-setting {
+    --nv-set-hero-h: clamp(180px, 42vw, 300px);
+    --nv-set-persona-h: 150px;
+    --nv-set-page-pad: 18px;
+    --nv-set-avatar-gap: 18px;
+  }
+  .nv-set-lowercontent { padding: 0 18px 0 var(--nv-set-lead); }
+  .nv-set-covercopy { padding: 0 var(--nv-set-page-pad) 20px; }
+  .nv-set-logo { border-radius: 18px; font-size: 26px; }
   .nv-set-name, .nv-set-rename { font-size: 24px; }
-  .nv-set-tags { grid-column: 1 / -1; justify-content: flex-start; max-width: none; padding: 14px 0 0; }
   .nv-set-content { padding: 28px 0 40px; }
   .nv-set-chars { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 620px) {
-  .nv-setting { --nv-set-hero-h: clamp(160px, 46vw, 240px); padding-bottom: 44px; }
-  .nv-set-lowercontent { padding: 0 14px; }
-  .nv-set-identity { gap: 10px; }
-  .nv-set-id { padding-top: 44px; }
-  .nv-set-logo { width: 62px; height: 62px; margin-top: -30px; border-radius: 14px; font-size: 20px; border-width: 2px; }
-  .nv-set-name, .nv-set-rename { font-size: 20px; }
+  .nv-setting {
+    --nv-set-hero-h: clamp(160px, 46vw, 240px);
+    --nv-set-persona-h: 112px;
+    --nv-set-page-pad: 14px;
+    --nv-set-avatar-gap: 14px;
+    padding-bottom: 44px;
+  }
+  .nv-set-lowercontent { padding: 0 14px 0 var(--nv-set-lead); }
+  .nv-set-covercopy { padding: 0 var(--nv-set-page-pad) 16px; }
+  .nv-set-logo { border-radius: 16px; font-size: 22px; }
+  .nv-set-name, .nv-set-rename { font-size: 22px; }
+  .nv-set-meta { font-size: 11.5px; }
+  .nv-set-metarow { flex-wrap: nowrap; }
+  .nv-set-tags {
+    flex: 1 1 auto; flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px;
+    scrollbar-width: none; overscroll-behavior-x: contain;
+  }
+  .nv-set-tags::-webkit-scrollbar { display: none; }
   .nv-set-content { padding: 24px 0 32px; }
   .nv-set-tabhead h2 { font-size: 18px; }
   .nv-set-profile { flex-direction: column; }

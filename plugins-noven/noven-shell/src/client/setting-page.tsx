@@ -332,15 +332,28 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
     const strip = tabsRef.current
     const tab = tabRefs.current.get(active.id)
     if (strip === null || tab === undefined) return
-    const start = strip.scrollLeft
-    const end = start + strip.clientWidth
-    const tabStart = tab.offsetLeft
-    const tabEnd = tabStart + tab.offsetWidth
-    if (tabStart < start) {
-      strip.scrollTo({ left: Math.max(0, tabStart - 16), behavior: 'smooth' })
-    } else if (tabEnd > end) {
-      strip.scrollTo({ left: Math.min(strip.scrollWidth - strip.clientWidth, tabEnd - strip.clientWidth + 16), behavior: 'smooth' })
+    const scrollTabs = (left: number): void => {
+      if (typeof strip.scrollTo === 'function') strip.scrollTo({ left, behavior: 'smooth' })
+      else strip.scrollLeft = left
     }
+    const ensureVisible = (): void => {
+      const stripRect = strip.getBoundingClientRect()
+      const tabRect = tab.getBoundingClientRect()
+      const tabStart = tabRect.left - stripRect.left + strip.scrollLeft
+      const tabEnd = tabStart + tabRect.width
+      const start = strip.scrollLeft
+      const end = start + strip.clientWidth
+      // The 46px gutters hold the arrow; the active tab must never sit under it.
+      if (start > 0 && tabStart < start + 46) {
+        scrollTabs(Math.max(0, tabStart - 46))
+      } else if (tabEnd > end - 46) {
+        scrollTabs(Math.min(strip.scrollWidth - strip.clientWidth, tabEnd - strip.clientWidth + 46))
+      }
+    }
+    ensureVisible()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(ensureVisible)
+    observer?.observe(strip)
+    return () => { observer?.disconnect() }
   }, [active.id, tabs])
 
   useEffect(() => {
@@ -488,51 +501,51 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
             {menu}
           </div>
         </div>
+        <div className="nv-set-covercopy">
+          <button type="button" className="nv-set-logo"
+            aria-label={target.kind === 'WORLD' ? t('card.home.logo') : t('card.home.avatar')}
+            onClick={() => pickImage(target.kind === 'WORLD' ? 'logo' : 'avatar')}>
+            {logo === '' ? <span>{target.name.slice(0, 1)}</span> : <img src={logo} alt="" />}
+          </button>
+          <div className="nv-set-id">
+            <span className="nv-set-kind">{kindLabel}</span>
+            {renaming
+              ? <InlineRename className="nv-set-rename" value={target.name} onDone={onRename} />
+              : <h1 className="nv-set-name">{target.name}</h1>}
+            <div className="nv-set-metarow">
+              <span className="nv-set-meta">{fmt(t, 'setting.moduleCount', { count: countModules(target.modules) })}</span>
+              {(tags.length > 0 || onSaveTags !== undefined) && (
+                <div className="nv-set-tags">
+                    {tags.map(tag => (
+                    <span key={tag} className="nv-set-tag">
+                      {tag.startsWith('#') ? tag : `#${tag}`}
+                      {onSaveTags !== undefined && ownedTags.includes(tag) && (
+                        <button type="button" aria-label={t('card.home.tagRemove')}
+                          onClick={() => { void onSaveTags(ownedTags.filter(candidate => candidate !== tag)) }}>×</button>
+                      )}
+                    </span>
+                  ))}
+                  {tagDraft === undefined
+                    ? onSaveTags !== undefined && (
+                      <button type="button" className="nv-set-tagadd" aria-label={t('card.home.tagAdd')}
+                        title={t('card.home.tagAdd')} onClick={() => setTagDraft('')}>＋</button>
+                    )
+                    : <input className="nv-set-taginput" autoFocus value={tagDraft} aria-label={t('card.home.tagAdd')}
+                        onChange={event => setTagDraft(event.target.value)}
+                        onBlur={() => { void commitTag() }}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter') { event.preventDefault(); void commitTag() }
+                          if (event.key === 'Escape') setTagDraft(undefined)
+                        }} />}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
       </header>
 
       <div className="nv-set-lower">
         <div className="nv-set-lowercontent">
-          <div className="nv-set-identity">
-            <button type="button" className="nv-set-logo"
-              aria-label={target.kind === 'WORLD' ? t('card.home.logo') : t('card.home.avatar')}
-              onClick={() => pickImage(target.kind === 'WORLD' ? 'logo' : 'avatar')}>
-              {logo === '' ? <span>{target.name.slice(0, 1)}</span> : <img src={logo} alt="" />}
-            </button>
-            <div className="nv-set-id">
-              <span className="nv-set-kind">{kindLabel}</span>
-              {renaming
-                ? <InlineRename className="nv-set-rename" value={target.name} onDone={onRename} />
-                : <h1 className="nv-set-name">{target.name}</h1>}
-              <div className="nv-set-meta">{fmt(t, 'setting.meta', { kind: kindLabel, count: countModules(target.modules) })}</div>
-            </div>
-
-            {(tags.length > 0 || onSaveTags !== undefined) && (
-              <div className="nv-set-tags">
-                {tags.map(tag => (
-                  <span key={tag} className="nv-set-tag">
-                    {tag.startsWith('#') ? tag : `#${tag}`}
-                    {onSaveTags !== undefined && ownedTags.includes(tag) && (
-                      <button type="button" aria-label={t('card.home.tagRemove')}
-                        onClick={() => { void onSaveTags(ownedTags.filter(candidate => candidate !== tag)) }}>×</button>
-                    )}
-                  </span>
-                ))}
-                {tagDraft === undefined
-                  ? onSaveTags !== undefined && (
-                    <button type="button" className="nv-set-tagadd" aria-label={t('card.home.tagAdd')}
-                      title={t('card.home.tagAdd')} onClick={() => setTagDraft('')}>＋</button>
-                  )
-                  : <input className="nv-set-taginput" autoFocus value={tagDraft} aria-label={t('card.home.tagAdd')}
-                      onChange={event => setTagDraft(event.target.value)}
-                      onBlur={() => { void commitTag() }}
-                      onKeyDown={event => {
-                        if (event.key === 'Enter') { event.preventDefault(); void commitTag() }
-                        if (event.key === 'Escape') setTagDraft(undefined)
-                      }} />}
-              </div>
-            )}
-          </div>
-
           <div className="nv-set-tabshell"
             data-overflow-left={tabScroll.left || undefined}
             data-overflow-right={tabScroll.right || undefined}>

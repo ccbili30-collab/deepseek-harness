@@ -104,12 +104,21 @@ async function openSettingPage(browser: Browser, name: string, shot: string): Pr
 }
 
 async function appearance(page: Page): Promise<{
+  readonly heroTop: number
   readonly heroBottom: number
   readonly logoTop: number
   readonly logoBottom: number
+  readonly logoHeight: number
+  readonly copyTop: number
+  readonly copyBottom: number
+  readonly copyHeight: number
+  readonly copyScroll: number
+  readonly copyClient: number
   readonly kindTop: number
   readonly nameTop: number
   readonly metaTop: number
+  readonly tagTop: number
+  readonly tagBottom: number
   readonly cover: string
   readonly logo: string
   readonly background: string
@@ -122,24 +131,51 @@ async function appearance(page: Page): Promise<{
     }
     const cover = document.querySelector('.nv-set-cover')
     const logo = document.querySelector('.nv-set-logo img')
+    const copy = document.querySelector('.nv-set-id')
+    const tag = document.querySelector('.nv-set-tags .nv-set-tag')
     const background = document.querySelector('.nv-set-bg')
-    if (!(cover instanceof HTMLImageElement) || !(logo instanceof HTMLImageElement) || background === null) {
+    if (!(cover instanceof HTMLImageElement) || !(logo instanceof HTMLImageElement)
+      || copy === null || tag === null || background === null) {
       throw new Error('card image roles are incomplete')
     }
     const hero = rect('.nv-set-hero')
     const mark = rect('.nv-set-logo')
+    const copyRect = copy.getBoundingClientRect()
+    const tagRect = tag.getBoundingClientRect()
     return {
+      heroTop: hero.top,
       heroBottom: hero.bottom,
       logoTop: mark.top,
       logoBottom: mark.bottom,
+      logoHeight: mark.height,
+      copyTop: copyRect.top,
+      copyBottom: copyRect.bottom,
+      copyHeight: copyRect.height,
+      copyScroll: copy.scrollHeight,
+      copyClient: copy.clientHeight,
       kindTop: rect('.nv-set-kind').top,
       nameTop: rect('.nv-set-name').top,
       metaTop: rect('.nv-set-meta').top,
+      tagTop: tagRect.top,
+      tagBottom: tagRect.bottom,
       cover: cover.currentSrc,
       logo: logo.currentSrc,
       background: getComputedStyle(background).backgroundImage,
     }
   })
+}
+
+/** The identity text block and the avatar share one height and one top/bottom edge. */
+function expectIdentityInsideAvatar(view: Awaited<ReturnType<typeof appearance>>): void {
+  expect(view.copyHeight).toBeCloseTo(view.logoHeight, 0)
+  expect(view.copyTop).toBeGreaterThanOrEqual(view.logoTop - 1)
+  expect(view.copyBottom).toBeLessThanOrEqual(view.logoBottom + 1)
+  for (const top of [view.kindTop, view.nameTop, view.metaTop, view.tagTop]) {
+    expect(top).toBeGreaterThanOrEqual(view.logoTop - 1)
+    expect(top).toBeLessThanOrEqual(view.logoBottom + 1)
+  }
+  expect(view.tagBottom).toBeLessThanOrEqual(view.logoBottom + 1)
+  expect(view.copyScroll).toBeLessThanOrEqual(view.copyClient + 1)
 }
 
 beforeAll(async () => {
@@ -170,7 +206,7 @@ beforeAll(async () => {
 afterAll(async () => { await close() })
 
 describe('Noven card image roles and identity geometry', () => {
-  it('keeps world cover, background, and logo distinct without putting title text on the cover', async () => {
+  it('keeps world cover, background, and logo distinct with the identity inside the cover', async () => {
     expect(worldId).not.toBe('')
     const browser = await chromium.launch()
     try {
@@ -182,21 +218,30 @@ describe('Noven card image roles and identity geometry', () => {
           .toMatch(/^rgb\(/)
         expect(view.cover).not.toBe(view.logo)
         expect(view.background).toContain(view.cover)
-        expect(view.logoTop).toBeLessThan(view.heroBottom)
-        expect(view.logoBottom).toBeGreaterThan(view.heroBottom)
-        for (const top of [view.kindTop, view.nameTop, view.metaTop]) {
-          expect(top).toBeGreaterThanOrEqual(view.heroBottom - 0.5)
-        }
-        expect(view.nameTop - view.heroBottom).toBeGreaterThanOrEqual(20)
+        // 身份压在封面下沿：方图与整块文字同高，文字不能探出上下边界。
+        expect(view.logoTop).toBeGreaterThan(view.heroTop)
+        expect(view.logoBottom).toBeLessThanOrEqual(view.heroBottom - 8)
+        expectIdentityInsideAvatar(view)
+        const tabsTop = await page.locator('.nv-set-tabshell').evaluate(element => element.getBoundingClientRect().top)
+        expect(tabsTop - view.heroBottom).toBeLessThanOrEqual(16)
         expect(await page.locator('.nv-set-name').evaluate(element => Number.parseFloat(getComputedStyle(element).fontSize))).toBeLessThanOrEqual(28)
-        await page.setViewportSize({ width: 600, height: 1000 })
+        const tabShell = await page.locator('.nv-set-tabshell').evaluate(element => ({
+          background: getComputedStyle(element).backgroundColor,
+          borderBottom: getComputedStyle(element).borderBottomWidth,
+        }))
+        expect(tabShell).toEqual({ background: 'rgba(0, 0, 0, 0)', borderBottom: '0px' })
+        // 正文列不越过画布：几档窗口宽度下滚动区都没有横向溢出。
+        for (const width of [1680, 1280, 1000, 780, 600]) {
+          await page.setViewportSize({ width, height: 1000 })
+          const strip = await page.locator('.nv-cardpage-scroll')
+            .evaluate(element => ({ client: element.clientWidth, scroll: element.scrollWidth }))
+          expect({ width, overflow: strip.scroll - strip.client }).toEqual({ width, overflow: 0 })
+        }
         const narrow = await appearance(page)
         expect(narrow.cover).not.toBe(narrow.logo)
-        expect(narrow.logoTop).toBeLessThan(narrow.heroBottom)
-        for (const top of [narrow.kindTop, narrow.nameTop, narrow.metaTop]) {
-          expect(top).toBeGreaterThanOrEqual(narrow.heroBottom - 0.5)
-        }
-        expect(narrow.nameTop - narrow.heroBottom).toBeGreaterThanOrEqual(20)
+        expect(narrow.logoTop).toBeGreaterThan(narrow.heroTop)
+        expect(narrow.logoBottom).toBeLessThanOrEqual(narrow.heroBottom - 8)
+        expectIdentityInsideAvatar(narrow)
         const tabs = page.locator('.nv-set-tabs')
         const tabStrip = await tabs.evaluate(element => ({
           clientWidth: element.clientWidth,
@@ -215,6 +260,21 @@ describe('Noven card image roles and identity geometry', () => {
         await expect.poll(() => tabs.evaluate(element => element.scrollLeft)).toBeGreaterThan(0)
         await page.locator('.nv-set-tabshell[data-overflow-left]').waitFor({ state: 'attached' })
         await page.locator('.nv-set-tabscroll-prev').waitFor({ state: 'visible' })
+        // 直接触发 click，不让 Playwright 先帮我们滚进视野；active 必须由页面自己完整滚入。
+        await page.getByRole('tab', { name: '商路、货币与物价' }).evaluate((element) => {
+          if (element instanceof HTMLElement) element.click()
+        })
+        await page.waitForTimeout(650)
+        const activeTabBox = await page.locator('.nv-set-tab[data-active]').evaluate((element) => {
+          const rect = element.getBoundingClientRect()
+          return { left: rect.left, right: rect.right }
+        })
+        const tabsBox = await tabs.evaluate((element) => {
+          const rect = element.getBoundingClientRect()
+          return { left: rect.left, right: rect.right }
+        })
+        expect(activeTabBox.left).toBeGreaterThanOrEqual(tabsBox.left + 40)
+        expect(activeTabBox.right).toBeLessThanOrEqual(tabsBox.right - 40)
         await page.locator('.nv-setting').screenshot({ path: join(SHOT_DIR, 'world-narrow.png') })
         console.log(`NOVEN_CARD_WORLD_SHOT=${join(SHOT_DIR, 'world.png')}`)
       } finally {
@@ -225,7 +285,7 @@ describe('Noven card image roles and identity geometry', () => {
     }
   })
 
-  it('keeps a character avatar distinct from its cover and keeps title text off the cover', async () => {
+  it('keeps a character avatar distinct from its cover with the identity inside the cover', async () => {
     expect(characterId).not.toBe('')
     const browser = await chromium.launch()
     try {
@@ -234,11 +294,9 @@ describe('Noven card image roles and identity geometry', () => {
         const view = await appearance(page)
         expect(view.cover).not.toBe(view.logo)
         expect(view.background).toContain(view.cover)
-        expect(view.logoTop).toBeLessThan(view.heroBottom)
-        expect(view.logoBottom).toBeGreaterThan(view.heroBottom)
-        for (const top of [view.kindTop, view.nameTop, view.metaTop]) {
-          expect(top).toBeGreaterThanOrEqual(view.heroBottom - 0.5)
-        }
+        expect(view.logoTop).toBeGreaterThan(view.heroTop)
+        expect(view.logoBottom).toBeLessThanOrEqual(view.heroBottom - 8)
+        expectIdentityInsideAvatar(view)
         console.log(`NOVEN_CARD_CHARACTER_SHOT=${join(SHOT_DIR, 'character.png')}`)
       } finally {
         await page.close()
