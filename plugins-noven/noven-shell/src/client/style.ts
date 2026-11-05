@@ -4236,7 +4236,6 @@ html[data-noven-conversation-appearance] [data-center-col] [data-phase='hero'] {
   --nv-set-persona-h: 112px;
   --nv-set-page-pad: 40px;
   --nv-set-avatar-gap: 20px;
-  --nv-set-lead: calc(var(--nv-set-page-pad) + var(--nv-set-persona-h) + var(--nv-set-avatar-gap));
   --nv-set-field: color-mix(in srgb, var(--nv-accent) 26%, #93A99C);
   --nv-set-accent: var(--nv-accent-deep);
 }
@@ -4408,7 +4407,7 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
 .nv-set-tab[data-active] { color: var(--nv-primary-text); font-weight: 600; border-bottom-color: var(--nv-set-accent); }
 .nv-set-lower { position: relative; z-index: 1; }
 /* 1140 是内容宽，1220 把左右 40 留白算进来；border-box 让窄画布不再溢出两倍 padding。 */
-.nv-set-lowercontent { position: relative; z-index: 2; display: flex; flex-direction: column; width: 100%; max-width: 1220px; margin: 0 auto; padding: 0 40px 0 var(--nv-set-lead); box-sizing: border-box; }
+.nv-set-lowercontent { position: relative; z-index: 2; display: flex; flex-direction: column; width: 100%; max-width: 1220px; margin: 0 auto; padding: 0 40px; box-sizing: border-box; }
 .nv-set-content { position: relative; min-height: 460px; padding: 34px 0 46px; touch-action: pan-y; }
 .nv-set-body { position: relative; z-index: 2; max-width: 760px; animation: nv-set-in var(--nv-dur-ui) var(--nv-ease-out); }
 @keyframes nv-set-in { from { opacity: .35; transform: translateY(6px); } to { opacity: 1; transform: none; } }
@@ -4527,7 +4526,7 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
 .nv-set-charmeta { font-size: 9.5px; color: var(--nv-secondary-text); opacity: .8; }
 @media (max-width: 1000px) {
   .nv-setting { --nv-set-page-pad: 24px; --nv-set-avatar-gap: 18px; }
-  .nv-set-lowercontent { padding: 0 24px 0 var(--nv-set-lead); }
+  .nv-set-lowercontent { padding: 0 24px; }
   .nv-set-covercopy { padding: 0 var(--nv-set-page-pad) 22px; }
 }
 @media (max-width: 820px) {
@@ -4537,7 +4536,7 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
     --nv-set-page-pad: 18px;
     --nv-set-avatar-gap: 18px;
   }
-  .nv-set-lowercontent { padding: 0 18px 0 var(--nv-set-lead); }
+  .nv-set-lowercontent { padding: 0 18px; }
   .nv-set-covercopy { padding: 0 var(--nv-set-page-pad) 20px; }
   .nv-set-logo { border-radius: 18px; font-size: 26px; }
   .nv-set-name, .nv-set-rename { font-size: 24px; }
@@ -4552,7 +4551,7 @@ button.nv-set-logo { padding: 0; cursor: pointer; font: inherit; }
     --nv-set-avatar-gap: 14px;
     padding-bottom: 44px;
   }
-  .nv-set-lowercontent { padding: 0 14px 0 var(--nv-set-lead); }
+  .nv-set-lowercontent { padding: 0 14px; }
   .nv-set-covercopy { padding: 0 var(--nv-set-page-pad) 16px; }
   .nv-set-logo { border-radius: 16px; font-size: 22px; }
   .nv-set-name, .nv-set-rename { font-size: 22px; }
