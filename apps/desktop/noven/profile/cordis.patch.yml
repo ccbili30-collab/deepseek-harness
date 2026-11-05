@@ -91,7 +91,191 @@
           - id: minimax-m3
             name: minimax-m3
       opencode-go:
+        displayName: OpenCode Go
         apiKeyEnv: OPENCODE_GO_API_KEY
+        api: openai-completions
+        baseURL: https://opencode.ai/inference/go/openai/v1
+        models:
+          - id: deepseek-v4.1-flash
+            name: DeepSeek V4.1 Flash
+            contextWindow: 1000000
+            maxTokens: 384000
+            input:
+              - text
+              - image
+          - id: deepseek-v4-pro
+            name: DeepSeek V4 Pro
+            contextWindow: 1000000
+            maxTokens: 384000
+            input:
+              - text
+          - id: glm-5.2
+            name: GLM-5.2
+            contextWindow: 1000000
+            maxTokens: 131072
+            input:
+              - text
+          - id: glm-5.3
+            name: GLM-5.3
+            contextWindow: 1000000
+            maxTokens: 131072
+            input:
+              - text
+          - id: glm-5.3-flash
+            name: GLM-5.3-Flash
+            contextWindow: 1000000
+            maxTokens: 131072
+            input:
+              - text
+              - image
+          - id: hy3
+            name: Hy3
+            contextWindow: 256000
+            maxTokens: 128000
+            input:
+              - text
+          - id: hy4-preview
+            name: Hy4 preview
+            contextWindow: 1024000
+            maxTokens: 64000
+            input:
+              - text
+          - id: kimi-k2.7-code
+            name: Kimi K2.7 Code
+            contextWindow: 262144
+            maxTokens: 262144
+            input:
+              - text
+              - image
+          - id: kimi-k3
+            name: Kimi K3
+            contextWindow: 1048576
+            maxTokens: 131072
+            input:
+              - text
+              - image
+          - id: mimo-v2.6-flash
+            name: MiMo-V2.6-Flash
+            contextWindow: 1048576
+            maxTokens: 131072
+            input:
+              - text
+              - image
+          - id: mimo-v2.6-pro
+            name: MiMo-V2.6-Pro
+            contextWindow: 1048576
+            maxTokens: 131072
+            input:
+              - text
+              - image
+          - id: minimax-m3.1-flash
+            name: MiniMax M3.1 Flash
+            contextWindow: 1000000
+            maxTokens: 512000
+            input:
+              - text
+              - image
+          - id: longcat-2.0
+            name: LongCat-2.0
+            contextWindow: 1000000
+            maxTokens: 131072
+            input:
+              - text
+          - id: step-5-preview
+            name: Step 5 Preview
+            contextWindow: 1000000
+            maxTokens: 65536
+            input:
+              - text
+              - image
+          - id: beam-free
+            name: Beam Free
+            contextWindow: 1048576
+            maxTokens: 131072
+            input:
+              - text
+          - id: kimi-k3.1-pro
+            name: Kimi K3.1 Pro
+            contextWindow: 1048576
+            maxTokens: 131072
+            input:
+              - text
+              - image
+          - id: hy4
+            name: Hy4
+            contextWindow: 1048576
+            maxTokens: 65536
+            input:
+              - text
+              - image
+      opencode-go-responses:
+        displayName: OpenCode Go · Responses
+        apiKeyEnv: OPENCODE_GO_API_KEY
+        api: openai-responses
+        baseURL: https://opencode.ai/inference/go/openai/v1
+        models:
+          - id: grok-4.7
+            name: Grok 4.7
+            contextWindow: 500000
+            maxTokens: 500000
+            input:
+              - text
+              - image
+          - id: gpt-5.6-luna
+            name: GPT-5.6 Luna
+            contextWindow: 1050000
+            maxTokens: 128000
+            input:
+              - text
+              - image
+          - id: gpt-6-luna
+            name: GPT-6 Luna
+            contextWindow: 1050000
+            maxTokens: 128000
+            input:
+              - text
+              - image
+      opencode-go-anthropic:
+        displayName: OpenCode Go · Anthropic
+        apiKeyEnv: OPENCODE_GO_API_KEY
+        api: anthropic-messages
+        baseURL: https://opencode.ai/inference/go/anthropic/v1
+        models:
+          - id: claude-haiku-5-5
+            name: Claude Haiku 5.5
+            contextWindow: 1000000
+            maxTokens: 128000
+            input:
+              - text
+              - image
+          - id: minimax-m3
+            name: MiniMax-M3
+            contextWindow: 1000000
+            maxTokens: 131072
+            input:
+              - text
+              - image
+          - id: qwen3.8-max
+            name: Qwen3.8 Max
+            contextWindow: 1000000
+            maxTokens: 131072
+            input:
+              - text
+              - image
+          - id: qwen3.8-flash
+            name: Qwen3.8 Flash
+            contextWindow: 1000000
+            maxTokens: 131072
+            input:
+              - text
+              - image
+          - id: qwen3.7-plus
+            name: Qwen3.7 Plus
+            contextWindow: 1000000
+            maxTokens: 65536
+            input:
+              - text
+              - image
       opencode-go-gemini:
         displayName: OpenCode Go · Gemini
         apiKeyEnv: OPENCODE_GO_API_KEY
@@ -105,11 +289,6 @@
             input:
               - text
               - image
-            reasoningEfforts:
-              off:
-              low: low
-              medium: medium
-              high: high
 - id: agent-default-model
   name: "@deepseek-ai/dsh-agent-default-model"
   config:
