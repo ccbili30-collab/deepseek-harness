@@ -6,8 +6,10 @@
  * internal characters.
  * @module noven-shell/client/setting-page
  */
-import { useCallback, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type ReactNode } from 'react'
 import type { CardDocView, CardModuleDoc } from './card-api.ts'
+import { avatarImageId, coverImageId, identityImageId } from './card-images.ts'
+import { coverPalette, type CoverPalette } from './cover-palette.ts'
 import { CardMarkdownEditor } from './doc-editor.tsx'
 import { InlineRename } from './ui/interact.tsx'
 import { coll, collText, rel, tl } from './widgets.tsx'
@@ -245,15 +247,15 @@ function scrub(text: string): string {
   return text.replace(/[#>*`\-|[\]()!]/g, ' ').replace(/\s+/g, ' ').trim()
 }
 
-/** A world-internal character tile: cover/avatar, name, and the first readable line. */
+/** A world-internal character tile: avatar, name, and the first readable line. */
 function CharacterCard({ character, t, imageUrl, onOpen }: {
   readonly character: Omit<CardDocView, 'characters'>
   readonly t: ShellT
   readonly imageUrl: (resourceId: string) => string
   readonly onOpen: () => void
 }) {
-  const cover = character.coverResourceId ?? character.avatarResourceId
-  const image = cover === null ? '' : imageUrl(cover)
+  const avatarId = avatarImageId(character)
+  const image = avatarId === null ? '' : imageUrl(avatarId)
   const excerpt = scrub(firstTextOf(character.modules)).slice(0, 72)
   return (
     <button type="button" className="nv-set-char" onClick={onOpen}>
@@ -280,7 +282,11 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
   const [tagDraft, setTagDraft] = useState<string | undefined>(undefined)
   const [roleDraft, setRoleDraft] = useState<string | undefined>(undefined)
   const [imageSlot, setImageSlot] = useState<'avatar' | 'cover' | 'logo' | undefined>(undefined)
+  const [tabScroll, setTabScroll] = useState({ left: false, right: false })
+  const [palette, setPalette] = useState<CoverPalette | undefined>(undefined)
   const fileRef = useRef<HTMLInputElement>(null)
+  const tabsRef = useRef<HTMLDivElement>(null)
+  const tabRefs = useRef(new Map<string, HTMLButtonElement>())
   const swipe = useRef<{ readonly x: number, readonly y: number } | null>(null)
 
   const overviewModule = target.modules.find(isOverviewModule)
@@ -309,17 +315,64 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
   const active = tabs.find(tab => tab.id === activeId) ?? tabs[0]
   const activeIndex = tabs.findIndex(tab => tab.id === active.id)
 
-  const cover = target.coverResourceId === null ? '' : imageUrl(target.coverResourceId)
-  const avatar = target.avatarResourceId === null ? '' : imageUrl(target.avatarResourceId)
-  const background = cover !== '' ? cover : avatar
-  // 卡页头图会写入 logoResourceId；字段尚未进入这份视图类型时按存在读取，世界优先用 LOGO。
-  const logoResource = 'logoResourceId' in target && typeof target.logoResourceId === 'string'
-    ? target.logoResourceId
-    : null
-  const face = target.kind === 'WORLD'
-    ? (logoResource === null ? cover : imageUrl(logoResource))
-    : avatar
-  const logo = face !== '' ? face : cover
+  const updateTabScroll = useCallback(() => {
+    const strip = tabsRef.current
+    if (strip === null) return
+    const left = strip.scrollLeft > 1
+    const right = strip.scrollLeft + strip.clientWidth < strip.scrollWidth - 1
+    setTabScroll(current => current.left === left && current.right === right ? current : { left, right })
+  }, [])
+
+  const nudgeTabs = (direction: -1 | 1): void => {
+    const strip = tabsRef.current
+    if (strip === null) return
+    strip.scrollBy({ left: direction * Math.max(160, strip.clientWidth * 0.65), behavior: 'smooth' })
+  }
+
+  useEffect(() => {
+    const strip = tabsRef.current
+    const tab = tabRefs.current.get(active.id)
+    if (strip === null || tab === undefined) return
+    const start = strip.scrollLeft
+    const end = start + strip.clientWidth
+    const tabStart = tab.offsetLeft
+    const tabEnd = tabStart + tab.offsetWidth
+    if (tabStart < start) {
+      strip.scrollTo({ left: Math.max(0, tabStart - 16), behavior: 'smooth' })
+    } else if (tabEnd > end) {
+      strip.scrollTo({ left: Math.min(strip.scrollWidth - strip.clientWidth, tabEnd - strip.clientWidth + 16), behavior: 'smooth' })
+    }
+  }, [active.id, tabs])
+
+  useEffect(() => {
+    const strip = tabsRef.current
+    if (strip === null) return
+    const onScroll = (): void => { updateTabScroll() }
+    const onWheel = (event: WheelEvent): void => {
+      if (strip.scrollWidth <= strip.clientWidth || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return
+      const atStart = strip.scrollLeft <= 0
+      const atEnd = strip.scrollLeft + strip.clientWidth >= strip.scrollWidth - 1
+      if ((event.deltaY < 0 && atStart) || (event.deltaY > 0 && atEnd)) return
+      strip.scrollLeft += event.deltaY
+      event.preventDefault()
+    }
+    strip.addEventListener('scroll', onScroll, { passive: true })
+    strip.addEventListener('wheel', onWheel, { passive: false })
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(onScroll)
+    observer?.observe(strip)
+    updateTabScroll()
+    return () => {
+      strip.removeEventListener('scroll', onScroll)
+      strip.removeEventListener('wheel', onWheel)
+      observer?.disconnect()
+    }
+  }, [tabs, updateTabScroll])
+
+  const coverId = coverImageId(target)
+  const cover = coverId === null ? '' : imageUrl(coverId)
+  const background = cover
+  const face = identityImageId(target)
+  const logo = face === null ? '' : imageUrl(face)
   const tags = useMemo(() => {
     const found = new Set<string>()
     for (const tag of target.tags ?? []) {
@@ -338,6 +391,20 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
     walk(target.modules)
     return [...found].slice(0, 10)
   }, [target.modules, target.tags])
+
+  useEffect(() => {
+    if (cover === '') {
+      setPalette(undefined)
+      return
+    }
+    let alive = true
+    void coverPalette(cover).then(next => { if (alive) setPalette(next) })
+    return () => { alive = false }
+  }, [cover])
+
+  const pageStyle = palette === undefined
+    ? undefined
+    : { '--nv-set-field': palette.field, '--nv-set-accent': palette.accent } as CSSProperties
 
   const go = useCallback((delta: number) => {
     const next = tabs[activeIndex + delta]
@@ -381,7 +448,15 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
   }
 
   return (
-    <div className="nv-setting">
+    <div className="nv-setting" style={pageStyle}>
+      <div className="nv-set-backdrop" aria-hidden="true">
+        <div className={`nv-set-bg${background === '' ? ' nv-set-bg-fallback' : ''}`}
+          data-kind={target.kind}
+          style={background === '' ? undefined : { backgroundImage: `url("${background}")` }} />
+        <div className="nv-set-soft" />
+        <div className="nv-set-paper" />
+      </div>
+
       <header className="nv-set-hero">
         {cover !== ''
           ? <img className="nv-set-cover" src={cover} alt="" />
@@ -406,15 +481,7 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
         </div>
       </header>
 
-      <div className="nv-set-lower" data-template={active.template}>
-        <div className="nv-set-lowerbg" aria-hidden="true">
-          <div className={`nv-set-bg${background === '' ? ' nv-set-bg-fallback' : ''}`}
-            data-kind={target.kind}
-            style={background === '' ? undefined : { backgroundImage: `url("${background}")` }} />
-          <div className="nv-set-tint" />
-          <div className="nv-set-veil" />
-        </div>
-
+      <div className="nv-set-lower">
         <div className="nv-set-lowercontent">
           <div className="nv-set-identity">
             <button type="button" className="nv-set-logo"
@@ -429,42 +496,59 @@ export function SettingPage({ target, doc, t, imageUrl, renderModule, onEditModu
                 : <h1 className="nv-set-name">{target.name}</h1>}
               <div className="nv-set-meta">{fmt(t, 'setting.meta', { kind: kindLabel, count: countModules(target.modules) })}</div>
             </div>
+
+            {(tags.length > 0 || onSaveTags !== undefined) && (
+              <div className="nv-set-tags">
+                {tags.map(tag => (
+                  <span key={tag} className="nv-set-tag">
+                    {tag.startsWith('#') ? tag : `#${tag}`}
+                    {onSaveTags !== undefined && (
+                      <button type="button" aria-label={t('card.home.tagRemove')}
+                        onClick={() => onSaveTags(tags.filter(candidate => candidate !== tag))}>×</button>
+                    )}
+                  </span>
+                ))}
+                {tagDraft === undefined
+                  ? onSaveTags !== undefined && (
+                    <button type="button" className="nv-set-tagadd" aria-label={t('card.home.tagAdd')}
+                      title={t('card.home.tagAdd')} onClick={() => setTagDraft('')}>＋</button>
+                  )
+                  : <input className="nv-set-taginput" autoFocus value={tagDraft} aria-label={t('card.home.tagAdd')}
+                      onChange={event => setTagDraft(event.target.value)}
+                      onBlur={commitTag}
+                      onKeyDown={event => {
+                        if (event.key === 'Enter') { event.preventDefault(); commitTag() }
+                        if (event.key === 'Escape') setTagDraft(undefined)
+                      }} />}
+              </div>
+            )}
           </div>
 
-          {(tags.length > 0 || onSaveTags !== undefined) && (
-            <div className="nv-set-tags">
-              {tags.map(tag => (
-                <span key={tag} className="nv-set-tag">
-                  {tag.startsWith('#') ? tag : `#${tag}`}
-                  {onSaveTags !== undefined && (
-                    <button type="button" aria-label={t('card.home.tagRemove')}
-                      onClick={() => onSaveTags(tags.filter(candidate => candidate !== tag))}>×</button>
-                  )}
-                </span>
+          <div className="nv-set-tabshell"
+            data-overflow-left={tabScroll.left || undefined}
+            data-overflow-right={tabScroll.right || undefined}>
+            <div className="nv-set-tabs" role="tablist" aria-label={t('setting.tabs')} ref={tabsRef}>
+              {tabs.map(tab => (
+                <button key={tab.id} type="button" role="tab" id={`nv-set-tab-${tab.id}`}
+                  ref={element => {
+                    if (element === null) tabRefs.current.delete(tab.id)
+                    else tabRefs.current.set(tab.id, element)
+                  }}
+                  className="nv-set-tab" data-active={tab.id === active.id || undefined}
+                  aria-selected={tab.id === active.id} aria-controls="nv-set-panel"
+                  onClick={() => setActiveId(tab.id)}>
+                  {tab.label}
+                </button>
               ))}
-              {tagDraft === undefined
-                ? onSaveTags !== undefined && (
-                  <button type="button" className="nv-set-tagadd" onClick={() => setTagDraft('')}>＋ {t('card.home.tagAdd')}</button>
-                )
-                : <input className="nv-set-taginput" autoFocus value={tagDraft} aria-label={t('card.home.tagAdd')}
-                    onChange={event => setTagDraft(event.target.value)}
-                    onBlur={commitTag}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter') { event.preventDefault(); commitTag() }
-                      if (event.key === 'Escape') setTagDraft(undefined)
-                    }} />}
             </div>
-          )}
-
-          <div className="nv-set-tabs" role="tablist" aria-label={t('setting.tabs')}>
-            {tabs.map(tab => (
-              <button key={tab.id} type="button" role="tab" id={`nv-set-tab-${tab.id}`}
-                className="nv-set-tab" data-active={tab.id === active.id || undefined}
-                aria-selected={tab.id === active.id} aria-controls="nv-set-panel"
-                onClick={() => setActiveId(tab.id)}>
-                {tab.label}
-              </button>
-            ))}
+            {tabScroll.left && (
+              <button type="button" className="nv-set-tabscroll nv-set-tabscroll-prev"
+                aria-label={t('setting.tabsPrev')} onClick={() => { nudgeTabs(-1) }}>‹</button>
+            )}
+            {tabScroll.right && (
+              <button type="button" className="nv-set-tabscroll nv-set-tabscroll-next"
+                aria-label={t('setting.tabsNext')} onClick={() => { nudgeTabs(1) }}>›</button>
+            )}
           </div>
 
           <div id="nv-set-panel" className="nv-set-content" role="tabpanel"

@@ -10,6 +10,7 @@ import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import { MarkdownDelegateProvider, Menu } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { CardAddr, CardBlockView, CardDocView, CardModuleDoc, CardOpResult, CardState } from './card-api.ts'
 import { CardConflict, cardContentUrl, deleteUserModule, fetchUserModules, postCardDiagnostics, type CardDiagnosticEntry, type UserModuleDefinition } from './card-api.ts'
+import { avatarImageId, coverImageId } from './card-images.ts'
 import { findModule } from './pages/card-tree.ts'
 import type { EditorSaveResult } from './editor.tsx'
 import { CardMarkdownEditor } from './doc-editor.tsx'
@@ -1805,7 +1806,9 @@ export function CardPreview({ addr, cardId, t, loadCard, onBack, onEdit, onExpor
     ? state.resources.filter(resource => resource.mediaType.startsWith('image/')).map(resource => ({ id: resource.id, mediaType: resource.mediaType }))
     : []
 
-  const coverId = target?.coverResourceId ?? (typeof state === 'object' && state !== null ? state.coverResourceId : null)
+  const coverId = role !== undefined
+    ? coverImageId(role)
+    : coverImageId(target) ?? (typeof state === 'object' && state !== null ? state.coverResourceId : null)
   const cover = coverId === null || coverId === undefined ? '' : imageUrl(coverId)
 
   const pushCard = useCallback((linkedCardId: string): void => {
@@ -1909,8 +1912,8 @@ export function CardPreview({ addr, cardId, t, loadCard, onBack, onEdit, onExpor
   const kindLabel = t(role !== undefined || doc.kind === 'CHARACTER' ? 'card.kind.character' : 'card.kind.world')
   const characters = role === undefined ? doc.characters : []
   const castArt = (character: Omit<CardDocView, 'characters'>): string => {
-    const resourceId = character.avatarResourceId ?? character.coverResourceId
-    return resourceId === null || resourceId === undefined ? '' : imageUrl(resourceId)
+    const resourceId = avatarImageId(character)
+    return resourceId === null ? '' : imageUrl(resourceId)
   }
 
   return (

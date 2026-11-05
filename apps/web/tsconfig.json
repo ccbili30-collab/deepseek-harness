@@ -56,6 +56,7 @@
     "tests/steering.e2e.ts",
     "tests/navigation-panes.e2e.ts",
     "tests/noven-shell.e2e.ts",
+    "tests/noven-card-images.e2e.ts",
     "tests/noven-inline-code.e2e.ts",
     "tests/noven-inline-gallery.e2e.ts",
     "tests/noven-appearance.e2e.ts",
