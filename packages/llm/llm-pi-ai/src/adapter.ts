@@ -202,13 +202,32 @@ function reasoningInfo(
 }
 
 /** Merge deployment headers while removing case-insensitive attribution collisions. */
-function requestHeaders(headers: Readonly<Record<string, string>> | undefined): Record<string, string> {
+function requestHeaders(
+  headers: Readonly<Record<string, string>> | undefined,
+  sessionHeaders: Readonly<Record<string, string>> = {},
+): Record<string, string> {
   const attribution = attributionHeaders()
   const reserved = new Set(Object.keys(attribution).map(name => name.toLowerCase()))
   return {
     ...Object.fromEntries(Object.entries(headers ?? {}).filter(([name]) => !reserved.has(name.toLowerCase()))),
+    ...sessionHeaders,
     ...attribution,
   }
+}
+
+/**
+ * OpenCode routes require their own session-affinity header for prompt-cache
+ * routing. pi-ai carries the stable session id already; this adapter adds the
+ * vendor header its installed catalog does not emit.
+ * @param model - resolved pi-ai model and endpoint.
+ * @param sessionId - durable Session identity supplied by the caller.
+ * @returns the vendor header when the route addresses OpenCode.
+ */
+export function openCodeSessionHeaders(model: Pick<Model<Api>, 'provider' | 'baseUrl'>, sessionId: string | undefined): Record<string, string> {
+  if (sessionId === undefined) return {}
+  const onOpenCode = model.provider === 'opencode' || model.provider === 'opencode-go'
+    || /^https:\/\/opencode\.ai(?:\/|$)/u.test(model.baseUrl)
+  return onOpenCode ? { 'x-opencode-session': sessionId } : {}
 }
 
 /**
@@ -383,9 +402,10 @@ export class PiAiAdapter extends LlmAdapter {
         ...options.maxTokens === undefined ? {} : { maxTokens: options.maxTokens },
         ...options.sessionId === undefined ? {} : { sessionId: String(options.sessionId) },
         signal: watchdog.signal,
-        // Profile headers are deployment-owned; attribution names are
-        // Harness-owned and therefore win collisions.
-        headers: requestHeaders(profile.headers),
+        // Profile headers are deployment-owned; session affinity and attribution
+        // names are Harness-owned and therefore win collisions.
+        headers: requestHeaders(profile.headers,
+          openCodeSessionHeaders(model, options.sessionId === undefined ? undefined : String(options.sessionId))),
       })
       const iterator = toStreamChunks(events, model.contextWindow, options.signal, model.id)[Symbol.asyncIterator]()
       let exhausted = false
